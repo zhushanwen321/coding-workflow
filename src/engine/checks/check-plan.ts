@@ -378,11 +378,11 @@ function checkE2eTestLayer(report: CheckReport, mdPath: string): void {
     report.addSkip("E2E 测试层", "无 E2E 章节");
     return;
   }
-  // 定位表头「测试层」列
+  // 定位含「测试层」字样的行（表头），确定其列号。
+  // 不用「用例 ID」字样探测表头——数据行说明列可能含此字样导致误跳过（Bug 2 修复）。
   let layerCol: number | null = null;
-  const headerRe = /用例\s*ID|用例id/i;
   for (const line of section.split(/\r?\n/)) {
-    if (headerRe.test(line)) {
+    if (line.includes("测试层")) {
       const cells = line.split("|").map((c) => c.trim()).filter((c) => c !== "");
       for (let idx = 0; idx < cells.length; idx++) {
         if (cells[idx]!.includes("测试层")) {
@@ -402,8 +402,7 @@ function checkE2eTestLayer(report: CheckReport, mdPath: string): void {
     const cells = s.split("|").map((c) => c.trim()).filter((c) => c !== "");
     if (cells.length < MIN_TABLE_COLS) continue;
     const first = cells[0]!;
-    if (headerRe.test(line)) continue; // 表头行
-    if (!/^E\d/i.test(first)) continue; // 分隔行 / 非数据行
+    if (!/^E\d/i.test(first)) continue; // 表头/分隔行 / 非 E 开头数据行
     if (layerCol === null || layerCol >= cells.length) {
       missing.push(first);
     } else {
