@@ -3,18 +3,11 @@
   "version": "0.1.0",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",
-  "main": "./dist/engine/dispatch.js",
-  "types": "./dist/engine/dispatch.d.ts",
-  "license": "MIT",
-  "engines": {
-    "node": ">=20"
-  },
   "bin": {
     "cw": "./dist/cli/cli.js"
   },
   "exports": {
-    ".": "./dist/engine/types.js",
-    "./dispatch": "./dist/engine/dispatch.js"
+    ".": "./dist/engine/types.js"
   },
   "scripts": {
     "build": "tsc",
