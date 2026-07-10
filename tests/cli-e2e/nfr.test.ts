@@ -7,13 +7,27 @@
  *   T7.3 非法 JSON → exit ≠0
  *   T7.4 路径穿越 CW_HOME → throw
  *   T7.5 .cw-wt/ 检测 → throw
+ *   T7.6 文件不存在 → exit ≠0（--xxx-file 边界）
+ *   T7.7 非 JSON 文件 → exit ≠0
+ *   T7.8 超大文件 → exit ≠0（10MB DoS 防护）
+ *   T7.9 gate fail → exit 0（C-1 分层：程序正常）
+ *   T7.10 illegal_transition → exit ≥1（程序错误）
+ *   T7.11 stderr 人类可读
  *
- * 测试层：integration（protocol.ts 校验 + resolveDbPath 防护）。
+ * 测试层：integration（protocol.ts 校验 + resolveDbPath 防护）+ e2e（subprocess exit code）。
  */
 
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { readJsonInput, resolveDbPath, validateParams } from "../../src/cli/protocol.js";
+
+// e2e 子进程测试用：需先 `npm run build` 生成 dist/cli/cli.js。
+const CLI_PATH = join(process.cwd(), "dist", "cli", "cli.js");
 
 // ── T7.1/T7.2/T7.3: typebox 参数校验 ─────────────────────────
 
@@ -79,5 +93,161 @@ describe("NFR: .cw-wt/ worktree 检测", () => {
     const path = resolveDbPath("/Users/x/proj", "/tmp/cw-home");
     expect(path).toMatch(/_cw\.json$/);
     expect(path).not.toContain(".cw-wt");
+  });
+});
+
+// ── T7.6/T7.7/T7.8: 文件读取边界（#4 安全：--xxx-file） ──────
+
+describe("NFR: 文件读取边界 (--xxx-file)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "cw-nfr-file-"));
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch (e) {
+      void e;
+    }
+  });
+
+  it("T7.6 — 文件不存在：readJsonInput throw（exit ≠0 等价）", () => {
+    expect(() => readJsonInput(join(tmpDir, "nonexistent.json"), "", true)).toThrow(
+      /文件不存在|not exist|ENOENT/i,
+    );
+  });
+
+  it("T7.7 — 非 JSON 文件：readJsonInput throw", () => {
+    const file = join(tmpDir, "bad.txt");
+    writeFileSync(file, "this is {{{ not json");
+    expect(() => readJsonInput(file, "", true)).toThrow(/JSON/i);
+  });
+
+  it("T7.8 — 超大文件（>10MB）：readJsonInput throw（DoS 防护）", () => {
+    const file = join(tmpDir, "huge.json");
+    // 11MB > 10MB 限制；statSync 在 readFileSync 前拦截，不读内容
+    writeFileSync(file, "x".repeat(11 * 1024 * 1024));
+    expect(() => readJsonInput(file, "", true)).toThrow(/超过限制|exceed|limit|MB/i);
+  });
+});
+
+// ── T7.9/T7.10/T7.11: exit code 分层契约 + stderr（subprocess） ──
+
+/** 运行 cw CLI 子进程，返回 { stdout, stderr, exitCode }。 */
+function runCw(
+  args: string[],
+  env: Record<string, string>,
+  stdinData?: string,
+): { stdout: string; stderr: string; exitCode: number } {
+  try {
+    const stdout = execFileSync("node", [CLI_PATH, ...args], {
+      encoding: "utf-8",
+      env: { ...process.env, ...env },
+      stdio: stdinData === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+      input: stdinData,
+    });
+    return { stdout, stderr: "", exitCode: 0 };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; status?: number };
+    return {
+      stdout: err.stdout ?? "",
+      stderr: err.stderr ?? "",
+      exitCode: err.status ?? 1,
+    };
+  }
+}
+
+/** 合法 lite plan.json（经 stdin 传入；check_plan.py 未注册时 gate fail 但结构合法）。 */
+const VALID_PLAN = JSON.stringify({
+  format: "lite",
+  objective: "nfr e2e",
+  waves: [{ id: "W1", changes: ["src/a.ts"], dependsOn: [] }],
+  testCases: [
+    {
+      id: "E1",
+      layer: "mock",
+      scenario: "s",
+      steps: "st",
+      expected: {},
+      executor: "vitest",
+      requiresScreenshot: false,
+    },
+  ],
+});
+
+describe("NFR: exit code 分层契约 + stderr", () => {
+  let cwHome: string;
+  let workspace: string;
+
+  beforeEach(() => {
+    cwHome = mkdtempSync(join(tmpdir(), "cw-nfr-exit-h-"));
+    workspace = mkdtempSync(join(tmpdir(), "cw-nfr-exit-w-"));
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(cwHome, { recursive: true, force: true });
+    } catch (e) {
+      void e;
+    }
+    try {
+      rmSync(workspace, { recursive: true, force: true });
+    } catch (e) {
+      void e;
+    }
+  });
+
+  it("T7.9 — gate fail 时 exit 0（程序正常，gatePassed=false 在 stdout JSON）", () => {
+    const created = runCw(
+      ["create", "--slug", "gatefail", "--tier", "lite", "--objective", "x", "--workspace", workspace],
+      { CW_HOME: cwHome },
+    );
+    expect(created.exitCode).toBe(0);
+    const topicId = JSON.parse(created.stdout).topicId;
+
+    // check_plan.py 未注册 → infraError → gate fail，但仍是 exit 0（C-1 分层：gate 结果在 JSON）
+    const result = runCw(
+      ["plan", "--topicId", topicId, "--workspace", workspace],
+      { CW_HOME: cwHome },
+      VALID_PLAN,
+    );
+    expect(result.exitCode).toBe(0);
+    const json = JSON.parse(result.stdout);
+    expect(json.gatePassed?.plan).toBeFalsy();
+  });
+
+  it("T7.10 — illegal_transition（created topic 调 dev）→ exit ≥1", () => {
+    const created = runCw(
+      ["create", "--slug", "illegal", "--tier", "lite", "--objective", "x", "--workspace", workspace],
+      { CW_HOME: cwHome },
+    );
+    const topicId = JSON.parse(created.stdout).topicId;
+
+    // dev 期望 status ∈ {planned, detailed, developed}；created → guard illegal_transition → exit ≥1
+    const result = runCw(
+      ["dev", "--topicId", topicId, "--tasks", '[{"waveId":"W1","commitHash":"abc"}]', "--workspace", workspace],
+      { CW_HOME: cwHome },
+    );
+    expect(result.exitCode).toBeGreaterThanOrEqual(1);
+  });
+
+  it("T7.11 — 程序错误 stderr 人类可读（非空 + 含错误描述）", () => {
+    const created = runCw(
+      ["create", "--slug", "stderr", "--tier", "lite", "--objective", "x", "--workspace", workspace],
+      { CW_HOME: cwHome },
+    );
+    const topicId = JSON.parse(created.stdout).topicId;
+
+    const result = runCw(
+      ["dev", "--topicId", topicId, "--tasks", '[{"waveId":"W1","commitHash":"abc"}]', "--workspace", workspace],
+      { CW_HOME: cwHome },
+    );
+    expect(result.exitCode).toBeGreaterThanOrEqual(1);
+    // stderr 非空
+    expect(result.stderr.length).toBeGreaterThan(0);
+    // 人类可读：含中文「错误」或错误码/状态描述
+    expect(result.stderr).toMatch(/错误|illegal|transition|guard|状态|转换/i);
   });
 });
