@@ -9,6 +9,14 @@
 
 import { execFileSync } from "node:child_process";
 
+import { runCheckArchitecture } from "./checks/check-architecture.js";
+import { runCheckClarity } from "./checks/check-clarity.js";
+import { runCheckCloseout } from "./checks/check-closeout.js";
+import { runCheckCodeArch } from "./checks/check-code-arch.js";
+import { runCheckExecution } from "./checks/check-execution.js";
+import { runCheckIssues } from "./checks/check-issues.js";
+import { runCheckNfr } from "./checks/check-nfr.js";
+import { runCheckPlan } from "./checks/check-plan.js";
 import type { CwAction, CwTopic, GateTier, Tier } from "./types.js";
 
 // ── Gate 注册表类型 ─────────────────────────────────────────
@@ -58,9 +66,14 @@ type CheckFn = (topicDir: string) => CheckOutput;
 
 /** check 函数 dispatch 表（key = 原 python 脚本名，value = TS check 函数）。 */
 const CHECK_DISPATCH: Record<string, CheckFn> = {
-  // check_clarity: runCheckClarity,
-  // check_architecture: runCheckArchitecture,
-  // ... 搬迁时填充
+  "check_clarity.py": runCheckClarity,
+  "check_architecture.py": runCheckArchitecture,
+  "check_issues.py": runCheckIssues,
+  "check_nfr.py": runCheckNfr,
+  "check_code_arch.py": runCheckCodeArch,
+  "check_execution.py": runCheckExecution,
+  "check_plan.py": runCheckPlan,
+  "check_closeout.py": runCheckCloseout,
 };
 
 /**
@@ -239,14 +252,29 @@ export const GATE_REGISTRY: GateRule[] = [
   { tier: "lite", phase: "dev", checkers: [], gateTier: "medium-git", progressive: true },
   { tier: "lite", phase: "test", checkers: [], gateTier: "strong-recompute", progressive: true },
   { tier: "lite", phase: "retrospect", checkers: [], gateTier: "weak-structural", progressive: true },
-  { tier: "lite", phase: "closeout", checkers: [], gateTier: "weak-structural" },
+  { tier: "lite", phase: "closeout", checkers: [buildChecker("check_closeout.py")], gateTier: "weak-structural" },
   // mid
-  { tier: "mid", phase: "clarify", checkers: [], gateTier: "weak-structural" },
-  { tier: "mid", phase: "detail", checkers: [], gateTier: "weak-structural" },
+  {
+    tier: "mid",
+    phase: "clarify",
+    checkers: [buildChecker("check_clarity.py"), buildChecker("check_architecture.py")],
+    gateTier: "weak-structural",
+  },
+  {
+    tier: "mid",
+    phase: "detail",
+    checkers: [
+      buildChecker("check_issues.py"),
+      buildChecker("check_nfr.py"),
+      buildChecker("check_code_arch.py"),
+      buildChecker("check_execution.py"),
+    ],
+    gateTier: "weak-structural",
+  },
   { tier: "mid", phase: "dev", checkers: [], gateTier: "medium-git", progressive: true },
   { tier: "mid", phase: "test", checkers: [], gateTier: "medium-coverage", progressive: true },
   { tier: "mid", phase: "retrospect", checkers: [], gateTier: "weak-structural", progressive: true },
-  { tier: "mid", phase: "closeout", checkers: [], gateTier: "weak-structural" },
+  { tier: "mid", phase: "closeout", checkers: [buildChecker("check_closeout.py")], gateTier: "weak-structural" },
 ];
 
 /** 查 registry 单条规则。 */

@@ -17,12 +17,14 @@
  */
 
 import minimist from "minimist";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import { dispatch, GuardError } from "../engine/dispatch.js";
 import { CwStore } from "../engine/store.js";
 import { GateRunner, GitValidator } from "../engine/gates.js";
 import { parseParams, resolveDbPath } from "./protocol.js";
-import type { ActionResult, CwAction } from "../engine/types.js";
+import type { ActionResult, CwAction, CwStatus, CwTopic, Tier } from "../engine/types.js";
 
 // ── exit code 映射（C-1 分层契约） ──────────────────────────
 
@@ -47,6 +49,54 @@ function mapExitCode(resultOrError: ActionResult | Error): number {
   return 0;
 }
 
+// ── status/list 查询（issue #8 方案A：CLI 层只读查询，不经 dispatch） ──
+
+/** 查询所需的 store 能力子集（便于注入 FakeStore 测试）。 */
+interface QueryStore {
+  loadTopic(topicId: string): CwTopic | null;
+  listTopics(): CwTopic[];
+}
+
+/** status 子命令的序列化输出（§4.5：topicId/status/gatePassed/waves/testCases）。 */
+export interface StatusOutput {
+  topicId: string;
+  status: CwStatus;
+  tier: Tier;
+  gatePassed: Record<string, boolean>;
+  waves: Array<{ id: string; committed: boolean }>;
+  testCases: Array<{ id: string; status: string }>;
+}
+
+/**
+ * handleStatus — 查询单个 topic 的进度快照。
+ *
+ * 数据流（§4.5）：store.loadTopic(topicId) → 存在: 构造 StatusOutput
+ *                                    → 不存在: throw「topic not found」（CLI 层映射 exit 1）
+ */
+export function handleStatus(topicId: string, store: QueryStore): StatusOutput {
+  const topic = store.loadTopic(topicId);
+  if (!topic) {
+    throw new Error(`topic not found: ${topicId}`);
+  }
+  return {
+    topicId: topic.topicId,
+    status: topic.status,
+    tier: topic.tier,
+    gatePassed: topic.gatePassed as Record<string, boolean>,
+    waves: topic.waves.map((w) => ({ id: w.id, committed: w.committed !== null })),
+    testCases: topic.testCases.map((c) => ({ id: c.id, status: c.status })),
+  };
+}
+
+/**
+ * handleList — 列出全部 topic（空库 → []）。
+ *
+ * 数据流（§4.5）：store.listTopics() → CwTopic[] → stdout JSON array。
+ */
+export function handleList(store: QueryStore): CwTopic[] {
+  return store.listTopics();
+}
+
 // ── main ─────────────────────────────────────────────────────
 
 async function main(argv: string[]): Promise<void> {
@@ -57,6 +107,31 @@ async function main(argv: string[]): Promise<void> {
   if (!action) {
     process.stderr.write("错误：未指定 action。用法：cw <action> [options]\n");
     process.exit(1);
+  }
+
+  // status/list 是 CLI 只读查询命令，不经 dispatch（issue #8 方案A：UC-4）。
+  // 直接走 CwStore.loadTopic/listTopics，不触碰状态机。
+  if (action === "status" || action === "list") {
+    const workspacePath = (parsed.workspace ? String(parsed.workspace) : undefined) ?? process.cwd();
+    const dbPath = resolveDbPath(workspacePath, process.env.CW_HOME);
+    const store = new CwStore(dbPath);
+
+    if (action === "status") {
+      const topicId = parsed.topicId ? String(parsed.topicId) : undefined;
+      if (!topicId) {
+        process.stderr.write("错误：status 需要 --topicId\n");
+        process.exit(1);
+      }
+      // handleStatus topic 不存在时 throw → 顶层 .catch 映射 exit 1
+      const output = handleStatus(topicId, store);
+      process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+      process.exit(0);
+    }
+
+    // action === "list"
+    const output = handleList(store);
+    process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+    process.exit(0);
   }
 
   // 验证 action 合法性
@@ -109,11 +184,21 @@ function readStdin(): Promise<string> {
   });
 }
 
-// ── 顶层 try/catch（稳定性保障：未捕获异常 → stderr + exit 2） ──
+// ── 顶层 try/catch（稳定性保障：未捕获异常 → stderr + exit code） ──
+// 仅当 cli.ts 是进程入口时执行 main()；被测试 import 时不触发（避免 process.exit）。
+const isCliEntry = (() => {
+  try {
+    return process.argv[1] ? fileURLToPath(import.meta.url) === resolve(process.argv[1]) : false;
+  } catch {
+    return false;
+  }
+})();
 
-main(process.argv).catch((err: unknown) => {
-  const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`错误：${message}\n`);
-  const exitCode = err instanceof Error ? mapExitCode(err) : 2;
-  process.exit(exitCode);
-});
+if (isCliEntry) {
+  main(process.argv).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`错误：${message}\n`);
+    const exitCode = err instanceof Error ? mapExitCode(err) : 2;
+    process.exit(exitCode);
+  });
+}

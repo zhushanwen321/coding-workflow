@@ -11,20 +11,20 @@
  *   - nextAction 由 handler 内部调 buildNextAction
  */
 
+import { handleCloseout, type CloseoutParams } from "./actions/closeout.js";
 import { handleCreate, type CreateParams } from "./actions/create.js";
+import { handleDev, type DevParams } from "./actions/dev.js";
 import { handlePlan, type PlanParams } from "./actions/plan.js";
 import { handleReplan, type ReplanParams } from "./actions/replan.js";
+import { handleRetrospect, type RetrospectParams } from "./actions/retrospect.js";
+import { handleTest, type TestParams } from "./actions/test.js";
 import { guard } from "./state-machine.js";
 import type { ActionDeps, ActionResult, CwAction, CwTopic } from "./types.js";
 
-// ── 各 action 的参数类型（签名级 stub） ──────────────────────
+// ── 各 action 的参数类型（未实现的 handler 保留 stub） ──────
 
 interface ClarifyParams { action: "clarify"; topicId: string; clarifyJson: unknown }
 interface DetailParams { action: "detail"; topicId: string; detailJson: unknown }
-interface DevParams { action: "dev"; topicId: string; tasks: Array<{ waveId: string; commitHash: string }> }
-interface TestParams { action: "test"; topicId: string; cases: Array<{ caseId: string; actual?: unknown; screenshotPath?: string; commitHash?: string; claimedStatus?: string }> }
-interface RetrospectParams { action: "retrospect"; topicId: string; retrospectPath?: string }
-interface CloseoutParams { action: "closeout"; topicId: string }
 
 export type CwParams =
   | CreateParams
@@ -104,7 +104,7 @@ export class GuardError extends Error {
   }
 }
 
-// ── handler stubs（签名级，方法体 throw NotImplementedError） ──
+// ── handler stubs（未实现的 handler 保留 stub） ────────────
 
 function handleClarify(_params: ClarifyParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
   throw new Error("NotImplementedError: handleClarify");
@@ -112,22 +112,4 @@ function handleClarify(_params: ClarifyParams, _topic: CwTopic, _deps: ActionDep
 
 function handleDetail(_params: DetailParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
   throw new Error("NotImplementedError: handleDetail");
-}
-
-function handleDev(_params: DevParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
-  // 叶子：per task GitValidator.validate → setWaveCommitted → computeNextStatus → buildNextAction
-  throw new Error("NotImplementedError: handleDev");
-}
-
-function handleTest(_params: TestParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
-  // 叶子：per case judgeByExpected/GitValidator → updateTestCase → buildNextAction
-  throw new Error("NotImplementedError: handleTest");
-}
-
-function handleRetrospect(_params: RetrospectParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
-  throw new Error("NotImplementedError: handleRetrospect");
-}
-
-function handleCloseout(_params: CloseoutParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
-  throw new Error("NotImplementedError: handleCloseout");
 }
