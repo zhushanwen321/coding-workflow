@@ -152,16 +152,29 @@ export function assertFormatMatchesTier(format: string, tier: Tier): void {
 /**
  * parseLitePlan — 解析 plan.json（lite tier）。
  *
- * Level 1 接线：Value.Check 真调 typebox 校验（Tier 2 证伪）。
- * 叶子逻辑：字段映射到 WaveSeed/TestCaseSeed 留 Wave 实现。
+ * 校验链：类型守卫（拒 string/非 object，防 LLM 误传 JSON 字符串）
+ *   → D-003 tier 锁定（format 必须 === tier 锁定值）
+ *   → typebox Value.Check 结构校验（真调 typebox，Tier 2 证伪）
+ *   → 字段映射到 WaveSeed/TestCaseSeed。
  */
-export function parseLitePlan(json: unknown): ParsedLitePlan {
-  // 接线：typebox Value.Check 校验。
+export function parseLitePlan(json: unknown, tier: Tier): ParsedLitePlan {
+  // 类型守卫：拒 string（LLM 误传 JSON.stringify 后的字符串）
+  if (typeof json !== "object" || json === null) {
+    throw new Error("invalid plan json: not an object");
+  }
+  // D-003 tier 锁定：format 必须 === tier 锁定值
+  const format = "format" in json ? (json as { format: unknown }).format : undefined;
+  if (tier === "lite" && format !== "lite") {
+    throw new Error(
+      `tier mismatch: json.format="${String(format)}" but topic.tier="lite" (D-003 tier locked at create)`,
+    );
+  }
+  // typebox 结构校验
   if (!Value.Check(LitePlanSchema, json)) {
     const errors = [...Value.Errors(LitePlanSchema, json)];
     throw new Error(`plan.json 校验失败: ${errors.map((e) => e.message).join("; ")}`);
   }
-  // 叶子：字段映射 WaveSeed/TestCaseSeed。
+  // 字段映射 WaveSeed/TestCaseSeed
   const plan = json as { waves: WaveSeed[]; testCases: TestCaseSeed[] };
   return { waves: plan.waves, testCases: plan.testCases };
 }

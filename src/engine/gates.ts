@@ -219,10 +219,23 @@ export class GitValidator {
 
 // ── Gate 执行器 ─────────────────────────────────────────────
 
+/**
+ * 构造 checker 闭包：调 ctx.runner.runCheck(scriptPath, topicDir) 并包成 CheckerResult。
+ *
+ * checkers 是 in-process 闭包，通过 ctx.runner 间接调 check 函数（测试可 spyOn runCheck）。
+ * progressive 行（dev/test）checkers 空——action handler 直接调 GitValidator/judgeByExpected。
+ */
+function buildChecker(scriptPath: string): Checker {
+  return (ctx: GateContext): CheckerResult => {
+    const out = ctx.runner.runCheck(scriptPath, ctx.topicDir);
+    return { name: scriptPath, passed: out.passed, report: out.report ?? out.infraError };
+  };
+}
+
 /** GATE_REGISTRY 声明式数组（§5.2 的 11 行表 1:1 编码）。 */
 export const GATE_REGISTRY: GateRule[] = [
   // lite
-  { tier: "lite", phase: "plan", checkers: [], gateTier: "weak-structural" },
+  { tier: "lite", phase: "plan", checkers: [buildChecker("check_plan.py")], gateTier: "weak-structural" },
   { tier: "lite", phase: "dev", checkers: [], gateTier: "medium-git", progressive: true },
   { tier: "lite", phase: "test", checkers: [], gateTier: "strong-recompute", progressive: true },
   { tier: "lite", phase: "retrospect", checkers: [], gateTier: "weak-structural", progressive: true },

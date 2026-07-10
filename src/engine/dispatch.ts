@@ -12,12 +12,12 @@
  */
 
 import { handleCreate, type CreateParams } from "./actions/create.js";
+import { handlePlan, type PlanParams } from "./actions/plan.js";
 import { guard } from "./state-machine.js";
 import type { ActionDeps, ActionResult, CwAction, CwTopic } from "./types.js";
 
 // ── 各 action 的参数类型（签名级 stub） ──────────────────────
 
-interface PlanParams { action: "plan"; topicId: string; planJson: unknown }
 interface ClarifyParams { action: "clarify"; topicId: string; clarifyJson: unknown }
 interface DetailParams { action: "detail"; topicId: string; detailJson: unknown }
 interface DevParams { action: "dev"; topicId: string; tasks: Array<{ waveId: string; commitHash: string }> }
@@ -105,11 +105,6 @@ export class GuardError extends Error {
 }
 
 // ── handler stubs（签名级，方法体 throw NotImplementedError） ──
-
-function handlePlan(_params: PlanParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
-  // 叶子：parseLitePlan → runGate → store.transaction(write) → buildNextAction
-  throw new Error("NotImplementedError: handlePlan");
-}
 
 function handleClarify(_params: ClarifyParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
   throw new Error("NotImplementedError: handleClarify");
