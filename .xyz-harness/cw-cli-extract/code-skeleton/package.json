@@ -1,0 +1,30 @@
+{
+  "name": "@zhushanwen/coding-workflow",
+  "version": "0.1.0",
+  "description": "Agent-agnostic CLI for coding-workflow engine",
+  "type": "module",
+  "bin": {
+    "cw": "./dist/cli/cli.js"
+  },
+  "exports": {
+    ".": "./dist/engine/types.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "lint": "eslint src/ tests/",
+    "test": "vitest run",
+    "verify": "bash scripts/verify-anti-patterns.sh"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

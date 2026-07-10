@@ -1,0 +1,368 @@
+{
+  "format": "mid-detail",
+  "objective": "将 pi coding-workflow extension 的核心 engine（state-machine/actions/checks/store/gates/plan-parser，已确认零 pi 耦合）抽离为 agent-agnostic 的独立 npm 包 @zhushanwen/coding-workflow + CLI 子进程入口（bin=cw）。复用现有 engine 源码，替换 src/index.ts 的 pi tool 注册薄壳为 CLI 适配层（子命令风格 + 大 JSON 走 stdin/--xxx-file + exit code 分层契约）。本轮范围：单形态 CLI 跑通（MCP/多 runtime 留后续 topic），使任何能调子进程的 coding agent 都能驱动 CW 状态机。",
+  "waves": [
+    {
+      "id": "W1",
+      "issues": ["#1", "#2", "#3", "#5", "#6"],
+      "dependsOn": [],
+      "parallelGroup": ""
+    },
+    {
+      "id": "W2",
+      "issues": ["#2", "#4", "#7"],
+      "dependsOn": ["W1"],
+      "parallelGroup": "G1"
+    },
+    {
+      "id": "W3",
+      "issues": ["#7"],
+      "dependsOn": ["W1"],
+      "parallelGroup": "G1"
+    },
+    {
+      "id": "W4",
+      "issues": ["#1"],
+      "dependsOn": ["W2"],
+      "parallelGroup": ""
+    },
+    {
+      "id": "W5",
+      "issues": ["#8"],
+      "dependsOn": ["W1"],
+      "parallelGroup": "G1"
+    },
+    {
+      "id": "W6",
+      "issues": [],
+      "dependsOn": ["W1", "W2", "W3", "W4", "W5"],
+      "parallelGroup": "G2"
+    },
+    {
+      "id": "W7",
+      "issues": [],
+      "dependsOn": ["W1", "W2", "W3", "W4", "W5"],
+      "parallelGroup": "G2"
+    }
+  ],
+  "testCases": [
+    {
+      "id": "T1.1",
+      "layer": "unit",
+      "scenario": "create lite topic",
+      "steps": "cw create --slug x --tier lite --objective test",
+      "assertion": "topicId 形如 cw-YYYY-MM-DD-x，status=created，nextAction.action=plan",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.2",
+      "layer": "unit",
+      "scenario": "create mid topic",
+      "steps": "cw create --slug y --tier mid --objective test",
+      "assertion": "nextAction.action=clarify",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.3",
+      "layer": "unit",
+      "scenario": "slug 含特殊字符",
+      "steps": "cw create --slug a-b_1 --tier lite --objective test",
+      "assertion": "成功创建",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.4",
+      "layer": "unit",
+      "scenario": "空 objective",
+      "steps": "cw create --slug x --tier lite --objective ''",
+      "assertion": "成功创建（objective 允许空）",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.5",
+      "layer": "unit",
+      "scenario": "slug 重复",
+      "steps": "两次 cw create --slug x",
+      "assertion": "第二次 throw PRIMARY KEY 冲突",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.6",
+      "layer": "unit",
+      "scenario": "无效 tier",
+      "steps": "cw create --slug x --tier bad --objective test",
+      "assertion": "typebox 校验失败",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.7",
+      "layer": "unit",
+      "scenario": "topicId 重复",
+      "steps": "cw create 同 slug 两次",
+      "assertion": "throw",
+      "executor": "vitest"
+    },
+    {
+      "id": "T1.8",
+      "layer": "e2e",
+      "scenario": "完整 create 流程",
+      "steps": "cw create --slug x --tier lite --objective test → 读 stdout JSON",
+      "assertion": "JSON 含 topicId + status + nextAction",
+      "executor": "vitest"
+    },
+    {
+      "id": "T2.1",
+      "layer": "unit",
+      "scenario": "plan gate 通过",
+      "steps": "create → cw plan --topicId X --plan-json-file valid.json",
+      "assertion": "status=planned，gatePassed.plan=true",
+      "executor": "vitest"
+    },
+    {
+      "id": "T2.2",
+      "layer": "unit",
+      "scenario": "plan gate fail",
+      "steps": "create → cw plan 无效 plan.json（缺 waves）",
+      "assertion": "status 不变=created，gatePassed.plan=false",
+      "executor": "vitest"
+    },
+    {
+      "id": "T2.3",
+      "layer": "unit",
+      "scenario": "format≠tier",
+      "steps": "create(lite) → cw plan format=mid 的 plan.json",
+      "assertion": "typebox 校验失败，exit ≠0",
+      "executor": "vitest"
+    },
+    {
+      "id": "T2.4",
+      "layer": "unit",
+      "scenario": "非法状态转换",
+      "steps": "create → plan → 再次 plan",
+      "assertion": "GuardError code=illegal_transition，exit ≥1",
+      "executor": "vitest"
+    },
+    {
+      "id": "T2.5",
+      "layer": "unit",
+      "scenario": "closed topic 调 plan",
+      "steps": "create → plan → ... → closeout → plan",
+      "assertion": "GuardError code=illegal_transition",
+      "executor": "vitest"
+    },
+    {
+      "id": "T2.6",
+      "layer": "e2e",
+      "scenario": "stdin 传 plan.json",
+      "steps": "echo '{}' | cw plan --topicId X",
+      "assertion": "JSON 解析 + 校验 + dispatch 全链",
+      "executor": "vitest"
+    },
+    {
+      "id": "T3.1",
+      "layer": "unit",
+      "scenario": "单 wave commit",
+      "steps": "create → plan → cw dev --topicId X --tasks '[{waveId:\"W1\",commitHash:\"abc\"}]'",
+      "assertion": "wave.committed 更新",
+      "executor": "vitest"
+    },
+    {
+      "id": "T3.2",
+      "layer": "unit",
+      "scenario": "批量 wave commit",
+      "steps": "cw dev --tasks '[2个task]'",
+      "assertion": "两个 wave 都 committed",
+      "executor": "vitest"
+    },
+    {
+      "id": "T3.3",
+      "layer": "unit",
+      "scenario": "无效 commitHash",
+      "steps": "cw dev --tasks '[{waveId:\"W1\",commitHash:\"nonexistent\"}]'",
+      "assertion": "CommitValidation.valid=false",
+      "executor": "vitest"
+    },
+    {
+      "id": "T3.4",
+      "layer": "unit",
+      "scenario": "全 wave committed 后 dev",
+      "steps": "已全 committed → cw dev",
+      "assertion": "nextAction 仍指 dev（态内推进）",
+      "executor": "vitest"
+    },
+    {
+      "id": "T3.5",
+      "layer": "e2e",
+      "scenario": "完整 dev→test 流程",
+      "steps": "3 个 wave 逐次 cw dev",
+      "assertion": "全 committed 后 nextAction→test",
+      "executor": "vitest"
+    },
+    {
+      "id": "T3.6",
+      "layer": "integration",
+      "scenario": "git 可执行文件缺失",
+      "steps": "无 git 环境 → cw dev",
+      "assertion": "throw ENOENT (infra error)，非 valid=false",
+      "executor": "vitest"
+    },
+    {
+      "id": "T6.1",
+      "layer": "unit",
+      "scenario": "replan 追加新 wave",
+      "steps": "create → plan → dev(W1) → cw replan 追加 W2",
+      "assertion": "waves 含 W1(committed) + W2(not committed)",
+      "executor": "vitest"
+    },
+    {
+      "id": "T6.2",
+      "layer": "unit",
+      "scenario": "破坏性变更（修改/删除已 committed wave）",
+      "steps": "create → plan → dev(W1) → cw replan 修改 W1 changes",
+      "assertion": "append-only 拒绝，exit ≠0",
+      "executor": "vitest"
+    },
+    {
+      "id": "T6.3",
+      "layer": "unit",
+      "scenario": "developed 状态 replan",
+      "steps": "topic status=developed → cw replan",
+      "assertion": "回退到 planned，追加成功",
+      "executor": "vitest"
+    },
+    {
+      "id": "T6.4",
+      "layer": "unit",
+      "scenario": "连续两次 replan",
+      "steps": "replan → replan",
+      "assertion": "第二次追加在第一次追加基础上",
+      "executor": "vitest"
+    },
+    {
+      "id": "T4.1",
+      "layer": "unit",
+      "scenario": "查询已存在 topic",
+      "steps": "cw status --topicId X",
+      "assertion": "JSON 含 status/gatePassed/waves/testCases",
+      "executor": "vitest"
+    },
+    {
+      "id": "T4.2",
+      "layer": "unit",
+      "scenario": "查询不存在 topic",
+      "steps": "cw status --topicId nonexistent",
+      "assertion": "exit 1 + stderr",
+      "executor": "vitest"
+    },
+    {
+      "id": "T4.3",
+      "layer": "unit",
+      "scenario": "list 所有 topic",
+      "steps": "cw list",
+      "assertion": "JSON array",
+      "executor": "vitest"
+    },
+    {
+      "id": "T4.4",
+      "layer": "unit",
+      "scenario": "空库 list",
+      "steps": "cw list（无 topic）",
+      "assertion": "JSON = []",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.1",
+      "layer": "integration",
+      "scenario": "无效 CLI 参数",
+      "steps": "cw create --slug '' --tier lite",
+      "assertion": "exit ≠0，stderr 含校验错误",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.2",
+      "layer": "integration",
+      "scenario": "缺必填字段",
+      "steps": "cw create --tier lite（无 slug）",
+      "assertion": "exit ≠0，stderr 含缺失字段",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.3",
+      "layer": "integration",
+      "scenario": "非法 JSON",
+      "steps": "cw plan --topicId X --plan-json 'not-json'",
+      "assertion": "exit ≠0，stderr 含解析错误",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.4",
+      "layer": "integration",
+      "scenario": "路径穿越 CW_HOME",
+      "steps": "CW_HOME=/tmp/../etc cw create ...",
+      "assertion": "throw/exit ≠0",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.5",
+      "layer": "integration",
+      "scenario": ".cw-wt/ 检测",
+      "steps": "cwd 含 .cw-wt/ 且无 --workspace",
+      "assertion": "throw/exit ≠0",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.6",
+      "layer": "integration",
+      "scenario": "文件不存在",
+      "steps": "cw plan --topicId X --plan-json-file /nonexistent",
+      "assertion": "exit ≠0，stderr 含文件错误",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.7",
+      "layer": "integration",
+      "scenario": "非 JSON 文件",
+      "steps": "cw plan --topicId X --plan-json-file /etc/hosts",
+      "assertion": "exit ≠0，stderr 含解析错误",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.8",
+      "layer": "integration",
+      "scenario": "超大文件",
+      "steps": "cw plan --topicId X --plan-json-file >10MB 文件",
+      "assertion": "exit ≠0，stderr 含大小限制",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.9",
+      "layer": "integration",
+      "scenario": "gate fail exit code",
+      "steps": "plan gate fail",
+      "assertion": "exit=0，JSON.gatePassed=false",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.10",
+      "layer": "integration",
+      "scenario": "illegal_transition exit code",
+      "steps": "status=planned 时调 plan",
+      "assertion": "exit ≥1",
+      "executor": "vitest"
+    },
+    {
+      "id": "T7.11",
+      "layer": "integration",
+      "scenario": "stderr 人类可读",
+      "steps": "任意程序错误",
+      "assertion": "stderr 非空、含错误描述、无 stack trace 泄露",
+      "executor": "vitest"
+    }
+  ],
+  "deliverables": {
+    "issues": "issues.md",
+    "nonFunctional": "non-functional-design.md",
+    "codeArchitecture": "code-architecture.md",
+    "executionPlan": "execution-plan.md"
+  }
+}

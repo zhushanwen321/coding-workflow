@@ -1,0 +1,8 @@
+{
+  "format": "mid-clarify",
+  "objective": "将 pi coding-workflow extension 的核心 engine（state-machine/actions/checks/store/gates/plan-parser，已确认零 pi 耦合）抽离为 agent-agnostic 的独立 npm 包 @zhushanwen/coding-workflow + CLI 子进程入口（bin=cw）。复用现有 engine 源码，替换 src/index.ts 的 pi tool 注册薄壳为 CLI 适配层（子命令风格 + 大 JSON 走 stdin/--xxx-file + exit code 分层契约）。本轮范围：单形态 CLI 跑通（MCP/多 runtime 留后续 topic），使任何能调子进程的 coding agent 都能驱动 CW 状态机。",
+  "deliverables": {
+    "requirements": ".xyz-harness/cw-cli-extract/requirements.md",
+    "systemArchitecture": ".xyz-harness/cw-cli-extract/system-architecture.md"
+  }
+}
