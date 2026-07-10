@@ -13,6 +13,7 @@
 
 import { handleCreate, type CreateParams } from "./actions/create.js";
 import { handlePlan, type PlanParams } from "./actions/plan.js";
+import { handleReplan, type ReplanParams } from "./actions/replan.js";
 import { guard } from "./state-machine.js";
 import type { ActionDeps, ActionResult, CwAction, CwTopic } from "./types.js";
 
@@ -24,7 +25,6 @@ interface DevParams { action: "dev"; topicId: string; tasks: Array<{ waveId: str
 interface TestParams { action: "test"; topicId: string; cases: Array<{ caseId: string; actual?: unknown; screenshotPath?: string; commitHash?: string; claimedStatus?: string }> }
 interface RetrospectParams { action: "retrospect"; topicId: string; retrospectPath?: string }
 interface CloseoutParams { action: "closeout"; topicId: string }
-interface ReplanParams { action: "replan"; topicId: string; planJson: unknown }
 
 export type CwParams =
   | CreateParams
@@ -130,9 +130,4 @@ function handleRetrospect(_params: RetrospectParams, _topic: CwTopic, _deps: Act
 
 function handleCloseout(_params: CloseoutParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
   throw new Error("NotImplementedError: handleCloseout");
-}
-
-function handleReplan(_params: ReplanParams, _topic: CwTopic, _deps: ActionDeps): ActionResult {
-  // 叶子：append-only 校验 → appendWaves/appendTestCases → buildNextAction
-  throw new Error("NotImplementedError: handleReplan");
 }
