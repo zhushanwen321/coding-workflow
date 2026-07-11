@@ -23,6 +23,7 @@ import {
   type Actual,
   type Expected,
   type TestCase,
+  type Topic,
   judgeByExpected,
 } from "./types.js";
 
@@ -35,6 +36,11 @@ export interface CommitValidation {
   nonEmpty: boolean;
   valid: boolean;
   reason?: string;
+  /**
+   * 不在 plan changes 中的额外改动文件（宽松模式，只警告不 fail）。
+   * devCheck 用 git diff-tree 提取实际改动文件，与 planData.waves 对比后填充。
+   */
+  extraFiles?: string[];
 }
 
 /** git 可执行文件缺失判定（ENOENT = 基础设施异常，应 throw 而非吞掉）。 */
@@ -176,18 +182,39 @@ export interface PlanCheckResult {
   report: string;
 }
 
+/// P0: 模糊 expected 值正则（不区分大小写，全词匹配）。
+/// 匹配这些值的 expected.text 表示 agent 未真正跑测试，只填了结论词。
+const FUZZY_EXPECTED_RE =
+  /^(passed|ok|success|fail|failed|true|false|yes|no|done|completed|正确|错误|成功|失败)$/i;
+
 /**
- * planCheck — lite plan gate 的结构校验。
+ * planCheck — lite plan gate 的结构校验 + 模糊 expected 值检测。
  *
  * 委托 parseLitePlan 做 format === "lite" + typebox schema 校验。
- * parseLitePlan throw → gate fail（report 含错误消息）；成功 → gate pass。
- *
- * 砍掉旧版 check_plan.py 的 6 章节齐全 / 覆盖率阈值 / E2E mock+real 双层 / 依赖无环 /
- * 并行组无冲突——这些质量约束交回 skill 文档管，engine 只做最基础结构校验。
+ * P0 补充：schema 通过后，遍历 testCases 的 expected.text，
+ * 若匹配模糊结论词（passed/ok/success 等）则 gate fail。
+ * 目的：防 agent 填 expected.text="passed" 然后 actual.text="passed" 跳过真实测试。
  */
 export function planCheck(planJson: unknown): PlanCheckResult {
   try {
-    parseLitePlan(planJson);
+    const parsed = parseLitePlan(planJson);
+
+    // P0: 检查模糊 expected 值
+    const fuzzyIds: string[] = [];
+    for (const tc of parsed.testCases) {
+      if (tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
+        fuzzyIds.push(tc.id);
+      }
+    }
+    if (fuzzyIds.length > 0) {
+      return {
+        result: "fail",
+        report:
+          `expected.text 为模糊结论词（不允许填 passed/ok/success 等，需写具体判定条件）: ` +
+          fuzzyIds.join(", "),
+      };
+    }
+
     return { result: "pass", report: "" };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -198,17 +225,93 @@ export function planCheck(planJson: unknown): PlanCheckResult {
 // ── devCheck（调 GitValidator.validate） ─────────────────────
 
 /**
+ * P1: 从 plan changes 描述中提取文件路径。
+ * changes 格式如 "修改 src/store.ts 加 fileLock 方法"，
+ * 用正则匹配 "修改/创建/删除/更新/新增/add/modify/create/delete/update + 路径.ext"。
+ */
+const PLAN_FILE_RE =
+  /(?:修改|创建|删除|更新|新增|add|modify|create|delete|update)\s+([\w./-]+(?:\.\w+))/gi;
+
+function extractFilesFromChanges(changes: string[]): Set<string> {
+  const files = new Set<string>();
+  for (const change of changes) {
+    // 每次 exec 重置 lastIndex（g flag）
+    PLAN_FILE_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PLAN_FILE_RE.exec(change)) !== null) {
+      if (match[1]) files.add(match[1]);
+    }
+  }
+  return files;
+}
+
+/**
  * devCheck — 校验单个 commit 是否合法（存在 + 在 repo + 非空）。
+ *
+ * P1 补充：commit 校验通过后，用 git diff-tree 获取实际改动文件列表，
+ * 与 topic.planData.waves 对应 wave 的 changes 对比，
+ * 把不在 plan 里的额外文件写入 extraFiles（只警告不 fail）。
  *
  * progressive gate：每次 dev 提交一组 task，逐个校验。handler 汇总结果。
  * 不在这里做「全 wave committed」判定——那是 computeGatePassed 的职责（state-machine.ts）。
+ *
+ * @param waveId 当前 task 对应的 waveId，用于从 topic.waves 找对应 wave
+ * @param topic Topic 对象（含 waves 和 planData），可选；缺省时跳过文件覆盖校验
  */
 export function devCheck(
   commitHash: string,
   workspacePath: string,
+  waveId?: string,
+  topic?: Topic,
 ): CommitValidation {
   const validator = new GitValidator(workspacePath);
-  return validator.validate(commitHash);
+  const result = validator.validate(commitHash);
+
+  // commit 校验不通过时直接返回，不做文件覆盖校验
+  if (!result.valid) return result;
+
+  // P1: 文件覆盖校验（宽松模式，只警告不 fail）
+  if (!waveId || !topic) return result;
+
+  try {
+    // 获取该 commit 实际改动的文件列表
+    const diffOutput = execFileSync(
+      "git",
+      ["diff-tree", "--no-commit-id", "--name-only", "-r", commitHash],
+      { cwd: workspacePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const actualFiles = new Set(
+      diffOutput
+        .split("\n")
+        .map((f) => f.trim())
+        .filter((f) => f.length > 0),
+    );
+
+    // 从 topic.waves 找对应 wave 的 changes
+    const wave = topic.waves.find((w) => w.id === waveId);
+    if (!wave) return result;
+
+    // 提取 plan 中的文件路径
+    const planFiles = extractFilesFromChanges(wave.changes);
+    if (planFiles.size === 0) return result;
+
+    // 找出不在 plan 中的额外文件
+    const extra: string[] = [];
+    for (const file of actualFiles) {
+      if (!planFiles.has(file)) {
+        extra.push(file);
+      }
+    }
+
+    if (extra.length > 0) {
+      result.extraFiles = extra;
+    }
+  } catch (e) {
+    // git 命令失败不阻塞 commit 校验，只跳过文件覆盖检查
+    if (isENOENT(e)) throw e;
+  }
+
+  return result;
 }
 
 // ── testCheck（judgeByExpected 机器重算） ────────────────────

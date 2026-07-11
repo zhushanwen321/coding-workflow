@@ -265,7 +265,7 @@ export function handleDev(
   const taskResults = params.tasks.map((task) => ({
     waveId: task.waveId,
     commitHash: task.commitHash,
-    validation: devCheck(task.commitHash, deps.workspacePath),
+    validation: devCheck(task.commitHash, deps.workspacePath, task.waveId, topic),
   }));
   const invalidTasks = taskResults.filter((t) => !t.validation.valid);
 

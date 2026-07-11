@@ -288,7 +288,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       return {
         action: "closeout",
         guidance:
-          "retrospect gate 通过。下一步：沉淀长期文档（如需），完成后调 cw(closeout) 归档 topic。",
+          "retrospect gate 通过。下一步：调 cw(closeout) 归档 topic。\n\ncloseout gate 检查项：topic 目录（.xyz-harness/<slug>/）存在且非空。retrospect.md 已在里面所以会自动通过。",
       };
     }
     case "closeout": {

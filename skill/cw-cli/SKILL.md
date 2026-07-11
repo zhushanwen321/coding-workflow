@@ -87,11 +87,13 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 - topicId 格式：`cw-{date}-{slug}`
 - 跨 session 接续：调 `cw list` 找 topicId，调 `cw status --topicId <id>` 看当前进度，再按 nextAction 继续
 
+[强制] **cwd 隔离**：CW 按调用时的 cwd 隔离 topic。bash 工具的 cwd 会因 cd 命令变化——**每次调 cw 前必须确认 cwd 在项目根目录**。"topic not found" 最常见的原因就是 cwd 跑到了子目录。
+
 ## 失败模式
 
 - **illegal_transition**（跳阶段）：没按 nextAction 顺序走。看 `cw status` 确认当前 status，按 nextAction 重来
 - **gate 反复 fail**：同一 action 连续 fail 5 次后 guidance 换熔断文案（不阻断，建议找用户人工审查）
-- **topic not found**：topicId 传错或 workspace 不对（_cw.json 按 cwd 隔离，换目录会找不到）
+- **topic not found**：topicId 传错或 cwd 不对（最常见原因：cd 到子目录后调 cw，_cw.json 按 cwd 隔离所以找不到）。修复：回到项目根目录，用 `cw list` 找 topicId
 
 ## Self-Check
 

@@ -82,6 +82,21 @@ cw(test) 的 \`--cases\` 支持数组，可一次提交多条 case：
 
     cw test --topicId <topicId> --cases '[{"caseId":"U1","actual":{"text":"2"}},{"caseId":"U2","actual":{"text":"ok"}}]'
 
+## TDD self-check（每次调 cw(dev) 前必须过一遍）
+
+违反 TDD 不会 gate fail（engine 不强制），但会导致代码质量下降、后期返工。
+每次调 cw(dev) 前，自问：
+
+- 这个 Wave 的测试是先写的吗？代码写之前测试跑过失败（红）吗？
+- 如果答否：停下来，先补测试，确认红，再写实现，再确认绿。
+- 如果答是：提交，继续。
+
+常见违反模式（全部禁止）：
+- "这个 Wave 没有独立测试，靠后续 Wave 间接覆盖" = 违反 TDD
+- "先写 types.ts + helpers.ts，后写 helpers.test.ts" = 违反 TDD（先实现后测试）
+- "测试和实现一起写" = 违反 TDD（没有红\u2192绿过程）
+- "这个 Wave 是纯类型补全，不需要测试" = 即使是类型补全，也要有类型检查测试（expectTypeOf 或 tsd）
+
 ## gate fail 恢复
 
 - dev gate fail（commit 不真实/缺失）→ CW 返回 taskResults[].reason，修该 Wave commit 后重调 cw(dev)。
