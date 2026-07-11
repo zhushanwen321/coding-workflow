@@ -23,7 +23,10 @@ plan gate 已通过（status=planned）。本阶段把 plan 的 waves 和 testCa
    - 写实现代码让测试通过（绿）
    - 重构（如需要），保持测试绿
 3. git commit 该 Wave 的改动（一个 Wave 至少一个 commit）
-4. 调 cw(action=dev, topicId, tasks=[{ waveId: "W1", commitHash: "<commit sha>" }])
+4. 提交该 Wave：
+
+    cw dev --topicId <topicId> --tasks '[{"waveId":"W1","commitHash":"<commit sha>"}]'
+
    - CW 校验 commit 真实性（存在 + 属本仓库 + 有 diff），通过则该 Wave 标记 committed
 5. CW 返回 nextAction：若仍有 Wave 未 committed → 继续 dev；若全部 committed → 进入 test
 
@@ -40,14 +43,30 @@ plan gate 已通过（status=planned）。本阶段把 plan 的 waves 和 testCa
 - 全部 Wave committed 后，dev gate 通过，status 流转到 developed，nextAction 指向 test。
 - 没全部完成就调 cw(test) 会被状态机 guard 拒绝（illegal_transition）——按 nextAction 走不会撞这个。
 
+### Wave 执行模式：subagent 派发（推荐）
+
+当 Wave 之间无依赖（dependsOn 为空）且 ≥2 个 Wave 时，推荐用 subagent 并行执行：
+
+- 每个 Wave 派一个独立 subagent，各自上下文隔离（不共享中间状态）
+- subagent 职责：读 plan.json 该 Wave 的 changes → TDD 实现 → git commit → 返回 commitHash
+- 主 agent 收集所有 subagent 返回的 commitHash 后，统一调一次 cw(dev) 提交
+- 依赖链上的 Wave 必须串行（前一个 committed 后才能开始下一个）
+- subagent 失败时：主 agent 读错误信息，决定 retry 该 Wave 还是 ask_user
+
+cw(dev) 的 \`--tasks\` 支持数组，可一次提交多个 Wave 的 commitHash：
+
+    cw dev --topicId <topicId> --tasks '[{"waveId":"W1","commitHash":"<sha1>"},{"waveId":"W2","commitHash":"<sha2>"}]'
+
 ## test 阶段：跑测试 + 提交结果
 
 ### 工作流
 
 1. 所有 Wave 已 committed（dev gate 通过）后，CW nextAction 指向 test
 2. 跑 plan 设计的全部 testCase（U* 单测 + E* e2e）
-3. 对每条 testCase 调 cw(action=test, topicId, cases=[...]) 提交结果：
-   - 单条入参：{ caseId: "U1", actual: { text: "<实际结果>" }, screenshotPath?: "<路径>" }
+3. 对每条 testCase 提交结果：
+
+    cw test --topicId <topicId> --cases '[{"caseId":"U1","actual":{"text":"<实际结果>"}}]'
+
    - screenshotPath：仅当 plan 该 testCase requiresScreenshot=true 时必传，指向已存在的截图文件
 4. CW 按 expected 机器重算每条 case 的 pass/fail（不信任 agent 声明的 status，自己判）
 5. 全部 passed 后，test gate 通过，status 流转到 tested，nextAction 指向 retrospect
@@ -58,6 +77,10 @@ plan gate 已通过（status=planned）。本阶段把 plan 的 waves 和 testCa
 - 每条 case CW 按 expected.text 与 actual.text 判定 pass/fail，不信任 agent 传入的 status 字段。
 - 有 case 未 passed 时，nextAction 指回 test 继续；全部 passed 才流转到 tested。
 - screenshotPath 指向不存在的文件 = 该 case 判 failed（即使 actual 文本对了）。
+
+cw(test) 的 \`--cases\` 支持数组，可一次提交多条 case：
+
+    cw test --topicId <topicId> --cases '[{"caseId":"U1","actual":{"text":"2"}},{"caseId":"U2","actual":{"text":"ok"}}]'
 
 ## gate fail 恢复
 

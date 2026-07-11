@@ -221,9 +221,11 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
   switch (action) {
     case "create": {
       // create 后进入 spec 阶段：先明确范围与目标，再写 plan。
+      // guidance 同时带 spec + plan 提示词，agent 在做 spec 时就能看到 plan.json 格式，
+      // 避免「不知道 plan.json schema 就要调 cw plan → gate fail 才看到格式」的循环依赖。
       return {
         action: "plan",
-        guidance: `topic 已建立。下一步：明确任务范围与目标，完成后调 cw(plan) 提交 plan.json。\n\n${SPEC_PROMPT}`,
+        guidance: `topic 已建立。下一步：明确任务范围与目标，完成后产出 plan.json 并提交。\n\n${SPEC_PROMPT}\n\n---\n\n${PLAN_PROMPT}`,
       };
     }
     case "plan": {

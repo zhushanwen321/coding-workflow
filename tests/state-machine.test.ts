@@ -224,14 +224,16 @@ describe("computeNextStatus progressive（U9b/U9c）", () => {
 // ── U9-U11: buildNextAction ─────────────────────────────────
 
 describe("buildNextAction（U9-U11）", () => {
-  it("U9: create 后 → nextAction.action=plan, guidance 含 spec 提示词", () => {
+  it("U9: create 后 → nextAction.action=plan, guidance 含 spec+plan 提示词", () => {
     const topic = makeTopic({ status: "created" });
     const na = buildNextAction("create", topic);
     expect(na.action).toBe("plan");
     expect(na.skill).toBeUndefined();
-    // guidance 整合了 spec 提示词（含范围守门等关键内容）
+    // guidance 整合了 spec 提示词 + plan 提示词（解决循环依赖：agent 做 spec 时就能看到 plan.json schema）
     expect(na.guidance).toContain("[create 阶段]");
     expect(na.guidance).toContain("范围守门");
+    expect(na.guidance).toContain("[plan 阶段]");
+    expect(na.guidance).toContain("plan.json 结构");
   });
 
   it("U10: plan gate pass 后 → nextAction.action=dev, waves 列表返回", () => {

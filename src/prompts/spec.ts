@@ -56,6 +56,9 @@ export const SPEC_PROMPT = `
 
 ## 完成标志
 
-三件事都弄清后，进入 plan 阶段：调 cw(action=plan, topicId, planJson) 提交结构化计划。
-plan.json 的格式规范见 plan 阶段提示词。
+三件事都弄清后，按下方 plan.json 格式产出 plan.json，然后提交：
+
+    echo '<planJson>' | cw plan --topicId <topicId>
+
+plan.json 的完整格式见下方「plan 阶段提示词」（本 guidance 已附带）。
 `.trim();
