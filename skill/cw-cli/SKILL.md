@@ -81,17 +81,29 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 - **git 仓库已初始化**：`git rev-parse --git-dir` 能跑通（dev/test 需要真实 commit）
 - **workspace 可写**：交付物（plan.json / retrospect.md）落在 `<cwd>/.xyz-harness/<slug>/`
 
-## 数据存储（跨 session 续跑）
+## 数据存储（cwd 隔离机制）
 
-- 状态库：`~/.cw/<encoded-cwd>/_cw.json`（per-cwd 隔离）
+- 状态库：`~/.cw/<encoded-cwd>/_cw.json`
 - topicId 格式：`cw-{date}-{slug}`
 - 跨 session 接续：调 `cw list` 找 topicId，调 `cw status --topicId <id>` 看当前进度，再按 nextAction 继续
+
+[强制] **cwd 隔离**：CW 按 `process.cwd()` 隔离 topic，不同 cwd 路径对应不同的 `_cw.json`。以下场景会导致 `topic not found`：
+
+| 场景 | 原因 | 修复 |
+|------|------|------|
+| 跨 worktree | `feat-xxx/` 和 `main/` 是不同 cwd | 在创建 topic 的 worktree 下调 cw |
+| 跨子目录 | `project/` 和 `project/src/` 是不同 cwd | 回到创建 topic 时的目录 |
+| 跨 session | 不同 bash 调用的 cwd 可能不同 | 用 `cw list` 确认当前 cwd 下有哪些 topic |
+
+**设计意图**：per-cwd 隔离保证不同项目/worktree 的 topic 互不干扰。这不是 bug，是特性。
+
+**排查步骤**：`topic not found` 时，先 `cw list` 看当前 cwd 下有没有 topic。如果没有，说明 cwd 不对——回到创建 topic 时的目录再调。
 
 ## 失败模式
 
 - **illegal_transition**（跳阶段）：没按 nextAction 顺序走。看 `cw status` 确认当前 status，按 nextAction 重来
 - **gate 反复 fail**：同一 action 连续 fail 5 次后 guidance 换熔断文案（不阻断，建议找用户人工审查）
-- **topic not found**：topicId 传错或跨 session 后 cwd 不同（_cw.json 按 cwd 隔离）。修复：用 `cw list` 找 topicId，确认 cwd 在项目根目录
+- **topic not found**：cwd 不对（跨 worktree/子目录/session）。修复：`cw list` 看当前 cwd 下有哪些 topic，回到创建 topic 时的目录调 cw
 
 ## Self-Check
 
