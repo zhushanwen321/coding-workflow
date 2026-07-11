@@ -200,7 +200,7 @@ describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程
     writeFileSync(retrospectPath, "# Retrospect\n\nE2E 复盘内容");
     const retroResult = parseStdout(
       runCli(
-        ["retrospect", "--topicId", topicId, "--retrospectPath", retrospectPath],
+        ["retrospect", "--topicId", topicId, "--retrospect-path", retrospectPath],
         env,
       ),
     );

@@ -25,7 +25,7 @@
  */
 
 import minimist from "minimist";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,6 +171,19 @@ interface ParsedArgs {
 }
 
 /**
+ * 同时取 camelCase 和 kebab-case 的 flag 值。
+ *
+ * minimist 不做 camelCase 转换（与 yargs 不同）：`--retrospect-path` 解析为
+ * `parsed["retrospect-path"]` 而非 `parsed.retrospectPath`。用户两种写法都可能用，
+ * 都兼容。
+ */
+function flag(parsed: ParsedArgs, camel: string): string | undefined {
+  const kebab = camel.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+  const v = parsed[camel] ?? parsed[kebab];
+  return typeof v === "string" ? v : undefined;
+}
+
+/**
  * 解析 --tasks / --cases / --retrospectPath 等 JSON 字符串参数。
  * 这些参数在 CLI 协议里以 JSON 字符串形式传入（便于 shell 单行调用）。
  */
@@ -220,7 +233,7 @@ function buildParams(
     case "replan": {
       if (!topicId) throw new Error(`${action} 需要 --topicId`);
       const planJson = readJsonPayload(
-        typeof parsed.planJsonFile === "string" ? parsed.planJsonFile : undefined,
+        flag(parsed, "planJsonFile"),
         stdinData,
         isStdinTTY,
       );
@@ -267,10 +280,7 @@ function buildParams(
     case "retrospect": {
       if (!topicId) throw new Error("retrospect 需要 --topicId");
       const params: RetrospectParams = { action: "retrospect", topicId };
-      const rp =
-        typeof parsed.retrospectPath === "string"
-          ? parsed.retrospectPath
-          : undefined;
+      const rp = flag(parsed, "retrospectPath");
       if (rp) params.retrospectPath = rp;
       return params;
     }
@@ -487,11 +497,16 @@ async function main(argv: string[]): Promise<void> {
 
 // ── 顶层 try/catch（稳定性保障） ─────────────────────────────
 // 仅当 cli.ts 是进程入口时执行 main()；被测试 import 时不触发（避免 process.exit 污染测试进程）。
+//
+// 比较 import.meta.url 与 process.argv[1] 前两侧 realpathSync：npm link / npm install -g 场景下
+// argv[1] 是 symlink 路径而 import.meta.url 是 realpath（Node ESM 默认 resolve symlink），
+// 不 realpath 会导致两者永不相等 → main() 不执行 → cw 命令静默无输出。
 const isCliEntry = (() => {
   try {
-    return process.argv[1]
-      ? fileURLToPath(import.meta.url) === resolve(process.argv[1])
-      : false;
+    if (!process.argv[1]) return false;
+    const selfPath = realpathSync(fileURLToPath(import.meta.url));
+    const entryPath = realpathSync(resolve(process.argv[1]));
+    return selfPath === entryPath;
   } catch {
     return false;
   }

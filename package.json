@@ -20,8 +20,7 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "lint": "eslint src/ tests/",
-    "test": "vitest run",
-    "verify": "bash scripts/verify-anti-patterns.sh"
+    "test": "vitest run"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0",
