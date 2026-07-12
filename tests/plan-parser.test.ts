@@ -143,3 +143,150 @@ describe("parseLitePlan 补充防护", () => {
     expect(() => parseLitePlan(42)).toThrow();
   });
 });
+
+// ── 环形依赖检测（assertAcyclicDeps）─────────────────────────
+
+describe("parseLitePlan 环形 dependsOn 检测", () => {
+  it("wave 环形依赖（W1→W2→W1）→ 抛错含 cycle", () => {
+    const json = {
+      ...makeValidPlanJson(),
+      waves: [
+        { id: "W1", changes: ["a"], dependsOn: ["W2"] },
+        { id: "W2", changes: ["b"], dependsOn: ["W1"] },
+      ],
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out2" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+      ],
+    };
+    expect(() => parseLitePlan(json)).toThrow(/cycle|环形/i);
+  });
+
+  it("wave 自环（W1 dependsOn W1）→ 抛错含 cycle", () => {
+    const json = {
+      ...makeValidPlanJson(),
+      waves: [{ id: "W1", changes: ["a"], dependsOn: ["W1"] }],
+      testCases: [
+        {
+          id: "E1",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+      ],
+    };
+    expect(() => parseLitePlan(json)).toThrow(/cycle|环形/i);
+  });
+
+  it("wave 三元环（W1→W2→W3→W1）→ 抛错", () => {
+    const json = {
+      ...makeValidPlanJson(),
+      waves: [
+        { id: "W1", changes: ["a"], dependsOn: ["W3"] },
+        { id: "W2", changes: ["b"], dependsOn: ["W1"] },
+        { id: "W3", changes: ["c"], dependsOn: ["W2"] },
+      ],
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out2" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+      ],
+    };
+    expect(() => parseLitePlan(json)).toThrow(/cycle|环形/i);
+  });
+
+  it("testCase 环形依赖（U1→U2→U1）→ 抛错含 cycle", () => {
+    const json = {
+      ...makeValidPlanJson(),
+      testCases: [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out1" },
+          executor: "agent",
+          requiresScreenshot: false,
+          dependsOn: ["U2"],
+        },
+        {
+          id: "U2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out2" },
+          executor: "agent",
+          requiresScreenshot: false,
+          dependsOn: ["U1"],
+        },
+      ],
+    };
+    expect(() => parseLitePlan(json)).toThrow(/cycle|环形/i);
+  });
+
+  it("无环的线性依赖链（W1←W2←W3）→ 解析成功", () => {
+    const json = {
+      ...makeValidPlanJson(),
+      waves: [
+        { id: "W1", changes: ["a"], dependsOn: [] },
+        { id: "W2", changes: ["b"], dependsOn: ["W1"] },
+        { id: "W3", changes: ["c"], dependsOn: ["W2"] },
+      ],
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out2" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+      ],
+    };
+    expect(() => parseLitePlan(json)).not.toThrow();
+  });
+});

@@ -79,6 +79,15 @@ function makePlanJson(overrides: Record<string, unknown> = {}): unknown {
         executor: "agent",
         requiresScreenshot: false,
       },
+      {
+        id: "E2",
+        layer: "real",
+        scenario: "集成验证",
+        steps: "执行集成测试",
+        expected: { text: "集成测试通过" },
+        executor: "agent",
+        requiresScreenshot: false,
+      },
     ],
     ...overrides,
   };
@@ -292,6 +301,17 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
     expect(result.report).not.toContain("E2");
   });
 
+  /** real 层补充用例，与 mock 层用例配对以满足测试分层校验 */
+  const realLayerCase = {
+    id: "E2",
+    layer: "real" as const,
+    scenario: "s",
+    steps: "st",
+    expected: { text: "real layer output" },
+    executor: "agent",
+    requiresScreenshot: false,
+  };
+
   it("expected.text='返回 { status: 'planned' }' → gate pass（非模糊值）", () => {
     const planJson = makePlanJson({
       testCases: [
@@ -304,6 +324,7 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           executor: "agent",
           requiresScreenshot: false,
         },
+        realLayerCase,
       ],
     });
     const result = planCheck(planJson);
@@ -323,6 +344,7 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           executor: "agent",
           requiresScreenshot: false,
         },
+        realLayerCase,
       ],
     });
     const result = planCheck(planJson);
@@ -341,6 +363,7 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           executor: "agent",
           requiresScreenshot: false,
         },
+        realLayerCase,
       ],
     });
     const result = planCheck(planJson);
@@ -359,6 +382,7 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           executor: "agent",
           requiresScreenshot: false,
         },
+        realLayerCase,
       ],
     });
     const result = planCheck(planJson);
@@ -377,6 +401,7 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           executor: "agent",
           requiresScreenshot: false,
         },
+        realLayerCase,
       ],
     });
     const result = planCheck(planJson);
@@ -387,6 +412,53 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
     const result = planCheck(makePlanJson());
     expect(result.result).toBe("pass");
     expect(result.report).toBe("");
+  });
+});
+
+// ── 测试分层强制（mock + real 各≥1）──────────────────────────
+
+describe("planCheck 测试分层强制（mock + real 各≥1）", () => {
+  it("只有 mock 层 testCase（缺 real 层）→ gate fail", () => {
+    const planJson = makePlanJson({
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "具体输出值" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+      ],
+    });
+    const result = planCheck(planJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("real");
+  });
+
+  it("只有 real 层 testCase（缺 mock 层）→ gate fail", () => {
+    const planJson = makePlanJson({
+      testCases: [
+        {
+          id: "E1",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "具体输出值" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+      ],
+    });
+    const result = planCheck(planJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("mock");
+  });
+
+  it("mock + real 各≥1 → 测试分层校验通过", () => {
+    const result = planCheck(makePlanJson());
+    expect(result.result).toBe("pass");
   });
 });
 

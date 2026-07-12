@@ -8,8 +8,9 @@
  * 与旧版的差异（重构 = 推倒重建）：
  * - 砍 MidClarifySchema / MidDetailSchema / TestCaseSubmissionSchema（mid 专属）
  * - format 从 `=== tier 锁定值` 改为硬编码 `=== "lite"`（tier 字段彻底砍掉）
- * - 砍 assertAcyclicDeps（环形依赖潜伏到 execute 阶段报错，本轮可接受——
- *   plan gate 不再做依赖无环质量约束，交回 skill 文档管）
+ * - assertAcyclicDeps 加回（原 lite 重构时砍掉，交回 skill 文档管，
+ *   但复盘显示 agent 不遵守 → 环形 dependsOn 到 execute 才爆，代价高。
+ *   重新接入 plan gate 做 DFS 环检测）
  * - WaveSeed 砍 parallelGroup/issues，TestCaseSeed 砍 assertion/parallelGroup/file/describe
  */
 
@@ -101,6 +102,73 @@ function assertSafeSize(obj: unknown, label: string): void {
   }
 }
 
+// ── 环形依赖检测 ─────────────────────────────────────────────
+
+/**
+ * assertAcyclicDeps — DFS 检测节点间 dependsOn 是否存在环（含自环）。
+ *
+ * 对 wave 和 testCase 各跑一次。环形依赖（如 W1→W2→W1）会在 execute 阶段
+ * 产生死锁式的调度问题，plan gate 阶段拦截比运行时报错代价低得多。
+ *
+ * 算法：标准三色 DFS。WHITE=未访问, GRAY=在当前递归栈中, BLACK=已完成。
+ * 遇到 GRAY 节点 = 发现背边 = 存在环。
+ *
+ * @param items  节点列表（含 id + dependsOn）
+ * @param label  报错用的类型标签（"wave" 或 "testCase"）
+ * @throws Error  发现环时抛错，消息含环上的节点链
+ */
+interface DepNode {
+  id: string;
+  dependsOn?: string[];
+}
+
+function assertAcyclicDeps(items: DepNode[], label: string): void {
+  if (items.length === 0) return;
+
+  const nodeMap = new Map<string, DepNode>();
+  for (const item of items) {
+    nodeMap.set(item.id, item);
+  }
+
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  for (const item of items) {
+    color.set(item.id, WHITE);
+  }
+
+  function dfs(id: string, path: string[]): boolean {
+    color.set(id, GRAY);
+    const node = nodeMap.get(id);
+    const deps = node?.dependsOn ?? [];
+    for (const dep of deps) {
+      // dep 不在节点集内 = 引用了不存在的 id，不算环（schema 层不强制存在性）
+      if (!color.has(dep)) continue;
+      const depColor = color.get(dep);
+      if (depColor === GRAY) {
+        // 发现环，构造环链消息
+        const cycleStart = path.indexOf(dep);
+        const cycleChain = [...path.slice(cycleStart), id, dep].join("→");
+        throw new Error(
+          `${label} 存在环形 dependsOn 依赖（cycle detected）: ${cycleChain}`,
+        );
+      }
+      if (depColor === WHITE) {
+        if (dfs(dep, [...path, id])) return true;
+      }
+    }
+    color.set(id, BLACK);
+    return false;
+  }
+
+  for (const item of items) {
+    if (color.get(item.id) === WHITE) {
+      dfs(item.id, []);
+    }
+  }
+}
+
 // ── 共用校验 ─────────────────────────────────────────────────
 
 /**
@@ -151,7 +219,10 @@ export function parseLitePlan(json: unknown): ParsedLitePlan {
   assertSafeSize(json, "lite plan");
   assertFormat(json);
   assertSchema(LitePlanSchema, json, "lite plan");
-  return extractLitePlan(json);
+  const parsed = extractLitePlan(json);
+  assertAcyclicDeps(parsed.waves, "wave");
+  assertAcyclicDeps(parsed.testCases, "testCase");
+  return parsed;
 }
 
 // ── extract（json 已过 schema 校验，结构安全） ───────────────

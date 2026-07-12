@@ -77,14 +77,20 @@ plan 必须达到 decision complete——implementer 零决策即可执行。检
 plan gate 检查结构完整性（字段齐全），decision complete 检查语义完整性（可零决策执行）。
 两者都过才算 plan 真正完成。
 
-## plan gate 会校验什么（engine 侧最基础结构校验）
+## plan gate 会校验什么（engine 侧结构校验 + 质量门）
 
-CW plan gate 只做最基础结构校验，不判质量（质量靠本提示词的方法论约束）：
+CW plan gate 做结构校验 + 关键质量门（不只是字段齐全）：
 - format 字段 === "lite"
 - waves 数组非空（至少 1 个 wave）
 - testCases 数组非空（至少 1 个 testCase）
 - 每个 wave 有 id / changes / dependsOn
 - 每个 testCase 有 id / layer / scenario / steps / expected / executor
+- **[环形依赖检测]** waves 和 testCases 的 dependsOn 不可成环（含自环）。W1 依赖 W2、W2 依赖 W1 = 非法，plan gate 直接拒。设计 dependsOn 时确保依赖方向单一无环。
+- **[测试分层强制]** testCases 必须同时含 mock 层和 real 层（各≥1）。只有 mock 层（缺 real）或只有 real 层（缺 mock）= gate fail。
+  - mock 层验证「逻辑对不对」（隔离真实依赖，快速跑）
+  - real 层验证「接起来对不对」（真实集成，验契约/数据形态/时序）
+  - 只有 mock 层 = mock 可能掩盖后端契约偏差，到生产才爆
+- **[模糊值检测]** expected.text 不可填 passed/ok/success 等结论词，必须写具体可判定值
 
 gate fail 时 CW 返回 mustFix（逐条 fail 原因），status 不变（仍 created），修 mustFix 后重调：
 

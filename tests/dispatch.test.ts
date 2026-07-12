@@ -79,6 +79,15 @@ function makeValidPlanJson(overrides: Record<string, unknown> = {}): unknown {
         executor: "agent",
         requiresScreenshot: false,
       },
+      {
+        id: "E2",
+        layer: "real",
+        scenario: "集成场景",
+        steps: "步骤",
+        expected: { text: "real-output" },
+        executor: "agent",
+        requiresScreenshot: false,
+      },
     ],
     ...overrides,
   };
@@ -116,8 +125,7 @@ describe("dispatch plan（U19）", () => {
     const topic = store.loadTopic(topicId);
     expect(topic!.waves).toHaveLength(1);
     expect(topic!.waves[0]!.id).toBe("W1");
-    expect(topic!.testCases).toHaveLength(1);
-    expect(topic!.testCases[0]!.id).toBe("E1");
+    expect(topic!.testCases).toHaveLength(2);
     expect(topic!.gatePassed.plan).toBe(true);
   });
 });
@@ -222,7 +230,10 @@ describe("dispatch test（U22-U24c）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -283,6 +294,15 @@ describe("dispatch test（U22-U24c）", () => {
       waves: [{ id: "W1", changes: ["c"], dependsOn: [] }],
       testCases: [
         {
+          id: "U1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "mock-output" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
+        {
           id: "E1",
           layer: "real",
           scenario: "s",
@@ -310,8 +330,8 @@ describe("dispatch test（U22-U24c）", () => {
     );
 
     const topic = store.loadTopic(topicId);
-    expect(topic!.testCases[0]!.status).toBe("failed");
-    expect(topic!.testCases[0]!.failureReason).toMatch(/screenshot/i);
+    expect(topic!.testCases.find((c) => c.id === "E1")!.status).toBe("failed");
+    expect(topic!.testCases.find((c) => c.id === "E1")!.failureReason).toMatch(/screenshot/i);
     expect(result.gatePassed.test).toBe(false);
   });
 
@@ -327,6 +347,15 @@ describe("dispatch test（U22-U24c）", () => {
       objective: "obj",
       waves: [{ id: "W1", changes: ["c"], dependsOn: [] }],
       testCases: [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "mock-output" },
+          executor: "agent",
+          requiresScreenshot: false,
+        },
         {
           id: "E1",
           layer: "real",
@@ -352,6 +381,10 @@ describe("dispatch test（U22-U24c）", () => {
         action: "test",
         topicId,
         cases: [
+          {
+            caseId: "U1",
+            actual: { text: "mock-output" },
+          },
           {
             caseId: "E1",
             actual: { text: "expected-output" },
@@ -421,15 +454,8 @@ describe("dispatch replan（U25-U29）", () => {
         { id: "W2", changes: ["change2"], dependsOn: ["W1"] },
       ],
       testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "expected-output" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
@@ -456,15 +482,8 @@ describe("dispatch replan（U25-U29）", () => {
       objective: "obj",
       waves: [],
       testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "expected-output" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
@@ -486,15 +505,8 @@ describe("dispatch replan（U25-U29）", () => {
         { id: "W1", changes: ["modified-change"], dependsOn: [] },
       ],
       testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "expected-output" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
@@ -524,7 +536,10 @@ describe("dispatch replan（U25-U29）", () => {
       format: "lite",
       objective: "obj",
       waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
-      testCases: [],
+      testCases: [
+        { id: "E2", layer: "mock", scenario: "s", steps: "st", expected: { text: "mock-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E3", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+      ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
       /case_deleted_passed/,
@@ -553,15 +568,8 @@ describe("dispatch replan（U25-U29）", () => {
       objective: "obj",
       waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
       testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "modified-expected" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "modified-expected" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(

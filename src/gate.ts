@@ -215,6 +215,22 @@ export function planCheck(planJson: unknown): PlanCheckResult {
       };
     }
 
+    // 测试分层强制：mock + real 各≥1。
+    // mock 层验证逻辑正确性，real 层验证集成契约。只有一层 = 覆盖不完整。
+    const hasMock = parsed.testCases.some((tc) => tc.layer === "mock");
+    const hasReal = parsed.testCases.some((tc) => tc.layer === "real");
+    const missingLayers: string[] = [];
+    if (!hasMock) missingLayers.push("mock");
+    if (!hasReal) missingLayers.push("real");
+    if (missingLayers.length > 0) {
+      return {
+        result: "fail",
+        report:
+          `测试分层不完整：缺少 ${missingLayers.join(" 和 ")} 层 testCase。` +
+          `plan 必须同时含 mock 层（验证逻辑正确性）和 real 层（验证集成契约）的测试用例。`,
+      };
+    }
+
     return { result: "pass", report: "" };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
