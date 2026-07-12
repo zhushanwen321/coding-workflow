@@ -20,6 +20,7 @@ import type {
   GateHistoryEntry,
   GuardVerdict,
   NextAction,
+  NextActionAlternative,
   Status,
   Topic,
 } from "./types.js";
@@ -57,6 +58,26 @@ function buildCircuitBreakerGuidance(phase: Action, fails: number): string {
     `${phase} gate 已连续失败 ${fails} 次（达熔断阈值 ${GATE_RETRY_LIMIT}）。` +
     `可能存在机器检查误判。建议：(1) 逐条检查 mustFix 报错是否合理 (2) ask_user 人工审查交付物。`
   );
+}
+
+// ── replan alternative ─────────────────────────────────────
+
+/**
+ * replan 的 alternative guidance（plan/dev 阶段注入，让 agent 发现可改 plan）。
+ *
+ * replan 在 status∈{planned, developed} 合法（见 TRANSITIONS.replan）。
+ * 注入到这两个阶段的 nextAction.alternatives，使 agent 知道「plan 不是一次性的，
+ * dev 中途发现要追加 Wave 可以 replan」。append-only 约束在文案里点明，避免 agent 误改已 committed 项。
+ */
+const REPLAN_GUIDANCE =
+  `如需追加 Wave 或调整未 committed 的 plan 项，调 cw replan 提交完整新版 plan.json：\n` +
+  `    echo '<newPlanJson>' | cw replan --topicId <topicId>\n` +
+  `约束（append-only）：已 committed 的 wave 和已 passed 的 testCase 不可删改。` +
+  `replan 后 status 回退到 planned，需重新走 dev。`;
+
+/** 构造 replan alternative 项（status∈{planned, developed} 的 nextAction 用）。 */
+function replanAlternative(): NextActionAlternative {
+  return { action: "replan", guidance: REPLAN_GUIDANCE };
 }
 
 // ── 声明式转换表 ────────────────────────────────────────────
@@ -243,6 +264,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         action: "dev",
         guidance: `plan gate 通过。下一步：按 Wave 实现 + TDD，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
         waves: waveProgress(topic),
+        alternatives: [replanAlternative()],
       };
     }
     case "dev": {
@@ -252,12 +274,14 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           guidance: `所有 Wave 已 committed。下一步：跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
           waves: waveProgress(topic),
           testCases: testCaseProgress(topic),
+          alternatives: [replanAlternative()],
         };
       }
       return {
         action: "dev",
         guidance: `dev 阶段进行中，仍有 Wave 未 committed。继续实现 + commit + 调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
         waves: waveProgress(topic),
+        alternatives: [replanAlternative()],
       };
     }
     case "test": {

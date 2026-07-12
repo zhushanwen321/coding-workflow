@@ -189,11 +189,25 @@ export type GuardVerdict = { ok: true } | { ok: false; code: GuardErrorCode; rea
 
 // ── nextAction ──────────────────────────────────────────────
 
+/**
+ * nextAction 的可选 action 项。
+ *
+ * 用于表达「当前状态下同时有多个合法 action」的场景（如 plan/dev 阶段，
+ * dev 是主推荐，replan 也是合法的旁路——可追加 Wave 或调整未 committed 的 plan 项）。
+ * action 字段是主推荐路径，alternatives 补充其他合法选项，agent 按场景选择。
+ */
+export interface NextActionAlternative {
+  action: Action;
+  guidance: string;
+}
+
 export interface NextAction {
   action?: Action;
   guidance: string;
   waves?: Array<{ id: string; committed: boolean }>;
   testCases?: Array<{ id: string; status: TestCase["status"] }>;
+  /** 当前状态下同样合法的可选 action（主推荐在 action 字段）。 */
+  alternatives?: NextActionAlternative[];
 }
 
 // ── action handler 契约 ─────────────────────────────────────

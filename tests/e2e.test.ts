@@ -160,6 +160,12 @@ describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程
     );
     expect(planResult.status).toBe("planned");
     expect((planResult.nextAction as Record<string, unknown>).action).toBe("dev");
+    // plan 通过后 status=planned，replan 作为 alternative 暴露
+    const planAlts = (planResult.nextAction as Record<string, unknown>).alternatives as
+      | Array<{ action: string }>
+      | undefined;
+    expect(planAlts).toBeDefined();
+    expect(planAlts![0].action).toBe("replan");
 
     // 3. dev
     const devResult = parseStdout(

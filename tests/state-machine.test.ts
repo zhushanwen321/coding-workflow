@@ -260,6 +260,10 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.waves).toBeDefined();
     expect(na.waves).toHaveLength(2);
     expect(na.waves![0]).toEqual({ id: "W1", committed: false });
+    // plan 通过后 status=planned，replan 合法 → 作为 alternative 暴露
+    expect(na.alternatives).toHaveLength(1);
+    expect(na.alternatives![0].action).toBe("replan");
+    expect(na.alternatives![0].guidance).toContain("cw replan");
   });
 
   it("U10 补充: plan gate fail → nextAction 指回 plan retry", () => {
@@ -305,6 +309,9 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.action).toBe("test");
     expect(na.testCases).toBeDefined();
     expect(na.testCases).toHaveLength(1);
+    // status=developed，replan 合法 → 作为 alternative 暴露（即使 dev 全 committed）
+    expect(na.alternatives).toHaveLength(1);
+    expect(na.alternatives![0].action).toBe("replan");
   });
 
   it("U11 补充: dev 未全 committed → nextAction 指回 dev", () => {
@@ -317,6 +324,9 @@ describe("buildNextAction（U9-U11）", () => {
     });
     const na = buildNextAction("dev", topic);
     expect(na.action).toBe("dev");
+    // status=developed，replan 合法 → 作为 alternative 暴露
+    expect(na.alternatives).toHaveLength(1);
+    expect(na.alternatives![0].action).toBe("replan");
   });
 });
 

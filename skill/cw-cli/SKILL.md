@@ -45,12 +45,15 @@ cw create --slug <kebab-case-slug> --objective "<一句话业务目标>"
     "action": "dev",            // 下一步该调的 action；为空 = 流程结束
     "guidance": "plan gate 通过。下一步：...\n\n[execute 阶段]...",  // 含完整方法论
     "waves": [{ "id": "W1", "committed": false }],    // dev/test 带进度
-    "testCases": [{ "id": "U1", "status": "pending" }]
+    "testCases": [{ "id": "U1", "status": "pending" }],
+    "alternatives": [{ "action": "replan", "guidance": "如需追加 Wave..." }]  // plan/dev 阶段：同样合法的可选 action
   }
 }
 ```
 
 **ALWAYS 按 `nextAction.action` 调下一次 `cw`**。`action` 为空（undefined）= 流程结束（closed 终态）。
+
+`alternatives` 是当前状态下**同样合法**的可选 action（不是错误处理路径）。`action` 是主推荐，`alternatives` 是补充——当场景需要时（如 dev 中途发现 plan 要追加 Wave）走 `alternatives`，不必每次都走 `action`。
 
 | nextAction.action | 你要做的 | cw 命令 |
 |-------------------|---------|---------|
@@ -59,6 +62,7 @@ cw create --slug <kebab-case-slug> --objective "<一句话业务目标>"
 | `test` | 读 guidance，跑测试，提交结果 | `cw test --topicId <id> --cases '[{"caseId":"U1","actual":{"text":"<结果>"}}]'` |
 | `retrospect` | 写复盘报告，提交路径 | `cw retrospect --topicId <id> --retrospect-path <path>` |
 | `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
+| `replan` | dev 阶段发现要追加 Wave 或调整未 committed 的 plan 项时 | `echo '<planJson>' \| cw replan --topicId <id>` |
 | `undefined` | 流程结束 | 无 |
 
 ## gate fail 时怎么办
@@ -72,6 +76,33 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 | test gate fail（结果 != 预期） | `caseResults[].failureReason` | 修代码或修测试，重跑，重调 `cw test` |
 
 修完后重调同一 action（渐进式：已成功的项不重跑）。**照 nextAction 走不会撞 illegal_transition**——fail 时它指回自己，不会指向下一阶段。
+
+## 修改 plan.json（replan）
+
+plan 不是一次性的。status∈{planned, developed}（plan 通过后到 test 之前）时，`nextAction.alternatives` 会带 replan 提示。以下场景调 `cw replan`：
+
+- dev 中途发现需要**追加新 Wave**（plan 漏了某块改动）
+- 调整**未 committed** 的 Wave（改 changes/dependsOn、删残留 Wave）
+- 调整**未 passed** 的 testCase
+
+```bash
+echo '<新版完整 plan.json>' | cw replan --topicId <id>
+```
+
+replan 接收**完整的新 plan.json**（不是增量 patch），内部解析校验 + append-only 安全校验。
+
+**append-only 约束**（不可违反，违反则 replan 抛错 + mustFix）：
+
+| 不可动的项 | 原因 |
+|-----------|------|
+| 已 committed 的 Wave（删/改 changes/dependsOn） | 已有 commit 锚定，改了会让 commit 与 plan 脱节 |
+| 已 passed 的 testCase（删/改 expected 等语义字段） | expected 是判定基准，改了会让「已 passed」失效 |
+
+未 committed/passed 的可删可改（清理残留的合法机制）。
+
+**replan 后的状态变化**：status 回退到 `planned`（即使之前已 developed），需重新走 dev。新增的 Wave 要重新 commit。已 committed 的 Wave 保留不动（progressive）。
+
+**replan gate fail 时**（append-only 违规）：返回 mustFix 列出违反的项，修正后重调 `cw replan`。
 
 ## 前置检查
 
