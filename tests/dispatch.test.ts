@@ -204,6 +204,52 @@ describe("dispatch dev（U20-U21）", () => {
     // status 前进到 developed（progressive 语义），但 dev gate=false
     expect(topic!.status).toBe("developed");
   });
+
+  it("U21b: 两个 wave 传同一 commitHash → 都 committed 但标记 extraCommitReuse warning", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "u21b", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    // plan 含 W1 + W2（无依赖）
+    const twoWavePlan = makeValidPlanJson({
+      waves: [
+        { id: "W1", changes: ["change1"], dependsOn: [] },
+        { id: "W2", changes: ["change2"], dependsOn: [] },
+      ],
+    });
+    dispatch({ action: "plan", topicId, planJson: twoWavePlan }, deps);
+
+    // W1 和 W2 传同一个 commitHash
+    const result = dispatch(
+      {
+        action: "dev",
+        topicId,
+        tasks: [
+          { waveId: "W1", commitHash: realCommitHash },
+          { waveId: "W2", commitHash: realCommitHash },
+        ],
+      },
+      deps,
+    );
+
+    // 两个 wave 都 committed（不阻断）
+    const topic = store.loadTopic(topicId);
+    expect(topic!.waves.find((w) => w.id === "W1")!.committed).toBe(realCommitHash);
+    expect(topic!.waves.find((w) => w.id === "W2")!.committed).toBe(realCommitHash);
+
+    // taskResults 标记 extraCommitReuse warning
+    const taskResults = (result as Record<string, unknown>).taskResults as Array<{
+      waveId: string;
+      validation: { extraCommitReuse?: string[] };
+    }>;
+    expect(taskResults).toBeDefined();
+    const w1Result = taskResults.find((t) => t.waveId === "W1")!;
+    const w2Result = taskResults.find((t) => t.waveId === "W2")!;
+    expect(w1Result.validation.extraCommitReuse).toContain("W2");
+    expect(w2Result.validation.extraCommitReuse).toContain("W1");
+  });
 });
 
 // ── U22-U24c: dispatch test ─────────────────────────────────

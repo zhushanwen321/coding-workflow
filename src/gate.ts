@@ -41,6 +41,12 @@ export interface CommitValidation {
    * devCheck 用 git diff-tree 提取实际改动文件，与 planData.waves 对比后填充。
    */
   extraFiles?: string[];
+  /**
+   * 与此 commitHash 共享的其他 waveId 列表（只警告不 fail）。
+   * handleDev 检测同一 commitHash 绑定多个 wave 时填充。
+   * commit 是 Wave 级验证锚点——共享 commit 让两个 Wave 的验证脱节。
+   */
+  extraCommitReuse?: string[];
 }
 
 /** git 可执行文件缺失判定（ENOENT = 基础设施异常，应 throw 而非吞掉）。 */

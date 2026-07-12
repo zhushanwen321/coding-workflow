@@ -267,6 +267,25 @@ export function handleDev(
     commitHash: task.commitHash,
     validation: devCheck(task.commitHash, deps.workspacePath, task.waveId, topic),
   }));
+
+  // Step 1b: commitHash 唯一性检测（warning，不阻断 committed）。
+  // 同一 commitHash 绑定多个 wave = 违反「每 Wave 独立 commit」规范。
+  // commit 是 Wave 级验证锚点，共享 commit 让两个 Wave 的验证脱节。
+  // 只检测 + 标记（extraCommitReuse），不阻止 committed——因为可能是简单任务 agent 塞了一个 commit。
+  // 配合 EXECUTE_PROMPT 的 COMMIT_DISCIPLINE 段做事前预防。
+  const hashToWaves = new Map<string, string[]>();
+  for (const t of taskResults) {
+    const existing = hashToWaves.get(t.commitHash) ?? [];
+    existing.push(t.waveId);
+    hashToWaves.set(t.commitHash, existing);
+  }
+  for (const t of taskResults) {
+    const sharing = hashToWaves.get(t.commitHash);
+    if (sharing && sharing.length > 1) {
+      t.validation.extraCommitReuse = sharing.filter((w) => w !== t.waveId);
+    }
+  }
+
   const invalidTasks = taskResults.filter((t) => !t.validation.valid);
 
   // Step 2: 计算流转后状态（progressive：已 developed 则原地停留）。
@@ -310,6 +329,7 @@ export function handleDev(
     status: updated.status,
     gatePassed: { ...updated.gatePassed, dev: devGatePassed },
     nextAction: buildNextAction("dev", updated),
+    taskResults,
   };
 }
 

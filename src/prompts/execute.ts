@@ -14,6 +14,21 @@ plan gate 已通过（status=planned）。本阶段把 plan 的 waves 和 testCa
 
 ## dev 阶段：逐 Wave 实现 + 提交
 
+### commit 纪律（每 Wave 独立 commit）
+
+[MANDATORY] **每个 Wave 必须有独立的 commit，即使是简单任务也要分开 commit。**
+
+commit 是 Wave 级验证锚点——CW 用 commit 存在性 + diff 非空校验每个 Wave 是否真落地。
+两个 Wave 共享一个 commit 会让验证脱节：无法区分哪个 Wave 的改动在 commit 里、哪个没做。
+
+engine 事后检测：CW dev gate 检测同一 commitHash 绑定多个 wave，在 taskResults 标记
+extraCommitReuse warning（不阻断 committed，但报告里会标出）。配合本纪律做事前预防。
+
+规则：
+- 一个 Wave 至少一个 commit（可多个 commit 拆细，但不可多个 Wave 共享一个 commit）
+- 即使两个 Wave 改动都很小（各几行），也要分开 commit
+- commit message 标明 Wave（如 "feat(W1): xxx"）
+
 ### 工作流（每个 Wave）
 
 1. 选一个 dependsOn 已满足的 Wave（初始选 dependsOn 为空的）
