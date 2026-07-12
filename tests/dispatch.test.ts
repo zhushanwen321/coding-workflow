@@ -528,6 +528,11 @@ describe("dispatch review", () => {
     expect(result.status).toBe("reviewed");
     expect(result.gatePassed.review).toBe(true);
     expect(result.nextAction.action).toBe("test");
+
+    // artifacts 记录了 review.md 路径 + 时间戳
+    const topic = store.loadTopic(topicId);
+    expect(topic!.artifacts?.reviewPath).toBe(reviewPath);
+    expect(topic!.artifacts?.reviewAt).toBeDefined();
   });
 
   it("review gate fail：传不存在的路径 → status=developed, nextAction=review retry", () => {
@@ -782,6 +787,9 @@ describe("dispatch closeout（U30）", () => {
     expect(phases).toContain("dev");
     expect(phases).toContain("review");
     expect(phases).toContain("test");
+    // retrospect artifact 记录了路径 + 时间戳
+    expect(topic!.artifacts?.retrospectPath).toBe(retrospectPath);
+    expect(topic!.artifacts?.retrospectAt).toBeDefined();
     expect(phases).toContain("retrospect");
     expect(phases).toContain("closeout");
   });

@@ -345,6 +345,11 @@ export interface ListEntry {
   status: Status;
   createdAt: string;
   gatePassed: Partial<Record<Action, boolean>>;
+  /** 复盘文档路径（存在时返回，便于检索分析）。 */
+  retrospectPath?: string;
+  retrospectAt?: string;
+  reviewPath?: string;
+  reviewAt?: string;
 }
 
 /**
@@ -384,6 +389,10 @@ export function handleList(store: CwStore): ListEntry[] {
     status: t.status,
     createdAt: t.createdAt,
     gatePassed: t.gatePassed,
+    retrospectPath: t.artifacts?.retrospectPath,
+    retrospectAt: t.artifacts?.retrospectAt,
+    reviewPath: t.artifacts?.reviewPath,
+    reviewAt: t.artifacts?.reviewAt,
   }));
 }
 

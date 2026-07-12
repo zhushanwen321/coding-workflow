@@ -37,6 +37,7 @@ import { dirname } from "node:path";
 
 import type {
   Action,
+  Artifacts,
   Evidence,
   GateHistoryEntry,
   Status,
@@ -76,6 +77,7 @@ interface TopicRecord {
   status: Status;
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
+  artifacts?: Artifacts;
 }
 
 interface WaveRecord {
@@ -373,6 +375,7 @@ export class CwStore {
         status: topic.status,
         gatePassed: topic.gatePassed,
         evidence: topic.evidence,
+        artifacts: topic.artifacts,
       };
       this.fileData!.topics.push(record);
     });
@@ -427,6 +430,7 @@ export class CwStore {
       gateHistory: gateHistory.map((g) => this.mapGateHistoryRecord(g)),
       gatePassed: topic.gatePassed ?? {},
       evidence: topic.evidence,
+      artifacts: topic.artifacts,
     };
   }
 
@@ -490,6 +494,19 @@ export class CwStore {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
       if (topic) {
         topic.evidence = evidence;
+      }
+    });
+  }
+
+  /**
+   * 更新 topic 的交付物文档记录（review.md / retrospect.md 路径 + 时间戳）。
+   * merge 语义：只更新传入的字段，不覆盖已有字段。
+   */
+  setArtifacts(topicId: string, patch: Partial<Artifacts>): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (topic) {
+        topic.artifacts = { ...topic.artifacts, ...patch };
       }
     });
   }

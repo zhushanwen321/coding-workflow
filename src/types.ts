@@ -146,6 +146,17 @@ export interface Evidence {
   gateHistory: GateHistoryEntry[];
 }
 
+/**
+ * 交付物文档记录——存储 review.md / retrospect.md 的路径 + 提交时间戳。
+ * 用于后续检索复盘文档，分析 CW 流程的改进点。
+ */
+export interface Artifacts {
+  reviewPath?: string;
+  reviewAt?: string;
+  retrospectPath?: string;
+  retrospectAt?: string;
+}
+
 export interface Topic {
   topicId: string;
   slug: string;
@@ -159,6 +170,7 @@ export interface Topic {
   gateHistory: GateHistoryEntry[];
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
+  artifacts?: Artifacts;
 }
 
 // ── DAO seed 类型（plan.json 解析后写入 store 的输入形态） ─────

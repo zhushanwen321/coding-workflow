@@ -474,6 +474,11 @@ export function handleReview(
         computeNextStatus("review", topic.status),
       );
       deps.store.updateGatePassed(params.topicId, "review", true);
+      // 记录 review.md 路径 + 时间戳，供后续检索复盘文档。
+      deps.store.setArtifacts(params.topicId, {
+        reviewPath: path,
+        reviewAt: new Date().toISOString(),
+      });
       passed = true;
       return;
     }
@@ -532,6 +537,11 @@ export function handleRetrospect(
         computeNextStatus("retrospect", topic.status),
       );
       deps.store.updateGatePassed(params.topicId, "retrospect", true);
+      // 记录 retrospect.md 路径 + 时间戳，供后续检索复盘文档。
+      deps.store.setArtifacts(params.topicId, {
+        retrospectPath: path,
+        retrospectAt: new Date().toISOString(),
+      });
       passed = true;
       return;
     }
