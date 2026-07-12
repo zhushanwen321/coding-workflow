@@ -59,6 +59,7 @@ cw create --slug <kebab-case-slug> --objective "<一句话业务目标>"
 |-------------------|---------|---------|
 | `plan` | 读 guidance 的 spec 提示词，明确范围后产出 plan.json，提交 | `echo '<planJson>' \| cw plan --topicId <id>` |
 | `dev` | 读 guidance 的 execute 提示词，按 Wave 实现 + TDD + commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
+| `review` | 读 guidance 的 review 提示词，做 5 维度代码审查 + plan 覆盖核对，产出 review.md | `cw review --topicId <id> --reviewPath <path>` |
 | `test` | 读 guidance，跑测试，提交结果 | `cw test --topicId <id> --cases '[{"caseId":"U1","actual":{"text":"<结果>"}}]'` |
 | `retrospect` | 写复盘报告，提交路径 | `cw retrospect --topicId <id> --retrospect-path <path>` |
 | `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
@@ -71,7 +72,7 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 
 | 场景 | fail 原因在哪 | 怎么修 |
 |------|-------------|--------|
-| plan/retrospect/closeout gate fail | 顶层 `mustFix` | 修 mustFix 列出的问题，重调同一 action |
+| plan/review/retrospect/closeout gate fail | 顶层 `mustFix` | 修 mustFix 列出的问题，重调同一 action |
 | dev gate fail（commit 不真实/缺失） | `taskResults[].reason` | 修该 Wave 的 commit，重调 `cw dev` |
 | test gate fail（结果 != 预期） | `caseResults[].failureReason` | 修代码或修测试，重跑，重调 `cw test` |
 
@@ -79,11 +80,12 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 
 ## 修改 plan.json（replan）
 
-plan 不是一次性的。status∈{planned, developed}（plan 通过后到 test 之前）时，`nextAction.alternatives` 会带 replan 提示。以下场景调 `cw replan`：
+plan 不是一次性的。status∈{planned, developed, reviewed, tested}（plan 通过后的任何阶段）时，`nextAction.alternatives` 会带 replan 提示。以下场景调 `cw replan`：
 
 - dev 中途发现需要**追加新 Wave**（plan 漏了某块改动）
 - 调整**未 committed** 的 Wave（改 changes/dependsOn、删残留 Wave）
 - 调整**未 passed** 的 testCase
+- test 阶段发现 **expected 值需修正**（如 rename 后 testId 失效导致全 fail，或 plan 预期值设错）
 
 ```bash
 echo '<新版完整 plan.json>' | cw replan --topicId <id>
