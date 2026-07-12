@@ -702,6 +702,36 @@ describe("dispatch replan（U25-U29）", () => {
       /case_modified_passed/,
     );
   });
+
+  it("replan 从 tested 状态可调用（rename 后改 expected 场景）→ status 回退 planned", () => {
+    const { topicId, deps, store } = setupDevTopic();
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    // 推进到 reviewed（模拟 review gate pass）
+    store.updateStatus(topicId, "reviewed");
+    store.updateGatePassed(topicId, "review", true);
+    // 推进到 tested（模拟 test gate pass）
+    store.updateStatus(topicId, "tested");
+    store.updateGatePassed(topicId, "test", true);
+    expect(store.loadTopic(topicId)!.status).toBe("tested");
+
+    // 从 tested 调 replan，修改未 passed 的 testCase expected
+    // （原 plan 的 E1/E2 还没真正 passed via dispatch test，这里手动改 status 模拟）
+    const newPlan = {
+      format: "lite",
+      objective: "obj",
+      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "corrected-expected" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "corrected-real" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
+
+    expect(result.status).toBe("planned");
+  });
 });
 
 // ── U30: dispatch closeout ──────────────────────────────────

@@ -93,6 +93,15 @@ cw(dev) 的 \`--tasks\` 支持数组，可一次提交多个 Wave 的 commitHash
 - 有 case 未 passed 时，nextAction 指回 test 继续；全部 passed 才流转到 tested。
 - screenshotPath 指向不存在的文件 = 该 case 判 failed（即使 actual 文本对了）。
 
+### test 阶段发现 expected 需修正 → replan
+
+test 阶段（status=reviewed/tested）可以调 cw replan。典型场景：
+- rename 后 testId 失效，expected 引用的 testid 与真实组件脱节 → 全 fail
+- 发现 plan 的 expected 值设错了（不是代码 bug，是 plan 的预期值需要改）
+
+这些场景下调 replan 修改 expected（append-only 约束：已 passed 的 testCase 不可改 expected，
+未 passed 的可改），status 回退到 planned，重走 dev→review→test。
+
 cw(test) 的 \`--cases\` 支持数组，可一次提交多条 case：
 
     cw test --topicId <topicId> --cases '[{"caseId":"U1","actual":{"text":"2"}},{"caseId":"U2","actual":{"text":"ok"}}]'

@@ -75,7 +75,7 @@ const REPLAN_GUIDANCE =
   `约束（append-only）：已 committed 的 wave 和已 passed 的 testCase 不可删改。` +
   `replan 后 status 回退到 planned，需重新走 dev。`;
 
-/** 构造 replan alternative 项（status∈{planned, developed} 的 nextAction 用）。 */
+/** 构造 replan alternative 项（status∈{planned, developed, reviewed, tested} 的 nextAction 用）。 */
 function replanAlternative(): NextActionAlternative {
   return { action: "replan", guidance: REPLAN_GUIDANCE };
 }
@@ -115,7 +115,7 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   },
   retrospect: { expectedStatuses: ["tested"], nextStatus: "retrospected" },
   closeout: { expectedStatuses: ["retrospected"], nextStatus: "closed" },
-  replan: { expectedStatuses: ["planned", "developed"], nextStatus: "planned" },
+  replan: { expectedStatuses: ["planned", "developed", "reviewed", "tested"], nextStatus: "planned" },
 };
 
 // ── 单重 guard ──────────────────────────────────────────────
@@ -299,6 +299,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         action: "test",
         guidance: `review gate 通过。下一步：跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
+        alternatives: [replanAlternative()],
       };
     }
     case "test": {
@@ -307,12 +308,14 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           action: "retrospect",
           guidance:
             "所有 testCase 已 passed。下一步：写复盘报告（retrospect.md），完成后调 cw(retrospect) 提交路径。",
+          alternatives: [replanAlternative()],
         };
       }
       return {
         action: "test",
         guidance: `test 阶段进行中，仍有 testCase 未 passed。继续跑剩余 testCase + 调 cw(test)。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
+        alternatives: [replanAlternative()],
       };
     }
     case "retrospect": {
