@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/coding-workflow",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",
   "main": "./dist/types.js",
@@ -15,6 +15,23 @@
   "exports": {
     ".": "./dist/types.js",
     "./dispatch": "./dist/dispatch.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhushanwen321/coding-workflow.git"
+  },
+  "homepage": "https://github.com/zhushanwen321/coding-workflow#readme",
+  "bugs": {
+    "url": "https://github.com/zhushanwen321/coding-workflow/issues"
   },
   "scripts": {
     "build": "tsc",

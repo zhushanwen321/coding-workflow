@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # push v0.0.1 形式的 tag 触发发布
+  workflow_dispatch: # Actions 页面手动触发
+    inputs:
+      dry-run:
+        description: '空跑（只构建+测试，不发布）'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # npm publish --provenance 需要此权限
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: npm test
+
+      # 验证打包内容（CI 日志可见，便于排查多打包/漏打包问题）
+      - run: npm pack --dry-run
+
+      - name: Publish to npm
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
