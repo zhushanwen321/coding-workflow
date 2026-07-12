@@ -5,7 +5,7 @@
  *   - 每个测试 beforeAll: git init tmp 目录 + 创建非空 commit（供 dev gate GitValidator 校验）
  *   - CW_HOME 指向 tmp 子目录，env 传递给子进程（per-cwd 隔离）
  *   - 用 spawnSync 真实 node 子进程调 dist/cli.js
- *   - 验证全链路：create → plan → dev → test → retrospect → closeout
+ *   - 验证全链路：create → plan → dev → review → test → retrospect → closeout
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -123,7 +123,7 @@ afterAll(() => {
 
 // ── E1: 全链子进程跑通 ──────────────────────────────────────
 
-describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程跑通", () => {
+describe("E1: create→plan→dev→review→test→retrospect→closeout 全链子进程跑通", () => {
   it("完整流程走通，最终 status=closed, evidence 写入", () => {
     // 1. create
     const createResult = parseStdout(
@@ -191,8 +191,25 @@ describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程
     );
     expect(devResult.status).toBe("developed");
     expect(devResult.gatePassed).toMatchObject({ dev: true });
+    // dev 全 committed 后 nextAction 指向 review（新状态机插在 dev/test 之间）
+    expect((devResult.nextAction as Record<string, unknown>).action).toBe("review");
 
-    // 4. test
+    // 4. review（需 review.md 文件，写到 .xyz-harness/<slug>/changes/review.md）
+    const reviewDir = join(workspaceDir, ".xyz-harness", "e1-full", "changes");
+    mkdirSync(reviewDir, { recursive: true });
+    const reviewPath = join(reviewDir, "review.md");
+    writeFileSync(reviewPath, "# Code Review\n\n审查通过");
+    const reviewResult = parseStdout(
+      runCli(
+        ["review", "--topicId", topicId, "--reviewPath", reviewPath],
+        env,
+      ),
+    );
+    expect(reviewResult.status).toBe("reviewed");
+    expect(reviewResult.gatePassed).toMatchObject({ review: true });
+    expect((reviewResult.nextAction as Record<string, unknown>).action).toBe("test");
+
+    // 5. test
     const testResult = parseStdout(
       runCli(
         [
@@ -211,7 +228,7 @@ describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程
     expect(testResult.status).toBe("tested");
     expect(testResult.gatePassed).toMatchObject({ test: true });
 
-    // 5. retrospect（需 retrospect.md 文件）
+    // 6. retrospect（需 retrospect.md 文件）
     const retrospectDir = join(workspaceDir, ".xyz-harness", "e1-full");
     mkdirSync(retrospectDir, { recursive: true });
     const retrospectPath = join(retrospectDir, "retrospect.md");
@@ -225,7 +242,7 @@ describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程
     expect(retroResult.status).toBe("retrospected");
     expect((retroResult.nextAction as Record<string, unknown>).action).toBe("closeout");
 
-    // 6. closeout
+    // 7. closeout
     const closeoutResult = parseStdout(
       runCli(["closeout", "--topicId", topicId], env),
     );
@@ -235,7 +252,7 @@ describe("E1: create→plan→dev→test→retrospect→closeout 全链子进程
     expect(evidence.gateHistory).toBeDefined();
     expect((evidence.gateHistory as unknown[]).length).toBeGreaterThan(0);
 
-    // 7. status 查询验证（只读子命令）
+    // 8. status 查询验证（只读子命令）
     const statusResult = parseStdout(
       runCli(["status", "--topicId", topicId], env),
     );
@@ -305,7 +322,8 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
     );
     expect(dev2.status).toBe("developed"); // 原地停留
     expect(dev2.gatePassed).toMatchObject({ dev: true }); // 全部 committed
-    expect((dev2.nextAction as Record<string, unknown>).action).toBe("test");
+    // dev 全 committed 后 nextAction 指向 review（新状态机插在 dev/test 之间）
+    expect((dev2.nextAction as Record<string, unknown>).action).toBe("review");
   });
 });
 

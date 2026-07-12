@@ -89,6 +89,13 @@ export interface RetrospectParams {
   retrospectPath?: string;
 }
 
+export interface ReviewParams {
+  action: "review";
+  topicId: string;
+  /** changes/review.md 绝对路径。 */
+  reviewPath?: string;
+}
+
 export interface CloseoutParams {
   action: "closeout";
   topicId: string;
@@ -107,6 +114,7 @@ export type CwParams =
   | DevParams
   | TestParams
   | RetrospectParams
+  | ReviewParams
   | CloseoutParams
   | ReplanParams;
 
@@ -429,6 +437,64 @@ export function handleTest(
     testProgress: updated.testCases.map((c) => ({ id: c.id, status: c.status })),
     caseResults,
   };
+}
+
+// ── handleReview ────────────────────────────────────────────
+
+/**
+ * handleReview — weak gate（文件存在 + 非空），与 handleRetrospect 同模式。
+ *
+ * 插在 dev 和 test 之间。复盘证明「不强制 = 被跳过」——review gate 用文件存在性
+ * 强制审查环节存在。reviewPath 不传时默认 .xyz-harness/<slug>/changes/review.md。
+ *
+ * gate pass → status=reviewed + gatePassed(review,true) + nextAction 指向 test。
+ * gate fail → status 不变（仍 developed）+ nextAction 指回 review retry。
+ */
+export function handleReview(
+  params: ReviewParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const path = params.reviewPath ?? "";
+  const check = fileExistsCheck(path);
+
+  let passed: boolean;
+  deps.store.transaction(() => {
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "review",
+      action: "review",
+      gate: "file-exists+non-empty",
+      result: check.result,
+      report: check.result === "fail" ? check.report : undefined,
+      progressive: false,
+    });
+    if (check.result === "pass") {
+      deps.store.updateStatus(
+        params.topicId,
+        computeNextStatus("review", topic.status),
+      );
+      deps.store.updateGatePassed(params.topicId, "review", true);
+      passed = true;
+      return;
+    }
+    passed = false;
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after review: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("review", updated),
+  };
+  if (!passed!) {
+    (result as Record<string, unknown>).mustFix = check.report;
+  }
+  return result;
 }
 
 // ── handleRetrospect ────────────────────────────────────────

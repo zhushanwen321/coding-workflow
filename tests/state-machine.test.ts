@@ -285,30 +285,18 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.action).toBe("plan");
   });
 
-  it("U11: dev 全 committed 后 → nextAction.action=test", () => {
+  it("U11: dev 全 committed 后 → nextAction.action=review", () => {
     const topic = makeTopic({
       status: "developed",
       waves: [
         { id: "W1", dependsOn: [], committed: "abc", changes: [] },
       ],
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s1",
-          steps: "steps",
-          expected: { text: "hi" },
-          executor: "agent",
-          status: "pending",
-          requiresScreenshot: false,
-          dependsOn: [],
-        },
-      ],
     });
     const na = buildNextAction("dev", topic);
-    expect(na.action).toBe("test");
-    expect(na.testCases).toBeDefined();
-    expect(na.testCases).toHaveLength(1);
+    expect(na.action).toBe("review");
+    // dev 全 committed 后 nextAction 带 waves 进度摘要（指向 review 阶段）
+    expect(na.waves).toBeDefined();
+    expect(na.waves).toHaveLength(1);
     // status=developed，replan 合法 → 作为 alternative 暴露（即使 dev 全 committed）
     expect(na.alternatives).toHaveLength(1);
     expect(na.alternatives![0].action).toBe("replan");
@@ -333,34 +321,36 @@ describe("buildNextAction（U9-U11）", () => {
 // ── 状态机全链路 status 校验 ─────────────────────────────────
 
 describe("状态机线性转换完整性", () => {
-  it("6 个 status 的线性序列合法", () => {
+  it("7 个 status 的线性序列合法", () => {
     const statuses: Status[] = [
       "created",
       "planned",
       "developed",
+      "reviewed",
       "tested",
       "retrospected",
       "closed",
     ];
     // 每个 status 对应的合法 action（非 progressive 路径）
-    const actionByStatus: Record<Status, "plan" | "dev" | "test" | "retrospect" | "closeout"> = {
+    const actionByStatus: Record<Status, "plan" | "dev" | "review" | "test" | "retrospect" | "closeout"> = {
       created: "plan",
       planned: "dev",
-      developed: "test",
+      developed: "review",
+      reviewed: "test",
       tested: "retrospect",
       retrospected: "closeout",
       closed: "closeout", // closed 是终态，仅用于穷尽
     };
 
-    for (const status of statuses.slice(0, 5)) {
+    for (const status of statuses.slice(0, 6)) {
       const action = actionByStatus[status];
       const verdict = checkLinear(action, status);
       expect(verdict.ok, `${action} from ${status} should pass`).toBe(true);
     }
   });
 
-  it("TRANSITIONS 含全部 7 个 action", () => {
-    const actions = ["create", "plan", "dev", "test", "retrospect", "closeout", "replan"];
+  it("TRANSITIONS 含全部 8 个 action", () => {
+    const actions = ["create", "plan", "dev", "review", "test", "retrospect", "closeout", "replan"];
     for (const a of actions) {
       expect(TRANSITIONS).toHaveProperty(a);
     }

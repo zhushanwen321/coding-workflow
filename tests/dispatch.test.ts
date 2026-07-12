@@ -93,6 +93,27 @@ function makeValidPlanJson(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+/**
+ * 在 developed 之后、test 之前手动注入 review gate pass（跳过文件创建）。
+ *
+ * 状态机新增 review action（插在 dev 和 test 之间）：test 的 expectedStatuses
+ * 从 ["developed", "tested"] 改为 ["reviewed", "tested"]。所以测试里调 test 前
+ * 必须先把 status 推进到 reviewed + 写一条 review pass 的 gateHistory。
+ *
+ * 直接操作 store 而非调 dispatch review（避免每个测试都建 review.md 文件）。
+ */
+function passReviewGate(store: CwStore, topicId: string): void {
+  store.updateStatus(topicId, "reviewed");
+  store.updateGatePassed(topicId, "review", true);
+  store.appendGateHistory(topicId, {
+    phase: "review",
+    action: "review",
+    gate: "file-exists+non-empty",
+    result: "pass",
+    progressive: false,
+  });
+}
+
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "cw-dispatch-test-"));
   dbPath = join(tmpDir, "cw.json");
@@ -267,6 +288,8 @@ describe("dispatch test（U22-U24c）", () => {
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
       deps,
     );
+    // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
+    passReviewGate(store, topicId);
     return { topicId, deps, store };
   }
 
@@ -364,6 +387,8 @@ describe("dispatch test（U22-U24c）", () => {
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
       deps,
     );
+    // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
+    passReviewGate(store, topicId);
 
     // 不提供 screenshotPath
     const result = dispatch(
@@ -382,7 +407,7 @@ describe("dispatch test（U22-U24c）", () => {
   });
 
   it("U24b 补充: requiresScreenshot=true 且 screenshotPath 指向存在的文件 → passed", () => {
-    const { deps } = makeDeps();
+    const { deps, store } = makeDeps();
     const createResult = dispatch(
       { action: "create", slug: "u24b-pass", objective: "obj", workspacePath: tmpDir },
       deps,
@@ -418,6 +443,8 @@ describe("dispatch test（U22-U24c）", () => {
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
       deps,
     );
+    // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
+    passReviewGate(store, topicId);
 
     const screenshotPath = join(tmpDir, "screenshot.png");
     writeFileSync(screenshotPath, "fake png content");
@@ -466,6 +493,55 @@ describe("dispatch test（U22-U24c）", () => {
         deps,
       ),
     ).not.toThrow();
+  });
+});
+
+// ── dispatch review ─────────────────────────────────────────
+
+describe("dispatch review", () => {
+  function setupDevelopedTopic(): { topicId: string; deps: ActionDeps; store: CwStore } {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "review-test", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    return { topicId, deps, store };
+  }
+
+  it("review gate pass：传存在的报告文件 → status=reviewed, nextAction=test", () => {
+    const { topicId, deps, store } = setupDevelopedTopic();
+    // 创建 review.md 文件
+    const reviewPath = join(tmpDir, "review.md");
+    writeFileSync(reviewPath, "# Code Review\n审查通过");
+
+    const result = dispatch(
+      { action: "review", topicId, reviewPath },
+      deps,
+    );
+
+    expect(result.status).toBe("reviewed");
+    expect(result.gatePassed.review).toBe(true);
+    expect(result.nextAction.action).toBe("test");
+  });
+
+  it("review gate fail：传不存在的路径 → status=developed, nextAction=review retry", () => {
+    const { topicId, deps } = setupDevelopedTopic();
+
+    const result = dispatch(
+      { action: "review", topicId, reviewPath: "/nonexistent/review.md" },
+      deps,
+    );
+
+    expect(result.status).toBe("developed");
+    expect(result.gatePassed.review).toBeFalsy();
+    expect(result.nextAction.action).toBe("review");
+    expect((result as Record<string, unknown>).mustFix).toBeDefined();
   });
 });
 
@@ -566,6 +642,8 @@ describe("dispatch replan（U25-U29）", () => {
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
       deps,
     );
+    // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
+    passReviewGate(store, topicId);
     dispatch(
       {
         action: "test",
@@ -598,6 +676,8 @@ describe("dispatch replan（U25-U29）", () => {
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
       deps,
     );
+    // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
+    passReviewGate(store, topicId);
     dispatch(
       {
         action: "test",
@@ -639,6 +719,8 @@ describe("dispatch closeout（U30）", () => {
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
       deps,
     );
+    // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
+    passReviewGate(store, topicId);
     dispatch(
       {
         action: "test",
@@ -668,6 +750,7 @@ describe("dispatch closeout（U30）", () => {
     const phases = topic!.evidence!.gateHistory.map((g) => g.phase);
     expect(phases).toContain("plan");
     expect(phases).toContain("dev");
+    expect(phases).toContain("review");
     expect(phases).toContain("test");
     expect(phases).toContain("retrospect");
     expect(phases).toContain("closeout");

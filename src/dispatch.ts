@@ -34,12 +34,14 @@ import {
   type PlanParams,
   type ReplanParams,
   type RetrospectParams,
+  type ReviewParams,
   type TestParams,
   handleCloseout,
   handleCreate,
   handleDev,
   handlePlan,
   handleReplan,
+  handleReview,
   handleRetrospect,
   handleTest,
 } from "./actions.js";
@@ -106,6 +108,8 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handlePlan(params as PlanParams, topic, deps);
     case "dev":
       return handleDev(params as DevParams, topic, deps);
+    case "review":
+      return handleReview(params as ReviewParams, topic, deps);
     case "test":
       return handleTest(params as TestParams, topic, deps);
     case "retrospect":

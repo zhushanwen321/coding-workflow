@@ -22,26 +22,29 @@ import type { GitValidator } from "./gate.js";
 // ── 状态机值对象 ────────────────────────────────────────────
 
 /**
- * lite 单轨的 6 个正向 action + replan（共 7 个）。
+ * lite 单轨的 7 个正向 action + replan（共 8 个）。
  * 砍掉 clarify / detail（mid 专属）。
+ * review 插在 dev 和 test 之间（强制审查环节，复盘证明不强制就被跳过）。
  */
 export type Action =
   | "create"
   | "plan"
   | "dev"
+  | "review"
   | "test"
   | "retrospect"
   | "closeout"
   | "replan";
 
 /**
- * lite 单轨的 6 个 status。
+ * lite 单轨的 7 个 status。
  * 砍掉 clarified / detailed（mid 专属）。
  */
 export type Status =
   | "created"
   | "planned"
   | "developed"
+  | "reviewed"
   | "tested"
   | "retrospected"
   | "closed";

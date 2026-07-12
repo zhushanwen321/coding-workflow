@@ -8,3 +8,4 @@
 export { SPEC_PROMPT } from "./spec.js";
 export { PLAN_PROMPT } from "./plan.js";
 export { EXECUTE_PROMPT } from "./execute.js";
+export { REVIEW_PROMPT } from "./review.js";

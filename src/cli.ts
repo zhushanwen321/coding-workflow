@@ -49,6 +49,7 @@ import {
   type PlanParams,
   type ReplanParams,
   type RetrospectParams,
+  type ReviewParams,
   type TestParams,
 } from "./actions.js";
 
@@ -62,6 +63,7 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
   "plan",
   "dev",
+  "review",
   "test",
   "retrospect",
   "closeout",
@@ -277,6 +279,14 @@ function buildParams(
       return params;
     }
 
+    case "review": {
+      if (!topicId) throw new Error("review 需要 --topicId");
+      const params: ReviewParams = { action: "review", topicId };
+      const rp = flag(parsed, "reviewPath");
+      if (rp) params.reviewPath = rp;
+      return params;
+    }
+
     case "retrospect": {
       if (!topicId) throw new Error("retrospect 需要 --topicId");
       const params: RetrospectParams = { action: "retrospect", topicId };
@@ -405,6 +415,7 @@ function mapExitCode(err: Error): number {
     msg.startsWith("dev 需要") ||
     msg.startsWith("test 需要") ||
     msg.startsWith("retrospect 需要") ||
+    msg.startsWith("review 需要") ||
     msg.startsWith("closeout 需要") ||
     msg.startsWith("case not found") ||
     msg.startsWith("replan append-only") ||

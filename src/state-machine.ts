@@ -24,7 +24,7 @@ import type {
   Status,
   Topic,
 } from "./types.js";
-import { SPEC_PROMPT, PLAN_PROMPT, EXECUTE_PROMPT } from "./prompts/index.js";
+import { SPEC_PROMPT, PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT } from "./prompts/index.js";
 
 // ── gate 熔断 ──────────────────────────────────────────────
 
@@ -107,8 +107,9 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     nextStatus: "developed",
     progressive: true,
   },
+  review: { expectedStatuses: ["developed"], nextStatus: "reviewed" },
   test: {
-    expectedStatuses: ["developed", "tested"],
+    expectedStatuses: ["reviewed", "tested"],
     nextStatus: "tested",
     progressive: true,
   },
@@ -198,7 +199,7 @@ export function computeNextStatus(action: Action, current: Status): Status {
  * 完成语义：
  *   - dev：全 Wave committed（≥1 个且全部 committed !== null）
  *   - test：全 testCase passed（≥1 个且全部 status === "passed"）
- *   - single-shot（plan/retrospect/closeout）：gateHistory 有该 phase 的 pass 记录
+ *   - single-shot（plan/review/retrospect/closeout）：gateHistory 有该 phase 的 pass 记录
  *   - create：永远 false（create 无 gate）
  *   - replan：永远 false（replan 无独立 gate，完成度看 dev）
  */
@@ -270,10 +271,9 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
     case "dev": {
       if (computeGatePassed("dev", topic)) {
         return {
-          action: "test",
-          guidance: `所有 Wave 已 committed。下一步：跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
+          action: "review",
+          guidance: `所有 Wave 已 committed。下一步：做 code review（审查代码质量 + 逐条核对 plan changes），产出 review.md 后调 cw(review)。\n\n${REVIEW_PROMPT}`,
           waves: waveProgress(topic),
-          testCases: testCaseProgress(topic),
           alternatives: [replanAlternative()],
         };
       }
@@ -282,6 +282,23 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         guidance: `dev 阶段进行中，仍有 Wave 未 committed。继续实现 + commit + 调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
         waves: waveProgress(topic),
         alternatives: [replanAlternative()],
+      };
+    }
+    case "review": {
+      if (!computeGatePassed("review", topic)) {
+        const fails = countConsecutiveGateFails(topic.gateHistory, "review");
+        return {
+          action: "review",
+          guidance:
+            fails >= GATE_RETRY_LIMIT
+              ? buildCircuitBreakerGuidance("review", fails)
+              : `review gate FAIL。修 mustFix 后重调 cw(review)。\n\n${REVIEW_PROMPT}`,
+        };
+      }
+      return {
+        action: "test",
+        guidance: `review gate 通过。下一步：跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
+        testCases: testCaseProgress(topic),
       };
     }
     case "test": {
