@@ -18,6 +18,7 @@ import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
 import type { TestCaseSeed, WaveSeed } from "./types.js";
+import { CwError } from "./types.js";
 
 // ── LitePlanSchema（§12 architecture，typebox 声明） ─────────
 
@@ -89,14 +90,14 @@ function assertSafeSize(obj: unknown, label: string): void {
     serialized = JSON.stringify(obj);
   } catch (e) {
     if (e instanceof RangeError) {
-      throw new Error(
+      throw new CwError(
         `invalid ${label}: deeply nested (JSON.stringify stack overflow rejected)`,
       );
     }
     throw e;
   }
   if (serialized.length > MAX_PLAN_BYTES) {
-    throw new Error(
+    throw new CwError(
       `${label} too large: ${serialized.length} bytes > ${MAX_PLAN_BYTES} (1MB limit, T2.17)`,
     );
   }
@@ -150,7 +151,7 @@ function assertAcyclicDeps(items: DepNode[], label: string): void {
         // 发现环，构造环链消息
         const cycleStart = path.indexOf(dep);
         const cycleChain = [...path.slice(cycleStart), id, dep].join("→");
-        throw new Error(
+        throw new CwError(
           `${label} 存在环形 dependsOn 依赖（cycle detected）: ${cycleChain}`,
         );
       }
@@ -180,11 +181,11 @@ function assertAcyclicDeps(items: DepNode[], label: string): void {
  */
 function assertFormat(json: unknown): void {
   if (typeof json !== "object" || json === null) {
-    throw new Error("invalid plan json: not an object");
+    throw new CwError("invalid plan json: not an object");
   }
   const format = "format" in json ? json.format : undefined;
   if (format !== "lite") {
-    throw new Error(
+    throw new CwError(
       `format mismatch: json.format="${String(format)}" but lite-only engine requires "lite" ` +
         `(tier 已砍，format 硬编码锁定)`,
     );
@@ -201,7 +202,7 @@ function assertSchema(schema: Schema, json: unknown, label: string): void {
       .map((e) => `${e.path}: ${e.message}`)
       .slice(0, MAX_SCHEMA_ERRORS)
       .join("; ");
-    throw new Error(`invalid ${label} json: ${errors}`);
+    throw new CwError(`invalid ${label} json: ${errors}`);
   }
 }
 

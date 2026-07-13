@@ -178,7 +178,7 @@ function buildTopicId(slug: string): string {
  *
  * 差异只在 phase 名、gate 名、path、pass 时的额外步骤（setArtifacts / setEvidence），
  * 通过参数 + onPass 回调收敛。onPass 在事务内、gate-pass 三联写之后执行，
- * 可通过 loadTopicInTx 拿到含本次写入的 topic（closeout 的 evidence 快照用）。
+ * 可通过 deps.store.loadTopic 拿到含本次写入的 topic（closeout 的 evidence 快照用）。
  */
 function gateAdvance(
   phase: "review" | "retrospect" | "closeout",
