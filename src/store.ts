@@ -460,6 +460,33 @@ export class CwStore {
     };
   }
 
+  /** WaveSeed → WaveRecord（初始 committed=null）。insertWaves/replaceUncommittedWaves 共用。 */
+  private waveSeedToRecord(topicId: string, w: WaveSeed): WaveRecord {
+    return {
+      topicId,
+      id: w.id,
+      dependsOn: w.dependsOn,
+      committed: null,
+      changes: w.changes ?? [],
+    };
+  }
+
+  /** TestCaseSeed → TestCaseRecord（初始 status=pending）。insertTestCases/replaceUnpassedTestCases 共用。 */
+  private testCaseSeedToRecord(topicId: string, c: TestCaseSeed): TestCaseRecord {
+    return {
+      topicId,
+      id: c.id,
+      layer: c.layer,
+      scenario: c.scenario,
+      steps: c.steps,
+      expected: c.expected,
+      executor: c.executor,
+      status: "pending",
+      requiresScreenshot: c.requiresScreenshot === true,
+      dependsOn: c.dependsOn ?? [],
+    };
+  }
+
   private mapGateHistoryRecord(r: GateHistoryRecord): GateHistoryEntry {
     return {
       id: r.id,
@@ -516,14 +543,7 @@ export class CwStore {
   insertWaves(topicId: string, waves: WaveSeed[]): void {
     this.executeWrite(() => {
       for (const w of waves) {
-        const record: WaveRecord = {
-          topicId,
-          id: w.id,
-          dependsOn: w.dependsOn,
-          committed: null,
-          changes: w.changes ?? [],
-        };
-        this.fileData!.waves.push(record);
+        this.fileData!.waves.push(this.waveSeedToRecord(topicId, w));
       }
     });
   }
@@ -542,19 +562,7 @@ export class CwStore {
   insertTestCases(topicId: string, cases: TestCaseSeed[]): void {
     this.executeWrite(() => {
       for (const c of cases) {
-        const record: TestCaseRecord = {
-          topicId,
-          id: c.id,
-          layer: c.layer,
-          scenario: c.scenario,
-          steps: c.steps,
-          expected: c.expected,
-          executor: c.executor,
-          status: "pending",
-          requiresScreenshot: c.requiresScreenshot === true,
-          dependsOn: c.dependsOn ?? [],
-        };
-        this.fileData!.testCases.push(record);
+        this.fileData!.testCases.push(this.testCaseSeedToRecord(topicId, c));
       }
     });
   }
@@ -590,13 +598,7 @@ export class CwStore {
         (w) => w.topicId !== topicId || w.committed !== null,
       );
       for (const w of waves) {
-        data.waves.push({
-          topicId,
-          id: w.id,
-          dependsOn: w.dependsOn,
-          committed: null,
-          changes: w.changes ?? [],
-        });
+        data.waves.push(this.waveSeedToRecord(topicId, w));
       }
     });
   }
@@ -612,18 +614,7 @@ export class CwStore {
         (tc) => tc.topicId !== topicId || tc.status === "passed",
       );
       for (const c of cases) {
-        data.testCases.push({
-          topicId,
-          id: c.id,
-          layer: c.layer,
-          scenario: c.scenario,
-          steps: c.steps,
-          expected: c.expected,
-          executor: c.executor,
-          status: "pending",
-          requiresScreenshot: c.requiresScreenshot === true,
-          dependsOn: c.dependsOn ?? [],
-        });
+        data.testCases.push(this.testCaseSeedToRecord(topicId, c));
       }
     });
   }
