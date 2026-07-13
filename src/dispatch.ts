@@ -25,6 +25,7 @@ import {
   type ActionResult,
   type GuardErrorCode,
   type Topic,
+  CwError,
 } from "./types.js";
 import {
   type CwParams,
@@ -47,16 +48,15 @@ import {
 } from "./actions.js";
 import { guard } from "./state-machine.js";
 
-// ── GuardError（CLI 层按 code 映射 exit code） ─────────────
+// ── GuardError（guard 拒绝，extends CwError 走 exit 1）──────
 
 /**
  * GuardError — guard 拒绝时抛出。
  *
  * code 仅 "illegal_transition"（GuardErrorCode 单值，纵深防御 guard 砍掉后只剩这一种）。
- * CLI 层捕获 GuardError 映射 exit code=1，其他 Error 映射 exit code=2（内部异常）。
- * 不要吞掉——dispatch 不 catch GuardError，原样上抛给 CLI。
+ * extends CwError，CLI 层 mapExitCode 用 instanceof CwError 统一判定 exit code=1。
  */
-export class GuardError extends Error {
+export class GuardError extends CwError {
   constructor(
     public readonly code: GuardErrorCode,
     public readonly reason: string,
@@ -93,7 +93,7 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
   const nonCreateParams = params as Exclude<CwParams, CreateParams>;
   const topic: Topic | null = deps.store.loadTopic(nonCreateParams.topicId);
   if (!topic) {
-    throw new Error(`topic not found: ${nonCreateParams.topicId}`);
+    throw new CwError(`topic not found: ${nonCreateParams.topicId}`);
   }
 
   // 单重 guard（checkLinear）。fail → throw GuardError，不吞异常。
@@ -123,7 +123,7 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       // 保留兜底防御未来新增 action 忘加 case。
       const _exhaustive: never = action;
       void _exhaustive;
-      throw new Error(`unknown action: ${String(action)}`);
+      throw new CwError(`unknown action: ${String(action)}`);
     }
   }
 }

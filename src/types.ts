@@ -245,3 +245,25 @@ export interface ActionResult {
   nextAction: NextAction;
   [key: string]: unknown;
 }
+
+// ── CwError（预期错误标记）──────────────────────────────────
+
+/**
+ * CwError — 预期错误（agent 可修正的输入/状态问题）。
+ *
+ * CLI 层 mapExitCode 按 instanceof CwError 判定 exit code=1（而非 18 条字符串前缀匹配）。
+ * GuardError extends CwError，所以 guard 拒绝也走同一条路径。
+ *
+ * 抛 CwError 的场景：参数缺失、topic not found、replan append-only 违规、
+ * JSON 解析失败、slug 重复（UNIQUE constraint）等。
+ *
+ * 不抛 CwError 的场景（保持普通 Error → exit 2 内部异常）：
+ *   - 事务后 topic 消失（不变式违反，理论上不可能）
+ *   - lock 获取失败（基础设施问题）
+ */
+export class CwError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CwError";
+  }
+}

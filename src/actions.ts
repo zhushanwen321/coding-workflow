@@ -29,6 +29,7 @@ import {
   type TestCase,
   type Topic,
   type Wave,
+  CwError,
 } from "./types.js";
 import {
   devCheck,
@@ -444,7 +445,7 @@ export function handleTest(
     for (const submission of params.cases) {
       const tc = topic.testCases.find((c) => c.id === submission.caseId);
       if (!tc) {
-        throw new Error(`case not found: ${submission.caseId}`);
+        throw new CwError(`case not found: ${submission.caseId}`);
       }
 
       const judged = testCheck(tc, submission.actual, submission.screenshotPath);
@@ -754,7 +755,7 @@ export function handleReplan(
   );
   if (violations.length > 0) {
     const mustFix = violations.map((v) => `[${v.type}] ${v.reason}`).join("\n");
-    throw new Error(
+    throw new CwError(
       `replan append-only 校验失败：已 committed/passed 的不可删改。\nmustFix:\n${mustFix}`,
     );
   }

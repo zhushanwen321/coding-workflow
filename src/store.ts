@@ -47,6 +47,7 @@ import type {
   Wave,
   WaveSeed,
 } from "./types.js";
+import { CwError } from "./types.js";
 
 const JSON_INDENT = 2;
 
@@ -361,7 +362,7 @@ export class CwStore {
         (t) => t.topicId === topic.topicId,
       );
       if (exists) {
-        throw new Error(
+        throw new CwError(
           `UNIQUE constraint failed: topic.topicId '${topic.topicId}'`,
         );
       }

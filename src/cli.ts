@@ -8,7 +8,7 @@
  *   - resolveDbPath（CW_HOME + encodeCwd 从 path-encoding.ts import）
  *   - constructActionDeps（store + git + workspacePath）
  *   - dispatch 调用 + stdout JSON 序列化
- *   - exit code 映射（0=正常, 1=GuardError/参数错误, 2=内部异常）
+ *   - exit code 映射（0=正常, 1=CwError/参数错误, 2=内部异常）
  *   - status / list 只读查询子命令（不经 dispatch，不触发状态变更）
  *
  * 设计原则：
@@ -30,7 +30,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { dispatch, GuardError } from "./dispatch.js";
+import { dispatch } from "./dispatch.js";
 import { GitValidator } from "./gate.js";
 import { encodeCwd } from "./path-encoding.js";
 import { CwStore } from "./store.js";
@@ -40,6 +40,7 @@ import {
   type ActionResult,
   type Status,
   type Topic,
+  CwError,
 } from "./types.js";
 import {
   type CwParams,
@@ -87,7 +88,7 @@ const READONLY_QUERIES = new Set(["status", "list"]);
 export function resolveDbPath(workspacePath: string, cwHome?: string): string {
   const home = cwHome ?? join(homedir(), ".cw");
   if (!isAbsolute(home)) {
-    throw new Error(`CW_HOME 必须是绝对路径，当前值: ${home}`);
+    throw new CwError(`CW_HOME 必须是绝对路径，当前值: ${home}`);
   }
   const encoded = encodeCwd(workspacePath);
   return join(home, encoded, "_cw.json");
@@ -131,7 +132,7 @@ function readJsonPayload(
   const hasFlag = fileFlag !== undefined;
 
   if (hasStdin && hasFlag) {
-    throw new Error(
+    throw new CwError(
       "同时提供 stdin 数据和 --xxx-file 参数，冲突。请只用一种方式传 JSON。",
     );
   }
@@ -142,23 +143,23 @@ function readJsonPayload(
   } else if (hasFlag) {
     const filePath = resolve(fileFlag as string);
     if (!existsSync(filePath)) {
-      throw new Error(`文件不存在: ${filePath}`);
+      throw new CwError(`文件不存在: ${filePath}`);
     }
     const stat = statSync(filePath);
     if (stat.size > MAX_FILE_SIZE_BYTES) {
-      throw new Error(
+      throw new CwError(
         `文件大小 ${(stat.size / 1024 / 1024).toFixed(1)}MB 超过限制 ${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB`,
       );
     }
     raw = readFileSync(filePath, "utf-8");
   } else {
-    throw new Error("未提供 JSON 输入（stdin 为空且未指定 --xxx-file）");
+    throw new CwError("未提供 JSON 输入（stdin 为空且未指定 --xxx-file）");
   }
 
   try {
     return JSON.parse(raw);
   } catch (e) {
-    throw new Error(
+    throw new CwError(
       `JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
@@ -191,12 +192,12 @@ function flag(parsed: ParsedArgs, camel: string): string | undefined {
  */
 function parseJsonArg(name: string, value: unknown): unknown {
   if (typeof value !== "string") {
-    throw new Error(`--${name} 需要是 JSON 字符串`);
+    throw new CwError(`--${name} 需要是 JSON 字符串`);
   }
   try {
     return JSON.parse(value);
   } catch (e) {
-    throw new Error(
+    throw new CwError(
       `--${name} JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
@@ -224,8 +225,8 @@ function buildParams(
       const slug = typeof parsed.slug === "string" ? parsed.slug : undefined;
       const objective =
         typeof parsed.objective === "string" ? parsed.objective : undefined;
-      if (!slug) throw new Error("create 需要 --slug");
-      if (!objective) throw new Error("create 需要 --objective");
+      if (!slug) throw new CwError("create 需要 --slug");
+      if (!objective) throw new CwError("create 需要 --objective");
       const params: CreateParams = { action, slug, objective };
       if (workspacePath) params.workspacePath = workspacePath;
       return params;
@@ -233,7 +234,7 @@ function buildParams(
 
     case "plan":
     case "replan": {
-      if (!topicId) throw new Error(`${action} 需要 --topicId`);
+      if (!topicId) throw new CwError(`${action} 需要 --topicId`);
       const planJson = readJsonPayload(
         flag(parsed, "planJsonFile"),
         stdinData,
@@ -252,10 +253,10 @@ function buildParams(
     }
 
     case "dev": {
-      if (!topicId) throw new Error("dev 需要 --topicId");
+      if (!topicId) throw new CwError("dev 需要 --topicId");
       const tasks = parseJsonArg("tasks", parsed.tasks);
       if (!Array.isArray(tasks)) {
-        throw new Error("dev 的 --tasks 需要是 JSON 数组");
+        throw new CwError("dev 的 --tasks 需要是 JSON 数组");
       }
       const params: DevParams = {
         action: "dev",
@@ -266,10 +267,10 @@ function buildParams(
     }
 
     case "test": {
-      if (!topicId) throw new Error("test 需要 --topicId");
+      if (!topicId) throw new CwError("test 需要 --topicId");
       const cases = parseJsonArg("cases", parsed.cases);
       if (!Array.isArray(cases)) {
-        throw new Error("test 的 --cases 需要是 JSON 数组");
+        throw new CwError("test 的 --cases 需要是 JSON 数组");
       }
       const params: TestParams = {
         action: "test",
@@ -280,7 +281,7 @@ function buildParams(
     }
 
     case "review": {
-      if (!topicId) throw new Error("review 需要 --topicId");
+      if (!topicId) throw new CwError("review 需要 --topicId");
       const params: ReviewParams = { action: "review", topicId };
       const rp = flag(parsed, "reviewPath");
       if (rp) params.reviewPath = rp;
@@ -288,7 +289,7 @@ function buildParams(
     }
 
     case "retrospect": {
-      if (!topicId) throw new Error("retrospect 需要 --topicId");
+      if (!topicId) throw new CwError("retrospect 需要 --topicId");
       const params: RetrospectParams = { action: "retrospect", topicId };
       const rp = flag(parsed, "retrospectPath");
       if (rp) params.retrospectPath = rp;
@@ -296,7 +297,7 @@ function buildParams(
     }
 
     case "closeout": {
-      if (!topicId) throw new Error("closeout 需要 --topicId");
+      if (!topicId) throw new CwError("closeout 需要 --topicId");
       const params: CloseoutParams = { action: "closeout", topicId };
       return params;
     }
@@ -305,7 +306,7 @@ function buildParams(
       // 穷尽性：Action 联合已全覆盖。default 不可达，兜底防御未来新增 action。
       const _exhaustive: never = action;
       void _exhaustive;
-      throw new Error(`unknown action: ${String(action)}`);
+      throw new CwError(`unknown action: ${String(action)}`);
     }
   }
 }
@@ -361,7 +362,7 @@ export interface ListEntry {
 export function handleStatus(topicId: string, store: CwStore): StatusOutput {
   const topic = store.loadTopic(topicId);
   if (!topic) {
-    throw new Error(`topic not found: ${topicId}`);
+    throw new CwError(`topic not found: ${topicId}`);
   }
   return topicToStatusOutput(topic);
 }
@@ -403,45 +404,11 @@ export function handleList(store: CwStore): ListEntry[] {
  *
  * 契约（plan.md Wave 4）：
  *   - exit 0 = 程序正常（gate pass/fail 都是正常返回，结果在 stdout JSON）
- *   - exit 1 = GuardError / 参数错误 / topic not found
+ *   - exit 1 = CwError（参数错误 / topic not found / guard 拒绝等预期错误）
  *   - exit 2 = 内部异常（未预期的错误）
- *
- * GuardError 明确 exit 1（guard 拒绝是业务预期路径，不是 bug）。
  */
-function mapExitCode(err: Error): number {
-  if (err instanceof GuardError) {
-    // illegal_transition → exit 1（guard 拒绝，agent 按 nextAction retry）。
-    return 1;
-  }
-  // 参数错误 / topic not found / append-only 违规 / JSON 解析失败 → exit 1（预期错误）。
-  // 用消息前缀判定预期错误：这些是 agent 可修正的输入/状态问题，非内部 bug。
-  const msg = err.message;
-  if (
-    msg.startsWith("topic not found") ||
-    msg.startsWith("create 需要") ||
-    msg.startsWith("plan 需要") ||
-    msg.startsWith("replan 需要") ||
-    msg.startsWith("dev 需要") ||
-    msg.startsWith("test 需要") ||
-    msg.startsWith("retrospect 需要") ||
-    msg.startsWith("review 需要") ||
-    msg.startsWith("closeout 需要") ||
-    msg.startsWith("case not found") ||
-    msg.startsWith("replan append-only") ||
-    msg.includes("需要 --") ||
-    msg.includes("JSON 解析失败") ||
-    msg.includes("需要是 JSON") ||
-    msg.startsWith("未提供 JSON 输入") ||
-    msg.startsWith("同时提供 stdin") ||
-    msg.startsWith("文件不存在") ||
-    msg.startsWith("文件大小") ||
-    msg.startsWith("未知 action") ||
-    msg.startsWith("CW_HOME")
-  ) {
-    return 1;
-  }
-  // 其他未预期错误 → exit 2（内部异常）。
-  return 2;
+export function mapExitCode(err: Error): number {
+  return err instanceof CwError ? 1 : 2;
 }
 
 // ── main ─────────────────────────────────────────────────────
