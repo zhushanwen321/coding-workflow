@@ -166,6 +166,71 @@ function buildTopicId(slug: string): string {
   return `cw-${date}-${slug}`;
 }
 
+// ── gateAdvance（file-gate 深函数）─────────────────────────
+
+/**
+ * gateAdvance — 吸收 file-gate handler 的共同骨架。
+ *
+ * review / retrospect / closeout 三个 handler 共享同一套编排：
+ *   fileExistsCheck → transaction{ appendGateHistory + if pass{ updateStatus + updateGatePassed + onPass } }
+ *   → loadTopic reload → buildNextAction → mustFix 装配。
+ *
+ * 差异只在 phase 名、gate 名、path、pass 时的额外步骤（setArtifacts / setEvidence），
+ * 通过参数 + onPass 回调收敛。onPass 在事务内、gate-pass 三联写之后执行，
+ * 可通过 loadTopicInTx 拿到含本次写入的 topic（closeout 的 evidence 快照用）。
+ */
+function gateAdvance(
+  phase: "review" | "retrospect" | "closeout",
+  gateName: string,
+  path: string,
+  topicId: string,
+  topic: Topic,
+  deps: ActionDeps,
+  onPass?: () => void,
+): ActionResult {
+  const check = fileExistsCheck(path);
+
+  let passed: boolean;
+  deps.store.transaction(() => {
+    deps.store.appendGateHistory(topicId, {
+      phase,
+      action: phase,
+      gate: gateName,
+      result: check.result,
+      report: check.result === "fail" ? check.report : undefined,
+      progressive: false,
+    });
+    if (check.result === "fail") {
+      passed = false;
+      return;
+    }
+    deps.store.updateStatus(topicId, computeNextStatus(phase, topic.status));
+    deps.store.updateGatePassed(topicId, phase, true);
+    onPass?.();
+    passed = true;
+  });
+
+  const updated = deps.store.loadTopic(topicId);
+  if (!updated) {
+    throw new Error(`topic not found after ${phase}: ${topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction(phase, updated),
+  };
+  // closeout 在事务内写 evidence，updated 已含——带上供调用方使用。
+  if (updated.evidence) {
+    result.evidence = updated.evidence;
+  }
+  if (!passed!) {
+    (result as Record<string, unknown>).mustFix = check.report;
+  }
+  return result;
+}
+
 // ── handlePlan ──────────────────────────────────────────────
 
 /**
@@ -442,13 +507,10 @@ export function handleTest(
 // ── handleReview ────────────────────────────────────────────
 
 /**
- * handleReview — weak gate（文件存在 + 非空），与 handleRetrospect 同模式。
+ * handleReview — weak gate（文件存在 + 非空），委托 gateAdvance。
  *
  * 插在 dev 和 test 之间。复盘证明「不强制 = 被跳过」——review gate 用文件存在性
- * 强制审查环节存在。reviewPath 不传时默认 .xyz-harness/<slug>/changes/review.md。
- *
- * gate pass → status=reviewed + gatePassed(review,true) + nextAction 指向 test。
- * gate fail → status 不变（仍 developed）+ nextAction 指回 review retry。
+ * 强制审查环节存在。gate pass → status=reviewed + 记录 reviewPath/reviewAt artifacts。
  */
 export function handleReview(
   params: ReviewParams,
@@ -456,62 +518,29 @@ export function handleReview(
   deps: ActionDeps,
 ): ActionResult {
   const path = params.reviewPath ?? "";
-  const check = fileExistsCheck(path);
-
-  let passed: boolean;
-  deps.store.transaction(() => {
-    deps.store.appendGateHistory(params.topicId, {
-      phase: "review",
-      action: "review",
-      gate: "file-exists+non-empty",
-      result: check.result,
-      report: check.result === "fail" ? check.report : undefined,
-      progressive: false,
-    });
-    if (check.result === "pass") {
-      deps.store.updateStatus(
-        params.topicId,
-        computeNextStatus("review", topic.status),
-      );
-      deps.store.updateGatePassed(params.topicId, "review", true);
-      // 记录 review.md 路径 + 时间戳，供后续检索复盘文档。
+  return gateAdvance(
+    "review",
+    "file-exists+non-empty",
+    path,
+    params.topicId,
+    topic,
+    deps,
+    () => {
       deps.store.setArtifacts(params.topicId, {
         reviewPath: path,
         reviewAt: new Date().toISOString(),
       });
-      passed = true;
-      return;
-    }
-    passed = false;
-  });
-
-  const updated = deps.store.loadTopic(params.topicId);
-  if (!updated) {
-    throw new Error(`topic not found after review: ${params.topicId}`);
-  }
-
-  const result: ActionResult = {
-    topicId: params.topicId,
-    status: updated.status,
-    gatePassed: updated.gatePassed,
-    nextAction: buildNextAction("review", updated),
-  };
-  if (!passed!) {
-    (result as Record<string, unknown>).mustFix = check.report;
-  }
-  return result;
+    },
+  );
 }
 
 // ── handleRetrospect ────────────────────────────────────────
 
 /**
- * handleRetrospect — weak gate（文件存在 + 非空）。
+ * handleRetrospect — weak gate（文件存在 + 非空），委托 gateAdvance。
  *
- * gate fail 语义：status 不变（仍 tested），gateHistory append fail，
- * gatePassed.retrospect 不设，nextAction 指回 retrospect retry。
- *
- * progressive 标记：retrospect 在 TRANSITIONS 里非 progressive（expectedStatuses=["tested"]，
- * nextStatus="retrospected"），但 gate 可多次重试（gate fail 时 status 不变，停在 tested 反复调）。
+ * gate pass → status=retrospected + 记录 retrospectPath/retrospectAt artifacts。
+ * gate fail → status 不变（仍 tested）+ nextAction 指回 retry。
  */
 export function handleRetrospect(
   params: RetrospectParams,
@@ -519,123 +548,56 @@ export function handleRetrospect(
   deps: ActionDeps,
 ): ActionResult {
   const path = params.retrospectPath ?? "";
-  const check = fileExistsCheck(path);
-
-  let passed: boolean;
-  deps.store.transaction(() => {
-    deps.store.appendGateHistory(params.topicId, {
-      phase: "retrospect",
-      action: "retrospect",
-      gate: "file-exists+non-empty",
-      result: check.result,
-      report: check.result === "fail" ? check.report : undefined,
-      progressive: false,
-    });
-    if (check.result === "pass") {
-      deps.store.updateStatus(
-        params.topicId,
-        computeNextStatus("retrospect", topic.status),
-      );
-      deps.store.updateGatePassed(params.topicId, "retrospect", true);
-      // 记录 retrospect.md 路径 + 时间戳，供后续检索复盘文档。
+  return gateAdvance(
+    "retrospect",
+    "file-exists+non-empty",
+    path,
+    params.topicId,
+    topic,
+    deps,
+    () => {
       deps.store.setArtifacts(params.topicId, {
         retrospectPath: path,
         retrospectAt: new Date().toISOString(),
       });
-      passed = true;
-      return;
-    }
-    passed = false;
-  });
-
-  const updated = deps.store.loadTopic(params.topicId);
-  if (!updated) {
-    throw new Error(`topic not found after retrospect: ${params.topicId}`);
-  }
-
-  const result: ActionResult = {
-    topicId: params.topicId,
-    status: updated.status,
-    gatePassed: updated.gatePassed,
-    nextAction: buildNextAction("retrospect", updated),
-  };
-  if (!passed!) {
-    (result as Record<string, unknown>).mustFix = check.report;
-  }
-  return result;
+    },
+  );
 }
 
 // ── handleCloseout ──────────────────────────────────────────
 
 /**
- * handleCloseout — 终态归档 + evidence 填充（含 gateHistory 快照）。
+ * handleCloseout — 终态归档 + evidence 填充，委托 gateAdvance。
  *
- * gate pass → status=closed（终态不可逆）+ gatePassed(closeout,true) + gateHistory(pass)
- *   + evidence.gateHistory = 全量 gateHistory 快照（reviewer 指出不能砍，closeout 后回溯用）。
- * gate fail → status 不变 + gateHistory(fail) + nextAction 指回 closeout retry。
- *
- * closeout 的 fileExistsCheck 校验什么文件：plan.md 约束只说「retrospect/closeout gate 验文件存在」，
- * 未明确 closeout 验哪个文件。closeout 是归档动作，归档目标是 .xyz-harness/{slug}/ 目录已就绪——
- * 本轮用 topicDir 存在性作为 closeout gate（目录存在即 pass）。后续如需更细校验可补。
+ * gate pass → status=closed + onPass 回调事务内 reload 取 gateHistory 快照写入 evidence。
+ * gate 用 topicDir 存在性（归档目录就绪）。gateAdvance 返回的 result 已含 evidence
+ * （事务后 reload 的 updated.evidence）。
  */
 export function handleCloseout(
   params: CloseoutParams,
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  // closeout gate：topicDir 目录存在（归档目标就绪）。
-  // 比 retrospect 的单文件校验弱，但 closeout 的实质校验（ARCHIVED 溯源等）本轮砍掉，只留目录存在。
-  const check = fileExistsCheck(topic.topicDir);
-
-  let passed: boolean;
-  deps.store.transaction(() => {
-    deps.store.appendGateHistory(params.topicId, {
-      phase: "closeout",
-      action: "closeout",
-      gate: "topicDir-exists",
-      result: check.result,
-      report: check.result === "fail" ? check.report : undefined,
-      progressive: false,
-    });
-    if (check.result === "fail") {
-      passed = false;
-      return;
-    }
-    deps.store.updateStatus(
-      params.topicId,
-      computeNextStatus("closeout", topic.status),
-    );
-    deps.store.updateGatePassed(params.topicId, "closeout", true);
-
-    // 事务内 reload：evidence.gateHistory 含全量历史（含本次 closeout pass 记录）。
-    const fresh = deps.store.loadTopic(params.topicId);
-    if (!fresh) {
-      throw new Error(`topic not found after closeout: ${params.topicId}`);
-    }
-    const evidence: Evidence = {
-      closedAt: new Date().toISOString(),
-      gateHistory: fresh.gateHistory,
-    };
-    deps.store.setEvidence(params.topicId, evidence);
-    passed = true;
-  });
-
-  const updated = deps.store.loadTopic(params.topicId);
-  if (!updated) {
-    throw new Error(`topic not found after closeout: ${params.topicId}`);
-  }
-
-  const result: ActionResult = {
-    topicId: params.topicId,
-    status: updated.status,
-    gatePassed: updated.gatePassed,
-    evidence: updated.evidence,
-    nextAction: buildNextAction("closeout", updated),
-  };
-  if (!passed!) {
-    (result as Record<string, unknown>).mustFix = check.report;
-  }
-  return result;
+  return gateAdvance(
+    "closeout",
+    "topicDir-exists",
+    topic.topicDir,
+    params.topicId,
+    topic,
+    deps,
+    () => {
+      // 事务内 reload：evidence.gateHistory 含全量历史（含本次 closeout pass 记录）。
+      const fresh = deps.store.loadTopic(params.topicId);
+      if (!fresh) {
+        throw new Error(`topic not found after closeout: ${params.topicId}`);
+      }
+      const evidence: Evidence = {
+        closedAt: new Date().toISOString(),
+        gateHistory: fresh.gateHistory,
+      };
+      deps.store.setEvidence(params.topicId, evidence);
+    },
+  );
 }
 
 // ── handleReplan ────────────────────────────────────────────
