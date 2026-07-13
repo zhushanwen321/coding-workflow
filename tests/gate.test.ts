@@ -466,9 +466,11 @@ describe("planCheck 测试分层强制（mock + real 各≥1）", () => {
 
 describe("P1: devCheck 文件覆盖校验", () => {
   let initialCommit: string;
+  let validator: GitValidator;
 
   beforeEach(() => {
     initialCommit = setupGitRepo(tmpDir);
+    validator = new GitValidator(tmpDir);
   });
 
   it("commit 改了 plan 外文件 → extraFiles 包含该文件", () => {
@@ -496,7 +498,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W1", topic);
+    const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true);
     expect(result.extraFiles).toBeDefined();
     expect(result.extraFiles).toContain("src/utils.ts");
@@ -527,7 +529,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W1", topic);
+    const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true);
     // extraFiles 应为 undefined 或空数组
     if (result.extraFiles !== undefined) {
@@ -573,7 +575,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W1", topic);
+    const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true);
     expect(result.extraFiles).toBeDefined();
     expect(result.extraFiles).toContain("src/extra.ts");
@@ -605,7 +607,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W-nonexistent", topic);
+    const result = devCheck(validator, commitHash, "W-nonexistent", topic);
     expect(result.valid).toBe(true);
     expect(result.extraFiles).toBeUndefined();
   });
@@ -614,7 +616,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
     const commitHash = commitFile(tmpDir, "src/any.ts", "export const a = 1;", "add any");
 
     // 不传 waveId 和 topic，模拟旧版调用
-    const result = devCheck(commitHash, tmpDir);
+    const result = devCheck(validator, commitHash);
     expect(result.valid).toBe(true);
     expect(result.extraFiles).toBeUndefined();
   });
@@ -643,7 +645,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W1", topic);
+    const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true);
     expect(result.extraFiles).toBeUndefined();
   });
@@ -686,7 +688,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W1", topic);
+    const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true);
     expect(result.extraFiles).toBeDefined();
     expect(result.extraFiles).toContain("src/config.ts");
@@ -715,7 +717,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck("nonexistent000000000000000000000000000000000000", tmpDir, "W1", topic);
+    const result = devCheck(validator, "nonexistent000000000000000000000000000000000000", "W1", topic);
     expect(result.valid).toBe(false);
     expect(result.extraFiles).toBeUndefined();
   });
@@ -744,7 +746,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gatePassed: {},
     };
 
-    const result = devCheck(commitHash, tmpDir, "W1", topic);
+    const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true); // 宽松模式：有 extraFiles 不 fail
     expect(result.extraFiles).toContain("src/extra.ts");
   });

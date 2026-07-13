@@ -2,14 +2,11 @@
  * dispatch 单测 — U19-U30（含 replan 4 拒绝路径 + gate fail 不变 + screenshot + test 渐进式）。
  *
  * 测试策略（src 设计决定）：
- *   - src 的 handleDev 调用 gate.ts 的 devCheck，devCheck 内部 `new GitValidator(workspacePath)`
- *     直接跑真实 git 子命令，不走 ActionDeps.git 注入。因此 dev gate 必须用真实 git 仓库。
+ *   - handleDev 调 devCheck(deps.git, ...)，devCheck 用注入的 GitValidator 跑真实 git 子命令。
+ *     dev gate 必须用真实 git 仓库（GitValidator.validate 调 git rev-parse/cat-file/diff-tree）。
  *   - store 用真实 CwStore 指向 tmp 文件。
  *   - git 用真实 GitValidator（在 git init 过的 tmp workspace 上跑）。
  *   - fileExistsCheck (retrospect/closeout) 用 tmp 文件真实验证。
- *
- * 注：ActionDeps.git 字段在 src 中实际未被任何 handler 使用（devCheck 自建 GitValidator），
- *     是 src 的设计冗余，测试中传入真实 GitValidator 即可。
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

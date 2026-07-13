@@ -338,7 +338,7 @@ export function handleDev(
   const taskResults = params.tasks.map((task) => ({
     waveId: task.waveId,
     commitHash: task.commitHash,
-    validation: devCheck(task.commitHash, deps.workspacePath, task.waveId, topic),
+    validation: devCheck(deps.git, task.commitHash, task.waveId, topic),
   }));
 
   // Step 1b: commitHash 唯一性检测（warning，不阻断 committed）。

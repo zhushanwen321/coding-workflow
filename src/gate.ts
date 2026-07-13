@@ -72,7 +72,7 @@ function isENOENT(e: unknown): boolean {
  *   - 空 commit → nonEmpty:false
  */
 export class GitValidator {
-  constructor(private workspacePath: string) {}
+  constructor(readonly workspacePath: string) {}
 
   /**
    * 三项校验：repo 探测 → cat-file 存在性 → diff-tree 非空。
@@ -281,12 +281,11 @@ function extractFilesFromChanges(changes: string[]): Set<string> {
  * @param topic Topic 对象（含 waves 和 planData），可选；缺省时跳过文件覆盖校验
  */
 export function devCheck(
+  validator: GitValidator,
   commitHash: string,
-  workspacePath: string,
   waveId?: string,
   topic?: Topic,
 ): CommitValidation {
-  const validator = new GitValidator(workspacePath);
   const result = validator.validate(commitHash);
 
   // commit 校验不通过时直接返回，不做文件覆盖校验
@@ -300,7 +299,7 @@ export function devCheck(
     const diffOutput = execFileSync(
       "git",
       ["diff-tree", "--no-commit-id", "--name-only", "-r", commitHash],
-      { cwd: workspacePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      { cwd: validator.workspacePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
     const actualFiles = new Set(
       diffOutput
