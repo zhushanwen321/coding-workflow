@@ -185,6 +185,8 @@ export interface Topic {
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
   artifacts?: Artifacts;
+  /** tdd_plan 阶段从 test.json 写入的项目级测试执行配置。 */
+  testRunner?: TestRunnerConfig;
 }
 
 // ── DAO seed 类型（plan.json 解析后写入 store 的输入形态） ─────

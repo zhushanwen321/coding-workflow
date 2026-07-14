@@ -963,6 +963,172 @@ describe("dispatch tdd_plan", () => {
   });
 });
 
+// ── dispatch tdd_plan + testRunner 存储 + 红灯校验 ──────────
+
+describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
+  function setupPlannedTopic(): { topicId: string; deps: ActionDeps; store: CwStore } {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "tdd-runner-test", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    return { topicId, deps, store };
+  }
+
+  it("含 testRunner 的 test.json → topic.testRunner 被存储", () => {
+    const { topicId, deps, store } = setupPlannedTopic();
+    const testJson = {
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "expected-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "real-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
+    };
+    const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
+
+    expect(result.status).toBe("tdd_inited");
+    expect(result.gatePassed.tdd_plan).toBe(true);
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testRunner).toBeDefined();
+    expect(topic!.testRunner!.mode).toBe("nodejs");
+    expect(topic!.testRunner!.command).toBe("npx vitest run");
+  });
+
+  it("testRunner + redCheck=true + 测试命令 exit 1 → 红灯确认, 不报 mustFix", () => {
+    const { topicId, deps, store } = setupPlannedTopic();
+    // 测试命令 exit 1（模拟测试失败）→ redLightCheck redLight=true（红灯确认）→ 无 warning。
+    const testJson = {
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "expected-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          redCheck: true,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "real-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ],
+      testRunner: { mode: "nodejs", command: 'node -e "process.exit(1)"' },
+    };
+    const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
+
+    // status 仍正常流转到 tdd_inited（红灯校验失败不阻断流转）
+    expect(result.status).toBe("tdd_inited");
+    expect(result.gatePassed.tdd_plan).toBe(true);
+    // 红灯确认 → 没有 mustFix warning
+    expect((result as Record<string, unknown>).mustFix).toBeUndefined();
+
+    // testRunner 仍被存储
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testRunner!.command).toBe('node -e "process.exit(1)"');
+  });
+
+  it("testRunner + redCheck=true + 测试命令 exit 0（意外通过）→ mustFix 含红灯校验 warning, status 仍流转", () => {
+    const { topicId, deps, store } = setupPlannedTopic();
+    // 测试命令 exit 0（模拟测试意外通过）→ redLightCheck redLight=false → warning。
+    const testJson = {
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "expected-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          redCheck: true,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "real-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ],
+      testRunner: { mode: "nodejs", command: 'node -e "process.exit(0)"' },
+    };
+    const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
+
+    // status 仍正常流转到 tdd_inited（红灯校验失败不阻断流转，只 warning）
+    expect(result.status).toBe("tdd_inited");
+    expect(result.gatePassed.tdd_plan).toBe(true);
+    // 红灯校验失败 → mustFix 含 warning（不阻断但提示 agent）
+    const mustFix = (result as Record<string, unknown>).mustFix;
+    expect(mustFix).toBeDefined();
+    expect(String(mustFix)).toMatch(/红灯校验未通过/);
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.status).toBe("tdd_inited");
+  });
+
+  it("无 testRunner（agent 模式）+ redCheck=true → 不跑红灯校验, 无 mustFix", () => {
+    const { topicId, deps } = setupPlannedTopic();
+    const testJson = {
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "expected-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          redCheck: true,
+        },
+        {
+          id: "E2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "real-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ],
+      // 不配 testRunner → agent 自己负责红灯，engine 不跑 redLightCheck
+    };
+    const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
+
+    expect(result.status).toBe("tdd_inited");
+    expect(result.gatePassed.tdd_plan).toBe(true);
+    // 无 testRunner → 不跑红灯校验 → 无 mustFix
+    expect((result as Record<string, unknown>).mustFix).toBeUndefined();
+  });
+});
+
 // ── dispatch replan --test ──────────────────────────────────
 
 describe("dispatch replan --test（testCases 更新）", () => {

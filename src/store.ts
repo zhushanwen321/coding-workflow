@@ -44,6 +44,7 @@ import type {
   Status,
   TestCase,
   TestCaseSeed,
+  TestRunnerConfig,
   Topic,
   Wave,
   WaveSeed,
@@ -80,6 +81,7 @@ interface TopicRecord {
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
   artifacts?: Artifacts;
+  testRunner?: TestRunnerConfig;
 }
 
 interface WaveRecord {
@@ -381,6 +383,7 @@ export class CwStore {
         gatePassed: topic.gatePassed,
         evidence: topic.evidence,
         artifacts: topic.artifacts,
+        testRunner: topic.testRunner,
       };
       this.fileData!.topics.push(record);
     });
@@ -436,6 +439,7 @@ export class CwStore {
       gatePassed: topic.gatePassed ?? {},
       evidence: topic.evidence,
       artifacts: topic.artifacts,
+      testRunner: topic.testRunner,
     };
   }
 
@@ -545,6 +549,20 @@ export class CwStore {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
       if (topic) {
         topic.artifacts = { ...topic.artifacts, ...patch };
+      }
+    });
+  }
+
+  /**
+   * 写入 topic 的测试执行器配置（testRunner）。
+   * tdd_plan 阶段从 test.json 解析后调用，供 test 阶段的 runTestRunner / 红灯校验复用。
+   * 整体覆盖语义（与 setArtifacts 的 merge 不同）：testRunner 是单一配置对象，整体替换。
+   */
+  setTestRunner(topicId: string, config: TestRunnerConfig): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (topic) {
+        topic.testRunner = config;
       }
     });
   }

@@ -346,6 +346,20 @@ describe("redLightCheck", () => {
     expect(result.reason.length).toBeGreaterThan(0);
     expect(result.reason.toLowerCase()).toMatch(/spawn|fail|error/);
   });
+
+  // timeout 分支验证：redLightCheck 的 timeout 是硬编码 30s，真等 30s 会让单测变慢，
+  // 所以这里用 it.skip 占位 + 注释说明 timeout 分支的正确预期。
+  //
+  // timeout 时 execFileSync 抛出异常 status=null（非数字）、killed=true、signal=SIGTERM。
+  // 修复前：getExitCode 返回 -1，-1 !== 127（非 ENOENT），被误判成 exit≠0 → redLight=true（BUG）。
+  // 修复后：catch 先判 isTimeoutKilled(e.killed===true)，timeout → redLight=false + reason 含 "timeout"。
+  //
+  // 若要实测，取消下面的 .skip 并等 30s（命令 sleep 35 必然触发 30s timeout）：
+  it.skip("timeout（命令超过 30s）→ redLight=false + reason 含 timeout（默认跳过：需等 30s）", () => {
+    const result = redLightCheck("sleep 35", tmpDir);
+    expect(result.redLight).toBe(false);
+    expect(result.reason).toContain("timeout");
+  });
 });
 
 // ── runTestRunner（按 TestRunnerConfig 执行测试） ───────────

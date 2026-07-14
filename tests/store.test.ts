@@ -264,6 +264,70 @@ describe("setArtifacts merge 语义", () => {
   });
 });
 
+// ── DAO: setTestRunner ──────────────────────────────────────
+
+describe("setTestRunner", () => {
+  it("写入 testRunner → loadTopic 读回 mode/command 正确", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.setTestRunner("cw-test-topic", {
+        mode: "nodejs",
+        command: "npx vitest run",
+      });
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testRunner).toBeDefined();
+    expect(topic!.testRunner!.mode).toBe("nodejs");
+    expect(topic!.testRunner!.command).toBe("npx vitest run");
+  });
+
+  it("custom 模式 → 读回 mode/path 正确", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.setTestRunner("cw-test-topic", {
+        mode: "custom",
+        path: ".cw/run-tests.sh",
+      });
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testRunner!.mode).toBe("custom");
+    expect(topic!.testRunner!.path).toBe(".cw/run-tests.sh");
+  });
+
+  it("未 set testRunner → loadTopic 读回 undefined（agent 模式）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testRunner).toBeUndefined();
+  });
+
+  it("跨实例 reload（新 CwStore）→ testRunner 持久化到磁盘", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() => {
+      store.setTestRunner("cw-test-topic", {
+        mode: "python",
+        command: "python -m pytest",
+        cwd: "tests",
+      });
+    });
+
+    // 新 store 实例（模拟进程重启后 reload）
+    const reloaded = new CwStore(dbPath);
+    const topic = reloaded.loadTopic("cw-test-topic");
+    expect(topic!.testRunner!.mode).toBe("python");
+    expect(topic!.testRunner!.command).toBe("python -m pytest");
+    expect(topic!.testRunner!.cwd).toBe("tests");
+  });
+});
+
 // ── DAO: setEvidence gateHistory 快照 ───────────────────────
 
 describe("setEvidence gateHistory 快照", () => {

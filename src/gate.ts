@@ -290,9 +290,14 @@ export interface RedLightResult {
  * TDD 红灯阶段：agent 写了测试但还没写实现，测试应该失败。
  *   - exit code !== 0 → redLight=true（红灯确认，符合预期）
  *   - exit code === 0 → redLight=false（测试已通过，不是红灯，TDD 违规——可能 agent 提前写了实现）
+ *   - timeout（30s）→ redLight=false（测试还没跑完，无法确认红灯，不算违规也不算确认）
  *
  * spawn 异常（命令不存在、权限错误等基础设施问题）返回 redLight=false + reason，
  * 不抛错——交给上层判定（区分「测试通过了」和「测试根本跑不起来」）。
+ *
+ * timeout 误判修复：execFileSync timeout 时抛出的异常 status=null（非数字），
+ * getExitCode 返回 -1，若不先拦会被当成 exit code !== 0 误判成红灯。
+ * 所以 catch 里先检查 isTimeoutKilled（e.killed === true），timeout 时返回 redLight=false。
  *
  * 「命令不存在」的识别：shell 模式下 execFileSync 不会抛 ENOENT（shell 本身存在），
  * 而是返回 exit code 127（POSIX 约定的 command-not-found）。所以这里同时检测
@@ -321,6 +326,16 @@ export function redLightCheck(testCommand: string, cwd: string): RedLightResult 
       reason: `测试意外通过（exit code 0），TDD 红灯阶段要求测试失败：${testCommand}`,
     };
   } catch (e) {
+    // timeout → 不是红灯（测试可能还没跑完，无法确认红灯）。
+    // execFileSync timeout 时 Node 发 SIGTERM 杀子进程，抛出的异常 status=null（非数字），
+    // getExitCode 返回 -1。若不先拦 timeout，会被下面的 exit code !== 0 分支误判成红灯。
+    // 特征：e.killed === true（execFileSync 标记被 kill），且 e.signal === "SIGTERM"。
+    if (isTimeoutKilled(e)) {
+      return {
+        redLight: false,
+        reason: `测试执行超时（30s timeout），无法确认红灯：${testCommand}`,
+      };
+    }
     // spawn 异常（命令不存在等）→ 不是真正的「测试失败」，返回 redLight=false。
     if (isENOENT(e) || getExitCode(e) === EXIT_COMMAND_NOT_FOUND) {
       return {
@@ -335,6 +350,22 @@ export function redLightCheck(testCommand: string, cwd: string): RedLightResult 
       reason: `测试如期失败（exit code ${exitCode}），红灯确认。`,
     };
   }
+}
+
+/**
+ * 判断 execFileSync 抛出的异常是否是 timeout kill。
+ *
+ * execFileSync 设了 timeout 后，超时 Node 会向子进程发 SIGTERM（默认 killSignal），
+ * 然后抛出异常，其特征：killed === true（execFileSync 自己打的标记，表示因 timeout 被杀），
+ * signal === "SIGTERM"。此时 status 通常为 null（进程没正常退出，拿不到 exit code）。
+ *
+ * 单看 signal === "SIGTERM" 不够（测试框架自己可能发 SIGTERM）；killed === true 是
+ * execFileSync 专属标记，只有 timeout/killSignal 触发时才为 true，足以区分。
+ */
+function isTimeoutKilled(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  if (!("killed" in e)) return false;
+  return (e as { killed: unknown }).killed === true;
 }
 
 /// 从 execFileSync 抛出的异常里提取 status/exit code（失败时返回 -1）。

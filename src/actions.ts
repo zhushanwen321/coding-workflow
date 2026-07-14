@@ -25,6 +25,7 @@ import {
   devCheck,
   fileExistsCheck,
   planCheck,
+  redLightCheck,
   tddPlanCheck,
   testCheck,
 } from "./gate.js";
@@ -338,16 +339,22 @@ export function handlePlan(
 /**
  * handleTddPlan — test.json gate + testCases 写入 + 状态流转（planned → tdd_inited）。
  *
- * 数据流：tddPlanCheck(testJson) → 事务{ pass: insertTestCases + updateStatus(tdd_inited)
- *   + gatePassed(tdd_plan,true) + gateHistory(pass)
- *   | fail: gateHistory(fail)，status 不变（仍 planned） } → buildNextAction("tdd_plan")。
+ * 数据流：tddPlanCheck(testJson) → 事务{ pass: insertTestCases + (可选)setTestRunner
+ *   + updateStatus(tdd_inited) + gatePassed(tdd_plan,true) + gateHistory(pass)
+ *   | fail: gateHistory(fail)，status 不变（仍 planned） }
+ *   → 事务外对 redCheck=true 的 testCase 跑 redLightCheck（仅当配置了 testRunner）
+ *   → buildNextAction("tdd_plan")。
+ *
+ * 红灯校验（事务外）：testRunner 存在时，对 redCheck=true 的 testCase 跑测试命令，
+ * 确认测试如期失败（红灯）。失败（非红灯）只作为 warning 写入 result.mustFix，不阻断
+ * status 流转——红灯校验是「锦上添花」的机器验证，失败可能只是 testRunner 配置问题，
+ * agent 看到 mustFix 可以选择修测试或忽略。
  *
  * gate fail 语义：status 不变（仍 planned），gateHistory append fail，
  * nextAction 指回 tdd_plan retry。
  *
- * 简化说明（TODO）：当前 tdd_plan gate 只做结构校验（tddPlanCheck）。
- * 红灯校验（对 redCheck=true 的 testCase 跑 redLightCheck 确认测试如期失败）作为可选项，
- * 后续完善——需要知道测试命令（testRunner）后才能跑，本阶段先不实现。
+ * 约束：redLightCheck 调 execFileSync（跑外部命令），必须在事务外执行——
+ * execFileSync 的耗时不可控，放在 JSON 事务里会延长锁持有时间。
  *
  * 失败路径：
  *   - tddPlanCheck fail → status 不变 + gateHistory fail（exit 0，agent 按 nextAction retry）
@@ -376,9 +383,12 @@ export function handleTddPlan(
       return;
     }
     // gate pass：testCases 写入 + 状态流转到 tdd_inited。
-    // TODO: 对 redCheck=true 的 testCase 跑 redLightCheck（红灯校验），需 testRunner 提供测试命令。
     const parsed = check.parsed!;
     deps.store.insertTestCases(params.topicId, parsed.testCases);
+    // 存储项目级 testRunner 配置（若 test.json 提供），供 test 阶段 runTestRunner 和红灯校验复用。
+    if (parsed.testRunner) {
+      deps.store.setTestRunner(params.topicId, parsed.testRunner);
+    }
     deps.store.updateStatus(
       params.topicId,
       computeNextStatus("tdd_plan", topic.status),
@@ -394,7 +404,7 @@ export function handleTddPlan(
     passed = true;
   });
 
-  // 重新 load 拿最新 topic（testCases/status/gateHistory 已变）。
+  // 重新 load 拿最新 topic（testCases/testRunner/status/gateHistory 已变）。
   const updated = deps.store.loadTopic(params.topicId);
   if (!updated) {
     throw new Error(`topic not found after tdd_plan: ${params.topicId}`);
@@ -408,8 +418,56 @@ export function handleTddPlan(
   };
   if (!passed!) {
     (result as Record<string, unknown>).mustFix = check.report;
+    return result;
+  }
+
+  // 事务外：gate pass 后，对 redCheck=true 的 testCase 跑红灯校验（仅当配置了 testRunner）。
+  // 不改变 status（已是 tdd_inited），红灯校验失败只作为 warning 写入 mustFix。
+  const redWarnings = runRedLightVerification(updated);
+  if (redWarnings.length > 0) {
+    (result as Record<string, unknown>).mustFix = redWarnings.join("\n");
   }
   return result;
+}
+
+/**
+ * 红灯校验辅助：对 topic 中 redCheck=true 的 testCase 跑测试命令确认红灯。
+ *
+ * 命令来源：topic.testRunner（tdd_plan 阶段写入）。
+ *   - nodejs/python/java 模式：用 testRunner.command，cwd 解析为 join(workspacePath, testRunner.cwd ?? ".")
+ *   - custom 模式：用 `bash testRunner.path`，cwd = workspacePath
+ * 没配 testRunner（agent 模式）→ 跳过（agent 自己负责红灯），返回空数组。
+ *
+ * 返回非红灯的 reason 列表（warning），调用方拼入 mustFix。空数组 = 全部红灯确认或无需校验。
+ */
+function runRedLightVerification(topic: Topic): string[] {
+  if (!topic.testRunner) return [];
+  const redCases = topic.testCases.filter((c) => c.redCheck === true);
+  if (redCases.length === 0) return [];
+
+  const config = topic.testRunner;
+  let cmd: string | undefined;
+  let cwd: string;
+  if (config.mode === "custom") {
+    if (!config.path) return [];
+    cmd = `bash ${config.path}`;
+    cwd = topic.workspacePath;
+  } else {
+    if (!config.command) return [];
+    cmd = config.command;
+    cwd = config.cwd
+      ? join(topic.workspacePath, config.cwd)
+      : topic.workspacePath;
+  }
+
+  const failures: string[] = [];
+  const redResult = redLightCheck(cmd, cwd);
+  if (!redResult.redLight) {
+    failures.push(
+      `红灯校验未通过（${redCases.map((c) => c.id).join(", ")}）：${redResult.reason}`,
+    );
+  }
+  return failures;
 }
 
 // ── handleDev ───────────────────────────────────────────────
