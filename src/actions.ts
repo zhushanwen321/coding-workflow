@@ -40,6 +40,7 @@ import {
   computeGatePassed,
   computeNextStatus,
 } from "./state-machine.js";
+import { computeRetrospectDerived } from "./stats.js";
 import {
   type ActionDeps,
   type ActionResult,
@@ -47,6 +48,9 @@ import {
   type ClarifyRecord,
   CwError,
   type Evidence,
+  type RetrospectData,
+  type RetrospectKnownRisk,
+  type RuntimeEnv,
   type TestCase,
   type TestCaseSeed,
   type Topic,
@@ -61,6 +65,12 @@ export interface CreateParams {
   slug: string;
   objective: string;
   workspacePath?: string;
+  /** 运行环境 agent 名称（如 "Pi"、"Claude Code"），用于评估指标分组。cli 层合并 env.json/默认值后传入。 */
+  agent?: string;
+  /** 运行环境 LLM 名称（如 "GLM-5.2"），用途同 agent。 */
+  llm?: string;
+  /** cw-cli 版本号，cli 层从 package.json 自动读取后传入。 */
+  cwVersion?: string;
 }
 
 export interface ClarifyParams {
@@ -109,6 +119,12 @@ export interface RetrospectParams {
   topicId: string;
   /** changes/retrospect.md 绝对路径。 */
   retrospectPath?: string;
+  /**
+   * 结构化回顾数据（可选，与 retrospect.md 双写）。
+   * agent 填 knownRisks + processIssues，derived 由 cw 自动算并覆盖。
+   * 不提供时只存 retrospectPath（向后兼容）。
+   */
+  retrospectData?: unknown;
 }
 
 export interface ReviewParams {
@@ -149,7 +165,10 @@ export type CwParams =
 /**
  * handleCreate — 构造新 Topic 并持久化（入口 action）。
  *
- * 数据流：slug+objective → 构造 Topic → store.transaction{insertTopic} → buildNextAction。
+ * 数据流：slug+objective → 构造 Topic（含 runtimeEnv） → store.transaction{insertTopic} → buildNextAction。
+ *
+ * runtimeEnv 注入：agent/llm/cwVersion 三个字段由 CLI 层 resolveRuntimeEnv 合并后传入。
+ * 三者全缺（旧 CLI / 测试未传）时 runtimeEnv 留 undefined，保持旧 topic 兼容。
  *
  * 与旧版差异：砍掉 tier 参数（lite-only 硬编码，不再收 tier）。
  * 失败路径：slug 重复 → insertTopic 抛 UNIQUE 约束错误（propagate 给 CLI 映射 exit code）。
@@ -159,6 +178,16 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
   const workspacePath = params.workspacePath ?? deps.workspacePath;
   const topicDir = join(workspacePath, ".xyz-harness", params.slug);
 
+  // runtimeEnv：agent/llm/cwVersion 任一存在即构造（三字段通常同时出现，但容错部分缺）。
+  const runtimeEnv: RuntimeEnv | undefined =
+    params.agent || params.llm || params.cwVersion
+      ? {
+          agent: params.agent ?? "unknown",
+          llm: params.llm ?? "unknown",
+          cwVersion: params.cwVersion ?? "unknown",
+        }
+      : undefined;
+
   const topic: Topic = {
     topicId,
     slug: params.slug,
@@ -167,6 +196,7 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     topicDir,
     createdAt: new Date().toISOString(),
     status: "created",
+    runtimeEnv,
     waves: [],
     testCases: [],
     gateHistory: [],
@@ -675,7 +705,12 @@ export function handleDev(
   deps.store.transaction(() => {
     for (const t of taskResults) {
       if (t.validation.valid) {
-        deps.store.setWaveCommitted(topic.topicId, t.waveId, t.commitHash);
+        deps.store.setWaveCommitted(
+          topic.topicId,
+          t.waveId,
+          t.commitHash,
+          t.validation.changedFiles,
+        );
       }
     }
     deps.store.updateStatus(topic.topicId, nextStatus);
@@ -844,10 +879,76 @@ export function handleReview(
 // ── handleRetrospect ────────────────────────────────────────
 
 /**
- * handleRetrospect — weak gate（文件存在 + 非空），委托 gateAdvance。
+ * 校验 agent 提交的 retrospectData（轻量校验，不阻断 gate）。
  *
- * gate pass → status=retrospected + 记录 retrospectPath/retrospectAt artifacts。
+ * 只校验 knownRisks 和 processIssues 是数组 + 内部结构。derived 不校验——
+ * cw 自动算并覆盖，不信任 agent 填的 derived。
+ *
+ * 校验通过 → 返回 { knownRisks, processIssues }；失败 → 返回 { error }。
+ * 调用方（handleRetrospect）按有无 error 决定是否存储 + 是否记 warning。
+ */
+function validateRetrospectData(
+  raw: unknown,
+): { knownRisks?: RetrospectKnownRisk[]; processIssues?: string[]; error?: string } {
+  if (typeof raw !== "object" || raw === null) {
+    return { error: "retrospectData 不是对象" };
+  }
+  const obj = raw as Record<string, unknown>;
+
+  // knownRisks 校验
+  let knownRisks: RetrospectKnownRisk[] | undefined;
+  if (obj.knownRisks !== undefined) {
+    if (!Array.isArray(obj.knownRisks)) {
+      return { error: "retrospectData.knownRisks 不是数组" };
+    }
+    const validated: RetrospectKnownRisk[] = [];
+    for (let i = 0; i < obj.knownRisks.length; i++) {
+      const item = obj.knownRisks[i] as Record<string, unknown>;
+      if (!item || typeof item !== "object") {
+        return { error: `knownRisks[${i}] 不是对象` };
+      }
+      const severity = item.severity;
+      if (severity !== "high" && severity !== "medium" && severity !== "low") {
+        return { error: `knownRisks[${i}].severity 必须是 high/medium/low` };
+      }
+      if (typeof item.area !== "string" || typeof item.description !== "string") {
+        return { error: `knownRisks[${i}].area/description 必须是字符串` };
+      }
+      validated.push({
+        severity,
+        area: item.area,
+        description: item.description,
+        unverified: item.unverified === true,
+      });
+    }
+    knownRisks = validated;
+  }
+
+  // processIssues 校验
+  let processIssues: string[] | undefined;
+  if (obj.processIssues !== undefined) {
+    if (!Array.isArray(obj.processIssues)) {
+      return { error: "retrospectData.processIssues 不是数组" };
+    }
+    for (let i = 0; i < obj.processIssues.length; i++) {
+      if (typeof obj.processIssues[i] !== "string") {
+        return { error: `processIssues[${i}] 不是字符串` };
+      }
+    }
+    processIssues = obj.processIssues as string[];
+  }
+
+  return { knownRisks, processIssues };
+}
+
+/**
+ * handleRetrospect — weak gate（文件存在 + 非空）+ 可选结构化数据，委托 gateAdvance。
+ *
+ * gate pass → status=retrospected + 记录 retrospectPath/retrospectAt artifacts +
+ *   若提供 retrospectData：校验后存入 topic.retrospectData（derived 由 cw 自动算覆盖）。
  * gate fail → status 不变（仍 tested）+ nextAction 指回 retry。
+ *
+ * retrospectData 是可选增强，不阻断 gate——校验失败只记 warning，gate 仍 pass。
  */
 export function handleRetrospect(
   params: RetrospectParams,
@@ -855,7 +956,9 @@ export function handleRetrospect(
   deps: ActionDeps,
 ): ActionResult {
   const path = params.retrospectPath ?? "";
-  return gateAdvance(
+  let retrospectWarning: string | undefined;
+
+  const result = gateAdvance(
     "retrospect",
     "file-exists+non-empty",
     path,
@@ -867,8 +970,30 @@ export function handleRetrospect(
         retrospectPath: path,
         retrospectAt: new Date().toISOString(),
       });
+
+      // 结构化数据存储（可选，校验失败不阻断 gate）
+      if (params.retrospectData !== undefined) {
+        const validated = validateRetrospectData(params.retrospectData);
+        if (validated.error) {
+          retrospectWarning = `retrospectData 校验失败（已跳过存储）：${validated.error}`;
+          return;
+        }
+        const derived = computeRetrospectDerived(topic);
+        const data: RetrospectData = {
+          derived,
+          knownRisks: validated.knownRisks ?? [],
+          processIssues: validated.processIssues ?? [],
+        };
+        deps.store.setRetrospectData(params.topicId, data);
+      }
     },
   );
+
+  // gate pass 但 retrospectData 校验失败 → warning 挂 mustFix（不阻断 status）
+  if (retrospectWarning) {
+    (result as Record<string, unknown>).mustFix = retrospectWarning;
+  }
+  return result;
 }
 
 // ── handleCloseout ──────────────────────────────────────────

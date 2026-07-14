@@ -767,3 +767,38 @@ describe("clarify + adr DAO", () => {
     expect(topic!.adrs.map((a) => a.id)).toEqual(["0001", "0002"]);
   });
 });
+
+// ── runtimeEnv 持久化 ───────────────────────────────────────
+
+describe("runtimeEnv 持久化", () => {
+  it("insertTopic 带 runtimeEnv → loadTopic 读回", () => {
+    const store = makeStore();
+    const env = { agent: "Pi", llm: "GLM-5.2", cwVersion: "0.0.1" };
+    store.transaction(() =>
+      store.insertTopic(makeTopic({ topicId: "cw-env-1", runtimeEnv: env })),
+    );
+
+    const topic = store.loadTopic("cw-env-1");
+    expect(topic!.runtimeEnv).toEqual(env);
+  });
+
+  it("insertTopic 无 runtimeEnv（旧 topic）→ loadTopic 读回 undefined", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic({ topicId: "cw-env-2" })));
+
+    const topic = store.loadTopic("cw-env-2");
+    expect(topic!.runtimeEnv).toBeUndefined();
+  });
+
+  it("runtimeEnv 通过 listTopics 也能读回", () => {
+    const store = makeStore();
+    const env = { agent: "Claude Code", llm: "Sonnet-4.5", cwVersion: "1.2.3" };
+    store.transaction(() =>
+      store.insertTopic(makeTopic({ topicId: "cw-env-3", runtimeEnv: env })),
+    );
+
+    const topics = store.listTopics();
+    const topic = topics.find((t) => t.topicId === "cw-env-3");
+    expect(topic!.runtimeEnv).toEqual(env);
+  });
+});

@@ -121,6 +121,12 @@ export interface Wave {
   committed: string | null;
   changes: string[];
   priority?: Priority;
+  /**
+   * 该 wave 的 commit 实际改动的文件列表（git diff-tree --name-only）。
+   * handleDev 在 devCheck 通过后持久化。未 committed 或 diff-tree 异常时为 undefined。
+   * 用于 plan 完成度核对、有效产出率、散弹枪修改指数。
+   */
+  changedFiles?: string[];
 }
 
 export interface TestCase {
@@ -172,6 +178,62 @@ export interface Artifacts {
   reviewAt?: string;
   retrospectPath?: string;
   retrospectAt?: string;
+}
+
+// ── retrospect 结构化数据（test → closeout 之间的 retrospect 阶段） ──
+
+/**
+ * RetrospectDerived — cw 自动从 topic 派生的回顾指标。
+ *
+ * agent 不填，handleRetrospect 从 gateHistory/waves/testCases 计算。
+ * 与 stats.ts 的 computeEfficiency 共享部分计算逻辑（computeRetrospectDerived）。
+ */
+export interface RetrospectDerived {
+  totalWaves: number;
+  totalCases: number;
+  /** 全阶段 gate fail 总数。 */
+  gateFailCount: number;
+  /** dev 阶段 progressive fail 次数。 */
+  devRetryCount: number;
+  /** test 阶段 progressive fail 次数。 */
+  testRetryCount: number;
+  /** TDD 红灯校验是否 pass（gateHistory 含 tdd-red-light pass 记录）。 */
+  redLightConfirmed: boolean;
+  /** 各 phase 首次调用即 pass 的比例（0-1）。 */
+  firstTryPassRate: number;
+}
+
+/**
+ * RetrospectKnownRisk — agent 自省的已知风险。
+ *
+ * 交付时已知但未完全解决的问题/假设。用于与 post-closeout assessment 交叉比对，
+ * 算"自省准确度"——如果实际缺陷大部分没在 knownRisks 登记，说明自省流程太浅。
+ */
+export interface RetrospectKnownRisk {
+  severity: "high" | "medium" | "low";
+  /** 涉及的模块/功能区域。 */
+  area: string;
+  description: string;
+  /** 是否为未经证实的假设（待 post-closeout 验证）。 */
+  unverified: boolean;
+}
+
+/**
+ * RetrospectData — retrospect 阶段的结构化产物（与 retrospect.md 双写）。
+ *
+ * 与 clarify 阶段的 clarifyJson + ADR 双写同模式：
+ *   - retrospect.md（自由 markdown）给人读
+ *   - retrospectData（结构化 JSON）给机器读
+ *
+ * agent 只填 knownRisks + processIssues，derived 由 cw 自动算并覆盖（不信任 agent 填的 derived）。
+ */
+export interface RetrospectData {
+  /** cw 自动算（agent 不填）。 */
+  derived: RetrospectDerived;
+  /** agent 自省——本次交付中已知但未完全解决的风险。 */
+  knownRisks: RetrospectKnownRisk[];
+  /** 本次 topic 暴露的流程问题（供 quality-criteria 迭代参考）。 */
+  processIssues: string[];
 }
 
 // ── 澄清记录 + ADR（create → plan 之间的 clarify 阶段） ─────
@@ -258,6 +320,26 @@ export interface AdrRecord {
   createdAt: string;
 }
 
+/**
+ * RuntimeEnv — 运行环境元数据，评估指标的分组维度。
+ *
+ * create 时注入，后续不可变。用于跨 topic 聚合时按 agent+llm+cwVersion 分组对比——
+ * 不同 agent/LLM 组合之间没有可比性，只比较同组内不同 cwVersion 的差异。
+ *
+ * 取值优先级（cli.ts resolveRuntimeEnv 实现）：
+ *   命令行 --agent / --llm  >  ~/.cw/<encodeCwd>/env.json  >  硬编码默认（Pi / GLM-5.2）
+ *   cwVersion 始终从 package.json 自动读，不走命令行/env.json 路径。
+ *
+ * 旧 topic 兼容：已存在的 _cw.json topic 无 runtimeEnv 字段，loadTopic 时为 undefined。
+ * stats 聚合时归入 agent=unknown / llm=unknown 分组。不迁移、不报错。
+ */
+export interface RuntimeEnv {
+  agent: string;
+  llm: string;
+  /** 从 package.json 自动读取，不让人填。 */
+  cwVersion: string;
+}
+
 export interface Topic {
   topicId: string;
   slug: string;
@@ -266,12 +348,16 @@ export interface Topic {
   topicDir: string;
   createdAt: string;
   status: Status;
+  /** create 时注入的运行环境元数据（评估指标分组维度）。旧 topic 可能为 undefined。 */
+  runtimeEnv?: RuntimeEnv;
   waves: Wave[];
   testCases: TestCase[];
   gateHistory: GateHistoryEntry[];
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
   artifacts?: Artifacts;
+  /** retrospect 阶段的结构化数据（与 retrospect.md 双写）。agent 填 knownRisks + processIssues，cw 自动算 derived。 */
+  retrospectData?: RetrospectData;
   /** tdd_plan 阶段从 test.json 写入的项目级测试执行配置。 */
   testRunner?: TestRunnerConfig;
   /** clarify 阶段的澄清记录（progressive，create→plan 之间）。 */

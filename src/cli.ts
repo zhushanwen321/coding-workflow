@@ -26,7 +26,7 @@
 
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
@@ -47,12 +47,14 @@ import {
 import { dispatch } from "./dispatch.js";
 import { GitValidator } from "./gate.js";
 import { encodeCwd } from "./path-encoding.js";
+import { computeStats } from "./stats.js";
 import { CwStore } from "./store.js";
 import {
   type Action,
   type ActionDeps,
   type ActionResult,
   CwError,
+  type RuntimeEnv,
   type Status,
   type Topic,
 } from "./types.js";
@@ -91,7 +93,19 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
   "replan",
 ];
 
-const READONLY_QUERIES = new Set(["status", "list"]);
+const READONLY_QUERIES = new Set(["status", "list", "stats"]);
+
+// ── RuntimeEnv 默认值 + env.json ────────────────────────────
+
+/**
+ * 运行环境默认值——开发者的主要使用环境。
+ * 命令行 --agent / --llm 或 env.json 可覆盖。
+ */
+const DEFAULT_AGENT = "Pi";
+const DEFAULT_LLM = "GLM-5.2";
+
+/** env.json 文件名（与 _cw.json 同目录）。 */
+const ENV_JSON_NAME = "env.json";
 
 // ── resolveDbPath ────────────────────────────────────────────
 
@@ -112,6 +126,88 @@ export function resolveDbPath(workspacePath: string, cwHome?: string): string {
   }
   const encoded = encodeCwd(workspacePath);
   return join(home, encoded, "_cw.json");
+}
+
+/**
+ * env.json 路径（与 _cw.json 同目录）。
+ *
+ * env.json 是 per-cwd 的运行环境配置（agent + llm），用户手动创建/编辑。
+ * 不存在时用默认值（Pi / GLM-5.2），不自动创建。
+ */
+export function resolveEnvJsonPath(workspacePath: string, cwHome?: string): string {
+  const home = cwHome ?? join(homedir(), ".cw");
+  const encoded = encodeCwd(workspacePath);
+  return join(home, encoded, ENV_JSON_NAME);
+}
+
+/**
+ * getCwVersion — 从 package.json 自动读取 cw-cli 版本号。
+ *
+ * import.meta.url 在 dist/cli.js 时指向编译后文件，`../package.json` 是 npm 包根。
+ * 在 src/cli.ts（vitest）时指向源文件，`../package.json` 是项目根。两种场景都对。
+ * 读取失败（文件不存在/JSON 解析失败）返回 "unknown"——不阻断 create。
+ */
+export function getCwVersion(): string {
+  try {
+    const pkgPath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "package.json",
+    );
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * EnvJsonFile — env.json 的结构（agent + llm 两字段，均可选）。
+ */
+interface EnvJsonFile {
+  agent?: string;
+  llm?: string;
+}
+
+/**
+ * resolveRuntimeEnv — 合并三个来源的 agent/llm/cwVersion，构造 RuntimeEnv。
+ *
+ * 优先级：命令行参数 > env.json > 硬编码默认值（Pi / GLM-5.2）。
+ * cwVersion 始终从 package.json 自动读，不受 env.json/命令行影响。
+ *
+ * env.json 不存在或解析失败 → 静默回退默认值（不报错、不自动创建）。
+ * 设计意图：默认值覆盖 99% 场景，切环境时手动写 env.json 或传命令行参数。
+ *
+ * @param parsed  minimist 解析结果（读 --agent / --llm）
+ * @param envJsonPath  env.json 路径（resolveEnvJsonPath 计算）
+ */
+export function resolveRuntimeEnv(
+  parsed: ParsedArgs,
+  envJsonPath: string,
+): RuntimeEnv {
+  // env.json 读取（不存在/解析失败 → 空对象，静默回退）
+  const envFile: EnvJsonFile = {};
+  if (existsSync(envJsonPath)) {
+    try {
+      const raw = readFileSync(envJsonPath, "utf8");
+      const envParsed = JSON.parse(raw) as EnvJsonFile;
+      if (typeof envParsed.agent === "string") envFile.agent = envParsed.agent;
+      if (typeof envParsed.llm === "string") envFile.llm = envParsed.llm;
+    } catch {
+      // env.json 损坏 → 静默回退默认值，不阻断 create
+    }
+  }
+
+  const agent =
+    (typeof parsed.agent === "string" && parsed.agent) ||
+    envFile.agent ||
+    DEFAULT_AGENT;
+  const llm =
+    (typeof parsed.llm === "string" && parsed.llm) ||
+    envFile.llm ||
+    DEFAULT_LLM;
+
+  return { agent, llm, cwVersion: getCwVersion() };
 }
 
 // ── stdin / 文件读取 ─────────────────────────────────────────
@@ -231,12 +327,16 @@ function parseJsonArg(name: string, value: unknown): unknown {
  *   - tdd_plan：testJson 从 stdin 或 --testJsonFile 读
  *   - replan：--plan / --test 二选一或同时提供
  *     （--plan 或无 flag → stdin 读 planJson；--test → --testJsonFile 读 testJson）
+ *   - create：runtimeEnv 由 main 在调用前通过 resolveRuntimeEnv 解析后传入
+ *
+ * @param runtimeEnv  仅 create 用，其他 action 忽略此参数
  */
 export function buildParams(
   action: Action,
   parsed: ParsedArgs,
   stdinData: string,
   isStdinTTY: boolean,
+  runtimeEnv?: RuntimeEnv,
 ): CwParams {
   const topicId =
     typeof parsed.topicId === "string" ? parsed.topicId : undefined;
@@ -252,6 +352,11 @@ export function buildParams(
       if (!objective) throw new CwError("create 需要 --objective");
       const params: CreateParams = { action, slug, objective };
       if (workspacePath) params.workspacePath = workspacePath;
+      if (runtimeEnv) {
+        params.agent = runtimeEnv.agent;
+        params.llm = runtimeEnv.llm;
+        params.cwVersion = runtimeEnv.cwVersion;
+      }
       return params;
     }
 
@@ -362,6 +467,17 @@ export function buildParams(
       const params: RetrospectParams = { action: "retrospect", topicId };
       const rp = flag(parsed, "retrospectPath");
       if (rp) params.retrospectPath = rp;
+      // retrospectData 从 stdin 读（可选，无 stdin 时跳过）。
+      // stdin 有内容时解析为 JSON；非 JSON → throw（exit 1，参数错误）。
+      if (!isStdinTTY && stdinData.trim().length > 0) {
+        try {
+          params.retrospectData = JSON.parse(stdinData);
+        } catch (e) {
+          throw new CwError(
+            `retrospectData JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
       return params;
     }
 
@@ -498,7 +614,7 @@ async function main(argv: string[]): Promise<void> {
     typeof parsed.workspace === "string" ? parsed.workspace : process.cwd();
   const dbPath = resolveDbPath(workspacePath, process.env.CW_HOME);
 
-  // status/list 是只读查询，绕过 dispatch（不触发状态变更、不写 gateHistory）。
+  // status/list/stats 是只读查询，绕过 dispatch（不触发状态变更、不写 gateHistory）。
   if (READONLY_QUERIES.has(action)) {
     const store = new CwStore(dbPath);
 
@@ -510,6 +626,23 @@ async function main(argv: string[]): Promise<void> {
         process.exit(EXIT_CW_ERROR);
       }
       const output = handleStatus(topicId, store);
+      process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
+      return;
+    }
+
+    if (action === "stats") {
+      const topicId =
+        typeof parsed.topicId === "string" ? parsed.topicId : undefined;
+      if (!topicId) {
+        process.stderr.write("错误：stats 需要 --topicId\n");
+        process.exit(EXIT_CW_ERROR);
+      }
+      const topic = store.loadTopic(topicId);
+      if (!topic) {
+        process.stderr.write(`错误：topic not found: ${topicId}\n`);
+        process.exit(EXIT_CW_ERROR);
+      }
+      const output = computeStats(topic);
       process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
       return;
     }
@@ -527,6 +660,7 @@ async function main(argv: string[]): Promise<void> {
         ...VALID_DISPATCH_ACTIONS,
         "status",
         "list",
+        "stats",
       ].join(", ")}\n`,
     );
     process.exit(EXIT_CW_ERROR);
@@ -536,12 +670,19 @@ async function main(argv: string[]): Promise<void> {
   const stdinData = await readStdin();
   const isStdinTTY = process.stdin.isTTY === true;
 
+  // create 时解析运行环境（agent/llm/cwVersion），其他 action 不需要。
+  const runtimeEnv =
+    action === "create"
+      ? resolveRuntimeEnv(parsed, resolveEnvJsonPath(workspacePath, process.env.CW_HOME))
+      : undefined;
+
   // 构造 CwParams（参数校验在此层完成）。
   const params = buildParams(
     action as Action,
     parsed,
     stdinData,
     isStdinTTY,
+    runtimeEnv,
   );
 
   // 构造 ActionDeps + 调 dispatch。

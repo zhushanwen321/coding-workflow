@@ -15,7 +15,7 @@
  * - gate 熔断不阻断只告警：连续 fail 达阈值后 nextAction guidance 换熔断文案。
  */
 
-import { CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
 import type {
   Action,
   GateHistoryEntry,
@@ -393,7 +393,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         return {
           action: "retrospect",
           guidance:
-            "所有 testCase 已 passed。下一步：写复盘报告（retrospect.md），完成后调 cw(retrospect) 提交路径。",
+            `所有 testCase 已 passed。下一步：写复盘报告（retrospect.md）+ 结构化 retrospectData，完成后调 cw(retrospect) 提交。\n\n${RETROSPECT_PROMPT}`,
           alternatives: [replanAlternative()],
         };
       }
@@ -414,7 +414,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           guidance:
             fails >= GATE_RETRY_LIMIT
               ? buildCircuitBreakerGuidance("retrospect", fails)
-              : "retrospect gate FAIL。修 mustFix 后重调 cw(retrospect)。",
+              : `retrospect gate FAIL。修 mustFix 后重调 cw(retrospect)。\n\n${RETROSPECT_PROMPT}`,
         };
       }
       return {

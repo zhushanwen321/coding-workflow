@@ -47,6 +47,8 @@ import type {
   Evidence,
   GateHistoryEntry,
   Priority,
+  RetrospectData,
+  RuntimeEnv,
   Status,
   TestCase,
   TestCaseSeed,
@@ -84,9 +86,11 @@ interface TopicRecord {
   topicDir: string;
   createdAt: string;
   status: Status;
+  runtimeEnv?: RuntimeEnv;
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
   artifacts?: Artifacts;
+  retrospectData?: RetrospectData;
   testRunner?: TestRunnerConfig;
 }
 
@@ -97,6 +101,7 @@ interface WaveRecord {
   committed: string | null;
   changes: string[];
   priority?: Priority;
+  changedFiles?: string[];
 }
 
 interface TestCaseRecord {
@@ -425,9 +430,11 @@ export class CwStore {
         topicDir: topic.topicDir,
         createdAt: topic.createdAt,
         status: topic.status,
+        runtimeEnv: topic.runtimeEnv,
         gatePassed: topic.gatePassed,
         evidence: topic.evidence,
         artifacts: topic.artifacts,
+        retrospectData: topic.retrospectData,
         testRunner: topic.testRunner,
       };
       this.fileData!.topics.push(record);
@@ -496,12 +503,14 @@ export class CwStore {
       topicDir: topic.topicDir ?? "",
       createdAt: topic.createdAt,
       status: topic.status,
+      runtimeEnv: topic.runtimeEnv,
       waves: waves.map((w) => this.mapWaveRecord(w)),
       testCases: testCases.map((tc) => this.mapTestCaseRecord(tc)),
       gateHistory: gateHistory.map((g) => this.mapGateHistoryRecord(g)),
       gatePassed: topic.gatePassed ?? {},
       evidence: topic.evidence,
       artifacts: topic.artifacts,
+      retrospectData: topic.retrospectData,
       testRunner: topic.testRunner,
       clarifyRecords: clarifyRecords.map((c) => this.mapClarifyRecord(c)),
       adrs: adrs.map((a) => this.mapAdrRecord(a)),
@@ -515,6 +524,7 @@ export class CwStore {
       committed: r.committed ?? null,
       changes: r.changes ?? [],
       priority: r.priority,
+      changedFiles: r.changedFiles,
     };
   }
 
@@ -652,6 +662,19 @@ export class CwStore {
   }
 
   /**
+   * 写入 retrospect 阶段的结构化数据（retrospectData）。
+   * 整体覆盖语义（与 setEvidence 同模式）：retrospectData 是单一结构化对象，整体替换。
+   */
+  setRetrospectData(topicId: string, data: RetrospectData): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (topic) {
+        topic.retrospectData = data;
+      }
+    });
+  }
+
+  /**
    * 写入 topic 的测试执行器配置（testRunner）。
    * tdd_plan 阶段从 test.json 解析后调用，供 test 阶段的 runTestRunner / 红灯校验复用。
    * 整体覆盖语义（与 setArtifacts 的 merge 不同）：testRunner 是单一配置对象，整体替换。
@@ -675,12 +698,20 @@ export class CwStore {
     });
   }
 
-  setWaveCommitted(topicId: string, waveId: string, commitHash: string): void {
+  setWaveCommitted(
+    topicId: string,
+    waveId: string,
+    commitHash: string,
+    changedFiles?: string[],
+  ): void {
     this.executeWrite(() => {
       const wave = this.fileData!.waves.find(
         (w) => w.topicId === topicId && w.id === waveId,
       );
-      if (wave) wave.committed = commitHash;
+      if (wave) {
+        wave.committed = commitHash;
+        if (changedFiles) wave.changedFiles = changedFiles;
+      }
     });
   }
 

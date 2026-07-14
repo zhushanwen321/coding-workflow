@@ -45,6 +45,17 @@ export const REVIEW_PROMPT = `
 ## 审查范围
 - commits: <base>..HEAD（N 个 commit）
 
+## 评分汇总
+| 维度 | 状态 | must_fix | should_fix |
+|------|------|----------|------------|
+| 业务逻辑正确性 | pass/warn/fail | 0 | 1 |
+| 类型安全 | pass | 0 | 0 |
+| 边界条件 | warn | 0 | 2 |
+| 测试覆盖 | pass | 0 | 0 |
+| 代码规范 | pass | 0 | 0 |
+
+状态判定：fail = 有 must_fix；warn = 有 should_fix 但无 must_fix；pass = 无问题或仅 nit。
+
 ## 发现的问题
 | 维度 | 问题 | 严重度 | 位置 |
 |------|------|--------|------|
@@ -55,7 +66,7 @@ export const REVIEW_PROMPT = `
 - [ ] W2 changes[1]: 未落地（缺异常分支处理）
 
 ## 结论
-- must_fix 数量 > 0 → 修完后重新 cw(dev) 提交修正 commit
+- must_fix 总数 > 0 → **禁止调 cw(review)**。先修代码，重新 commit + cw(dev)，再重走 review
 - must_fix = 0 → 调 cw(review) 提交本文件路径
 \`\`\`
 

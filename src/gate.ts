@@ -48,6 +48,13 @@ export interface CommitValidation {
   valid: boolean;
   reason?: string;
   /**
+   * 该 commit 实际改动的完整文件列表（git diff-tree --name-only）。
+   * devCheck 填充，handleDev 持久化到 Wave.changedFiles。
+   * 用于 plan 完成度客观核对、有效产出率、散弹枪修改指数。
+   * diff-tree 异常或提前 return 路径时为 undefined。
+   */
+  changedFiles?: string[];
+  /**
    * 不在 plan changes 中的额外改动文件（宽松模式，只警告不 fail）。
    * devCheck 用 git diff-tree 提取实际改动文件，与 planData.waves 对比后填充。
    */
@@ -202,8 +209,9 @@ export function planCheck(planJson: unknown): PlanCheckResult {
 }
 
 /// 范围守门阈值。超过 = 返回 warning（不阻断），提示 agent 考虑拆分 topic。
-const SCOPE_WARN_WAVES = 10;
-const SCOPE_WARN_FILES = 15;
+/// stats.ts 复杂度分桶也复用这两个阈值。
+export const SCOPE_WARN_WAVES = 10;
+export const SCOPE_WARN_FILES = 15;
 
 /**
  * checkPlanScopeWarning — 范围守门客观信号检查（warning 不阻断）。
@@ -523,7 +531,10 @@ function getStringField(e: unknown, field: "stdout" | "stderr"): string {
 const PLAN_FILE_RE =
   /(?:修改|创建|删除|更新|新增|add|modify|create|delete|update)\s+([\w./-]+(?:\.\w+))/gi;
 
-function extractFilesFromChanges(changes: string[]): Set<string> {
+/**
+ * 从 plan changes 描述中提取文件路径。stats.ts 复杂度分桶也复用此函数。
+ */
+export function extractFilesFromChanges(changes: string[]): Set<string> {
   const files = new Set<string>();
   for (const change of changes) {
     // 每次 exec 重置 lastIndex（g flag）
@@ -557,48 +568,51 @@ export function devCheck(
 ): CommitValidation {
   const result = validator.validate(commitHash);
 
-  // commit 校验不通过时直接返回，不做文件覆盖校验
+  // commit 校验不通过时直接返回，不做文件提取
   if (!result.valid) return result;
 
-  // P1: 文件覆盖校验（宽松模式，只警告不 fail）
-  if (!waveId || !topic) return result;
-
+  // 提取 commit 实际改动文件列表（changedFiles），供持久化 + plan 覆盖校验复用。
+  // 放在 waveId/topic 校验之前——即使缺 topic 也要拿到 changedFiles（评估指标需要）。
+  let actualFiles: Set<string> | undefined;
   try {
-    // 获取该 commit 实际改动的文件列表
     const diffOutput = execFileSync(
       "git",
       ["diff-tree", "--no-commit-id", "--name-only", "-r", commitHash],
       { cwd: validator.workspacePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
-    const actualFiles = new Set(
+    actualFiles = new Set(
       diffOutput
         .split("\n")
         .map((f) => f.trim())
         .filter((f) => f.length > 0),
     );
-
-    // 从 topic.waves 找对应 wave 的 changes
-    const wave = topic.waves.find((w) => w.id === waveId);
-    if (!wave) return result;
-
-    // 提取 plan 中的文件路径
-    const planFiles = extractFilesFromChanges(wave.changes);
-    if (planFiles.size === 0) return result;
-
-    // 找出不在 plan 中的额外文件
-    const extra: string[] = [];
-    for (const file of actualFiles) {
-      if (!planFiles.has(file)) {
-        extra.push(file);
-      }
-    }
-
-    if (extra.length > 0) {
-      result.extraFiles = extra;
-    }
+    result.changedFiles = Array.from(actualFiles);
   } catch (e) {
-    // git 命令失败不阻塞 commit 校验，只跳过文件覆盖检查
+    // git 命令失败不阻塞 commit 校验，只跳过文件提取
     if (isENOENT(e)) throw e;
+  }
+
+  // P1: 文件覆盖校验（宽松模式，只警告不 fail）。需要 waveId + topic + actualFiles。
+  if (!waveId || !topic || !actualFiles) return result;
+
+  // 从 topic.waves 找对应 wave 的 changes
+  const wave = topic.waves.find((w) => w.id === waveId);
+  if (!wave) return result;
+
+  // 提取 plan 中的文件路径
+  const planFiles = extractFilesFromChanges(wave.changes);
+  if (planFiles.size === 0) return result;
+
+  // 找出不在 plan 中的额外文件
+  const extra: string[] = [];
+  for (const file of actualFiles) {
+    if (!planFiles.has(file)) {
+      extra.push(file);
+    }
+  }
+
+  if (extra.length > 0) {
+    result.extraFiles = extra;
   }
 
   return result;

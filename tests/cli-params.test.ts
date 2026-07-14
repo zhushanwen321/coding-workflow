@@ -42,6 +42,33 @@ describe("buildParams — create action", () => {
     expect(p.action).toBe("create");
     expect(p).toMatchObject({ slug: "feat", objective: "do x" });
   });
+
+  it("create 带 runtimeEnv → agent/llm/cwVersion 注入 params", () => {
+    const p = buildParams(
+      "create",
+      makeParsed({ slug: "feat", objective: "do x" }),
+      "",
+      true,
+      { agent: "Claude Code", llm: "Sonnet-4.5", cwVersion: "0.1.0" },
+    );
+    expect(p).toMatchObject({
+      agent: "Claude Code",
+      llm: "Sonnet-4.5",
+      cwVersion: "0.1.0",
+    });
+  });
+
+  it("create 无 runtimeEnv → agent/llm/cwVersion 不在 params 里", () => {
+    const p = buildParams(
+      "create",
+      makeParsed({ slug: "feat", objective: "do x" }),
+      "",
+      true,
+    );
+    expect((p as { agent?: string }).agent).toBeUndefined();
+    expect((p as { llm?: string }).llm).toBeUndefined();
+    expect((p as { cwVersion?: string }).cwVersion).toBeUndefined();
+  });
 });
 
 describe("buildParams — plan/replan action", () => {

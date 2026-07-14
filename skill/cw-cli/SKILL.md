@@ -33,6 +33,23 @@ cw create --slug <kebab-case-slug> --objective "<一句话业务目标>"
 
 返回 JSON 含 `topicId` + `nextAction`。**记下 topicId**，后续所有调用都要传。
 
+### 运行环境（评估分组维度，可选）
+
+`cw create` 会自动注入运行环境元数据（agent + llm + cwVersion），用于评估指标按分组对比。默认值 `Pi / GLM-5.2`，覆盖日常场景。
+
+切环境时两种覆盖方式（优先级：命令行 > env.json > 默认值）：
+
+```bash
+# 方式 1：命令行参数（临时覆盖）
+cw create --slug <slug> --objective "<obj>" --agent "Claude Code" --llm "Sonnet-4.5"
+
+# 方式 2：env.json（持久默认，与 _cw.json 同目录）
+# ~/.cw/<encoded-cwd>/env.json
+{ "agent": "Claude Code", "llm": "Sonnet-4.5" }
+```
+
+cwVersion 始终从 package.json 自动读取，不可手动指定。
+
 ## 推进流程（按 nextAction 驱动）
 
 每次 `cw` 调用返回 `nextAction`：
@@ -69,7 +86,7 @@ create → clarify → plan → tdd_plan → dev → review → test → retrosp
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
 | `review` | 做 code review，产出 review.md | `cw review --topicId <id> --reviewPath <path>` |
 | `test` | 跑测试，提交 actual 结果 | `cw test --topicId <id> --cases '[{"caseId":"U1","actual":{"text":"<结果>"}}]'` |
-| `retrospect` | 写复盘报告，提交路径 | `cw retrospect --topicId <id> --retrospect-path <path>` |
+| `retrospect` | 写复盘报告（retrospect.md）+ 结构化回顾数据（retrospectData），提交 | `echo '<retrospectDataJson>' \| cw retrospect --topicId <id> --retrospect-path <path>` |
 | `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
 | `replan` | 修改计划（--plan 改 dev-plan / --test 改 test.json） | `echo '<json>' \| cw replan --topicId <id> --plan` 或 `--test` |
 | `undefined` | 流程结束 | 无 |
@@ -127,6 +144,28 @@ CW 的计划阶段产出**两个文件**：
 
 **向后兼容**：旧版 plan.json（同时含 waves + testCases）仍可提交给 `cw plan`，CW 自动提取 testCases。
 
+### retrospect 结构化数据（retrospectData）
+
+retrospect 阶段产出两个文件：
+
+| 产物 | 给谁读 | 内容 |
+|------|--------|------|
+| retrospect.md | 人（自由格式复盘叙述） | 含上下文和思考过程 |
+| retrospectData | 机器（结构化 JSON，从 stdin 传入） | knownRisks + processIssues |
+
+agent 只填 `knownRisks` + `processIssues`，`derived` 段由 cw 自动从执行数据派生（不填，填了也会被覆盖）：
+
+```jsonc
+{
+  "knownRisks": [
+    { "severity": "high", "area": "并发写入", "description": "flock 未压测", "unverified": true }
+  ],
+  "processIssues": ["plan 没考虑 git diff-tree 性能"]
+}
+```
+
+retrospectData 可选——不提供也能 gate pass（向后兼容），但建议提供（评估数据来源）。
+
 ## gate fail 时怎么办
 
 gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下一阶段。看返回里的失败原因字段：
@@ -135,10 +174,10 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 |------|-------------|--------|
 | plan/tdd_plan/review/retrospect/closeout gate fail | 顶层 `mustFix` | 修 mustFix 列出的问题，重调同一 action |
 | dev gate fail（commit 不真实/缺失） | `taskResults[].reason` | 修该 Wave 的 commit，重调 `cw dev` |
-| test gate fail（结果 != 预期） | `caseResults[].failureReason` | **回退到 dev** 修代码，修完重调 cw(dev) → cw(review) → cw(test) |
+| test gate fail（结果 != 预期） | `caseResults[].failureReason` | **test retry**（progressive）：修代码 + commit → 重跑测试 → 重调 `cw test` 提交新 actual |
 
-**test 失败统一回退到 dev**（不是指回 test retry）。修完代码后重走 review → test。
-是否需要 replan（改 expected 或改 plan）由 agent/用户讨论决定。
+**test 失败是 progressive retry**（原地停留，不回 dev）。test 是 Wave 无关的验证环节——所有 Wave 已 committed，修代码不需要重走 dev/review，直接重跑失败的 testCase 提交新 actual 即可。
+如果是 expected 写错（不是代码 bug），调 `cw replan --test` 修订 test.json。
 
 ## 修改计划（replan）
 
@@ -184,8 +223,22 @@ echo '<devPlanJson>' | cw replan --topicId <id> --plan --testJsonFile <testJsonP
 ## 数据存储（cwd 隔离机制）
 
 - 状态库：`~/.cw/<encoded-cwd>/_cw.json`
+- 运行环境配置：`~/.cw/<encoded-cwd>/env.json`（可选，agent+llm 默认值覆盖）
 - topicId 格式：`cw-{date}-{slug}`
 - 跨 session 接续：调 `cw list` 找 topicId，调 `cw status --topicId <id>` 看当前进度，再按 nextAction 继续
+
+## 只读查询命令（不触发状态变更）
+
+| 命令 | 用途 |
+|------|------|
+| `cw status --topicId <id>` | 查看单个 topic 进度快照（status/gatePassed/waves/testCases） |
+| `cw list` | 列出当前 cwd 下所有 topic |
+| `cw stats --topicId <id>` | 评估指标（复杂度分桶/过程效率/杠杆健康度），数据从 gateHistory 派生 |
+
+`cw stats` 输出 JSON，含三类指标：
+- **complexity**：waves 数 + 文件数 → simple/medium/complex 分桶
+- **efficiency**：首次正确率、早期拦截率（dev+test fail 占比）、dev/test 重试次数
+- **leverHealth**：CW 各机制 gate（TDD 红灯/commit 锚定/机器重算等）的最终状态
 
 [强制] **cwd 隔离**：CW 按 `process.cwd()` 隔离 topic，不同 cwd 路径对应不同的 `_cw.json`。以下场景会导致 `topic not found`：
 

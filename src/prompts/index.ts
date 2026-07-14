@@ -8,6 +8,7 @@
 export { CLARIFY_PROMPT } from "./clarify.js";
 export { DEV_PLAN_PROMPT, PLAN_PROMPT } from "./dev-plan.js";
 export { EXECUTE_PROMPT } from "./execute.js";
+export { RETROSPECT_PROMPT } from "./retrospect.js";
 export { REVIEW_PROMPT } from "./review.js";
 export { SPEC_PROMPT } from "./spec.js";
 export { TDD_PLAN_PROMPT } from "./tdd-plan.js";
