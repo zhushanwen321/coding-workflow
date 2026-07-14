@@ -218,3 +218,194 @@ describe("store 补充覆盖", () => {
     expect(history[1]!.id).toBe(2);
   });
 });
+
+// ── DAO: setArtifacts merge 语义 ────────────────────────────
+
+describe("setArtifacts merge 语义", () => {
+  it("先 set reviewPath 再 set retrospectPath → 两者共存（merge 而非覆盖）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.setArtifacts("cw-test-topic", {
+        reviewPath: "/tmp/review.md",
+        reviewAt: "2026-01-01T00:00:00.000Z",
+      });
+    });
+    store.transaction(() => {
+      store.setArtifacts("cw-test-topic", {
+        retrospectPath: "/tmp/retrospect.md",
+        retrospectAt: "2026-01-02T00:00:00.000Z",
+      });
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.artifacts?.reviewPath).toBe("/tmp/review.md");
+    expect(topic!.artifacts?.retrospectPath).toBe("/tmp/retrospect.md");
+  });
+});
+
+// ── DAO: setEvidence gateHistory 快照 ───────────────────────
+
+describe("setEvidence gateHistory 快照", () => {
+  it("evidence.gateHistory 含写入前的全量历史", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    // 先写 2 条 gateHistory
+    store.transaction(() => {
+      store.appendGateHistory("cw-test-topic", {
+        phase: "plan",
+        action: "plan",
+        gate: "lite-plan-schema",
+        result: "pass",
+        progressive: false,
+      });
+      store.appendGateHistory("cw-test-topic", {
+        phase: "dev",
+        action: "dev",
+        gate: "medium-git",
+        result: "pass",
+        progressive: false,
+      });
+    });
+
+    // 再 setEvidence
+    store.transaction(() => {
+      store.setEvidence("cw-test-topic", {
+        closedAt: "2026-01-03T00:00:00.000Z",
+        gateHistory: store.loadGateHistory("cw-test-topic"),
+      });
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.evidence).toBeDefined();
+    expect(topic!.evidence!.closedAt).toBe("2026-01-03T00:00:00.000Z");
+    expect(topic!.evidence!.gateHistory).toHaveLength(2);
+    expect(topic!.evidence!.gateHistory[0]!.phase).toBe("plan");
+    expect(topic!.evidence!.gateHistory[1]!.phase).toBe("dev");
+  });
+});
+
+// ── DAO: insertTestCases ────────────────────────────────────
+
+describe("insertTestCases", () => {
+  it("批量插入 testCase，初始 status=pending", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.insertTestCases("cw-test-topic", [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "test scenario",
+          steps: "run test",
+          expected: { text: "expected result" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+        {
+          id: "E1",
+          layer: "real",
+          scenario: "e2e scenario",
+          steps: "spawn cli",
+          expected: { text: "status=closed" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ]);
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testCases).toHaveLength(2);
+    expect(topic!.testCases[0]!.id).toBe("U1");
+    expect(topic!.testCases[0]!.status).toBe("pending");
+    expect(topic!.testCases[1]!.id).toBe("E1");
+    expect(topic!.testCases[1]!.layer).toBe("real");
+  });
+});
+
+// ── DAO: replaceUnpassedTestCases 保留 passed ──────────────
+
+describe("replaceUnpassedTestCases", () => {
+  it("已 passed 的 testCase 保留，未 passed 的被新 testCase 替换", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    // 先插入 2 个 testCase
+    store.transaction(() => {
+      store.insertTestCases("cw-test-topic", [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "old scenario",
+          steps: "old steps",
+          expected: { text: "old expected" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+        {
+          id: "U2",
+          layer: "mock",
+          scenario: "will pass",
+          steps: "steps",
+          expected: { text: "ok" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ]);
+    });
+
+    // 将 U2 标记为 passed
+    store.transaction(() => {
+      store.updateTestCase("cw-test-topic", "U2", {
+        status: "passed",
+        actual: { text: "ok" },
+      });
+    });
+
+    // replan：替换未 passed 的（U1 被 U3 替换，U2 保留）
+    store.transaction(() => {
+      store.replaceUnpassedTestCases("cw-test-topic", [
+        {
+          id: "U3",
+          layer: "mock",
+          scenario: "new scenario",
+          steps: "new steps",
+          expected: { text: "new expected" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ]);
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    const ids = topic!.testCases.map((tc) => tc.id);
+    expect(ids).toContain("U2"); // passed 的保留
+    expect(ids).toContain("U3"); // 新插入
+    expect(ids).not.toContain("U1"); // 未 passed 的被替换
+
+    const u2 = topic!.testCases.find((tc) => tc.id === "U2")!;
+    expect(u2.status).toBe("passed");
+  });
+});
+
+// ── 文件损坏兜底 ────────────────────────────────────────────
+
+describe("文件损坏兜底", () => {
+  it("JSON.parse 失败 → 返回空库（不 crash）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic())); // 正常初始化
+
+    // 手动写坏 JSON
+    const { writeFileSync } = require("node:fs");
+    writeFileSync(dbPath, "{ corrupted json !!! ");
+
+    // 重新加载不应 crash，返回空库
+    const store2 = makeStore();
+    const topic = store2.loadTopic("cw-test-topic");
+    expect(topic).toBeNull();
+    expect(store2.listTopics()).toHaveLength(0);
+  });
+});

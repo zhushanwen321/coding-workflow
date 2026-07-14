@@ -24,6 +24,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { setupGitRepo } from "./helpers/git.js";
+
 // ── 路径常量 ────────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,25 +79,7 @@ function parseStdout(result: CliResult): Record<string, unknown> {
   return JSON.parse(trimmed) as Record<string, unknown>;
 }
 
-// ── git 仓库辅助 ────────────────────────────────────────────
-
-/** 在 tmp 目录 git init + 配置 + 创建非空 commit，返回 commit hash。 */
-function setupGitRepo(repoDir: string): string {
-  const git = (args: string[]): string =>
-    execFileSync("git", args, {
-      cwd: repoDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-
-  git(["init"]);
-  git(["config", "user.email", "e2e@test.com"]);
-  git(["config", "user.name", "E2E Test"]);
-  writeFileSync(join(repoDir, "README.md"), "# E2E test repo\n");
-  git(["add", "."]);
-  git(["commit", "-m", "initial commit"]);
-  return git(["rev-parse", "HEAD"]);
-}
+// ── git 仓库辅助（setupGitRepo 从 helpers/git.ts import） ────
 
 // ── 共享测试环境 ────────────────────────────────────────────
 

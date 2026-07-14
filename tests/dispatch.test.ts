@@ -19,34 +19,10 @@ import { dispatch, GuardError } from "../src/dispatch.js";
 import { CwStore } from "../src/store.js";
 import { GitValidator } from "../src/gate.js";
 import type { ActionDeps } from "../src/types.js";
+import { setupGitRepo } from "./helpers/git.js";
+import { makeValidPlanJson } from "./helpers/plan.js";
 
-// ── 真实 git 仓库辅助 ───────────────────────────────────────
-
-/**
- * 在 tmp 目录 git init + 配置 user + 创建一个非空 commit，返回 commit hash。
- * 供 dev gate 的 GitValidator.validate 校验用（需真实存在的非空 commit）。
- */
-function setupGitRepo(repoDir: string): string {
-  // git 子命令在 repoDir 内执行
-  const git = (args: string[]): string =>
-    execFileSync("git", args, {
-      cwd: repoDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-
-  git(["init"]);
-  git(["config", "user.email", "test@test.com"]);
-  git(["config", "user.name", "Test"]);
-
-  // 创建一个非空文件并提交（保证 commit 非空，diff-tree 有内容）
-  writeFileSync(join(repoDir, "README.md"), "# Test repo\n");
-  git(["add", "."]);
-  git(["commit", "-m", "initial commit"]);
-  return git(["rev-parse", "HEAD"]);
-}
-
-// ── 测试夹具 ────────────────────────────────────────────────
+// ── 测试夹具（setupGitRepo/makeValidPlanJson 从 helpers/ import） ──
 
 let tmpDir: string;
 let dbPath: string;
@@ -57,37 +33,6 @@ function makeDeps(): { deps: ActionDeps; store: CwStore } {
   const git = new GitValidator(tmpDir);
   const deps: ActionDeps = { store, git, workspacePath: tmpDir };
   return { deps, store };
-}
-
-function makeValidPlanJson(overrides: Record<string, unknown> = {}): unknown {
-  return {
-    format: "lite",
-    objective: "test objective",
-    waves: [
-      { id: "W1", changes: ["change1"], dependsOn: [] },
-    ],
-    testCases: [
-      {
-        id: "E1",
-        layer: "mock",
-        scenario: "场景",
-        steps: "步骤",
-        expected: { text: "expected-output" },
-        executor: "agent",
-        requiresScreenshot: false,
-      },
-      {
-        id: "E2",
-        layer: "real",
-        scenario: "集成场景",
-        steps: "步骤",
-        expected: { text: "real-output" },
-        executor: "agent",
-        requiresScreenshot: false,
-      },
-    ],
-    ...overrides,
-  };
 }
 
 /**

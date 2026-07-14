@@ -13,42 +13,10 @@ import { join, dirname } from "node:path";
 
 import { planCheck, devCheck, GitValidator } from "../src/gate.js";
 import type { Topic } from "../src/types.js";
+import { setupGitRepo, commitFile } from "./helpers/git.js";
+import { makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
 
 // ── 真实 git 仓库辅助 ───────────────────────────────────────
-
-function setupGitRepo(repoDir: string): string {
-  const git = (args: string[]): string =>
-    execFileSync("git", args, {
-      cwd: repoDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-
-  git(["init"]);
-  git(["config", "user.email", "gate@test.com"]);
-  git(["config", "user.name", "Gate Test"]);
-  writeFileSync(join(repoDir, "README.md"), "# Gate test repo\n");
-  git(["add", "."]);
-  git(["commit", "-m", "initial commit"]);
-  return git(["rev-parse", "HEAD"]);
-}
-
-/** 创建一个修改指定文件的 commit，返回 commit hash。 */
-function commitFile(repoDir: string, filePath: string, content: string, message: string): string {
-  const git = (args: string[]): string =>
-    execFileSync("git", args, {
-      cwd: repoDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-
-  // 确保父目录存在
-  mkdirSync(dirname(join(repoDir, filePath)), { recursive: true });
-  writeFileSync(join(repoDir, filePath), content);
-  git(["add", "."]);
-  git(["commit", "-m", message]);
-  return git(["rev-parse", "HEAD"]);
-}
 
 // ── 测试环境 ────────────────────────────────────────────────
 
@@ -62,36 +30,7 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ── 构造合法 planJson 的辅助函数 ────────────────────────────
-
-function makePlanJson(overrides: Record<string, unknown> = {}): unknown {
-  return {
-    format: "lite",
-    objective: "test objective",
-    waves: [{ id: "W1", changes: ["修改 src/app.ts 加功能"], dependsOn: [] }],
-    testCases: [
-      {
-        id: "E1",
-        layer: "mock",
-        scenario: "验证功能",
-        steps: "执行测试",
-        expected: { text: "返回 { status: 'planned' }" },
-        executor: "agent",
-        requiresScreenshot: false,
-      },
-      {
-        id: "E2",
-        layer: "real",
-        scenario: "集成验证",
-        steps: "执行集成测试",
-        expected: { text: "集成测试通过" },
-        executor: "agent",
-        requiresScreenshot: false,
-      },
-    ],
-    ...overrides,
-  };
-}
+// ── 真实 git 仓库辅助（setupGitRepo/commitFile 从 helpers/git.ts import） ──
 
 // ── P0: planCheck 模糊 expected 值检测 ──────────────────────
 

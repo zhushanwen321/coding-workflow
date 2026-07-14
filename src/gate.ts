@@ -5,7 +5,7 @@
  * - 砍掉 GateRegistry 声明表 + GateRunner dispatch 表（旧版 gates.ts 的 8 check 脚本 dispatch）
  * - 砍掉 GateTier 分档强度（gateHistory 不再记 tier 字段，types 已砍）
  * - 砍掉 runGate 通用执行器——4 个具名 check 函数内联各 phase 的校验逻辑
- * - 保留 GitValidator（validate + isAncestorOfAny），从旧 gates.ts 1:1 移植
+ * - 保留 GitValidator（validate），从旧 gates.ts 1:1 移植（isAncestorOfAny 已删：零调用 dead code）
  * - 保留 judgeByExpected（已在 types.ts，testCheck 调用）
  *
  * engine 职责边界（选项 A）：只做最基础结构校验，质量约束交回 skill 文档管。
@@ -145,39 +145,6 @@ export class GitValidator {
       reason = parts.join(",");
     }
     return { commitHash, exists, inRepo, nonEmpty, valid, reason };
-  }
-
-  /**
-   * 判断 commitHash 是否是 candidates 中任一 commit 的后代（即 candidate 是 commitHash 的祖先）。
-   *
-   * 用途：replan 时无（lite 单轨砍掉了 mid test gate 的 commitHash 追溯），
-   * 但保留方法供未来扩展或外部调用。语义：commitHash 可追溯到任一 candidate ancestor。
-   *
-   * 接线：git merge-base --is-ancestor <ancestor> <commitHash>，退出码 0 = 是祖先。
-   */
-  isAncestorOfAny(
-    commitHash: string,
-    candidates: readonly string[],
-  ): boolean {
-    if (candidates.length === 0) return false;
-    for (const ancestor of candidates) {
-      try {
-        execFileSync(
-          "git",
-          ["merge-base", "--is-ancestor", ancestor, commitHash],
-          {
-            cwd: this.workspacePath,
-            encoding: "utf8",
-            stdio: "ignore",
-          },
-        );
-        return true;
-      } catch (e) {
-        if (isENOENT(e)) throw e;
-        // 非零退出 = ancestor 不是 commitHash 的祖先，试下一个
-      }
-    }
-    return false;
   }
 }
 
