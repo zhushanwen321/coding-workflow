@@ -45,8 +45,12 @@ import {
   type ActionDeps,
   type ActionResult,
   type Actual,
+  type Assessment,
+  type AssessmentDefect,
+  type AssessmentType,
   type ClarifyRecord,
   CwError,
+  type DefectSeverity,
   type Evidence,
   type RetrospectData,
   type RetrospectKnownRisk,
@@ -171,6 +175,22 @@ export interface ReplanParams {
   testJson?: unknown;
 }
 
+export interface AssessParams {
+  action: "assess";
+  topicId: string;
+  type: AssessmentType;
+  /** 评分（可选，1-5）。不强制——有些评估是定性的。 */
+  score?: number;
+  notes: string;
+  /** type=defect 时必填。 */
+  defect?: {
+    severity: DefectSeverity;
+    area: string;
+    rootCause: string;
+    foundInReview: boolean;
+  };
+}
+
 export type CwParams =
   | CreateParams
   | ClarifyParams
@@ -183,7 +203,8 @@ export type CwParams =
   | ReviewFixParams
   | TestFixParams
   | CloseoutParams
-  | ReplanParams;
+  | ReplanParams
+  | AssessParams;
 
 // ── handleCreate ────────────────────────────────────────────
 
@@ -232,6 +253,7 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     reviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
+    assessments: [],
   };
 
   deps.store.transaction(() => {
@@ -1461,17 +1483,26 @@ export function handleReplan(
   const parsedTest = hasTest ? parseTestJson(params.testJson) : null;
 
   // append-only 校验（核心安全门，4 违规类型）。
-  // waves 来源：parsedPlan.waves（planJson 提供时）；cases 来源：testJson 优先，
-  // 回退到 planJson 的 legacyTestCases（旧格式兼容）。
-  const newWaves = parsedPlan?.waves ?? [];
-  const newCases =
-    parsedTest?.testCases ?? parsedPlan?.legacyTestCases ?? [];
-  const violations = validateAppendOnly(
-    newWaves,
-    newCases,
-    topic.waves,
-    topic.testCases,
-  );
+  // 只校验本次实际改动的部分：
+  //   - planJson 提供时 → 校验 waves（+ legacyTestCases 如有）
+  //   - testJson 提供时 → 校验 testCases
+  // --test-only 模式不校验 waves（waves 未提交，不参与变更）。
+  const violations: AppendOnlyViolation[] = [];
+  if (parsedPlan) {
+    const newWaves = parsedPlan.waves;
+    // planJson 里的 legacyTestCases（旧格式兼容）也要校验
+    const legacyCases = parsedPlan.legacyTestCases ?? [];
+    violations.push(
+      ...validateAppendOnly(newWaves, legacyCases, topic.waves, topic.testCases),
+    );
+  }
+  if (parsedTest) {
+    // --test 模式只校验 testCases，waves 传空跳过（oldWaves=[] → 不产生 wave 违规）
+    const newCases = parsedTest.testCases;
+    violations.push(
+      ...validateAppendOnly([], newCases, [], topic.testCases),
+    );
+  }
   if (violations.length > 0) {
     const mustFix = violations.map((v) => `[${v.type}] ${v.reason}`).join("\n");
     throw new CwError(
@@ -1495,6 +1526,8 @@ export function handleReplan(
     }
 
     // testCases replace：testJson 或旧格式 planJson 的 legacyTestCases 提供时执行。
+    const newCases =
+      parsedTest?.testCases ?? parsedPlan?.legacyTestCases ?? [];
     if (newCases.length > 0) {
       const passedCaseIds = new Set(
         topic.testCases.filter((c) => c.status === "passed").map((c) => c.id),
@@ -1533,11 +1566,11 @@ export function handleReplan(
       gate: "append-only-validator",
       result: "pass",
       report: JSON.stringify({
-        addedWaves: newWaves
+        addedWaves: (parsedPlan?.waves ?? [])
           .filter((w) => !topic.waves.some((o) => o.id === w.id))
           .map((w) => w.id),
         removedWaves: topic.waves
-          .filter((w) => !newWaves.some((o) => o.id === w.id))
+          .filter((w) => !(parsedPlan?.waves ?? []).some((o) => o.id === w.id))
           .map((w) => w.id),
         addedCases: newCases
           .filter((c) => !topic.testCases.some((o) => o.id === c.id))
@@ -1561,4 +1594,159 @@ export function handleReplan(
     gatePassed: finalTopic.gatePassed,
     nextAction: buildNextAction("replan", finalTopic),
   };
+}
+
+// ── handleAssess ────────────────────────────────────────────
+
+/** 合法的 AssessmentType 集合（校验用）。 */
+const VALID_ASSESSMENT_TYPES: ReadonlySet<AssessmentType> = new Set([
+  "quality",
+  "test",
+  "stability",
+  "defect",
+]);
+
+/** 合法的 DefectSeverity 集合（校验用）。 */
+const VALID_DEFECT_SEVERITIES: ReadonlySet<DefectSeverity> = new Set([
+  "blocker",
+  "major",
+  "minor",
+]);
+
+/**
+ * 校验 AssessParams 的入参完整性。
+ *
+ * 校验项：
+ *   - notes 非空（至少一句话，trim 后长度 > 0）
+ *   - type ∈ {quality, test, stability, defect}
+ *   - score 若提供则 ∈ [1, 5]（整数）
+ *   - type=defect 时 defect 必填且四字段完整（severity 合法 + area/rootCause 非空 + foundInReview 是 boolean）
+ *   - type≠defect 时 defect 必须未提供（防止语义混淆）
+ *
+ * 校验失败 → throw CwError（exit 1），不返回半成品。
+ * 与 clarifyCheck 的区别：assess 不走 gate 机制（无 gateHistory 记录），它是纯数据追加。
+ */
+function validateAssessParams(params: AssessParams): void {
+  if (!params.notes || params.notes.trim().length === 0) {
+    throw new CwError("assess 的 --notes 不能为空（至少一句话）");
+  }
+
+  if (!VALID_ASSESSMENT_TYPES.has(params.type)) {
+    throw new CwError(
+      `assess 的 --type 非法: ${params.type}（合法值: quality/test/stability/defect）`,
+    );
+  }
+
+  if (params.score !== undefined) {
+    if (
+      !Number.isInteger(params.score) ||
+      params.score < 1 ||
+      params.score > 5
+    ) {
+      throw new CwError(
+        `assess 的 --score 必须是 1-5 的整数（当前: ${params.score}）`,
+      );
+    }
+  }
+
+  if (params.type === "defect") {
+    if (!params.defect) {
+      throw new CwError("assess 的 type=defect 时 --defect 必填（severity/area/rootCause/foundInReview）");
+    }
+    const d = params.defect;
+    if (!VALID_DEFECT_SEVERITIES.has(d.severity)) {
+      throw new CwError(
+        `assess defect.severity 非法: ${d.severity}（合法值: blocker/major/minor）`,
+      );
+    }
+    if (typeof d.area !== "string" || d.area.trim().length === 0) {
+      throw new CwError("assess defect.area 不能为空");
+    }
+    if (typeof d.rootCause !== "string" || d.rootCause.trim().length === 0) {
+      throw new CwError("assess defect.rootCause 不能为空");
+    }
+    if (typeof d.foundInReview !== "boolean") {
+      throw new CwError("assess defect.foundInReview 必须是 boolean（true/false）");
+    }
+  } else if (params.defect !== undefined) {
+    // type≠defect 时不应提供 defect（防止语义混淆——非缺陷评估带缺陷详情无意义）。
+    throw new CwError(
+      `assess 的 --defect 仅在 type=defect 时填写（当前 type=${params.type}）`,
+    );
+  }
+}
+
+/**
+ * handleAssess — post-closeout 人工评估提交（progressive，不改 status）。
+ *
+ * 数据流：
+ *   validateAssessParams（notes/type/score/defect 完整性）
+ *     → 事务{ appendAssessment（store 分配 id AS1/AS2... + assessedAt） }
+ *     → reload → buildNextAction("assess")
+ *
+ * progressive 语义：status 始终为 closed（TRANSITIONS.assess.nextStatus=closed, progressive=true），
+ * 可多次调用，每次追加一条评估记录。不进任何 guidance 主链路（人工触发，不在导航里）。
+ * 不走 gate 机制（不写 gateHistory）——与 clarify 的 gate 模式不同，assess 是纯数据追加。
+ *
+ * 失败路径：校验失败 → throw CwError（exit 1），不返回半成品。
+ */
+export function handleAssess(
+  params: AssessParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  // 校验在事务外做（与 handleReviewFix/handleTestFix 的 caseId 校验同模式，
+  // 避免事务内 throw 触发回滚后又 throw）。
+  validateAssessParams(params);
+
+  void topic; // assess 不读 topic 当前状态（progressive append-only）。
+
+  const defect: AssessmentDefect | undefined = params.defect
+    ? {
+        severity: params.defect.severity,
+        area: params.defect.area,
+        rootCause: params.defect.rootCause,
+        foundInReview: params.defect.foundInReview,
+      }
+    : undefined;
+
+  let assignedId = "";
+  deps.store.transaction(() => {
+    assignedId = deps.store.appendAssessment(params.topicId, {
+      type: params.type,
+      score: params.score,
+      notes: params.notes,
+      defect,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after assess: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("assess", updated),
+  };
+  // 暴露 assessments 摘要供调用方查看进度（id/type/score/defect 概要）。
+  (result as Record<string, unknown>).assessmentId = assignedId;
+  (result as Record<string, unknown>).assessments = updated.assessments.map(
+    (a: Assessment) => ({
+      id: a.id,
+      type: a.type,
+      score: a.score,
+      defect: a.defect
+        ? {
+            severity: a.defect.severity,
+            area: a.defect.area,
+            rootCause: a.defect.rootCause,
+            foundInReview: a.defect.foundInReview,
+          }
+        : undefined,
+    }),
+  );
+  return result;
 }

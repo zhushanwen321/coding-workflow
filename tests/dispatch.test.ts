@@ -1241,6 +1241,47 @@ describe("dispatch replan --test（testCases 更新）", () => {
     expect(caseIds).toEqual(["E1", "E2", "E3"]);
   });
 
+  it("replan --test 在 wave 全 committed 时不触发 wave 违规（回归测试）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "replan-test-committed", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passTddPlanGate(store, topicId);
+    // 模拟 wave 已 committed + testCase 已 passed 的场景
+    store.transaction(() => {
+      store.setWaveCommitted(topicId, "W1", "fake-hash");
+      for (const tc of store.loadTopic(topicId)!.testCases) {
+        store.updateTestCase(topicId, tc.id, { status: "passed" });
+      }
+    });
+
+    // replan --test 只改 testCases，不应触发 wave_deleted_committed
+    // E1/E2 已 passed → 必须保持原 scenario/steps/expected 不变（append-only）
+    // E3 是新增 case（合法）
+    const newTestJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "单测场景", steps: "执行单测",
+          expected: { text: "expected-output" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "集成场景", steps: "执行集成测试",
+          expected: { text: "real-output" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E3", layer: "mock", scenario: "s3", steps: "st",
+          expected: { text: "new-case" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    };
+    // 不应 throw（E1/E2 已 passed 但 expected 未变 → 合法；E3 新增）
+    const result = dispatch(
+      { action: "replan", topicId, testJson: newTestJson },
+      deps,
+    );
+    expect(result.status).toBe("planned");
+    const topic = store.loadTopic(topicId);
+    expect(topic!.waves).toHaveLength(1); // waves 不变
+    expect(topic!.testCases.map((c) => c.id).sort()).toEqual(["E1", "E2", "E3"]);
+  });
+
   it("replan 不传 plan 也不传 test → throw CwError", () => {
     const { deps, store } = makeDeps();
     const createResult = dispatch(

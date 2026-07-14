@@ -420,6 +420,31 @@ describe("insertTestCases", () => {
     expect(topic!.testCases[1]!.id).toBe("E1");
     expect(topic!.testCases[1]!.layer).toBe("real");
   });
+
+  it("重复插入同 id 的 testCase → 去重，不累积", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.insertTestCases("cw-test-topic", [
+        { id: "U1", layer: "mock", scenario: "s", steps: "st",
+          expected: { text: "r" }, executor: "vitest", requiresScreenshot: false },
+      ]);
+    });
+    // 再次插入同 id
+    store.transaction(() => {
+      store.insertTestCases("cw-test-topic", [
+        { id: "U1", layer: "mock", scenario: "s2", steps: "st2",
+          expected: { text: "r2" }, executor: "vitest", requiresScreenshot: false },
+        { id: "U2", layer: "real", scenario: "s", steps: "st",
+          expected: { text: "r" }, executor: "vitest", requiresScreenshot: false },
+      ]);
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testCases).toHaveLength(2); // U1 不重复，U2 新增
+    expect(topic!.testCases.map((tc) => tc.id)).toEqual(["U1", "U2"]);
+  });
 });
 
 // ── DAO: insertTestCases 持久化 priority/redCheck ───────────

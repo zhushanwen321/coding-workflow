@@ -40,6 +40,7 @@ import type {
   AdrRecord,
   AdrSeed,
   Artifacts,
+  Assessment,
   ClarifyKind,
   ClarifyOption,
   ClarifyRecord,
@@ -101,6 +102,8 @@ interface TopicRecord {
   /** test 修复审计日志（可选，向后兼容旧 _cw.json 数据）。 */
   testFixLog?: TestFixEntry[];
   testTurn?: number;
+  /** post-closeout 评估记录（可选，向后兼容旧 _cw.json 数据）。 */
+  assessments?: Assessment[];
 }
 
 interface WaveRecord {
@@ -449,6 +452,7 @@ export class CwStore {
         reviewTurn: topic.reviewTurn,
         testFixLog: topic.testFixLog,
         testTurn: topic.testTurn,
+        assessments: topic.assessments,
       };
       this.fileData!.topics.push(record);
     });
@@ -531,6 +535,7 @@ export class CwStore {
       reviewTurn: topic.reviewTurn ?? 0,
       testFixLog: topic.testFixLog ?? [],
       testTurn: topic.testTurn ?? 0,
+      assessments: topic.assessments ?? [],
     };
   }
 
@@ -819,6 +824,41 @@ export class CwStore {
     });
   }
 
+  // ── assessment DAO（post-closeout 评估，progressive） ─────
+
+  /**
+   * 追加一条 post-closeout 评估记录。
+   * id（AS1, AS2...）在 topic 内按现有 assessments 数量自增分配。
+   * assessedAt 自动填充 new Date().toISOString()。
+   * 返回分配的 id，供 handler 回显给调用方。
+   *
+   * 不改变 topic.status（progressive，始终 closed）。
+   */
+  appendAssessment(
+    topicId: string,
+    params: Omit<Assessment, "id" | "assessedAt">,
+  ): string {
+    let assignedId = "";
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.assessments ?? [];
+      const nextN = existing.length + 1;
+      assignedId = `AS${nextN}`;
+      const record: Assessment = {
+        id: assignedId,
+        assessedAt: new Date().toISOString(),
+        type: params.type,
+        score: params.score,
+        notes: params.notes,
+        defect: params.defect,
+      };
+      existing.push(record);
+      topic.assessments = existing;
+    });
+    return assignedId;
+  }
+
   // ── wave DAO ───────────────────────────────────────────────
 
   insertWaves(topicId: string, waves: WaveSeed[]): void {
@@ -850,8 +890,17 @@ export class CwStore {
 
   insertTestCases(topicId: string, cases: TestCaseSeed[]): void {
     this.executeWrite(() => {
+      // 去重：已存在同 topicId+id 的 testCase 不重复插入。
+      const existingIds = new Set(
+        this.fileData!.testCases
+          .filter((tc) => tc.topicId === topicId)
+          .map((tc) => tc.id),
+      );
       for (const c of cases) {
-        this.fileData!.testCases.push(this.testCaseSeedToRecord(topicId, c));
+        if (!existingIds.has(c.id)) {
+          this.fileData!.testCases.push(this.testCaseSeedToRecord(topicId, c));
+          existingIds.add(c.id);
+        }
       }
     });
   }
