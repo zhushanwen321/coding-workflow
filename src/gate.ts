@@ -4,12 +4,15 @@
  * 与旧版的差异（重构 = 推倒重建）：
  * - 砍掉 GateRegistry 声明表 + GateRunner dispatch 表（旧版 gates.ts 的 8 check 脚本 dispatch）
  * - 砍掉 GateTier 分档强度（gateHistory 不再记 tier 字段，types 已砍）
- * - 砍掉 runGate 通用执行器——4 个具名 check 函数内联各 phase 的校验逻辑
+ * - 砍掉 runGate 通用执行器——多个具名 check 函数内联各 phase 的校验逻辑
  * - 保留 GitValidator（validate），从旧 gates.ts 1:1 移植（isAncestorOfAny 已删：零调用 dead code）
  * - 保留 judgeByExpected（已在 types.ts，testCheck 调用）
  *
  * engine 职责边界（选项 A）：只做最基础结构校验，质量约束交回 skill 文档管。
- *   - planCheck：format === "lite" + waves ≥ 1 + testCases ≥ 1（typebox schema，不读 plan.md）
+ *   - planCheck：dev-plan（waves 部分）校验，只调 parseDevPlan，只校验 waves 非空（向后兼容旧格式）
+ *   - tddPlanCheck：test.json 校验（testCases 非空 + mock+real 分层强制 + 模糊值检测），调 parseTestJson
+ *   - redLightCheck：执行测试命令确认红灯（exit ≠ 0）
+ *   - runTestRunner：按 TestRunnerConfig 执行测试，返回 stdout/stderr/exitCode
  *   - devCheck：commit 存在 + 非空（GitValidator.validate）
  *   - testCheck：judgeByExpected 机器重算（丢 claimedStatus，D-008）
  *   - fileExistsCheck：文件存在 + 非空（retrospect/closeout gate）
@@ -17,13 +20,16 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
-import { parseLitePlan } from "./plan-parser.js";
+import { parseDevPlan, parseTestJson, type ParsedTestJson } from "./plan-parser.js";
 import {
   type Actual,
   type Expected,
   type TestCase,
   type Topic,
+  type TestRunnerConfig,
+  CwError,
   judgeByExpected,
 } from "./types.js";
 
@@ -148,59 +154,36 @@ export class GitValidator {
   }
 }
 
-// ── planCheck（调 parseLitePlan，返回结构化报告） ─────────────
+// ── planCheck（调 parseDevPlan，只校验 waves 部分） ─────────────
 
 export interface PlanCheckResult {
   result: "pass" | "fail";
   report: string;
 }
 
-/// P0: 模糊 expected 值正则（不区分大小写，全词匹配）。
-/// 匹配这些值的 expected.text 表示 agent 未真正跑测试，只填了结论词。
-const FUZZY_EXPECTED_RE =
-  /^(passed|ok|success|fail|failed|true|false|yes|no|done|completed|正确|错误|成功|失败)$/i;
-
 /**
- * planCheck — lite plan gate 的结构校验 + 模糊 expected 值检测。
+ * planCheck — dev-plan gate 的结构校验（只校验 waves 部分）。
  *
- * 委托 parseLitePlan 做 format === "lite" + typebox schema 校验。
- * P0 补充：schema 通过后，遍历 testCases 的 expected.text，
- * 若匹配模糊结论词（passed/ok/success 等）则 gate fail。
- * 目的：防 agent 填 expected.text="passed" 然后 actual.text="passed" 跳过真实测试。
+ * 改造说明（W3）：planCheck 只调 parseDevPlan（不调 parseLitePlan），只校验 waves 非空。
+ * 删除了原本绑定在 planCheck 上的 testCases 校验（模糊值检测、mock+real 分层强制）——
+ * 这两块校验已搬到 tddPlanCheck，因为 test.json 现在是独立文件。
+ *
+ * 向后兼容：如果 planJson 含 testCases（旧版 plan.json 格式），parseDevPlan 会把 testCases
+ * 提取到 legacyTestCases，但 planCheck 不再校验 testCases 内容，所以旧格式仍然 pass。
+ *
+ * 失败路径（parseDevPlan throw）：
+ *   - format !== "lite" / 非 object / size 超 1MB / schema 不符 / 环形 dependsOn → fail。
+ *   - waves 空数组 → fail（schema 允许空数组，planCheck 额外校验非空）。
  */
 export function planCheck(planJson: unknown): PlanCheckResult {
   try {
-    const parsed = parseLitePlan(planJson);
+    const parsed = parseDevPlan(planJson);
 
-    // P0: 检查模糊 expected 值
-    const fuzzyIds: string[] = [];
-    for (const tc of parsed.testCases) {
-      if (tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
-        fuzzyIds.push(tc.id);
-      }
-    }
-    if (fuzzyIds.length > 0) {
+    // 校验 waves 非空（parseDevPlan schema 允许空数组，这里补一刀）。
+    if (parsed.waves.length === 0) {
       return {
         result: "fail",
-        report:
-          `expected.text 为模糊结论词（不允许填 passed/ok/success 等，需写具体判定条件）: ` +
-          fuzzyIds.join(", "),
-      };
-    }
-
-    // 测试分层强制：mock + real 各≥1。
-    // mock 层验证逻辑正确性，real 层验证集成契约。只有一层 = 覆盖不完整。
-    const hasMock = parsed.testCases.some((tc) => tc.layer === "mock");
-    const hasReal = parsed.testCases.some((tc) => tc.layer === "real");
-    const missingLayers: string[] = [];
-    if (!hasMock) missingLayers.push("mock");
-    if (!hasReal) missingLayers.push("real");
-    if (missingLayers.length > 0) {
-      return {
-        result: "fail",
-        report:
-          `测试分层不完整：缺少 ${missingLayers.join(" 和 ")} 层 testCase。` +
-          `plan 必须同时含 mock 层（验证逻辑正确性）和 real 层（验证集成契约）的测试用例。`,
+        report: "dev-plan waves 为空：至少需要 1 个 wave。",
       };
     }
 
@@ -209,6 +192,231 @@ export function planCheck(planJson: unknown): PlanCheckResult {
     const msg = e instanceof Error ? e.message : String(e);
     return { result: "fail", report: msg };
   }
+}
+
+// ── tddPlanCheck（调 parseTestJson，校验 testCases） ────────────
+
+export interface TddPlanCheckResult {
+  result: "pass" | "fail";
+  report: string;
+  /** 解析后的 testCases（pass 时供 handler 写入 store） */
+  parsed?: ParsedTestJson;
+}
+
+/// P0: 模糊 expected 值正则（不区分大小写，全词匹配）。
+/// 匹配这些值的 expected.text 表示 agent 未真正跑测试，只填了结论词。
+const FUZZY_EXPECTED_RE =
+  /^(passed|ok|success|fail|failed|true|false|yes|no|done|completed|正确|错误|成功|失败)$/i;
+
+/**
+ * tddPlanCheck — test.json gate 校验（testCases 非空 + mock+real 分层强制 + 模糊值检测）。
+ *
+ * 三层校验（从旧版 planCheck 搬过来）：
+ *   1. parseTestJson schema 校验（format + typebox）
+ *   2. testCases 非空
+ *   3. mock + real 分层强制（至少各 1 个）—— mock 层验证逻辑正确性，real 层验证集成契约
+ *   4. 模糊 expected.text 检测（不能是 passed/ok/success 等结论词）
+ *
+ * pass 时返回 parsed，供 handler 写入 store。fail 时 parsed 为 undefined。
+ */
+export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
+  let parsed: ParsedTestJson;
+  try {
+    parsed = parseTestJson(testJson);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { result: "fail", report: msg };
+  }
+
+  // 校验 testCases 非空（parseTestJson schema 允许空数组）。
+  if (parsed.testCases.length === 0) {
+    return {
+      result: "fail",
+      report: "test.json testCases 为空：至少需要 1 个 testCase。",
+    };
+  }
+
+  // 测试分层强制：mock + real 各≥1。
+  // mock 层验证逻辑正确性，real 层验证集成契约。只有一层 = 覆盖不完整。
+  const hasMock = parsed.testCases.some((tc) => tc.layer === "mock");
+  const hasReal = parsed.testCases.some((tc) => tc.layer === "real");
+  const missingLayers: string[] = [];
+  if (!hasMock) missingLayers.push("mock");
+  if (!hasReal) missingLayers.push("real");
+  if (missingLayers.length > 0) {
+    return {
+      result: "fail",
+      report:
+        `测试分层不完整：缺少 ${missingLayers.join(" 和 ")} 层 testCase。` +
+        `plan 必须同时含 mock 层（验证逻辑正确性）和 real 层（验证集成契约）的测试用例。`,
+    };
+  }
+
+  // P0: 检查模糊 expected 值
+  const fuzzyIds: string[] = [];
+  for (const tc of parsed.testCases) {
+    if (tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
+      fuzzyIds.push(tc.id);
+    }
+  }
+  if (fuzzyIds.length > 0) {
+    return {
+      result: "fail",
+      report:
+        `expected.text 为模糊结论词（不允许填 passed/ok/success 等，需写具体判定条件）: ` +
+        fuzzyIds.join(", "),
+    };
+  }
+
+  return { result: "pass", report: "", parsed };
+}
+
+// ── redLightCheck（执行测试命令确认红灯） ─────────────────────
+
+export interface RedLightResult {
+  /** true=红灯确认（测试如期失败），false=非红灯（测试意外通过了） */
+  redLight: boolean;
+  reason: string;
+}
+
+/**
+ * redLightCheck — 执行测试命令，确认测试如期失败（红灯）。
+ *
+ * TDD 红灯阶段：agent 写了测试但还没写实现，测试应该失败。
+ *   - exit code !== 0 → redLight=true（红灯确认，符合预期）
+ *   - exit code === 0 → redLight=false（测试已通过，不是红灯，TDD 违规——可能 agent 提前写了实现）
+ *
+ * spawn 异常（命令不存在、权限错误等基础设施问题）返回 redLight=false + reason，
+ * 不抛错——交给上层判定（区分「测试通过了」和「测试根本跑不起来」）。
+ *
+ * 「命令不存在」的识别：shell 模式下 execFileSync 不会抛 ENOENT（shell 本身存在），
+ * 而是返回 exit code 127（POSIX 约定的 command-not-found）。所以这里同时检测
+ * isENOENT（spawn 失败）和 exit code 127（shell 内命令未找到），都视为 spawn error。
+ *
+ * @param testCommand 测试命令字符串，直接传给 shell 执行（如 "npx vitest run"）
+ * @param cwd 执行目录（绝对路径）
+ */
+export function redLightCheck(testCommand: string, cwd: string): RedLightResult {
+  try {
+    execFileSync(testCommand, {
+      cwd,
+      encoding: "utf8",
+      shell: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // exit code === 0：测试通过了，不是红灯。
+    return {
+      redLight: false,
+      reason: `测试意外通过（exit code 0），TDD 红灯阶段要求测试失败：${testCommand}`,
+    };
+  } catch (e) {
+    // spawn 异常（命令不存在等）→ 不是真正的「测试失败」，返回 redLight=false。
+    if (isENOENT(e) || getExitCode(e) === 127) {
+      return {
+        redLight: false,
+        reason: `测试命令执行失败（spawn error，命令不存在）：${testCommand}`,
+      };
+    }
+    // exit code !== 0：测试如期失败，红灯确认。
+    const exitCode = getExitCode(e);
+    return {
+      redLight: true,
+      reason: `测试如期失败（exit code ${exitCode}），红灯确认。`,
+    };
+  }
+}
+
+/// 从 execFileSync 抛出的异常里提取 status/exit code（失败时返回 -1）。
+function getExitCode(e: unknown): number {
+  if (typeof e === "object" && e !== null && "status" in e) {
+    const status = (e as { status: unknown }).status;
+    if (typeof status === "number") return status;
+  }
+  return -1;
+}
+
+// ── runTestRunner（按 TestRunnerConfig 执行测试） ─────────────
+
+export interface RunTestRunnerResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * runTestRunner — 按 TestRunnerConfig 执行测试，返回 stdout/stderr/exitCode。
+ *
+ * 命令构造（按 mode）：
+ *   - nodejs/python/java：直接用 config.command，在 config.cwd（相对 workspacePath）下执行。
+ *     config.cwd 省略时在 workspacePath 下执行。
+ *   - custom：用 `bash config.path`（path 相对 workspacePath），在 workspacePath 下执行。
+ *
+ * spawn 异常（ENOENT 等）抛出 CwError——区别于 runTestRunner 内部执行失败的 exitCode≠0。
+ * 因为前者是「命令找不到」（基础设施异常），后者是「测试失败」（业务结果）。
+ *
+ * @param config TestRunnerConfig（来自 test.json 的 testRunner 字段）
+ * @param workspacePath 工作区绝对路径，config.cwd/path 相对它解析
+ */
+export function runTestRunner(
+  config: TestRunnerConfig,
+  workspacePath: string,
+): RunTestRunnerResult {
+  let command: string;
+  let cwd: string;
+
+  if (config.mode === "custom") {
+    if (!config.path) {
+      throw new CwError(
+        `testRunner custom 模式缺 path 字段（相对 workspacePath 的脚本路径）`,
+      );
+    }
+    command = `bash ${config.path}`;
+    cwd = workspacePath;
+  } else {
+    // nodejs / python / java
+    if (!config.command) {
+      throw new CwError(
+        `testRunner ${config.mode} 模式缺 command 字段（测试执行命令）`,
+      );
+    }
+    command = config.command;
+    cwd = config.cwd ? join(workspacePath, config.cwd) : workspacePath;
+  }
+
+  try {
+    const stdout = execFileSync(command, {
+      cwd,
+      encoding: "utf8",
+      shell: true,
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { exitCode: 0, stdout, stderr: "" };
+  } catch (e) {
+    // spawn 异常 / 命令不存在（exit 127）→ 抛 CwError（基础设施异常）。
+    // shell 模式下命令找不到返回 exit 127（POSIX 约定），而非 ENOENT 异常。
+    if (isENOENT(e) || getExitCode(e) === 127) {
+      throw new CwError(
+        `测试命令执行失败（spawn error，命令不存在）：${command}`,
+      );
+    }
+    // 执行失败（exit ≠ 0）——返回结构化结果，不抛错（业务结果）。
+    const exitCode = getExitCode(e);
+    const stdout = getStringField(e, "stdout");
+    const stderr = getStringField(e, "stderr");
+    return { exitCode: exitCode === -1 ? 1 : exitCode, stdout, stderr };
+  }
+}
+
+/// 从 execFileSync 抛出的异常里安全取 stdout/stderr 字符串。
+function getStringField(e: unknown, field: "stdout" | "stderr"): string {
+  if (typeof e === "object" && e !== null && field in e) {
+    const val = (e as Record<string, unknown>)[field];
+    if (typeof val === "string") return val;
+    if (Buffer.isBuffer(val)) return val.toString("utf8");
+  }
+  return "";
 }
 
 // ── devCheck（调 GitValidator.validate） ─────────────────────

@@ -1,22 +1,61 @@
 /**
- * gate 单测 — P0 模糊 expected 值检测 + P1 文件覆盖校验。
+ * gate 单测（W3 改造后）。
  *
- * P0：planCheck 拒除 expected.text 匹配模糊结论词（passed/ok/success 等）的 testCase。
- * P1：devCheck 对 commit 实际改动文件与 plan changes 对比，输出 extraFiles。
+ * - planCheck：只校验 dev-plan（waves 部分），不再校验 testCases。
+ *   - 不含 testCases 的 dev-plan 通过
+ *   - 含 testCases 的旧格式也通过（向后兼容）
+ *   - waves 为空 → fail
+ *   - format/schema 等结构错误 → fail
+ * - tddPlanCheck：test.json 校验（mock+real 分层强制 + 模糊值检测），从旧 planCheck 搬过来。
+ * - redLightCheck：执行测试命令确认红灯（exit ≠ 0）。
+ * - runTestRunner：按 TestRunnerConfig 执行测试，返回 stdout/stderr/exitCode。
+ * - P1 devCheck：commit 实际改动文件与 plan changes 对比，输出 extraFiles。
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
-import { planCheck, devCheck, GitValidator } from "../src/gate.js";
-import type { Topic } from "../src/types.js";
+import {
+  planCheck,
+  tddPlanCheck,
+  redLightCheck,
+  runTestRunner,
+  devCheck,
+  GitValidator,
+} from "../src/gate.js";
+import { CwError, type Topic } from "../src/types.js";
 import { setupGitRepo, commitFile } from "./helpers/git.js";
 import { makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
 
-// ── 真实 git 仓库辅助 ───────────────────────────────────────
+// ── test.json helper（与 plan-parser.test.ts 的 makeValidTestJson 结构一致） ──
+
+function makeValidTestJson(): unknown {
+  return {
+    testCases: [
+      {
+        id: "E1",
+        layer: "mock",
+        scenario: "单测场景",
+        steps: "执行单测",
+        expected: { text: "expected-output" },
+        executor: "vitest",
+        requiresScreenshot: false,
+      },
+      {
+        id: "E2",
+        layer: "real",
+        scenario: "集成场景",
+        steps: "执行集成测试",
+        expected: { text: "real-output" },
+        executor: "vitest",
+        requiresScreenshot: false,
+      },
+    ],
+  };
+}
 
 // ── 测试环境 ────────────────────────────────────────────────
 
@@ -30,12 +69,53 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ── 真实 git 仓库辅助（setupGitRepo/commitFile 从 helpers/git.ts import） ──
+// ── planCheck（只校验 dev-plan，waves 部分） ────────────────
 
-// ── P0: planCheck 模糊 expected 值检测 ──────────────────────
+describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
+  it("不含 testCases 的 dev-plan → gate pass", () => {
+    const devPlan = {
+      format: "lite",
+      objective: "test obj",
+      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+    };
+    const result = planCheck(devPlan);
+    expect(result.result).toBe("pass");
+    expect(result.report).toBe("");
+  });
 
-describe("P0: planCheck 拒除模糊 expected 值", () => {
-  it("expected.text='passed' → gate fail", () => {
+  it("含 testCases 的旧格式 plan.json → gate pass（向后兼容）", () => {
+    // 旧版 plan.json 同时含 waves + testCases，planCheck 不再校验 testCases 内容。
+    const result = planCheck(makePlanJson());
+    expect(result.result).toBe("pass");
+    expect(result.report).toBe("");
+  });
+
+  it("waves 为空数组 → gate fail", () => {
+    const devPlan = {
+      format: "lite",
+      objective: "test obj",
+      waves: [],
+    };
+    const result = planCheck(devPlan);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("waves");
+  });
+
+  it("format 非 lite → gate fail（parseDevPlan 抛错被捕获）", () => {
+    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: ["a"], dependsOn: [] }] };
+    const result = planCheck(devPlan);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("format");
+  });
+
+  it("非 object → gate fail", () => {
+    const result = planCheck("not an object");
+    expect(result.result).toBe("fail");
+  });
+
+  it("旧格式含模糊 expected.text（如 passed）→ planCheck 仍 pass（testCases 不再被校验）", () => {
+    // 关键向后兼容断言：即便 testCases 含模糊值，planCheck 也不报错，
+    // 因为这些校验已搬到 tddPlanCheck。
     const planJson = makePlanJson({
       testCases: [
         {
@@ -43,215 +123,26 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "passed" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-    expect(result.report).toContain("E1");
-    expect(result.report).toContain("模糊结论词");
-  });
-
-  it("expected.text='OK'（大写）→ gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "OK" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-    expect(result.report).toContain("E1");
-  });
-
-  it("expected.text='success' → gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "success" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("expected.text='fail' → gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "fail" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("expected.text='true' → gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "true" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("expected.text='done' → gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "done" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("expected.text='completed' → gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "completed" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("expected.text='成功'（中文）→ gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "成功" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("expected.text='失败'（中文）→ gate fail", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "失败" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-  });
-
-  it("多个 testCase 部分模糊 → gate fail，报告列出所有模糊 id", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s1",
-          steps: "st1",
           expected: { text: "passed" },
           executor: "agent",
           requiresScreenshot: false,
         },
         {
           id: "E2",
-          layer: "mock",
-          scenario: "s2",
-          steps: "st2",
-          expected: { text: "返回 { status: 'ok', data: [1,2,3] }" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        {
-          id: "E3",
-          layer: "mock",
-          scenario: "s3",
-          steps: "st3",
-          expected: { text: "success" },
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "ok" },
           executor: "agent",
           requiresScreenshot: false,
         },
       ],
     });
     const result = planCheck(planJson);
-    expect(result.result).toBe("fail");
-    expect(result.report).toContain("E1");
-    expect(result.report).toContain("E3");
-    // E2 不应出现在报告中（"返回 { status: 'ok', data: [1,2,3] }" 不是纯 "ok"）
-    expect(result.report).not.toContain("E2");
+    expect(result.result).toBe("pass");
   });
 
-  /** real 层补充用例，与 mock 层用例配对以满足测试分层校验 */
-  const realLayerCase = {
-    id: "E2",
-    layer: "real" as const,
-    scenario: "s",
-    steps: "st",
-    expected: { text: "real layer output" },
-    executor: "agent",
-    requiresScreenshot: false,
-  };
-
-  it("expected.text='返回 { status: 'planned' }' → gate pass（非模糊值）", () => {
+  it("旧格式只有 mock 层（缺 real）→ planCheck 仍 pass（分层校验已搬到 tddPlanCheck）", () => {
     const planJson = makePlanJson({
       testCases: [
         {
@@ -259,106 +150,47 @@ describe("P0: planCheck 拒除模糊 expected 值", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "返回 { status: 'planned' }" },
+          expected: { text: "具体输出" },
           executor: "agent",
           requiresScreenshot: false,
         },
-        realLayerCase,
       ],
     });
     const result = planCheck(planJson);
     expect(result.result).toBe("pass");
-    expect(result.report).toBe("");
-  });
-
-  it("expected.text 含 'ok' 但非纯 'ok' → gate pass", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "status is ok, count=42" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        realLayerCase,
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("pass");
-  });
-
-  it("expected.text 含 'passed' 但非纯 'passed' → gate pass", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "test passed with 0 errors" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        realLayerCase,
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("pass");
-  });
-
-  it("expected 只有 url 无 text → gate pass（不检查 url）", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { url: "http://localhost:3000" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        realLayerCase,
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("pass");
-  });
-
-  it("expected 为空对象 → gate pass（无 text 不触发模糊检查）", () => {
-    const planJson = makePlanJson({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: {},
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        realLayerCase,
-      ],
-    });
-    const result = planCheck(planJson);
-    expect(result.result).toBe("pass");
-  });
-
-  it("合法 plan（无模糊值）→ gate pass", () => {
-    const result = planCheck(makePlanJson());
-    expect(result.result).toBe("pass");
-    expect(result.report).toBe("");
   });
 });
 
-// ── 测试分层强制（mock + real 各≥1）──────────────────────────
+// ── tddPlanCheck（test.json 校验） ──────────────────────────
 
-describe("planCheck 测试分层强制（mock + real 各≥1）", () => {
-  it("只有 mock 层 testCase（缺 real 层）→ gate fail", () => {
-    const planJson = makePlanJson({
+describe("tddPlanCheck 对合法 test.json 返回 pass", () => {
+  it("mock + real 各≥1 + 无模糊值 → pass，parsed 返回", () => {
+    const result = tddPlanCheck(makeValidTestJson());
+    expect(result.result).toBe("pass");
+    expect(result.report).toBe("");
+    expect(result.parsed).toBeDefined();
+    expect(result.parsed!.testCases).toHaveLength(2);
+  });
+});
+
+describe("tddPlanCheck 对空 testCases 返回 fail", () => {
+  it("testCases 为空数组 → fail", () => {
+    const result = tddPlanCheck({ testCases: [] });
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("testCases");
+    expect(result.parsed).toBeUndefined();
+  });
+
+  it("test.json 缺 testCases 字段（schema 错）→ fail", () => {
+    const result = tddPlanCheck({});
+    expect(result.result).toBe("fail");
+    expect(result.parsed).toBeUndefined();
+  });
+});
+
+describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
+  it("只有 mock 层 testCase（缺 real 层）→ fail", () => {
+    const testJson = {
       testCases: [
         {
           id: "E1",
@@ -370,14 +202,14 @@ describe("planCheck 测试分层强制（mock + real 各≥1）", () => {
           requiresScreenshot: false,
         },
       ],
-    });
-    const result = planCheck(planJson);
+    };
+    const result = tddPlanCheck(testJson);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("real");
   });
 
-  it("只有 real 层 testCase（缺 mock 层）→ gate fail", () => {
-    const planJson = makePlanJson({
+  it("只有 real 层 testCase（缺 mock 层）→ fail", () => {
+    const testJson = {
       testCases: [
         {
           id: "E1",
@@ -389,15 +221,196 @@ describe("planCheck 测试分层强制（mock + real 各≥1）", () => {
           requiresScreenshot: false,
         },
       ],
-    });
-    const result = planCheck(planJson);
+    };
+    const result = tddPlanCheck(testJson);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("mock");
   });
+});
 
-  it("mock + real 各≥1 → 测试分层校验通过", () => {
-    const result = planCheck(makePlanJson());
+describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
+  it("expected.text='passed' → fail", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("E1");
+    expect(result.report).toContain("模糊结论词");
+  });
+
+  it("expected.text='OK'（大写）→ fail", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "OK" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("E1");
+  });
+
+  it("expected.text='success' → fail", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+  });
+
+  it("expected.text='成功'（中文）→ fail", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "成功" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+  });
+
+  it("多个 testCase 部分模糊 → fail，报告列出所有模糊 id", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s1", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "mock", scenario: "s2", steps: "st", expected: { text: "返回 { status: 'ok', data: [1,2,3] }" }, executor: "agent", requiresScreenshot: false },
+        { id: "E3", layer: "real", scenario: "s3", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("E1");
+    expect(result.report).toContain("E3");
+    // E2 不是纯 "ok"，不应出现在报告中
+    expect(result.report).not.toContain("E2");
+  });
+
+  it("expected.text 含 'ok' 但非纯 'ok' → pass", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "status is ok, count=42" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
     expect(result.result).toBe("pass");
+  });
+
+  it("expected 只有 url 无 text → pass（不检查 url）", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { url: "http://localhost:3000" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("pass");
+  });
+});
+
+// ── redLightCheck（执行测试命令确认红灯） ───────────────────
+
+describe("redLightCheck", () => {
+  it("测试命令退出码 1 → redLight=true（红灯确认）", () => {
+    // node -e "process.exit(1)" 立即退出 1，模拟测试失败。
+    const result = redLightCheck('node -e "process.exit(1)"', tmpDir);
+    expect(result.redLight).toBe(true);
+    expect(result.reason).toContain("1");
+  });
+
+  it("测试命令退出码 0 → redLight=false（非红灯，TDD 违规）", () => {
+    // node -e "process.exit(0)" 退出 0，模拟测试通过。
+    const result = redLightCheck('node -e "process.exit(0)"', tmpDir);
+    expect(result.redLight).toBe(false);
+    expect(result.reason).toContain("意外通过");
+  });
+
+  it("测试命令非零退出码（如 2）→ redLight=true", () => {
+    const result = redLightCheck('node -e "process.exit(2)"', tmpDir);
+    expect(result.redLight).toBe(true);
+    expect(result.reason).toContain("2");
+  });
+
+  it("命令不存在（spawn error）→ redLight=false + reason", () => {
+    // 用一个肯定不存在的命令触发 ENOENT。
+    const result = redLightCheck("this-command-definitely-not-exist-xyz-123", tmpDir);
+    expect(result.redLight).toBe(false);
+    expect(result.reason.length).toBeGreaterThan(0);
+    expect(result.reason.toLowerCase()).toMatch(/spawn|fail|error/);
+  });
+});
+
+// ── runTestRunner（按 TestRunnerConfig 执行测试） ───────────
+
+describe("runTestRunner", () => {
+  it("nodejs 模式执行 command 并返回 exitCode", () => {
+    // 用 echo 模拟测试命令：退出 0，stdout 非空。
+    const result = runTestRunner(
+      { mode: "nodejs", command: 'node -e "console.log(\'test ok\')"' },
+      tmpDir,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("test ok");
+  });
+
+  it("测试命令失败（exit ≠ 0）→ 返回非零 exitCode，不抛错", () => {
+    const result = runTestRunner(
+      { mode: "nodejs", command: 'node -e "process.exit(3)"' },
+      tmpDir,
+    );
+    expect(result.exitCode).toBe(3);
+  });
+
+  it("nodejs 模式缺 command → 抛 CwError", () => {
+    expect(() =>
+      runTestRunner({ mode: "nodejs" }, tmpDir),
+    ).toThrow(CwError);
+  });
+
+  it("python 模式执行 command（相对 cwd）", () => {
+    // 用 node 代替 python（CI 不一定装 python），验证 cwd 相对路径解析。
+    mkdirSync(join(tmpDir, "subdir"), { recursive: true });
+    const result = runTestRunner(
+      { mode: "python", command: 'node -e "console.log(\'from subdir\')"', cwd: "subdir" },
+      tmpDir,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("from subdir");
+  });
+
+  it("custom 模式用 bash path 执行脚本", () => {
+    // 写一个 sh 脚本，用 custom 模式跑。
+    const scriptPath = join(tmpDir, "run-tests.sh");
+    writeFileSync(scriptPath, '#!/bin/bash\necho "custom runner ok"\nexit 0\n');
+    const result = runTestRunner(
+      { mode: "custom", path: "run-tests.sh" },
+      tmpDir,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("custom runner ok");
+  });
+
+  it("custom 模式缺 path → 抛 CwError", () => {
+    expect(() =>
+      runTestRunner({ mode: "custom" }, tmpDir),
+    ).toThrow(CwError);
+  });
+
+  it("命令本身不存在（spawn ENOENT）→ 抛 CwError", () => {
+    // bash 不存在的脚本文件 → 抛 CwError（区别于脚本执行失败的 exit≠0）。
+    expect(() =>
+      runTestRunner(
+        { mode: "custom", path: "nonexistent-script-xyz.sh" },
+        tmpDir,
+      ),
+    ).toThrow(CwError);
   });
 });
 
