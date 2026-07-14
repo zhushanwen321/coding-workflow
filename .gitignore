@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # ZCode plan mode artifacts
 .zcode/plans/
+
+# CW CLI topic artifacts (delivery documents, per-topic working files)
+.xyz-harness/
