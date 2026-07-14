@@ -22,13 +22,13 @@ import type { GitValidator } from "./gate.js";
 // ── 状态机值对象 ────────────────────────────────────────────
 
 /**
- * lite 单轨的 7 个正向 action + replan（共 8 个）。
- * 砍掉 clarify / detail（mid 专属）。
- * review 插在 dev 和 test 之间（强制审查环节，复盘证明不强制就被跳过）。
+ * 8 个正向 action + replan（共 9 个）。
+ * tdd_plan 插在 plan 和 dev 之间——agent 先写测试代码 + test.json（红灯确认），再进 dev 写实现。
  */
 export type Action =
   | "create"
   | "plan"
+  | "tdd_plan"
   | "dev"
   | "review"
   | "test"
@@ -37,12 +37,13 @@ export type Action =
   | "replan";
 
 /**
- * lite 单轨的 7 个 status。
- * 砍掉 clarified / detailed（mid 专属）。
+ * 8 个 status（新增 tdd_inited）。
+ * tdd_inited：tdd_plan gate 通过，测试代码 + test.json 已写入，等待 dev 阶段实现。
  */
 export type Status =
   | "created"
   | "planned"
+  | "tdd_inited"
   | "developed"
   | "reviewed"
   | "tested"
@@ -106,11 +107,18 @@ export function judgeByExpected(
 
 // ── 领域模型 ────────────────────────────────────────────────
 
+/**
+ * 优先级——排序和评估用，不是跳过的理由。全部 P0/P1/P2 都必须完成。
+ * P0=核心路径，P1=重要功能，P2=增强/优化。
+ */
+export type Priority = "P0" | "P1" | "P2";
+
 export interface Wave {
   id: string;
   dependsOn: string[];
   committed: string | null;
   changes: string[];
+  priority?: Priority;
 }
 
 export interface TestCase {
@@ -126,6 +134,12 @@ export interface TestCase {
   failureReason?: string;
   requiresScreenshot: boolean;
   dependsOn: string[];
+  priority?: Priority;
+  /**
+   * tdd_plan 阶段是否对此 case 做红灯校验（跑测试文件确认 exit ≠ 0）。
+   * mock 层通常 true（纯逻辑，可立即跑），real 层通常 false（需环境，tdd_plan 时跑不了）。
+   */
+  redCheck?: boolean;
 }
 
 export interface GateHistoryEntry {
@@ -190,6 +204,35 @@ export interface TestCaseSeed {
   executor: string;
   requiresScreenshot: boolean;
   dependsOn?: string[];
+  priority?: Priority;
+  redCheck?: boolean;
+}
+
+// ── TestRunner 配置（test.json 顶层，定义如何执行测试） ──────
+
+/**
+ * 测试执行器模式。
+ * - nodejs：Node.js 生态（vitest/jest/mocha），command 字段指定测试命令
+ * - python：Python 生态（pytest/unittest），command 字段指定测试命令
+ * - java：Java 生态（JUnit/TestNG/Maven），command 字段指定测试命令
+ * - custom：用户自定义脚本，path 字段指定脚本路径
+ */
+export type TestRunnerMode = "nodejs" | "python" | "java" | "custom";
+
+/**
+ * TestRunnerConfig — test.json 的 testRunner 字段，定义项目的测试执行策略。
+ *
+ * 不配置时 CW 不自动执行测试（agent 模式，agent 自己跑测试后提交 actual）。
+ * 配置后 CW engine 在 test 阶段可自动执行 command/path，获取 exit code 判定 pass/fail。
+ */
+export interface TestRunnerConfig {
+  mode: TestRunnerMode;
+  /** nodejs/python/java 模式的测试命令（如 "npx vitest run"、"python -m pytest"）。 */
+  command?: string;
+  /** 命令执行的工作目录（相对 workspacePath），默认 "."。 */
+  cwd?: string;
+  /** custom 模式的脚本路径（相对 workspacePath，如 ".cw/run-tests.sh"）。 */
+  path?: string;
 }
 
 // ── guard 返回 ──────────────────────────────────────────────
