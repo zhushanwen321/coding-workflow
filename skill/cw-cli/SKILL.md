@@ -55,14 +55,15 @@ cw create --slug <kebab-case-slug> --objective "<一句话业务目标>"
 
 `alternatives` 是当前状态下**同样合法**的可选 action（不是错误处理路径）。`action` 是主推荐，`alternatives` 是补充——当场景需要时（如 dev 中途发现 plan 要追加 Wave）走 `alternatives`，不必每次都走 `action`。
 
-### 8 阶段流程
+### 9 阶段流程
 
 ```
-create → plan → tdd_plan → dev → review → test → retrospect → closeout
+create → clarify → plan → tdd_plan → dev → review → test → retrospect → closeout
 ```
 
 | nextAction.action | 你要做的 | cw 命令 |
 |-------------------|---------|---------|
+| `clarify` | 探索技术系统 + 澄清需求/技术 spec + 记录 ADR（advisory，可跳过） | `echo '<clarifyJson>' \| cw clarify --topicId <id>` |
 | `plan` | 明确范围后产出 **dev-plan.json**（只含 waves），提交 | `echo '<devPlanJson>' \| cw plan --topicId <id>` |
 | `tdd_plan` | 写测试代码（红灯）+ **test.json**（testCases + expected），提交 | `echo '<testJson>' \| cw tdd_plan --topicId <id>` |
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
@@ -72,6 +73,48 @@ create → plan → tdd_plan → dev → review → test → retrospect → clos
 | `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
 | `replan` | 修改计划（--plan 改 dev-plan / --test 改 test.json） | `echo '<json>' \| cw replan --topicId <id> --plan` 或 `--test` |
 | `undefined` | 流程结束 | 无 |
+
+### clarify 阶段 + ADR 机制
+
+create 之后、plan 之前。澄清需求/技术 spec，记录关键决策。**advisory——不强制**，清晰需求可直接 plan（plan 的 gate 不依赖 clarify）。
+
+**流程**：判断清晰度 → 探索技术系统（读代码）→ 形成预判 + 推荐 → 向用户提问 → 记录到 cw → 如有 ADR 则双写。
+
+**提问两类**：
+- `requirement`：需求 spec 澄清，阻塞业务用例的逻辑歧义
+- `technical`：技术 spec 澄清，涉及选型/架构/关键 ADR
+
+**呈现方式**：简单问题用 AskUserQuestion（选项式，批量 1-4 个）；复杂方案产出 md/html，`presentationPath` 记录路径。
+
+**禁止空问**：每条 clarifyJson 必须含 `assessment`（探索背景 + 预判）。空问 = 转嫁探索成本给用户。
+
+**ADR 双写**（克制使用，多数 session 0-1 个）：
+只有同时满足①难以逆转②没有上下文会让人觉得意外③真实取舍，才记 ADR。任一缺失则跳过。
+- agent 写 `docs/adr/{id}-{title}.md`（人可读，git tracked）
+- `cw clarify` 带 `adr.projectPath`，cw 校验文件存在后写入 `topic.adrs`（结构化数据）
+
+**clarifyJson 格式**：
+
+```jsonc
+// 单条（pending，向用户提问前记录）
+{ "kind": "technical", "topic": "状态存储方案",
+  "assessment": "当前 store.ts 用 JSON + flock（见 store.ts:222），并发写锁竞争明显...",
+  "question": "状态存储维持 JSON 还是迁移 SQLite？",
+  "options": [{"id":"A","label":"维持JSON","tradeoff":"零依赖，并发弱"},
+              {"id":"B","label":"迁SQLite","tradeoff":"并发好，引入原生依赖"}],
+  "recommendation": "B" }
+
+// 提问 + 回答 + ADR（一次闭环）
+{ ...同上, "answer": "选 B",
+  "adr": { "title":"状态存储迁移SQLite", "context":"...", "decision":"用better-sqlite3",
+           "alternatives":["JSON+flock"], "consequences":"新增原生依赖",
+           "projectPath":"docs/adr/0001-sqlite.md" } }
+
+// 批量（数组，一次记录多条）
+[{ ... }, { ... }]
+```
+
+**渐进式**：每次提问/拿到答案就调一次 `cw clarify`（参考 dev 阶段 progressive 模式）。全 resolved 后 nextAction 切到 `plan`。
 
 ### 文件拆分：dev-plan.json + test.json
 
