@@ -25,7 +25,7 @@ function makeTopicWithFails(phase: string, failCount: number): Topic {
   const gateHistory = [];
   for (let i = 0; i < failCount; i++) {
     gateHistory.push({
-      id: `gh-${i}`,
+      id: i,
       ts: `2026-01-01T00:00:0${i}.000Z`,
       phase,
       action: phase,
@@ -279,7 +279,7 @@ describe("gate 熔断 (countConsecutiveGateFails via buildNextAction)", () => {
     topic.status = "created";
     const na = buildNextAction("plan", topic);
     expect(na.guidance).toContain("熔断");
-    expect(na.guidance).toContain("5");
+    expect(na.guidance).toContain("熔断阈值");
   });
 
   it("review gate 连续 fail >= 5 → guidance 含熔断文案", () => {

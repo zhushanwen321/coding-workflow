@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -399,7 +399,6 @@ describe("文件损坏兜底", () => {
     store.transaction(() => store.insertTopic(makeTopic())); // 正常初始化
 
     // 手动写坏 JSON
-    const { writeFileSync } = require("node:fs");
     writeFileSync(dbPath, "{ corrupted json !!! ");
 
     // 重新加载不应 crash，返回空库
@@ -417,10 +416,10 @@ describe("stale-lock 清理", () => {
     const store = makeStore();
     store.transaction(() => store.insertTopic(makeTopic()));
 
-    // 手动写一个 stale lockfile：PID=999999（几乎肯定不存在）+ 当前 ts
+    // 手动写一个 stale lockfile：PID=本进程+1（几乎肯定不存在）+ 当前 ts
     const lockPath = dbPath + ".lock";
-    const { writeFileSync } = require("node:fs");
-    writeFileSync(lockPath, "999999\n" + Date.now() + "\n");
+    const deadPid = process.pid + 1;
+    writeFileSync(lockPath, `${deadPid}\n${Date.now()}\n`);
 
     // 新 CwStore 实例开 transaction → 应检测到死进程 PID → 清理 stale lock → 获取锁
     const store2 = makeStore();
