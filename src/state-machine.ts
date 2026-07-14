@@ -32,6 +32,14 @@ import type {
 const GATE_RETRY_LIMIT = 5;
 
 /**
+ * review / test 循环轮数上限（防无限重试）。
+ * review_fix/test_fix 的 loop 超过此阈值后 nextAction 应告警（W3+ 在 buildNextAction 接入）。
+ * 此处先定义常量供后续 Wave 使用。
+ */
+const REVIEW_TURN_LIMIT = 3;
+const TEST_TURN_LIMIT = 5;
+
+/**
  * 从 gateHistory 尾部向前数给定 phase 的连续 fail 次数。
  * 遇到非本 phase 或本 phase 的 pass 记录即停止。
  */
@@ -120,9 +128,26 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     nextStatus: "developed",
     progressive: true,
   },
-  review: { expectedStatuses: ["developed"], nextStatus: "reviewed" },
+  review: {
+    // progressive：fix 后可再 review（多轮 review loop）。reviewed 状态下再次 review 合法。
+    expectedStatuses: ["developed", "reviewed"],
+    nextStatus: "reviewed",
+    progressive: true,
+  },
+  review_fix: {
+    // review_fix：reviewed 状态下修 issue 后的修复动作（progressive，留在 reviewed）。
+    expectedStatuses: ["reviewed"],
+    nextStatus: "reviewed",
+    progressive: true,
+  },
   test: {
     expectedStatuses: ["reviewed", "tested"],
+    nextStatus: "tested",
+    progressive: true,
+  },
+  test_fix: {
+    // test_fix：tested 状态下修代码后的修复动作（progressive，留在 tested）。审计日志由 store 追加。
+    expectedStatuses: ["tested"],
     nextStatus: "tested",
     progressive: true,
   },
@@ -388,6 +413,20 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         alternatives: [replanAlternative()],
       };
     }
+    case "review_fix": {
+      // review_fix：review loop 内的修复动作（status 留在 reviewed）。
+      // 修完 issue 后应重新 review（下一轮），若已达 review 轮数上限则告警。
+      // 注意：review_fix 的 dispatch 尚未接入（W6），这里只给 nextAction 导航兜底。
+      const turn = topic.reviewTurn;
+      const overLimit = turn >= REVIEW_TURN_LIMIT;
+      return {
+        action: "review",
+        guidance: overLimit
+          ? `review 已达 ${REVIEW_TURN_LIMIT} 轮上限（当前 turn=${turn}）。建议 ask_user 人工介入审查，或调 cw(replan) 调整计划。`
+          : `review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(review) 开启下一轮审查，确认所有 issue 已闭环。\n\n${REVIEW_PROMPT}`,
+        alternatives: overLimit ? [replanAlternative()] : undefined,
+      };
+    }
     case "test": {
       if (computeGatePassed("test", topic)) {
         return {
@@ -404,6 +443,20 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         guidance: `test 有 case 未通过，回 dev 修代码。修完 commit 后重新走 review → test。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
+      };
+    }
+    case "test_fix": {
+      // test_fix：test loop 内的修复动作（status 留在 tested），审计日志由 store.appendTestFix 追加。
+      // 修完代码后应重新跑 test，若已达 test 轮数上限则告警。
+      // 注意：test_fix 的 dispatch 尚未接入（W6），这里只给 nextAction 导航兜底。
+      const turn = topic.testTurn;
+      const overLimit = turn >= TEST_TURN_LIMIT;
+      return {
+        action: "test",
+        guidance: overLimit
+          ? `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${turn}）。建议 ask_user 人工介入审查，或调 cw(replan) 调整计划。`
+          : `test_fix 完成（第 ${turn} 轮）。下一步：重新跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
+        alternatives: overLimit ? [replanAlternative()] : undefined,
       };
     }
     case "retrospect": {

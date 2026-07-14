@@ -5,14 +5,21 @@
  * setWaveCommitted 幂等更新。
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import { CwStore } from "../src/store.js";
-import type { AdrSeed, ClarifySeed, Priority, Topic } from "../src/types.js";
+import type {
+  AdrSeed,
+  ClarifySeed,
+  Priority,
+  ReviewIssueSubmission,
+  TestFixEntry,
+  Topic,
+} from "../src/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 
@@ -38,6 +45,10 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     gatePassed: {},
     clarifyRecords: [],
     adrs: [],
+    reviewIssues: [],
+    reviewTurn: 0,
+    testFixLog: [],
+    testTurn: 0,
     ...overrides,
   };
 }
@@ -800,5 +811,324 @@ describe("runtimeEnv 持久化", () => {
     const topics = store.listTopics();
     const topic = topics.find((t) => t.topicId === "cw-env-3");
     expect(topic!.runtimeEnv).toEqual(env);
+  });
+});
+
+// ── W2: review / test issue tracking DAO ────────────────────
+
+describe("appendReviewIssues", () => {
+  it("写入 2 个 issue → loadTopic 读回 status=open, foundAtTurn=1, id 自增 R1/R2", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const issues: ReviewIssueSubmission[] = [
+      { severity: "must-fix", description: "缺少错误处理", file: "src/app.ts:10" },
+      { severity: "nit", description: "命名拼写" },
+    ];
+    store.transaction(() => store.appendReviewIssues("cw-test-topic", 1, issues));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toHaveLength(2);
+    expect(topic!.reviewIssues[0]!.id).toBe("R1");
+    expect(topic!.reviewIssues[0]!.status).toBe("open");
+    expect(topic!.reviewIssues[0]!.foundAtTurn).toBe(1);
+    expect(topic!.reviewIssues[0]!.severity).toBe("must-fix");
+    expect(topic!.reviewIssues[0]!.file).toBe("src/app.ts:10");
+    expect(topic!.reviewIssues[1]!.id).toBe("R2");
+    expect(topic!.reviewIssues[1]!.foundAtTurn).toBe(1);
+    expect(topic!.reviewIssues[1]!.severity).toBe("nit");
+    expect(topic!.reviewIssues[1]!.file).toBeUndefined();
+  });
+
+  it("多轮追加：第 2 轮追加 1 个 → id 自增到 R3, foundAtTurn=2", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "i1" },
+      ]),
+    );
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 2, [
+        { severity: "should-fix", description: "i2" },
+      ]),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toHaveLength(2);
+    expect(topic!.reviewIssues[1]!.id).toBe("R2");
+    expect(topic!.reviewIssues[1]!.foundAtTurn).toBe(2);
+  });
+
+  it("跨实例 reload → reviewIssues 持久化到磁盘", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "persist check" },
+      ]),
+    );
+
+    const reloaded = new CwStore(dbPath);
+    const topic = reloaded.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toHaveLength(1);
+    expect(topic!.reviewIssues[0]!.description).toBe("persist check");
+  });
+});
+
+describe("fixReviewIssue", () => {
+  it("标记 issue fixed → status=fixed, fix.commitHash/resolution/fixedAtTurn 正确", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "bug" },
+      ]),
+    );
+
+    store.transaction(() =>
+      store.fixReviewIssue("cw-test-topic", "R1", {
+        commitHash: "abc123",
+        resolution: "加了 try/catch",
+        fixedAtTurn: 2,
+      }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    const issue = topic!.reviewIssues[0]!;
+    expect(issue.status).toBe("fixed");
+    expect(issue.fix).toBeDefined();
+    expect(issue.fix!.commitHash).toBe("abc123");
+    expect(issue.fix!.resolution).toBe("加了 try/catch");
+    expect(issue.fix!.fixedAtTurn).toBe(2);
+  });
+
+  it("issueId 不存在 → 静默忽略（不 throw）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "bug" },
+      ]),
+    );
+
+    expect(() =>
+      store.transaction(() =>
+        store.fixReviewIssue("cw-test-topic", "R999", {
+          commitHash: "x",
+          resolution: "x",
+          fixedAtTurn: 2,
+        }),
+      ),
+    ).not.toThrow();
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues[0]!.status).toBe("open");
+  });
+
+  it("topicId 不存在 → 静默忽略（不 throw）", () => {
+    const store = makeStore();
+    expect(() =>
+      store.transaction(() =>
+        store.fixReviewIssue("cw-nonexistent", "R1", {
+          commitHash: "x",
+          resolution: "x",
+          fixedAtTurn: 1,
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("appendTestFix", () => {
+  it("写入 1 条 → loadTopic 读回 turn/caseId/commitHash 正确", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const entry: TestFixEntry = {
+      caseId: "E1",
+      commitHash: "def456",
+      resolution: "修正了 expected 匹配",
+      turn: 2,
+    };
+    store.transaction(() => store.appendTestFix("cw-test-topic", entry));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testFixLog).toHaveLength(1);
+    expect(topic!.testFixLog[0]!.caseId).toBe("E1");
+    expect(topic!.testFixLog[0]!.commitHash).toBe("def456");
+    expect(topic!.testFixLog[0]!.resolution).toBe("修正了 expected 匹配");
+    expect(topic!.testFixLog[0]!.turn).toBe(2);
+  });
+
+  it("多次追加 → 顺序保留（append-only）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendTestFix("cw-test-topic", {
+        caseId: "E1",
+        commitHash: "h1",
+        resolution: "fix1",
+        turn: 1,
+      }),
+    );
+    store.transaction(() =>
+      store.appendTestFix("cw-test-topic", {
+        caseId: "E2",
+        commitHash: "h2",
+        resolution: "fix2",
+        turn: 2,
+      }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testFixLog).toHaveLength(2);
+    expect(topic!.testFixLog[0]!.caseId).toBe("E1");
+    expect(topic!.testFixLog[1]!.caseId).toBe("E2");
+  });
+});
+
+describe("incReviewTurn / incTestTurn", () => {
+  it("incReviewTurn 调用后 turn +1（从 0 → 1 → 2）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    let topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewTurn).toBe(0);
+
+    store.transaction(() => store.incReviewTurn("cw-test-topic"));
+    topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewTurn).toBe(1);
+
+    store.transaction(() => store.incReviewTurn("cw-test-topic"));
+    topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewTurn).toBe(2);
+  });
+
+  it("incTestTurn 调用后 turn +1（从 0 → 1）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    expect(store.loadTopic("cw-test-topic")!.testTurn).toBe(0);
+    store.transaction(() => store.incTestTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.testTurn).toBe(1);
+  });
+
+  it("topicId 不存在 → 静默忽略（不 throw）", () => {
+    const store = makeStore();
+    expect(() =>
+      store.transaction(() => store.incReviewTurn("cw-nope")),
+    ).not.toThrow();
+    expect(() =>
+      store.transaction(() => store.incTestTurn("cw-nope")),
+    ).not.toThrow();
+  });
+});
+
+describe("resetReviewLoop / resetTestLoop", () => {
+  it("resetReviewLoop → reviewIssues=[], reviewTurn=0", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "x" },
+        { severity: "nit", description: "y" },
+      ]),
+    );
+    store.transaction(() => store.incReviewTurn("cw-test-topic"));
+
+    let topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toHaveLength(2);
+    expect(topic!.reviewTurn).toBe(1);
+
+    store.transaction(() => store.resetReviewLoop("cw-test-topic"));
+    topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toEqual([]);
+    expect(topic!.reviewTurn).toBe(0);
+  });
+
+  it("resetTestLoop → testFixLog=[], testTurn=0", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendTestFix("cw-test-topic", {
+        caseId: "E1",
+        commitHash: "h",
+        resolution: "r",
+        turn: 1,
+      }),
+    );
+    store.transaction(() => store.incTestTurn("cw-test-topic"));
+
+    let topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testFixLog).toHaveLength(1);
+    expect(topic!.testTurn).toBe(1);
+
+    store.transaction(() => store.resetTestLoop("cw-test-topic"));
+    topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testFixLog).toEqual([]);
+    expect(topic!.testTurn).toBe(0);
+  });
+
+  it("reset 后再追加 → id 从 R1 重新自增（数组已清空）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "first" },
+      ]),
+    );
+    store.transaction(() => store.resetReviewLoop("cw-test-topic"));
+    store.transaction(() =>
+      store.appendReviewIssues("cw-test-topic", 1, [
+        { severity: "nit", description: "after reset" },
+      ]),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toHaveLength(1);
+    expect(topic!.reviewIssues[0]!.id).toBe("R1");
+  });
+});
+
+// ── 旧数据向后兼容：reviewIssues 等字段缺失时兜底默认值 ──────
+
+describe("旧数据向后兼容（issue tracking 字段缺失）", () => {
+  it("insertTopic 不传 reviewIssues → loadTopic 读回 [] / 0（types 必填，store 兜底）", () => {
+    // types.ts 的 Topic 把 reviewIssues 等设为必填，但 TopicRecord 是可选（向后兼容旧 _cw.json）。
+    // 这里通过 makeTopic 默认值写入（[] / 0），验证 round-trip 一致。
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.reviewIssues).toEqual([]);
+    expect(topic!.reviewTurn).toBe(0);
+    expect(topic!.testFixLog).toEqual([]);
+    expect(topic!.testTurn).toBe(0);
+  });
+
+  it("手工写缺字段的旧 JSON → loadTopic 用 ?? 兜底（不 crash）", () => {
+    // 模拟旧 _cw.json：topics 数组里的 record 不含 reviewIssues/reviewTurn/testFixLog/testTurn。
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    // 读出磁盘 JSON，删掉新字段后再写回，模拟旧数据。
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      topics: Array<Record<string, unknown>>;
+    };
+    for (const t of raw.topics) {
+      delete t.reviewIssues;
+      delete t.reviewTurn;
+      delete t.testFixLog;
+      delete t.testTurn;
+    }
+    writeFileSync(dbPath, JSON.stringify(raw));
+
+    const reloaded = new CwStore(dbPath);
+    const topic = reloaded.loadTopic("cw-test-topic");
+    expect(topic).not.toBeNull();
+    expect(topic!.reviewIssues).toEqual([]);
+    expect(topic!.reviewTurn).toBe(0);
+    expect(topic!.testFixLog).toEqual([]);
+    expect(topic!.testTurn).toBe(0);
   });
 });

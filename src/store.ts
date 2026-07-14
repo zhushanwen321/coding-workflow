@@ -48,10 +48,13 @@ import type {
   GateHistoryEntry,
   Priority,
   RetrospectData,
+  ReviewIssue,
+  ReviewIssueSubmission,
   RuntimeEnv,
   Status,
   TestCase,
   TestCaseSeed,
+  TestFixEntry,
   TestRunnerConfig,
   Topic,
   Wave,
@@ -92,6 +95,12 @@ interface TopicRecord {
   artifacts?: Artifacts;
   retrospectData?: RetrospectData;
   testRunner?: TestRunnerConfig;
+  /** review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
+  reviewIssues?: ReviewIssue[];
+  reviewTurn?: number;
+  /** test 修复审计日志（可选，向后兼容旧 _cw.json 数据）。 */
+  testFixLog?: TestFixEntry[];
+  testTurn?: number;
 }
 
 interface WaveRecord {
@@ -436,6 +445,10 @@ export class CwStore {
         artifacts: topic.artifacts,
         retrospectData: topic.retrospectData,
         testRunner: topic.testRunner,
+        reviewIssues: topic.reviewIssues,
+        reviewTurn: topic.reviewTurn,
+        testFixLog: topic.testFixLog,
+        testTurn: topic.testTurn,
       };
       this.fileData!.topics.push(record);
     });
@@ -514,6 +527,10 @@ export class CwStore {
       testRunner: topic.testRunner,
       clarifyRecords: clarifyRecords.map((c) => this.mapClarifyRecord(c)),
       adrs: adrs.map((a) => this.mapAdrRecord(a)),
+      reviewIssues: topic.reviewIssues ?? [],
+      reviewTurn: topic.reviewTurn ?? 0,
+      testFixLog: topic.testFixLog ?? [],
+      testTurn: topic.testTurn ?? 0,
     };
   }
 
@@ -685,6 +702,120 @@ export class CwStore {
       if (topic) {
         topic.testRunner = config;
       }
+    });
+  }
+
+  // ── review / test issue tracking DAO（闭环追踪） ──────────
+
+  /**
+   * 追加 review issues（新 turn 发现的，status=open）。
+   * id（R1, R2...）在 topic 内按现有 reviewIssues 数量自增分配。
+   * foundAtTurn 由调用方传入（对应当前 reviewTurn）。
+   */
+  appendReviewIssues(
+    topicId: string,
+    turn: number,
+    issues: ReviewIssueSubmission[],
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.reviewIssues ?? [];
+      let nextN = existing.length + 1;
+      for (const issue of issues) {
+        const record: ReviewIssue = {
+          id: `R${nextN}`,
+          severity: issue.severity,
+          description: issue.description,
+          file: issue.file,
+          status: "open",
+          foundAtTurn: turn,
+        };
+        existing.push(record);
+        nextN++;
+      }
+      topic.reviewIssues = existing;
+    });
+  }
+
+  /**
+   * 标记 review issue 为 fixed（附修复证据：commitHash + resolution + fixedAtTurn）。
+   * issue 不存在时静默忽略（与 updateClarifyRecord 的 find-or-skip 同模式）。
+   */
+  fixReviewIssue(
+    topicId: string,
+    issueId: string,
+    fix: { commitHash: string; resolution: string; fixedAtTurn: number },
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic || !topic.reviewIssues) return;
+      const issue = topic.reviewIssues.find((i) => i.id === issueId);
+      if (!issue) return;
+      issue.status = "fixed";
+      issue.fix = {
+        commitHash: fix.commitHash,
+        resolution: fix.resolution,
+        fixedAtTurn: fix.fixedAtTurn,
+      };
+    });
+  }
+
+  /**
+   * 追加 test fix 审计日志条目（每次 test_fix 调用一条）。
+   * 与 testCase.status 互补：status 反映当前态，testFixLog 是完整修复轨迹。
+   */
+  appendTestFix(topicId: string, entry: TestFixEntry): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const log = topic.testFixLog ?? [];
+      log.push(entry);
+      topic.testFixLog = log;
+    });
+  }
+
+  /** review turn 计数器 +1（每次开启新一轮 review 时调用）。 */
+  incReviewTurn(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.reviewTurn = (topic.reviewTurn ?? 0) + 1;
+    });
+  }
+
+  /** test turn 计数器 +1（每次开启新一轮 test 时调用）。 */
+  incTestTurn(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.testTurn = (topic.testTurn ?? 0) + 1;
+    });
+  }
+
+  /**
+   * replan 时重置 review loop：reviewIssues=[], reviewTurn=0。
+   * replan 修改 plan/testCases 后，旧 review 闭环数据失效，需清空重走。
+   */
+  resetReviewLoop(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.reviewIssues = [];
+      topic.reviewTurn = 0;
+    });
+  }
+
+  /**
+   * replan 时重置 test loop：testFixLog=[], testTurn=0。
+   * replan 修改 testCases 后，旧 test 修复轨迹失效，需清空重走。
+   */
+  resetTestLoop(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.testFixLog = [];
+      topic.testTurn = 0;
     });
   }
 

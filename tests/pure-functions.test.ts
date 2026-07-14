@@ -50,6 +50,10 @@ function makeTopicWithFails(phase: Action, failCount: number): Topic {
     gatePassed: {},
     clarifyRecords: [],
     adrs: [],
+    reviewIssues: [],
+    reviewTurn: 0,
+    testFixLog: [],
+    testTurn: 0,
   };
 }
 

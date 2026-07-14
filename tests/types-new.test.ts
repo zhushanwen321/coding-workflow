@@ -14,11 +14,17 @@ import { describe, expect,it } from "vitest";
 import type {
   Action,
   Priority,
+  ReviewFixSubmission,
+  ReviewIssue,
+  ReviewIssueSubmission,
   Status,
   TestCase,
   TestCaseSeed,
+  TestFixEntry,
+  TestFixSubmission,
   TestRunnerConfig,
   TestRunnerMode,
+  Topic,
   Wave,
 } from "../src/types.js";
 
@@ -138,6 +144,163 @@ describe("W1: 新增类型定义", () => {
         command: "mvn test",
       };
       expect(cfg.mode).toBe("java");
+    });
+  });
+});
+
+// ── W1+W2: issue tracking 类型（ReviewIssue / TestFixEntry / submissions） ──
+
+describe("W1+W2: issue tracking 类型", () => {
+  describe("Action 含 review_fix / test_fix", () => {
+    it("review_fix 是合法 Action 值", () => {
+      const a: Action = "review_fix";
+      expect(a).toBe("review_fix");
+    });
+
+    it("test_fix 是合法 Action 值", () => {
+      const a: Action = "test_fix";
+      expect(a).toBe("test_fix");
+    });
+  });
+
+  describe("ReviewIssue", () => {
+    it("open 态：仅 severity + description + foundAtTurn", () => {
+      const issue: ReviewIssue = {
+        id: "R1",
+        severity: "must-fix",
+        description: "缺少错误处理",
+        status: "open",
+        foundAtTurn: 1,
+      };
+      expect(issue.id).toBe("R1");
+      expect(issue.severity).toBe("must-fix");
+      expect(issue.status).toBe("open");
+      expect(issue.fix).toBeUndefined();
+    });
+
+    it("带 file 字段（代码位置）", () => {
+      const issue: ReviewIssue = {
+        id: "R2",
+        severity: "should-fix",
+        description: "命名不清晰",
+        file: "src/types.ts:42",
+        status: "open",
+        foundAtTurn: 2,
+      };
+      expect(issue.file).toBe("src/types.ts:42");
+    });
+
+    it("fixed 态：含 fix 证据（commitHash + resolution + fixedAtTurn）", () => {
+      const issue: ReviewIssue = {
+        id: "R1",
+        severity: "must-fix",
+        description: "缺少错误处理",
+        status: "fixed",
+        foundAtTurn: 1,
+        fix: {
+          commitHash: "abc123",
+          resolution: "加了 try/catch + 日志",
+          fixedAtTurn: 2,
+        },
+      };
+      expect(issue.status).toBe("fixed");
+      expect(issue.fix).toBeDefined();
+      expect(issue.fix!.commitHash).toBe("abc123");
+      expect(issue.fix!.fixedAtTurn).toBe(2);
+    });
+
+    it("severity 三档全部合法", () => {
+      const severities: ReviewIssue["severity"][] = ["must-fix", "should-fix", "nit"];
+      expect(severities).toHaveLength(3);
+    });
+  });
+
+  describe("TestFixEntry", () => {
+    it("含 caseId + commitHash + resolution + turn", () => {
+      const entry: TestFixEntry = {
+        caseId: "E1",
+        commitHash: "def456",
+        resolution: "修正了 expected 字符串匹配",
+        turn: 2,
+      };
+      expect(entry.caseId).toBe("E1");
+      expect(entry.commitHash).toBe("def456");
+      expect(entry.turn).toBe(2);
+    });
+  });
+
+  describe("Topic 含 review/test tracking 字段", () => {
+    it("Topic 可带 reviewIssues + reviewTurn + testFixLog + testTurn", () => {
+      const topic: Topic = {
+        topicId: "cw-x",
+        slug: "x",
+        objective: "obj",
+        workspacePath: "/tmp",
+        topicDir: "/tmp/.xyz-harness/x",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        status: "reviewed",
+        waves: [],
+        testCases: [],
+        gateHistory: [],
+        gatePassed: {},
+        clarifyRecords: [],
+        adrs: [],
+        reviewIssues: [
+          {
+            id: "R1",
+            severity: "must-fix",
+            description: "bug",
+            status: "open",
+            foundAtTurn: 1,
+          },
+        ],
+        reviewTurn: 1,
+        testFixLog: [
+          {
+            caseId: "E1",
+            commitHash: "h1",
+            resolution: "fixed",
+            turn: 1,
+          },
+        ],
+        testTurn: 1,
+      };
+      expect(topic.reviewIssues).toHaveLength(1);
+      expect(topic.reviewTurn).toBe(1);
+      expect(topic.testFixLog).toHaveLength(1);
+      expect(topic.testTurn).toBe(1);
+    });
+  });
+
+  describe("submission 类型", () => {
+    it("ReviewIssueSubmission 不含 id/status/foundAtTurn（cw 填充）", () => {
+      const sub: ReviewIssueSubmission = {
+        severity: "nit",
+        description: "拼写错误",
+        file: "README.md:10",
+      };
+      expect(sub.severity).toBe("nit");
+      expect((sub as { id?: string }).id).toBeUndefined();
+    });
+
+    it("ReviewFixSubmission 含 issueId + commitHash + resolution", () => {
+      const sub: ReviewFixSubmission = {
+        issueId: "R1",
+        commitHash: "abc123",
+        resolution: "修好了",
+      };
+      expect(sub.issueId).toBe("R1");
+      expect(sub.commitHash).toBe("abc123");
+    });
+
+    it("TestFixSubmission 含 caseId + commitHash + resolution", () => {
+      const sub: TestFixSubmission = {
+        caseId: "E1",
+        commitHash: "def456",
+        resolution: "修好了",
+      };
+      expect(sub.caseId).toBe("E1");
+      expect(sub.commitHash).toBe("def456");
     });
   });
 });

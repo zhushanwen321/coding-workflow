@@ -35,6 +35,10 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     gatePassed: {},
     clarifyRecords: [],
     adrs: [],
+    reviewIssues: [],
+    reviewTurn: 0,
+    testFixLog: [],
+    testTurn: 0,
     ...overrides,
   };
 }
@@ -647,10 +651,167 @@ describe("clarify 状态机", () => {
     expect(na.alternatives!.some((a) => a.action === "clarify")).toBe(true);
   });
 
-  it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"plan\"", () => {
+    it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"plan\"", () => {
     // 空数组也算完成，推荐直接进 plan（无需澄清）。
     const topic = makeTopic({ clarifyRecords: [] });
     const na = buildNextAction("clarify", topic);
     expect(na.action).toBe("plan");
+  });
+});
+
+// ── W1: review_fix / test_fix 状态机转换 + progressive review ──
+
+describe("review_fix / test_fix 状态机", () => {
+  describe("TRANSITIONS 定义", () => {
+    it("TRANSITIONS 含 review_fix 和 test_fix", () => {
+      expect(TRANSITIONS).toHaveProperty("review_fix");
+      expect(TRANSITIONS).toHaveProperty("test_fix");
+    });
+
+    it("review_fix: expectedStatuses=[reviewed], nextStatus=reviewed, progressive=true", () => {
+      expect(TRANSITIONS.review_fix.expectedStatuses).toEqual(["reviewed"]);
+      expect(TRANSITIONS.review_fix.nextStatus).toBe("reviewed");
+      expect(TRANSITIONS.review_fix.progressive).toBe(true);
+    });
+
+    it("test_fix: expectedStatuses=[tested], nextStatus=tested, progressive=true", () => {
+      expect(TRANSITIONS.test_fix.expectedStatuses).toEqual(["tested"]);
+      expect(TRANSITIONS.test_fix.nextStatus).toBe("tested");
+      expect(TRANSITIONS.test_fix.progressive).toBe(true);
+    });
+
+    it("review 改为 progressive（expectedStatuses 含 reviewed）", () => {
+      expect(TRANSITIONS.review.expectedStatuses).toContain("reviewed");
+      expect(TRANSITIONS.review.nextStatus).toBe("reviewed");
+      expect(TRANSITIONS.review.progressive).toBe(true);
+    });
+
+    it("test 仍是 progressive（expectedStatuses=[reviewed, tested]）", () => {
+      expect(TRANSITIONS.test.expectedStatuses).toEqual(["reviewed", "tested"]);
+      expect(TRANSITIONS.test.nextStatus).toBe("tested");
+      expect(TRANSITIONS.test.progressive).toBe(true);
+    });
+  });
+
+  describe("review_fix 转换（reviewed → reviewed progressive）", () => {
+    it("checkLinear(\"review_fix\", \"reviewed\") → ok=true", () => {
+      expect(checkLinear("review_fix", "reviewed").ok).toBe(true);
+    });
+
+    it("computeNextStatus(\"review_fix\", \"reviewed\") → reviewed（progressive 原地停留）", () => {
+      expect(computeNextStatus("review_fix", "reviewed")).toBe("reviewed");
+    });
+  });
+
+  describe("test_fix 转换（tested → tested progressive）", () => {
+    it("checkLinear(\"test_fix\", \"tested\") → ok=true", () => {
+      expect(checkLinear("test_fix", "tested").ok).toBe(true);
+    });
+
+    it("computeNextStatus(\"test_fix\", \"tested\") → tested（progressive 原地停留）", () => {
+      expect(computeNextStatus("test_fix", "tested")).toBe("tested");
+    });
+  });
+
+  describe("review_fix guard（非法 status）", () => {
+    it("checkLinear(\"review_fix\", \"developed\") → ok=false, code=illegal_transition", () => {
+      const verdict = checkLinear("review_fix", "developed");
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.code).toBe("illegal_transition");
+        expect(verdict.reason).toContain("review_fix");
+        expect(verdict.reason).toContain("developed");
+      }
+    });
+
+    it("checkLinear(\"review_fix\", \"tested\") → ok=false（test_fix 只接 reviewed）", () => {
+      const verdict = checkLinear("review_fix", "tested");
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.code).toBe("illegal_transition");
+      }
+    });
+
+    it("checkLinear(\"review_fix\", undefined) → ok=false（需已存在 topic）", () => {
+      const verdict = checkLinear("review_fix", undefined);
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.code).toBe("illegal_transition");
+      }
+    });
+  });
+
+  describe("test_fix guard（非法 status）", () => {
+    it("checkLinear(\"test_fix\", \"reviewed\") → ok=false, code=illegal_transition", () => {
+      const verdict = checkLinear("test_fix", "reviewed");
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.code).toBe("illegal_transition");
+        expect(verdict.reason).toContain("test_fix");
+        expect(verdict.reason).toContain("reviewed");
+      }
+    });
+
+    it("checkLinear(\"test_fix\", \"developed\") → ok=false", () => {
+      const verdict = checkLinear("test_fix", "developed");
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.code).toBe("illegal_transition");
+      }
+    });
+
+    it("checkLinear(\"test_fix\", undefined) → ok=false", () => {
+      const verdict = checkLinear("test_fix", undefined);
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.code).toBe("illegal_transition");
+      }
+    });
+  });
+
+  describe("review progressive（多轮 review loop）", () => {
+    it("checkLinear(\"review\", \"reviewed\") → ok=true（fix 后可再 review）", () => {
+      // review 改为 progressive 后，reviewed 状态下再次 review 合法（fix 后重审）。
+      expect(checkLinear("review", "reviewed").ok).toBe(true);
+    });
+
+    it("checkLinear(\"review\", \"developed\") → ok=true（首次 review 仍合法）", () => {
+      expect(checkLinear("review", "developed").ok).toBe(true);
+    });
+
+    it("checkLinear(\"review\", \"tested\") → ok=false（review 不接 tested）", () => {
+      const verdict = checkLinear("review", "tested");
+      expect(verdict.ok).toBe(false);
+    });
+  });
+
+  describe("buildNextAction review_fix / test_fix 导航", () => {
+    it("buildNextAction(\"review_fix\", topic) 未达上限 → action=review（重审）", () => {
+      const topic = makeTopic({ status: "reviewed", reviewTurn: 1 });
+      const na = buildNextAction("review_fix", topic);
+      expect(na.action).toBe("review");
+      expect(na.guidance).toContain("review_fix");
+    });
+
+    it("buildNextAction(\"review_fix\", topic) 达上限 → guidance 含上限告警, alternatives 含 replan", () => {
+      const topic = makeTopic({ status: "reviewed", reviewTurn: 3 });
+      const na = buildNextAction("review_fix", topic);
+      expect(na.guidance).toMatch(/上限|replan|ask_user/);
+      expect(na.alternatives).toBeDefined();
+      expect(na.alternatives!.some((a) => a.action === "replan")).toBe(true);
+    });
+
+    it("buildNextAction(\"test_fix\", topic) 未达上限 → action=test（重跑）", () => {
+      const topic = makeTopic({ status: "tested", testTurn: 1 });
+      const na = buildNextAction("test_fix", topic);
+      expect(na.action).toBe("test");
+      expect(na.guidance).toContain("test_fix");
+    });
+
+    it("buildNextAction(\"test_fix\", topic) 达上限 → guidance 含上限告警", () => {
+      const topic = makeTopic({ status: "tested", testTurn: 5 });
+      const na = buildNextAction("test_fix", topic);
+      expect(na.guidance).toMatch(/上限|replan|ask_user/);
+    });
   });
 });

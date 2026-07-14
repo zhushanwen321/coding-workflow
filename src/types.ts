@@ -22,9 +22,10 @@ import type { CwStore } from "./store.js";
 // ── 状态机值对象 ────────────────────────────────────────────
 
 /**
- * 9 个正向 action + replan（共 10 个）。
+ * 正向 action + replan + 修复动作。
  * clarify 插在 create 和 plan 之间——agent 先澄清需求/技术 spec + 记录 ADR，再写 plan。
  * tdd_plan 插在 plan 和 dev 之间——agent 先写测试代码 + test.json（红灯确认），再进 dev 写实现。
+ * review_fix / test_fix：review/test loop 内的修复动作（progressive，闭环追踪用）。
  */
 export type Action =
   | "create"
@@ -33,7 +34,9 @@ export type Action =
   | "tdd_plan"
   | "dev"
   | "review"
+  | "review_fix"
   | "test"
+  | "test_fix"
   | "retrospect"
   | "closeout"
   | "replan";
@@ -340,6 +343,47 @@ export interface RuntimeEnv {
   cwVersion: string;
 }
 
+// ── review / test issue tracking（闭环追踪） ───────────────
+
+/**
+ * ReviewIssue — Review 阶段 agent 声明的问题（主观，CW 不验证内容，只追踪闭环）。
+ *
+ * 设计：CW 不判定 issue 的内容是否合理（review 是主观的），只追踪「声明的 issue 是否
+ * 有对应的修复 commit」。severity 由 agent 自填，CW 不介入。
+ * status=open → 还没修；status=fixed → 带 fix 证据（commitHash + resolution）。
+ */
+export interface ReviewIssue {
+  /** R1, R2... cw 在 topic 内自增分配。 */
+  id: string;
+  severity: "must-fix" | "should-fix" | "nit";
+  description: string;
+  /** 关联代码位置，如 "src/types.ts:42"。 */
+  file?: string;
+  status: "open" | "fixed";
+  /** 第几轮 review 发现的（1-based）。 */
+  foundAtTurn: number;
+  /** 修复证据（status=fixed 时必填）。 */
+  fix?: {
+    commitHash: string;
+    resolution: string;
+    fixedAtTurn: number;
+  };
+}
+
+/**
+ * TestFixEntry — Test 修复审计日志条目。
+ *
+ * 每次 test_fix 提交一条审计记录（caseId + commitHash + resolution + turn）。
+ * 用于事后回溯「哪个 case 在哪轮被修复、怎么修的」，与 testCase.status 互补
+ * （status 只反映当前态，testFixLog 是完整修复轨迹）。
+ */
+export interface TestFixEntry {
+  caseId: string;
+  commitHash: string;
+  resolution: string;
+  turn: number;
+}
+
 export interface Topic {
   topicId: string;
   slug: string;
@@ -364,6 +408,14 @@ export interface Topic {
   clarifyRecords: ClarifyRecord[];
   /** clarify 阶段产生的 ADR 记录（与 docs/adr/ md 文件双写）。 */
   adrs: AdrRecord[];
+  /** review 阶段声明的问题列表（闭环追踪，CW 不验证内容只追踪 fixed）。 */
+  reviewIssues: ReviewIssue[];
+  /** 当前是第几轮 review（初始 0，第一次 review 后变 1）。 */
+  reviewTurn: number;
+  /** test 阶段的修复审计日志（每次 test_fix 追加一条）。 */
+  testFixLog: TestFixEntry[];
+  /** 当前是第几轮 test（初始 0，第一次 test 后变 1）。 */
+  testTurn: number;
 }
 
 // ── DAO seed 类型（plan.json 解析后写入 store 的输入形态） ─────
@@ -419,6 +471,37 @@ export interface AdrSeed {
   consequences: string;
   /** 项目 docs/adr/ 文件路径，cw 用 fileExistsCheck 校验存在。 */
   projectPath?: string;
+}
+
+// ── review / test 修复 submission（actions.ts 输入形态） ────
+
+/**
+ * ReviewIssueSubmission — review action 提交的 issue 输入形态。
+ * 不含 id/status/foundAtTurn/fix——由 cw 在 appendReviewIssues 时填充。
+ */
+export interface ReviewIssueSubmission {
+  severity: "must-fix" | "should-fix" | "nit";
+  description: string;
+  file?: string;
+}
+
+/**
+ * ReviewFixSubmission — review_fix action 提交的单条修复。
+ * issueId 指向已存在的 ReviewIssue.id。
+ */
+export interface ReviewFixSubmission {
+  issueId: string;
+  commitHash: string;
+  resolution: string;
+}
+
+/**
+ * TestFixSubmission — test_fix action 提交的单条修复。
+ */
+export interface TestFixSubmission {
+  caseId: string;
+  commitHash: string;
+  resolution: string;
 }
 
 // ── TestRunner 配置（test.json 顶层，定义如何执行测试） ──────

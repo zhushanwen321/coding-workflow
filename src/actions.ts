@@ -203,6 +203,10 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     gatePassed: {},
     clarifyRecords: [],
     adrs: [],
+    reviewIssues: [],
+    reviewTurn: 0,
+    testFixLog: [],
+    testTurn: 0,
   };
 
   deps.store.transaction(() => {

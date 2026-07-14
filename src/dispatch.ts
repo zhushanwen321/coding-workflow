@@ -128,6 +128,9 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleReplan(params as ReplanParams, topic, deps);
     default: {
       // 穷尽性检查：CwParams 的 action 联合已全覆盖，default 不可达。
+      // 注意：review_fix/test_fix 已加入 Action union，但 CwParams 尚未含 ReviewFixParams/
+      // TestFixParams（W6 接入 dispatch handler 时补），所以这里 action 的 narrowed 类型
+      // 不含它们，_exhaustive: never 检查仍成立。
       // 保留兜底防御未来新增 action 忘加 case。
       const _exhaustive: never = action;
       void _exhaustive;

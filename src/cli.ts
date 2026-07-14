@@ -487,6 +487,17 @@ export function buildParams(
       return params;
     }
 
+    case "review_fix":
+    case "test_fix": {
+      // TODO(W6): review_fix / test_fix 的 CLI 参数解析 + handler 尚未接入。
+      // W1/W2 已加入 Action union + TRANSITIONS + store DAO，本分支在 W6 实现。
+      if (!topicId) throw new CwError(`${action} 需要 --topicId`);
+      throw new CwError(
+        `${action} CLI 入口尚未实现（计划在 W6 接入）。` +
+          `issue tracking store 方法已就绪：store.appendReviewIssues/fixReviewIssue/appendTestFix/incReviewTurn/incTestTurn/resetReviewLoop/resetTestLoop。`,
+      );
+    }
+
     default: {
       // 穷尽性：Action 联合已全覆盖。default 不可达，兜底防御未来新增 action。
       const _exhaustive: never = action;
