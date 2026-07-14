@@ -168,7 +168,7 @@ function readJsonPayload(
 // ── argv → CwParams 构造 ────────────────────────────────────
 
 /** minimist 解析结果的结构子集（避免引入 @types/minimist 的 ParsedArgs 宽松 any）。 */
-interface ParsedArgs {
+export interface ParsedArgs {
   _: Array<string | number>;
   [key: string]: unknown;
 }
@@ -209,7 +209,7 @@ function parseJsonArg(name: string, value: unknown): unknown {
  * 每个 action 的必填参数缺失 → throw（exit 1，参数错误）。
  * plan/replan 的 planJson 支持双通道（stdin 优先，--planJson-file fallback）。
  */
-function buildParams(
+export function buildParams(
   action: Action,
   parsed: ParsedArgs,
   stdinData: string,

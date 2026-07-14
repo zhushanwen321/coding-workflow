@@ -409,3 +409,29 @@ describe("文件损坏兜底", () => {
     expect(store2.listTopics()).toHaveLength(0);
   });
 });
+
+// ── stale-lock 清理（死进程 PID） ───────────────────────────
+
+describe("stale-lock 清理", () => {
+  it("lockfile 含死进程 PID → 自动清理后获取锁成功", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    // 手动写一个 stale lockfile：PID=999999（几乎肯定不存在）+ 当前 ts
+    const lockPath = dbPath + ".lock";
+    const { writeFileSync } = require("node:fs");
+    writeFileSync(lockPath, "999999\n" + Date.now() + "\n");
+
+    // 新 CwStore 实例开 transaction → 应检测到死进程 PID → 清理 stale lock → 获取锁
+    const store2 = makeStore();
+    expect(() => {
+      store2.transaction(() => {
+        store2.updateStatus("cw-test-topic", "planned");
+      });
+    }).not.toThrow();
+
+    // 验证写入成功（锁被正确获取+释放）
+    const topic = store2.loadTopic("cw-test-topic");
+    expect(topic!.status).toBe("planned");
+  });
+});
