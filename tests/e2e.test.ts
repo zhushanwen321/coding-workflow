@@ -5,7 +5,7 @@
  *   - 每个测试 beforeAll: git init tmp 目录 + 创建非空 commit（供 dev gate GitValidator 校验）
  *   - CW_HOME 指向 tmp 子目录，env 传递给子进程（per-cwd 隔离）
  *   - 用 spawnSync 真实 node 子进程调 dist/cli.js
- *   - 验证全链路：create → plan → dev → review → test → retrospect → closeout
+ *   - 验证全链路：create → plan → tdd_plan → dev → review → test → retrospect → closeout
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -107,7 +107,7 @@ afterAll(() => {
 
 // ── E1: 全链子进程跑通 ──────────────────────────────────────
 
-describe("E1: create→plan→dev→review→test→retrospect→closeout 全链子进程跑通", () => {
+describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→closeout 全链子进程跑通", () => {
   it("完整流程走通，最终 status=closed, evidence 写入", () => {
     // 1. create
     const createResult = parseStdout(
@@ -122,11 +122,27 @@ describe("E1: create→plan→dev→review→test→retrospect→closeout 全链
     const nextAction = createResult.nextAction as Record<string, unknown>;
     expect(nextAction.action).toBe("plan");
 
-    // 2. plan（stdin 传 planJson）
+    // 2. plan（stdin 传 dev-plan.json，只含 waves）
     const planJson = JSON.stringify({
       format: "lite",
       objective: "E2E 全链测试",
       waves: [{ id: "W1", changes: ["实现功能"], dependsOn: [] }],
+    });
+    const planResult = parseStdout(
+      runCli(["plan", "--topicId", topicId], env, { input: planJson }),
+    );
+    expect(planResult.status).toBe("planned");
+    // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
+    expect((planResult.nextAction as Record<string, unknown>).action).toBe("tdd_plan");
+    // plan 通过后 status=planned，replan 作为 alternative 暴露
+    const planAlts = (planResult.nextAction as Record<string, unknown>).alternatives as
+      | Array<{ action: string }>
+      | undefined;
+    expect(planAlts).toBeDefined();
+    expect(planAlts![0].action).toBe("replan");
+
+    // 2b. tdd_plan（stdin 传 test.json，含 testCases）
+    const testJson = JSON.stringify({
       testCases: [
         {
           id: "E1",
@@ -148,17 +164,11 @@ describe("E1: create→plan→dev→review→test→retrospect→closeout 全链
         },
       ],
     });
-    const planResult = parseStdout(
-      runCli(["plan", "--topicId", topicId], env, { input: planJson }),
+    const tddPlanResult = parseStdout(
+      runCli(["tdd_plan", "--topicId", topicId], env, { input: testJson }),
     );
-    expect(planResult.status).toBe("planned");
-    expect((planResult.nextAction as Record<string, unknown>).action).toBe("dev");
-    // plan 通过后 status=planned，replan 作为 alternative 暴露
-    const planAlts = (planResult.nextAction as Record<string, unknown>).alternatives as
-      | Array<{ action: string }>
-      | undefined;
-    expect(planAlts).toBeDefined();
-    expect(planAlts![0].action).toBe("replan");
+    expect(tddPlanResult.status).toBe("tdd_inited");
+    expect((tddPlanResult.nextAction as Record<string, unknown>).action).toBe("dev");
 
     // 3. dev
     const devResult = parseStdout(
@@ -264,6 +274,11 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
         { id: "W1", changes: ["wave1"], dependsOn: [] },
         { id: "W2", changes: ["wave2"], dependsOn: ["W1"] },
       ],
+    });
+    runCli(["plan", "--topicId", topicId], env, { input: planJson });
+
+    // tdd_plan（test.json 含 testCases，推进到 tdd_inited 才能 dev）
+    const testJson = JSON.stringify({
       testCases: [
         {
           id: "E1",
@@ -285,7 +300,7 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
         },
       ],
     });
-    runCli(["plan", "--topicId", topicId], env, { input: planJson });
+    runCli(["tdd_plan", "--topicId", topicId], env, { input: testJson });
 
     // 第一次 dev：只提交 W1
     const dev1 = parseStdout(
@@ -350,6 +365,11 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
       format: "lite",
       objective: "replan 测试",
       waves: [{ id: "W1", changes: ["w1"], dependsOn: [] }],
+    });
+    runCli(["plan", "--topicId", topicId], env, { input: planJson });
+
+    // tdd_plan（推进到 tdd_inited 才能 dev）
+    const testJson = JSON.stringify({
       testCases: [
         {
           id: "E1",
@@ -371,39 +391,19 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
         },
       ],
     });
-    runCli(["plan", "--topicId", topicId], env, { input: planJson });
+    runCli(["tdd_plan", "--topicId", topicId], env, { input: testJson });
     runCli(
       ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash }])],
       env,
     );
 
-    // replan：追加 W2（保留 W1）
+    // replan：追加 W2（保留 W1）。replan 无 flag → 从 stdin 读 planJson（旧格式含 testCases 兼容）。
     const newPlan = JSON.stringify({
       format: "lite",
       objective: "replan 测试（追加 W2）",
       waves: [
         { id: "W1", changes: ["w1"], dependsOn: [] },
         { id: "W2", changes: ["w2"], dependsOn: ["W1"] },
-      ],
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "exit code 0, wave committed" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        {
-          id: "E2",
-          layer: "real",
-          scenario: "real layer integration",
-          steps: "run integration check",
-          expected: { text: "integration verified" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
       ],
     });
     const replanResult = parseStdout(
@@ -427,26 +427,6 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
       format: "lite",
       objective: "删 W1",
       waves: [],
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "exit code 0, wave committed" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        {
-          id: "E2",
-          layer: "real",
-          scenario: "real layer integration",
-          steps: "run integration check",
-          expected: { text: "integration verified" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
     });
     const deleteResult = runCli(
       ["replan", "--topicId", topicId],

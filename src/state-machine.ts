@@ -92,18 +92,22 @@ export interface TransitionRule {
 }
 
 /**
- * 7 个 action 的转换规则（lite 单轨）。
+ * 8 个 action 的转换规则（lite 单轨，含 tdd_plan）。
  *
- * replan 只允许在 planned/developed 调用（dev 阶段追加 wave），
- * nextStatus 回退到 planned。progressive=true 使其在 developed 调用时
+ * 线性序列：create → plan(planned) → tdd_plan(tdd_inited) → dev(developed)
+ *   → review(reviewed) → test(tested) → retrospect(retrospected) → closeout(closed)。
+ *
+ * replan 允许在 planned/tdd_inited/developed/reviewed/tested 调用（覆盖 dev 中途追加场景），
+ * nextStatus 回退到 planned。progressive=true 使其在非 planned 状态调用时
  * 仍回退 planned（replan 后必须重新走 dev）——这是「回退」而非「原地停留」，
  * 所以 progressive 标记在这里不触发原地停留（current 不会 === nextStatus）。
  */
 export const TRANSITIONS: Record<Action, TransitionRule> = {
   create: { expectedStatuses: [], nextStatus: "created" },
   plan: { expectedStatuses: ["created"], nextStatus: "planned" },
+  tdd_plan: { expectedStatuses: ["planned"], nextStatus: "tdd_inited" },
   dev: {
-    expectedStatuses: ["planned", "developed"],
+    expectedStatuses: ["tdd_inited", "developed"],
     nextStatus: "developed",
     progressive: true,
   },
@@ -115,7 +119,10 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   },
   retrospect: { expectedStatuses: ["tested"], nextStatus: "retrospected" },
   closeout: { expectedStatuses: ["retrospected"], nextStatus: "closed" },
-  replan: { expectedStatuses: ["planned", "developed", "reviewed", "tested"], nextStatus: "planned" },
+  replan: {
+    expectedStatuses: ["planned", "tdd_inited", "developed", "reviewed", "tested"],
+    nextStatus: "planned",
+  },
 };
 
 // ── 单重 guard ──────────────────────────────────────────────
@@ -199,7 +206,7 @@ export function computeNextStatus(action: Action, current: Status): Status {
  * 完成语义：
  *   - dev：全 Wave committed（≥1 个且全部 committed !== null）
  *   - test：全 testCase passed（≥1 个且全部 status === "passed"）
- *   - single-shot（plan/review/retrospect/closeout）：gateHistory 有该 phase 的 pass 记录
+ *   - single-shot（plan/tdd_plan/review/retrospect/closeout）：gateHistory 有该 phase 的 pass 记录
  *   - create：永远 false（create 无 gate）
  *   - replan：永远 false（replan 无独立 gate，完成度看 dev）
  */
@@ -261,10 +268,32 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
               : `plan gate FAIL。status 仍为 created——修 mustFix 后重调 cw(plan)。\n\n${PLAN_PROMPT}`,
         };
       }
+      // plan gate 通过 → 进入 tdd_plan 阶段（写 test.json + 测试代码，红灯确认）。
+      // guidance 占位文本，完整 prompt 在 W8 更新。
+      return {
+        action: "tdd_plan",
+        guidance: `plan gate 通过。下一步：写测试代码 + test.json（定义 testCases + 可选 testRunner），调 cw(tdd_plan) 提交。\n\n${PLAN_PROMPT}`,
+        waves: waveProgress(topic),
+        alternatives: [replanAlternative()],
+      };
+    }
+    case "tdd_plan": {
+      if (!computeGatePassed("tdd_plan", topic)) {
+        const fails = countConsecutiveGateFails(topic.gateHistory, "tdd_plan");
+        return {
+          action: "tdd_plan",
+          guidance:
+            fails >= GATE_RETRY_LIMIT
+              ? buildCircuitBreakerGuidance("tdd_plan", fails)
+              : `tdd_plan gate FAIL。status 仍为 planned——修 mustFix 后重调 cw(tdd_plan)。\n\n${PLAN_PROMPT}`,
+        };
+      }
+      // tdd_plan gate 通过 → 进入 dev 阶段（写实现，让测试转绿）。
+      // guidance 占位文本，完整 prompt 在 W8 更新。
       return {
         action: "dev",
-        guidance: `plan gate 通过。下一步：按 Wave 实现 + TDD，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
-        waves: waveProgress(topic),
+        guidance: `tdd_plan gate 通过，testCases 已写入。下一步：按 Wave 写实现让测试转绿，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
+        testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };
     }
@@ -311,9 +340,11 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           alternatives: [replanAlternative()],
         };
       }
+      // test 有 case 未通过 → 回 dev 修代码（而非原地重跑 test）。
+      // agent 修完代码 + commit 后重新走 review → test。
       return {
-        action: "test",
-        guidance: `test 阶段进行中，仍有 testCase 未 passed。继续跑剩余 testCase + 调 cw(test)。\n\n${EXECUTE_PROMPT}`,
+        action: "dev",
+        guidance: `test 有 case 未通过，回 dev 修代码。修完 commit 后重新走 review → test。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };

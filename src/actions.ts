@@ -27,19 +27,23 @@ import {
   type ActionResult,
   type Evidence,
   type TestCase,
+  type TestCaseSeed,
   type Topic,
   type Wave,
+  type WaveSeed,
   CwError,
 } from "./types.js";
 import {
   devCheck,
   fileExistsCheck,
   planCheck,
+  tddPlanCheck,
   testCheck,
 } from "./gate.js";
 import {
-  type ParsedLitePlan,
-  parseLitePlan,
+  type ParsedDevPlan,
+  parseDevPlan,
+  parseTestJson,
 } from "./plan-parser.js";
 import {
   buildNextAction,
@@ -61,6 +65,13 @@ export interface PlanParams {
   topicId: string;
   /** plan.json 内容（CLI 从 stdin 读为对象）。 */
   planJson: unknown;
+}
+
+export interface TddPlanParams {
+  action: "tdd_plan";
+  topicId: string;
+  /** test.json 内容（CLI 从 stdin 读为对象）。 */
+  testJson: unknown;
 }
 
 export interface DevParams {
@@ -105,13 +116,16 @@ export interface CloseoutParams {
 export interface ReplanParams {
   action: "replan";
   topicId: string;
-  /** 新版 plan.json（format 必须 === "lite"），整对象传入。 */
-  planJson: unknown;
+  /** 新版 dev-plan.json（format 必须 === "lite"），整对象传入。可选（与 testJson 二选一或同时提供）。 */
+  planJson?: unknown;
+  /** 新版 test.json（testCases + 可选 testRunner），整对象传入。可选（与 planJson 二选一或同时提供）。 */
+  testJson?: unknown;
 }
 
 export type CwParams =
   | CreateParams
   | PlanParams
+  | TddPlanParams
   | DevParams
   | TestParams
   | RetrospectParams
@@ -235,17 +249,23 @@ function gateAdvance(
 // ── handlePlan ──────────────────────────────────────────────
 
 /**
- * handlePlan — lite plan gate + 任务清单写入 + 状态流转。
+ * handlePlan — lite plan gate + waves 写入 + 状态流转。
  *
- * 数据流：planCheck → 事务{ pass: insertWaves/insertTestCases + 流转 + gatePassed(plan,true) + gateHistory(pass)
+ * 数据流：planCheck → 事务{ pass: insertWaves（+legacyTestCases 兼容旧格式）+ 流转 +
+ *   gatePassed(plan,true) + gateHistory(pass)
  *   | fail: gateHistory(fail)，status 不变 } → buildNextAction。
+ *
+ * 改造说明（W4）：planCheck 现在只校验 waves（W3 已改），handlePlan 只调 insertWaves。
+ * 向后兼容：如果 parsed.legacyTestCases 存在（旧格式 plan.json 同时含 testCases），
+ * 也调 insertTestCases 写入，避免破坏旧流程。新格式 dev-plan.json 不含 testCases，
+ * testCases 在 tdd_plan 阶段通过 test.json 单独提交。
  *
  * gate fail 语义（关键约束）：status 不变（仍 created），gateHistory append fail，
  * gatePassed.plan 不设，nextAction 指回 plan retry（buildNextAction 内判定 computeGatePassed("plan")=false）。
  *
  * 失败路径：
  *   - planCheck fail → status 不变 + gateHistory fail（exit 0，agent 按 nextAction retry）
- *   - 注意：parseLitePlan 在 planCheck 内部调用，throw 被 planCheck 捕获转为 fail 结果，
+ *   - 注意：parseDevPlan 在 planCheck 内部调用，throw 被 planCheck 捕获转为 fail 结果，
  *     不会 propagate——这是有意的，让 gate fail 走统一路径而非异常路径。
  */
 export function handlePlan(
@@ -271,10 +291,14 @@ export function handlePlan(
       return;
     }
     // gate pass：解析的任务清单写入 + 状态流转。
-    // planCheck 内部已调 parseLitePlan 成功，这里再调一次拿 parsed（parseLitePlan 是纯函数，幂等）。
-    const parsed = parseLitePlan(params.planJson);
+    // planCheck 内部已调 parseDevPlan 成功，这里再调一次拿 parsed（parseDevPlan 是纯函数，幂等）。
+    const parsed = parseDevPlan(params.planJson);
     deps.store.insertWaves(params.topicId, parsed.waves);
-    deps.store.insertTestCases(params.topicId, parsed.testCases);
+    // 向后兼容：旧格式 plan.json 同时含 testCases（extractDevPlan 提取到 legacyTestCases）。
+    // 新格式 dev-plan.json 不含 testCases（test.json 在 tdd_plan 阶段提交），跳过 insertTestCases。
+    if (parsed.legacyTestCases && parsed.legacyTestCases.length > 0) {
+      deps.store.insertTestCases(params.topicId, parsed.legacyTestCases);
+    }
     deps.store.updateStatus(
       params.topicId,
       computeNextStatus("plan", topic.status),
@@ -304,6 +328,85 @@ export function handlePlan(
   };
   if (!passed!) {
     // gate fail 时附 mustFix，方便 agent 诊断（不改变 ActionResult 结构契约）。
+    (result as Record<string, unknown>).mustFix = check.report;
+  }
+  return result;
+}
+
+// ── handleTddPlan ───────────────────────────────────────────
+
+/**
+ * handleTddPlan — test.json gate + testCases 写入 + 状态流转（planned → tdd_inited）。
+ *
+ * 数据流：tddPlanCheck(testJson) → 事务{ pass: insertTestCases + updateStatus(tdd_inited)
+ *   + gatePassed(tdd_plan,true) + gateHistory(pass)
+ *   | fail: gateHistory(fail)，status 不变（仍 planned） } → buildNextAction("tdd_plan")。
+ *
+ * gate fail 语义：status 不变（仍 planned），gateHistory append fail，
+ * nextAction 指回 tdd_plan retry。
+ *
+ * 简化说明（TODO）：当前 tdd_plan gate 只做结构校验（tddPlanCheck）。
+ * 红灯校验（对 redCheck=true 的 testCase 跑 redLightCheck 确认测试如期失败）作为可选项，
+ * 后续完善——需要知道测试命令（testRunner）后才能跑，本阶段先不实现。
+ *
+ * 失败路径：
+ *   - tddPlanCheck fail → status 不变 + gateHistory fail（exit 0，agent 按 nextAction retry）
+ *   - parseTestJson throw 被 tddPlanCheck 捕获转为 fail 结果，不会 propagate。
+ */
+export function handleTddPlan(
+  params: TddPlanParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const check = tddPlanCheck(params.testJson);
+
+  let passed: boolean;
+  deps.store.transaction(() => {
+    if (check.result === "fail") {
+      // gate fail：status 不变，只 append gateHistory(fail)。
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "tdd_plan",
+        action: "tdd_plan",
+        gate: "test-json-schema",
+        result: "fail",
+        report: check.report,
+        progressive: false,
+      });
+      passed = false;
+      return;
+    }
+    // gate pass：testCases 写入 + 状态流转到 tdd_inited。
+    // TODO: 对 redCheck=true 的 testCase 跑 redLightCheck（红灯校验），需 testRunner 提供测试命令。
+    const parsed = check.parsed!;
+    deps.store.insertTestCases(params.topicId, parsed.testCases);
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("tdd_plan", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "tdd_plan", true);
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "tdd_plan",
+      action: "tdd_plan",
+      gate: "test-json-schema",
+      result: "pass",
+      progressive: false,
+    });
+    passed = true;
+  });
+
+  // 重新 load 拿最新 topic（testCases/status/gateHistory 已变）。
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after tdd_plan: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("tdd_plan", updated),
+  };
+  if (!passed!) {
     (result as Record<string, unknown>).mustFix = check.report;
   }
   return result;
@@ -633,8 +736,8 @@ export interface ReplanSummary {
  * requiresScreenshot + dependsOn（expected 是 judgeByExpected 基准，改了会让已 passed 的 case 失效）。
  */
 function validateAppendOnly(
-  newWaves: ParsedLitePlan["waves"],
-  newCases: ParsedLitePlan["testCases"],
+  newWaves: WaveSeed[],
+  newCases: TestCaseSeed[],
   oldWaves: Wave[],
   oldTestCases: TestCase[],
 ): AppendOnlyViolation[] {
@@ -717,17 +820,23 @@ function validateAppendOnly(
 }
 
 /**
- * handleReplan — append-only plan.json 同步。
+ * handleReplan — append-only dev-plan.json / test.json 同步。
+ *
+ * 支持两种输入（可同时提供）：
+ *   - planJson → parseDevPlan + validateAppendOnly(waves, [legacyTestCases 兼容])
+ *     → replaceUncommittedWaves（+旧格式 plan.json 的 legacyTestCases 也走 replaceUnpassedTestCases）
+ *   - testJson → parseTestJson + validateAppendOnly(testCases) → replaceUnpassedTestCases
+ *   - 都不提供 → throw CwError("replan requires --plan or --test")
  *
  * 数据流：
- *   parseLitePlan（format + schema 校验）→ validateAppendOnly（4 违规检测）
+ *   parse（planJson→parseDevPlan / testJson→parseTestJson）→ validateAppendOnly（4 违规检测）
  *   → 事务{ replaceUncommittedWaves/replaceUnpassedTestCases → status 回退 planned
  *     → gatePassed 重算（dev+test，事务内同步——砍掉 cache_inconsistent guard 后的强依赖）
  *     → gateHistory(pass) } → buildNextAction
  *
  * status 回退语义：replan 的 nextStatus=planned（TRANSITIONS 表）。
  *   - current=planned → computeNextStatus("replan", planned) = planned（不变）
- *   - current=developed → computeNextStatus("replan", developed) = planned（回退，让 dev 重新走）
+ *   - current=developed/tdd_inited → computeNextStatus("replan", ...) = planned（回退，让 dev 重新走）
  * replan 后必须重新走 dev（即使之前 developed），因为可能追加了新 wave。
  *
  * 事务内同步 gatePassed（关键约束）：砍掉 cache_inconsistent guard 后，gatePassed 缓存漂移
@@ -735,21 +844,38 @@ function validateAppendOnly(
  * （test gate 变 false），必须在事务内同步 updateGatePassed，否则下次 dev/test 读到陈旧缓存。
  *
  * 失败路径：
- *   - parseLitePlan throw（format/schema）→ propagate（exit ≥1）
+ *   - parseDevPlan/parseTestJson throw（format/schema）→ propagate（exit ≥1）
  *   - append-only 违规 → throw（exit ≥1，AC-6.2）
+ *   - planJson 和 testJson 都不提供 → throw CwError
  */
 export function handleReplan(
   params: ReplanParams,
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  // 解析新 plan.json（format === "lite" + typebox schema 校验）。
-  const parsed = parseLitePlan(params.planJson);
+  const hasPlan = params.planJson !== undefined;
+  const hasTest = params.testJson !== undefined;
+  if (!hasPlan && !hasTest) {
+    throw new CwError("replan requires --plan or --test");
+  }
+
+  // 解析 planJson（dev-plan.json，只含 waves + 可选 legacyTestCases）。
+  const parsedPlan: ParsedDevPlan | null = hasPlan
+    ? parseDevPlan(params.planJson)
+    : null;
+
+  // 解析 testJson（testCases + 可选 testRunner）。
+  const parsedTest = hasTest ? parseTestJson(params.testJson) : null;
 
   // append-only 校验（核心安全门，4 违规类型）。
+  // waves 来源：parsedPlan.waves（planJson 提供时）；cases 来源：testJson 优先，
+  // 回退到 planJson 的 legacyTestCases（旧格式兼容）。
+  const newWaves = parsedPlan?.waves ?? [];
+  const newCases =
+    parsedTest?.testCases ?? parsedPlan?.legacyTestCases ?? [];
   const violations = validateAppendOnly(
-    parsed.waves,
-    parsed.testCases,
+    newWaves,
+    newCases,
     topic.waves,
     topic.testCases,
   );
@@ -764,24 +890,25 @@ export function handleReplan(
 
   // 事务内 append-only 写入 + status 回退 + gatePassed 同步。
   deps.store.transaction(() => {
-    // 只 replace 未 committed/passed 的（append-only：已 committed/passed 保留）。
-    // replaceUncommittedWaves 内部已 filter 保留已 committed，所以直接传全量 parsed.waves 也行，
-    // 但为语义清晰，这里仍只传未 committed 的新增（与旧版一致）。
-    const committedWaveIds = new Set(
-      topic.waves.filter((w) => w.committed !== null).map((w) => w.id),
-    );
-    const uncommittedNew = parsed.waves.filter(
-      (w) => !committedWaveIds.has(w.id),
-    );
-    deps.store.replaceUncommittedWaves(params.topicId, uncommittedNew);
+    // waves replace：只在 planJson 提供时执行。
+    if (parsedPlan) {
+      const committedWaveIds = new Set(
+        topic.waves.filter((w) => w.committed !== null).map((w) => w.id),
+      );
+      const uncommittedNew = parsedPlan.waves.filter(
+        (w) => !committedWaveIds.has(w.id),
+      );
+      deps.store.replaceUncommittedWaves(params.topicId, uncommittedNew);
+    }
 
-    const passedCaseIds = new Set(
-      topic.testCases.filter((c) => c.status === "passed").map((c) => c.id),
-    );
-    const unpassedNew = parsed.testCases.filter(
-      (c) => !passedCaseIds.has(c.id),
-    );
-    deps.store.replaceUnpassedTestCases(params.topicId, unpassedNew);
+    // testCases replace：testJson 或旧格式 planJson 的 legacyTestCases 提供时执行。
+    if (newCases.length > 0) {
+      const passedCaseIds = new Set(
+        topic.testCases.filter((c) => c.status === "passed").map((c) => c.id),
+      );
+      const unpassedNew = newCases.filter((c) => !passedCaseIds.has(c.id));
+      deps.store.replaceUnpassedTestCases(params.topicId, unpassedNew);
+    }
 
     // 重新 load 拿最新数据（replace 已改表）。
     const reloaded = deps.store.loadTopic(params.topicId);
@@ -789,15 +916,13 @@ export function handleReplan(
       throw new Error(`topic not found after replan replace: ${params.topicId}`);
     }
 
-    // status：developed → planned（回退，让 dev gate progressive 重新评估）。
+    // status：developed/tdd_inited → planned（回退，让 dev gate progressive 重新评估）。
     const nextStatus = computeNextStatus("replan", reloaded.status);
     if (nextStatus !== reloaded.status) {
       deps.store.updateStatus(params.topicId, nextStatus);
     }
 
     // gatePassed 重算：必须在事务内同步。
-    // replan 可能新增未 committed wave（dev gate 变 false）或新增 pending case（test gate 变 false）。
-    // 砍掉 cache_inconsistent guard 后，这里是唯一的缓存同步点——不同步会导致下次 dev/test 读陈旧缓存。
     const devGatePassed = computeGatePassed("dev", reloaded);
     deps.store.updateGatePassed(params.topicId, "dev", devGatePassed);
     const testGatePassed = computeGatePassed("test", reloaded);
@@ -809,13 +934,13 @@ export function handleReplan(
       gate: "append-only-validator",
       result: "pass",
       report: JSON.stringify({
-        addedWaves: parsed.waves
+        addedWaves: newWaves
           .filter((w) => !topic.waves.some((o) => o.id === w.id))
           .map((w) => w.id),
         removedWaves: topic.waves
-          .filter((w) => !parsed.waves.some((o) => o.id === w.id))
+          .filter((w) => !newWaves.some((o) => o.id === w.id))
           .map((w) => w.id),
-        addedCases: parsed.testCases
+        addedCases: newCases
           .filter((c) => !topic.testCases.some((o) => o.id === c.id))
           .map((c) => c.id),
         statusChanged: nextStatus !== statusBefore ? `${statusBefore}→${nextStatus}` : null,
@@ -830,7 +955,7 @@ export function handleReplan(
     throw new Error(`topic not found after replan: ${params.topicId}`);
   }
 
-  // buildNextAction("replan", topic) 内部按 dev/test gatePassed 分流（W2 已实现）。
+  // buildNextAction("replan", topic) 内部按 dev/test gatePassed 分流。
   return {
     topicId: params.topicId,
     status: finalTopic.status,

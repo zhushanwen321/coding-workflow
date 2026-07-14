@@ -52,6 +52,7 @@ import {
   type RetrospectParams,
   type ReviewParams,
   type TestParams,
+  type TddPlanParams,
 } from "./actions.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
@@ -59,10 +60,11 @@ import {
 /** stdin/文件读取的大小上限（10MB），防 agent 误传巨型 payload 撑爆内存。 */
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
-/** 合法 action 白名单（7 个 dispatch action + 2 个只读查询命令）。 */
+/** 合法 action 白名单（8 个 dispatch action + 2 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
   "plan",
+  "tdd_plan",
   "dev",
   "review",
   "test",
@@ -207,7 +209,10 @@ function parseJsonArg(name: string, value: unknown): unknown {
  * buildParams — 按 action 构造 CwParams 联合类型的对应分支。
  *
  * 每个 action 的必填参数缺失 → throw（exit 1，参数错误）。
- * plan/replan 的 planJson 支持双通道（stdin 优先，--planJson-file fallback）。
+ *   - plan：planJson 从 stdin 或 --planJsonFile 读
+ *   - tdd_plan：testJson 从 stdin 或 --testJsonFile 读
+ *   - replan：--plan / --test 二选一或同时提供
+ *     （--plan 或无 flag → stdin 读 planJson；--test → --testJsonFile 读 testJson）
  */
 export function buildParams(
   action: Action,
@@ -232,23 +237,58 @@ export function buildParams(
       return params;
     }
 
-    case "plan":
-    case "replan": {
-      if (!topicId) throw new CwError(`${action} 需要 --topicId`);
+    case "plan": {
+      if (!topicId) throw new CwError("plan 需要 --topicId");
       const planJson = readJsonPayload(
         flag(parsed, "planJsonFile"),
         stdinData,
         isStdinTTY,
       );
-      if (action === "plan") {
-        const params: PlanParams = { action: "plan", topicId, planJson };
-        return params;
+      const params: PlanParams = { action: "plan", topicId, planJson };
+      return params;
+    }
+
+    case "tdd_plan": {
+      if (!topicId) throw new CwError("tdd_plan 需要 --topicId");
+      const testJson = readJsonPayload(
+        flag(parsed, "testJsonFile"),
+        stdinData,
+        isStdinTTY,
+      );
+      const params: TddPlanParams = { action: "tdd_plan", topicId, testJson };
+      return params;
+    }
+
+    case "replan": {
+      if (!topicId) throw new CwError("replan 需要 --topicId");
+      // replan 支持 --plan / --test 两种输入（可同时提供，也可用 stdin 默认走 plan）。
+      //   - --test flag → 从 --testJsonFile 读 testJson
+      //   - --plan flag 或无 flag → 从 stdin 读 planJson（旧行为）
+      //   - 同时有 --plan 和 --test → planJson 从 stdin，testJson 从 --testJsonFile
+      const hasPlanFlag = parsed.plan === true;
+      const hasTestFlag = parsed.test === true;
+
+      const params: ReplanParams = { action: "replan", topicId };
+
+      // testJson：--test flag 触发，从 --testJsonFile 读（不占 stdin，stdin 留给 planJson）。
+      if (hasTestFlag) {
+        const testFile = flag(parsed, "testJsonFile");
+        if (!testFile) {
+          throw new CwError("replan --test 需要 --testJsonFile 指定 test.json 路径");
+        }
+        params.testJson = readJsonPayload(testFile, "", true);
       }
-      const params: ReplanParams = {
-        action: "replan",
-        topicId,
-        planJson,
-      };
+
+      // planJson：--plan flag 或（无 --test 时）默认从 stdin 读。
+      // 有 --test 但无 --plan → 不读 planJson（只改 testCases）。
+      // 有 --plan 或（既无 --plan 也无 --test）→ 从 stdin 读 planJson。
+      if (hasPlanFlag || !hasTestFlag) {
+        params.planJson = readJsonPayload(
+          flag(parsed, "planJsonFile"),
+          stdinData,
+          isStdinTTY,
+        );
+      }
       return params;
     }
 
@@ -462,7 +502,7 @@ async function main(argv: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // 读取 stdin（plan/replan 从这里读 planJson）。
+  // 读取 stdin（plan/tdd_plan/replan 从这里读 JSON payload）。
   const stdinData = await readStdin();
   const isStdinTTY = process.stdin.isTTY === true;
 

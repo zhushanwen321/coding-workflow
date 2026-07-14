@@ -236,7 +236,7 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.guidance).toContain("plan.json 结构");
   });
 
-  it("U10: plan gate pass 后 → nextAction.action=dev, waves 列表返回", () => {
+  it("U10: plan gate pass 后 → nextAction.action=tdd_plan, waves 列表返回", () => {
     const topic = makeTopic({
       status: "planned",
       waves: [
@@ -256,7 +256,8 @@ describe("buildNextAction（U9-U11）", () => {
       ],
     });
     const na = buildNextAction("plan", topic);
-    expect(na.action).toBe("dev");
+    // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
+    expect(na.action).toBe("tdd_plan");
     expect(na.waves).toBeDefined();
     expect(na.waves).toHaveLength(2);
     expect(na.waves![0]).toEqual({ id: "W1", committed: false });
@@ -264,6 +265,85 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.alternatives).toHaveLength(1);
     expect(na.alternatives![0].action).toBe("replan");
     expect(na.alternatives![0].guidance).toContain("cw replan");
+  });
+
+  it("U10 新增: tdd_plan gate pass 后 → nextAction.action=dev, testCases 列表返回", () => {
+    const topic = makeTopic({
+      status: "tdd_inited",
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          status: "pending",
+          requiresScreenshot: false,
+          dependsOn: [],
+        },
+      ],
+      gateHistory: [
+        {
+          id: 1,
+          phase: "tdd_plan",
+          action: "tdd_plan",
+          gate: "test-json-schema",
+          result: "pass",
+          ts: "2026-01-01T00:00:00.000Z",
+          progressive: false,
+        },
+      ],
+    });
+    const na = buildNextAction("tdd_plan", topic);
+    // tdd_plan gate 通过 → 进入 dev 阶段
+    expect(na.action).toBe("dev");
+    expect(na.testCases).toBeDefined();
+    expect(na.testCases).toHaveLength(1);
+    expect(na.alternatives).toHaveLength(1);
+    expect(na.alternatives![0].action).toBe("replan");
+  });
+
+  it("U10 新增: tdd_plan gate fail → nextAction 指回 tdd_plan retry", () => {
+    const topic = makeTopic({
+      status: "planned",
+      gateHistory: [
+        {
+          id: 1,
+          phase: "tdd_plan",
+          action: "tdd_plan",
+          gate: "test-json-schema",
+          result: "fail",
+          ts: "2026-01-01T00:00:00.000Z",
+          progressive: false,
+        },
+      ],
+    });
+    const na = buildNextAction("tdd_plan", topic);
+    expect(na.action).toBe("tdd_plan");
+  });
+
+  it("test gate fail → nextAction.action=dev（回 dev 修代码）", () => {
+    const topic = makeTopic({
+      status: "tested",
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          status: "failed",
+          requiresScreenshot: false,
+          dependsOn: [],
+        },
+      ],
+    });
+    const na = buildNextAction("test", topic);
+    // test 有 case 未通过 → 回 dev（而非原地重跑 test）
+    expect(na.action).toBe("dev");
+    expect(na.testCases).toBeDefined();
   });
 
   it("U10 补充: plan gate fail → nextAction 指回 plan retry", () => {
@@ -321,10 +401,11 @@ describe("buildNextAction（U9-U11）", () => {
 // ── 状态机全链路 status 校验 ─────────────────────────────────
 
 describe("状态机线性转换完整性", () => {
-  it("7 个 status 的线性序列合法", () => {
+  it("8 个 status 的线性序列合法", () => {
     const statuses: Status[] = [
       "created",
       "planned",
+      "tdd_inited",
       "developed",
       "reviewed",
       "tested",
@@ -332,9 +413,13 @@ describe("状态机线性转换完整性", () => {
       "closed",
     ];
     // 每个 status 对应的合法 action（非 progressive 路径）
-    const actionByStatus: Record<Status, "plan" | "dev" | "review" | "test" | "retrospect" | "closeout"> = {
+    const actionByStatus: Record<
+      Status,
+      "plan" | "tdd_plan" | "dev" | "review" | "test" | "retrospect" | "closeout"
+    > = {
       created: "plan",
-      planned: "dev",
+      planned: "tdd_plan",
+      tdd_inited: "dev",
       developed: "review",
       reviewed: "test",
       tested: "retrospect",
@@ -342,17 +427,95 @@ describe("状态机线性转换完整性", () => {
       closed: "closeout", // closed 是终态，仅用于穷尽
     };
 
-    for (const status of statuses.slice(0, 6)) {
+    for (const status of statuses.slice(0, 7)) {
       const action = actionByStatus[status];
       const verdict = checkLinear(action, status);
       expect(verdict.ok, `${action} from ${status} should pass`).toBe(true);
     }
   });
 
-  it("TRANSITIONS 含全部 8 个 action", () => {
-    const actions = ["create", "plan", "dev", "review", "test", "retrospect", "closeout", "replan"];
+  it("TRANSITIONS 含全部 9 个 action", () => {
+    const actions = [
+      "create",
+      "plan",
+      "tdd_plan",
+      "dev",
+      "review",
+      "test",
+      "retrospect",
+      "closeout",
+      "replan",
+    ];
     for (const a of actions) {
       expect(TRANSITIONS).toHaveProperty(a);
     }
+  });
+});
+
+// ── tdd_plan 转换 + guard ───────────────────────────────────
+
+describe("tdd_plan 转换与 guard", () => {
+  it("tdd_plan 从 planned 调 → guard 通过, nextStatus=tdd_inited", () => {
+    expect(checkLinear("tdd_plan", "planned").ok).toBe(true);
+    expect(TRANSITIONS.tdd_plan.nextStatus).toBe("tdd_inited");
+    expect(computeNextStatus("tdd_plan", "planned")).toBe("tdd_inited");
+  });
+
+  it("tdd_plan 从 created 调 → guard 拒绝(illegal_transition)", () => {
+    const verdict = checkLinear("tdd_plan", "created");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+      expect(verdict.reason).toContain("tdd_plan");
+    }
+  });
+
+  it("tdd_plan 从 developed 调 → guard 拒绝(illegal_transition)", () => {
+    const verdict = checkLinear("tdd_plan", "developed");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+    }
+  });
+
+  it("dev 从 planned（未过 tdd_plan）调 → guard 拒绝(illegal_transition)", () => {
+    const verdict = checkLinear("dev", "planned");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+      expect(verdict.reason).toContain("dev");
+      expect(verdict.reason).toContain("planned");
+    }
+  });
+
+  it("dev 从 tdd_inited 调 → guard 通过", () => {
+    expect(checkLinear("dev", "tdd_inited").ok).toBe(true);
+  });
+
+  it("replan 从 tdd_inited 调 → guard 通过", () => {
+    expect(checkLinear("replan", "tdd_inited").ok).toBe(true);
+  });
+
+  it("tdd_plan gate 有 pass 记录 → computeGatePassed=true", () => {
+    const topic = makeTopic({
+      status: "tdd_inited",
+      gateHistory: [
+        {
+          id: 1,
+          phase: "tdd_plan",
+          action: "tdd_plan",
+          gate: "test-json-schema",
+          result: "pass",
+          ts: "2026-01-01T00:00:00.000Z",
+          progressive: false,
+        },
+      ],
+    });
+    expect(computeGatePassed("tdd_plan", topic)).toBe(true);
+  });
+
+  it("tdd_plan 无 pass 记录 → computeGatePassed=false", () => {
+    const topic = makeTopic({ status: "planned" });
+    expect(computeGatePassed("tdd_plan", topic)).toBe(false);
   });
 });

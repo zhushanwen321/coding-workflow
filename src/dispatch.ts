@@ -37,6 +37,7 @@ import {
   type RetrospectParams,
   type ReviewParams,
   type TestParams,
+  type TddPlanParams,
   handleCloseout,
   handleCreate,
   handleDev,
@@ -44,6 +45,7 @@ import {
   handleReplan,
   handleReview,
   handleRetrospect,
+  handleTddPlan,
   handleTest,
 } from "./actions.js";
 import { guard } from "./state-machine.js";
@@ -106,6 +108,8 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
   switch (action) {
     case "plan":
       return handlePlan(params as PlanParams, topic, deps);
+    case "tdd_plan":
+      return handleTddPlan(params as TddPlanParams, topic, deps);
     case "dev":
       return handleDev(params as DevParams, topic, deps);
     case "review":
