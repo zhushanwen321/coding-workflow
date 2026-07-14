@@ -47,7 +47,7 @@ import {
 import { dispatch } from "./dispatch.js";
 import { GitValidator } from "./gate.js";
 import { encodeCwd } from "./path-encoding.js";
-import { computeStats } from "./stats.js";
+import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
 import {
   type Action,
@@ -631,6 +631,13 @@ async function main(argv: string[]): Promise<void> {
     }
 
     if (action === "stats") {
+      // --all：跨 topic 聚合（走 computeStatsAll，不走 computeStats 单 topic 路径）。
+      if (parsed.all === true) {
+        const topics = store.listTopics();
+        const output = computeStatsAll(topics);
+        process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
+        return;
+      }
       const topicId =
         typeof parsed.topicId === "string" ? parsed.topicId : undefined;
       if (!topicId) {
