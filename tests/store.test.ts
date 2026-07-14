@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CwStore } from "../src/store.js";
-import type { Topic } from "../src/types.js";
+import type { Priority, Topic } from "../src/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 
@@ -323,6 +323,123 @@ describe("insertTestCases", () => {
     expect(topic!.testCases[0]!.status).toBe("pending");
     expect(topic!.testCases[1]!.id).toBe("E1");
     expect(topic!.testCases[1]!.layer).toBe("real");
+  });
+});
+
+// ── DAO: insertTestCases 持久化 priority/redCheck ───────────
+
+describe("insertTestCases 持久化 priority/redCheck", () => {
+  it("priority (P0/P1/P2) 和 redCheck (true/false) 写入后 loadTopic 读回一致", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.insertTestCases("cw-test-topic", [
+        {
+          id: "P0-red",
+          layer: "mock",
+          scenario: "core path red check",
+          steps: "run test",
+          expected: { text: "expected" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          priority: "P0",
+          redCheck: true,
+        },
+        {
+          id: "P1-no-red",
+          layer: "real",
+          scenario: "important feature no red check",
+          steps: "spawn cli",
+          expected: { text: "ok" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          priority: "P1",
+          redCheck: false,
+        },
+        {
+          id: "P2-red",
+          layer: "mock",
+          scenario: "enhancement with red check",
+          steps: "run test",
+          expected: { text: "enhanced" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          priority: "P2",
+          redCheck: true,
+        },
+      ]);
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testCases).toHaveLength(3);
+
+    const p0 = topic!.testCases.find((tc) => tc.id === "P0-red")!;
+    expect(p0.priority).toBe("P0");
+    expect(p0.redCheck).toBe(true);
+
+    const p1 = topic!.testCases.find((tc) => tc.id === "P1-no-red")!;
+    expect(p1.priority).toBe("P1");
+    expect(p1.redCheck).toBe(false);
+
+    const p2 = topic!.testCases.find((tc) => tc.id === "P2-red")!;
+    expect(p2.priority).toBe("P2");
+    expect(p2.redCheck).toBe(true);
+  });
+
+  it("priority/redCheck 未设置 → 读回 undefined（可选字段正确兜底）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.transaction(() => {
+      store.insertTestCases("cw-test-topic", [
+        {
+          id: "no-fields",
+          layer: "mock",
+          scenario: "no priority/redCheck",
+          steps: "run test",
+          expected: { text: "expected" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ]);
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testCases).toHaveLength(1);
+    expect(topic!.testCases[0]!.priority).toBeUndefined();
+    expect(topic!.testCases[0]!.redCheck).toBeUndefined();
+  });
+
+  it("priority 全部 P0/P1/P2 取值经过往返（round-trip）保持原值", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const priorities: Priority[] = ["P0", "P1", "P2"];
+    store.transaction(() => {
+      store.insertTestCases(
+        "cw-test-topic",
+        priorities.map((p, i) => ({
+          id: `tc-${p}-${i}`,
+          layer: "mock" as const,
+          scenario: `scenario-${p}`,
+          steps: "steps",
+          expected: { text: p },
+          executor: "vitest",
+          requiresScreenshot: false,
+          priority: p,
+          redCheck: i % 2 === 0,
+        })),
+      );
+    });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.testCases).toHaveLength(3);
+    // 按 priority 字段聚合校验
+    const byPriority = new Map(topic!.testCases.map((tc) => [tc.priority, tc.redCheck]));
+    expect(byPriority.get("P0")).toBe(true);
+    expect(byPriority.get("P1")).toBe(false);
+    expect(byPriority.get("P2")).toBe(true);
   });
 });
 

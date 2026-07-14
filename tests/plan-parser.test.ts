@@ -45,11 +45,11 @@ describe("parseLitePlan 合法结构（U16）", () => {
     expect(parsed.waves[0]!.changes).toEqual(["change A", "change B"]);
     expect(parsed.waves[0]!.dependsOn).toEqual([]);
 
-    expect(parsed.testCases).toHaveLength(1);
-    expect(parsed.testCases[0]!.id).toBe("E1");
-    expect(parsed.testCases[0]!.layer).toBe("mock");
-    expect(parsed.testCases[0]!.expected.text).toBe("expected output");
-    expect(parsed.testCases[0]!.requiresScreenshot).toBe(false);
+    expect(parsed.legacyTestCases).toHaveLength(1);
+    expect(parsed.legacyTestCases![0]!.id).toBe("E1");
+    expect(parsed.legacyTestCases![0]!.layer).toBe("mock");
+    expect(parsed.legacyTestCases![0]!.expected.text).toBe("expected output");
+    expect(parsed.legacyTestCases![0]!.requiresScreenshot).toBe(false);
   });
 
   it("U16 补充: real layer + requiresScreenshot=true + url expected 也能解析", () => {
@@ -71,9 +71,9 @@ describe("parseLitePlan 合法结构（U16）", () => {
       ],
     };
     const parsed = parseLitePlan(json);
-    expect(parsed.testCases[0]!.layer).toBe("real");
-    expect(parsed.testCases[0]!.requiresScreenshot).toBe(true);
-    expect(parsed.testCases[0]!.expected.url).toBe("http://example.com");
+    expect(parsed.legacyTestCases![0]!.layer).toBe("real");
+    expect(parsed.legacyTestCases![0]!.requiresScreenshot).toBe(true);
+    expect(parsed.legacyTestCases![0]!.expected.url).toBe("http://example.com");
   });
 });
 
@@ -288,5 +288,163 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
       ],
     };
     expect(() => parseLitePlan(json)).not.toThrow();
+  });
+});
+
+// ── W2: parseDevPlan + parseTestJson 新增测试 ─────────────────
+
+import { parseDevPlan, parseTestJson } from "../src/plan-parser.js";
+
+describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
+  it("只含 waves 不含 testCases → legacyTestCases undefined", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [{ id: "W1", changes: ["change1"], dependsOn: [], priority: "P0" }],
+    };
+    const parsed = parseDevPlan(json);
+    expect(parsed.waves).toHaveLength(1);
+    expect(parsed.waves[0]!.id).toBe("W1");
+    expect(parsed.waves[0]!.priority).toBe("P0");
+    expect(parsed.legacyTestCases).toBeUndefined();
+  });
+
+  it("旧格式（同时含 testCases）→ legacyTestCases 自动提取", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      testCases: [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "result" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ],
+    };
+    const parsed = parseDevPlan(json);
+    expect(parsed.legacyTestCases).toHaveLength(1);
+    expect(parsed.legacyTestCases![0]!.id).toBe("U1");
+  });
+
+  it("wave 带 priority 字段正确解析", () => {
+    const json = {
+      format: "lite",
+      objective: "obj",
+      waves: [
+        { id: "W1", changes: ["a"], dependsOn: [], priority: "P0" },
+        { id: "W2", changes: ["b"], dependsOn: ["W1"], priority: "P2" },
+      ],
+    };
+    const parsed = parseDevPlan(json);
+    expect(parsed.waves[0]!.priority).toBe("P0");
+    expect(parsed.waves[1]!.priority).toBe("P2");
+  });
+
+  it("format 非 lite → 抛错", () => {
+    const json = { format: "wrong", objective: "obj", waves: [] };
+    expect(() => parseDevPlan(json)).toThrow(/format/);
+  });
+});
+
+describe("W2: parseTestJson（拆分后的 test.json）", () => {
+  function makeValidTestJson(): unknown {
+    return {
+      testCases: [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "单测场景",
+          steps: "执行单测",
+          expected: { text: "expected-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          priority: "P0",
+          redCheck: true,
+        },
+        {
+          id: "E1",
+          layer: "real",
+          scenario: "集成场景",
+          steps: "执行集成测试",
+          expected: { text: "real-output" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          priority: "P1",
+          redCheck: false,
+        },
+      ],
+    };
+  }
+
+  it("合法 test.json → 解析成功，含 priority + redCheck", () => {
+    const parsed = parseTestJson(makeValidTestJson());
+    expect(parsed.testCases).toHaveLength(2);
+    expect(parsed.testCases[0]!.priority).toBe("P0");
+    expect(parsed.testCases[0]!.redCheck).toBe(true);
+    expect(parsed.testCases[1]!.priority).toBe("P1");
+    expect(parsed.testCases[1]!.redCheck).toBe(false);
+  });
+
+  it("testRunner 配置正确解析", () => {
+    const json = {
+      ...makeValidTestJson(),
+      testRunner: { mode: "nodejs", command: "npx vitest run", cwd: "." },
+    } as Record<string, unknown>;
+    const parsed = parseTestJson(json);
+    expect(parsed.testRunner).toBeDefined();
+    expect(parsed.testRunner!.mode).toBe("nodejs");
+    expect(parsed.testRunner!.command).toBe("npx vitest run");
+  });
+
+  it("testRunner custom 模式正确解析", () => {
+    const json = {
+      ...makeValidTestJson(),
+      testRunner: { mode: "custom", path: ".cw/run-tests.sh" },
+    } as Record<string, unknown>;
+    const parsed = parseTestJson(json);
+    expect(parsed.testRunner!.mode).toBe("custom");
+    expect(parsed.testRunner!.path).toBe(".cw/run-tests.sh");
+  });
+
+  it("testRunner 省略 → testRunner undefined", () => {
+    const parsed = parseTestJson(makeValidTestJson());
+    expect(parsed.testRunner).toBeUndefined();
+  });
+
+  it("testCases 缺失 → 抛错", () => {
+    expect(() => parseTestJson({})).toThrow();
+  });
+
+  it("testCase 环形 dependsOn → 抛错", () => {
+    const json = {
+      testCases: [
+        {
+          id: "U1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          dependsOn: ["U2"],
+        },
+        {
+          id: "U2",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out2" },
+          executor: "vitest",
+          requiresScreenshot: false,
+          dependsOn: ["U1"],
+        },
+      ],
+    };
+    expect(() => parseTestJson(json)).toThrow(/cycle|环形/i);
   });
 });

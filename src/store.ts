@@ -40,6 +40,7 @@ import type {
   Artifacts,
   Evidence,
   GateHistoryEntry,
+  Priority,
   Status,
   TestCase,
   TestCaseSeed,
@@ -103,6 +104,8 @@ interface TestCaseRecord {
   failureReason?: string;
   requiresScreenshot: boolean;
   dependsOn: string[];
+  priority?: Priority;
+  redCheck?: boolean;
 }
 
 interface GateHistoryRecord {
@@ -458,6 +461,8 @@ export class CwStore {
       failureReason: r.failureReason,
       requiresScreenshot: r.requiresScreenshot === true,
       dependsOn: r.dependsOn ?? [],
+      priority: r.priority,
+      redCheck: r.redCheck,
     };
   }
 
@@ -485,6 +490,8 @@ export class CwStore {
       status: "pending",
       requiresScreenshot: c.requiresScreenshot === true,
       dependsOn: c.dependsOn ?? [],
+      priority: c.priority,
+      redCheck: c.redCheck,
     };
   }
 
