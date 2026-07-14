@@ -396,27 +396,71 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "review": {
-      if (!computeGatePassed("review", topic)) {
-        const fails = countConsecutiveGateFails(topic.gateHistory, "review");
+      // review gate 语义变了：看 reviewIssues（而非纯 gateHistory）。
+      //   - fileExistsCheck fail（reviewPath 提供但文件不存在）→ gate fail retry（见下）
+      //   - issues 为空（无问题）→ gate pass → test
+      //   - issues 非空（有发现）：
+      //     reviewTurn < LIMIT → review_fix
+      //     reviewTurn >= LIMIT → test（强制进 test，guidance 标注未闭环的 must-fix）
+      //
+      // 检测 reviewPath 前置条件失败：最近的 review phase gate 记录为 fail（file-exists+non-empty）。
+      const reviewFails = countConsecutiveGateFails(topic.gateHistory, "review");
+      const lastReviewGate =
+        topic.gateHistory[topic.gateHistory.length - 1];
+      const isReviewFileFail =
+        reviewFails > 0 &&
+        lastReviewGate?.phase === "review" &&
+        lastReviewGate?.gate === "file-exists+non-empty" &&
+        lastReviewGate?.result === "fail";
+      if (isReviewFileFail) {
         return {
           action: "review",
           guidance:
-            fails >= GATE_RETRY_LIMIT
-              ? buildCircuitBreakerGuidance("review", fails)
-              : `review gate FAIL。修 mustFix 后重调 cw(review)。\n\n${REVIEW_PROMPT}`,
+            reviewFails >= GATE_RETRY_LIMIT
+              ? buildCircuitBreakerGuidance("review", reviewFails)
+              : `review gate FAIL（reviewPath 文件不存在或为空）。修 mustFix 后重调 cw(review)。\n\n${REVIEW_PROMPT}`,
         };
       }
+
+      const openIssues = topic.reviewIssues.filter((i) => i.status === "open");
+      const mustFixCount = topic.reviewIssues.filter(
+        (i) => i.severity === "must-fix" && i.status === "open",
+      ).length;
+      const hasOpenIssues = openIssues.length > 0;
+      const overLimit = topic.reviewTurn >= REVIEW_TURN_LIMIT;
+
+      if (!hasOpenIssues) {
+        // 无 open issue（issues 为空或全已 fixed）→ gate pass → test。
+        return {
+          action: "test",
+          guidance: `review gate 通过（无 open issue）。下一步：跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
+          testCases: testCaseProgress(topic),
+          alternatives: [replanAlternative()],
+        };
+      }
+
+      if (overLimit) {
+        // 达上限：强制进 test，guidance 标注未闭环的 must-fix。
+        return {
+          action: "test",
+          guidance:
+            `review 已达 ${REVIEW_TURN_LIMIT} 轮上限（当前 turn=${topic.reviewTurn}），强制进 test。` +
+            `${mustFixCount} 个 must-fix 未修复。建议 ask_user 人工审查或调 cw(replan)。\n\n${EXECUTE_PROMPT}`,
+          testCases: testCaseProgress(topic),
+          alternatives: [replanAlternative()],
+        };
+      }
+
+      // 有 open issue 且未达上限 → review_fix。
       return {
-        action: "test",
-        guidance: `review gate 通过。下一步：跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
-        testCases: testCaseProgress(topic),
-        alternatives: [replanAlternative()],
+        action: "review_fix",
+        guidance: `review 发现 ${openIssues.length} 个 open issue（${mustFixCount} 个 must-fix）。` +
+          `下一步：逐条修 issue 并 commit，调 cw(review_fix) 提交 fixes（issueId + commitHash + resolution）。\n\n${REVIEW_PROMPT}`,
       };
     }
     case "review_fix": {
       // review_fix：review loop 内的修复动作（status 留在 reviewed）。
       // 修完 issue 后应重新 review（下一轮），若已达 review 轮数上限则告警。
-      // 注意：review_fix 的 dispatch 尚未接入（W6），这里只给 nextAction 导航兜底。
       const turn = topic.reviewTurn;
       const overLimit = turn >= REVIEW_TURN_LIMIT;
       return {
@@ -436,11 +480,18 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           alternatives: [replanAlternative()],
         };
       }
-      // test 有 case 未通过 → 回 dev 修代码（而非原地重跑 test）。
-      // agent 修完代码 + commit 后重新走 review → test。
+      // test 有 case 未通过 → 进 test_fix loop（不再回 dev）。
+      // testTurn >= LIMIT → guidance 含熔断提示（action 仍为 test_fix）。
+      const failedCount = topic.testCases.filter(
+        (c) => c.status !== "passed",
+      ).length;
+      const overLimit = topic.testTurn >= TEST_TURN_LIMIT;
       return {
-        action: "dev",
-        guidance: `test 有 case 未通过，回 dev 修代码。修完 commit 后重新走 review → test。\n\n${EXECUTE_PROMPT}`,
+        action: "test_fix",
+        guidance: overLimit
+          ? `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${topic.testTurn}），` +
+            `${failedCount} 个 case 仍未通过。建议 ask_user 人工介入或调 cw(replan) 调整计划。\n\n${EXECUTE_PROMPT}`
+          : `test 有 ${failedCount} 个 case 未通过。下一步：修代码 + commit，调 cw(test_fix) 提交 fixes（caseId + commitHash + resolution），再重跑 test。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };
@@ -448,7 +499,6 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
     case "test_fix": {
       // test_fix：test loop 内的修复动作（status 留在 tested），审计日志由 store.appendTestFix 追加。
       // 修完代码后应重新跑 test，若已达 test 轮数上限则告警。
-      // 注意：test_fix 的 dispatch 尚未接入（W6），这里只给 nextAction 导航兜底。
       const turn = topic.testTurn;
       const overLimit = turn >= TEST_TURN_LIMIT;
       return {

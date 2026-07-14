@@ -50,9 +50,13 @@ import {
   type Evidence,
   type RetrospectData,
   type RetrospectKnownRisk,
+  type ReviewFixSubmission,
+  type ReviewIssue,
+  type ReviewIssueSubmission,
   type RuntimeEnv,
   type TestCase,
   type TestCaseSeed,
+  type TestFixSubmission,
   type Topic,
   type Wave,
   type WaveSeed,
@@ -130,8 +134,27 @@ export interface RetrospectParams {
 export interface ReviewParams {
   action: "review";
   topicId: string;
-  /** changes/review.md 绝对路径。 */
+  /** changes/review.md 绝对路径。提供时做 fileExistsCheck（review 的前置条件：文件存在）。 */
   reviewPath?: string;
+  /**
+   * 本次 review 发现的问题列表（必填，空数组 = 无问题，直接进 test）。
+   * 非空 = gate「有发现」→ 进 review_fix（未达上限）或强制进 test（达上限）。
+   */
+  issues: ReviewIssueSubmission[];
+}
+
+export interface ReviewFixParams {
+  action: "review_fix";
+  topicId: string;
+  /** 本次修复提交（每条 issueId 指向已存在的 open ReviewIssue）。 */
+  fixes: ReviewFixSubmission[];
+}
+
+export interface TestFixParams {
+  action: "test_fix";
+  topicId: string;
+  /** 本次修复提交（每条 caseId 指向 failed 的 testCase，只记录审计，不验证 commit 真实性）。 */
+  fixes: TestFixSubmission[];
 }
 
 export interface CloseoutParams {
@@ -157,6 +180,8 @@ export type CwParams =
   | TestParams
   | RetrospectParams
   | ReviewParams
+  | ReviewFixParams
+  | TestFixParams
   | CloseoutParams
   | ReplanParams;
 
@@ -341,16 +366,19 @@ export function handleClarify(
 /**
  * gateAdvance — 吸收 file-gate handler 的共同骨架。
  *
- * review / retrospect / closeout 三个 handler 共享同一套编排：
+ * retrospect / closeout 两个 handler 共享同一套编排：
  *   fileExistsCheck → transaction{ appendGateHistory + if pass{ updateStatus + updateGatePassed + onPass } }
  *   → loadTopic reload → buildNextAction → mustFix 装配。
  *
  * 差异只在 phase 名、gate 名、path、pass 时的额外步骤（setArtifacts / setEvidence），
  * 通过参数 + onPass 回调收敛。onPass 在事务内、gate-pass 三联写之后执行，
  * 可通过 deps.store.loadTopic 拿到含本次写入的 topic（closeout 的 evidence 快照用）。
+ *
+ * 注意：review 不再用 gateAdvance——它的 gate 语义变了（issues 非空 = 「有发现」而非 fail），
+ * 见 handleReview 内联实现。
  */
 function gateAdvance(
-  phase: "review" | "retrospect" | "closeout",
+  phase: "retrospect" | "closeout",
   gateName: string,
   path: string,
   topicId: string,
@@ -812,6 +840,16 @@ export function handleTest(
       });
     }
 
+    const failedCount = caseResults.filter((c) => c.status !== "passed").length;
+    const hasFailures = failedCount > 0;
+
+    // 有 case failed 且是第一次 fail（testTurn=0）→ incTestTurn 开启 test-fix loop 计数。
+    // 首次 fail 标记后不再重复 inc（避免同 loop 内多次 test 提交重复计数）。
+    // 熔断由 buildNextAction 基于 testTurn >= TEST_TURN_LIMIT 判定（外部可手动设置 turn 触发）。
+    if (hasFailures && topic.testTurn === 0) {
+      deps.store.incTestTurn(params.topicId);
+    }
+
     // 事务内 reload 拿最新数据算 gatePassed + status。
     const reloaded = deps.store.loadTopic(params.topicId);
     if (!reloaded) {
@@ -824,7 +862,6 @@ export function handleTest(
     }
     deps.store.updateGatePassed(params.topicId, "test", gatePassed);
 
-    const failedCount = caseResults.filter((c) => c.status !== "passed").length;
     deps.store.appendGateHistory(params.topicId, {
       phase: "test",
       action: "test",
@@ -850,13 +887,92 @@ export function handleTest(
   };
 }
 
+// ── handleTestFix ───────────────────────────────────────────
+
+/**
+ * handleTestFix — test loop 内的修复动作（progressive，status 留在 tested）。
+ *
+ * 数据流：
+ *   校验 fixes[].caseId 存在（不存在的 caseId 抛 CwError）
+ *     → 事务{ 逐条 appendTestFix（caseId + commitHash + resolution + turn 审计日志）
+ *       + appendGateHistory(test-fix, pass, progressive) }
+ *     → reload → buildNextAction("test_fix")（指向 test 重跑失败的 case）。
+ *
+ * 不做 commit 校验：commitHash 只记录审计，不验证真实性（与 dev 的 commit 校验语义不同）。
+ * turn = 当前 testTurn（修复发生在哪一轮 test 之后）。
+ *
+ * 失败路径：fixes 里某 caseId 不存在于 topic.testCases → throw CwError。
+ */
+export function handleTestFix(
+  params: TestFixParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const fixes = params.fixes ?? [];
+
+  // 校验所有 caseId 存在（校验在事务外做）。
+  const caseIds = new Set(topic.testCases.map((c) => c.id));
+  for (const fix of fixes) {
+    if (!caseIds.has(fix.caseId)) {
+      throw new CwError(
+        `test_fix caseId 不存在: ${fix.caseId}（不存在于 topic.testCases）`,
+      );
+    }
+  }
+
+  // turn = 当前 testTurn（修复发生在哪一轮 test 之后）。
+  const turn = topic.testTurn;
+
+  deps.store.transaction(() => {
+    for (const fix of fixes) {
+      deps.store.appendTestFix(params.topicId, {
+        caseId: fix.caseId,
+        commitHash: fix.commitHash,
+        resolution: fix.resolution,
+        turn,
+      });
+    }
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "test_fix",
+      action: "test_fix",
+      gate: "test-fix",
+      result: "pass",
+      report: `${fixes.length} case(s) fixed at turn ${turn}`,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after test_fix: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("test_fix", updated),
+  };
+}
+
 // ── handleReview ────────────────────────────────────────────
 
 /**
- * handleReview — weak gate（文件存在 + 非空），委托 gateAdvance。
+ * handleReview — review 阶段 handler（progressive，多轮 review loop）。
  *
- * 插在 dev 和 test 之间。复盘证明「不强制 = 被跳过」——review gate 用文件存在性
- * 强制审查环节存在。gate pass → status=reviewed + 记录 reviewPath/reviewAt artifacts。
+ * gate 语义变了：不再只是 fileExistsCheck，还要看 issues。
+ *   - reviewPath 提供时，先做 fileExistsCheck（review 的前置条件：审查报告文件存在）。
+ *     fail → 记 gate fail，status 不变，nextAction 指回 review retry。
+ *   - issues 为空（无问题）= gate pass → status 流转 reviewed + nextAction=test。
+ *   - issues 非空（有发现）= gate「有发现」：
+ *     appendReviewIssues（新 turn 的 open issues）+ incReviewTurn + status 流转 reviewed
+ *     + nextAction 指向 review_fix（reviewTurn < LIMIT）或 test（达上限强制进 test）。
+ *
+ * 注意：issues 非空不是 gate fail——review 的目的就是发现问题，发现 = 正常流程。
+ * reviewTurn 在 appendReviewIssues 后 inc（turn = 原 reviewTurn+1），appendReviewIssues
+ * 传入的 turn 参数对应当前 turn（reviewTurn+1，新开启的这一轮）。
+ *
+ * progressive 语义：status=reviewed 下再次调 review 合法（fix 后重审，多轮 loop）。
  */
 export function handleReview(
   params: ReviewParams,
@@ -864,20 +980,161 @@ export function handleReview(
   deps: ActionDeps,
 ): ActionResult {
   const path = params.reviewPath ?? "";
-  return gateAdvance(
-    "review",
-    "file-exists+non-empty",
-    path,
-    params.topicId,
-    topic,
-    deps,
-    () => {
+  const issues = params.issues ?? [];
+  const hasIssues = issues.length > 0;
+
+  // reviewPath 提供时做 fileExistsCheck（前置条件）。fail → gate fail，status 不变。
+  const fileCheck =
+    path.length > 0 ? fileExistsCheck(path) : { result: "pass" as const, report: "" };
+
+  let passed: boolean;
+  let gateReport: string | undefined;
+
+  deps.store.transaction(() => {
+    if (fileCheck.result === "fail") {
+      // 前置条件失败 → gate fail，status 不变。
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "review",
+        action: "review",
+        gate: "file-exists+non-empty",
+        result: "fail",
+        report: fileCheck.report,
+        progressive: true,
+      });
+      passed = false;
+      gateReport = fileCheck.report;
+      return;
+    }
+
+    // 前置条件通过 → status 流转 reviewed（progressive）。
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("review", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "review", true);
+
+    // 记录 review artifacts（reviewPath + 时间戳）。
+    if (path.length > 0) {
       deps.store.setArtifacts(params.topicId, {
         reviewPath: path,
         reviewAt: new Date().toISOString(),
       });
-    },
-  );
+    }
+
+    if (hasIssues) {
+      // 有发现：appendReviewIssues + incReviewTurn。
+      // turn 参数 = 新开启的这一轮（原 reviewTurn+1），与 appendReviewIssues 后 incReviewTurn 一致。
+      const newTurn = topic.reviewTurn + 1;
+      deps.store.appendReviewIssues(params.topicId, newTurn, issues);
+      deps.store.incReviewTurn(params.topicId);
+    }
+
+    // gate 记录：issues 非空记「review-found」（gate 名区分纯文件通过 vs 有发现），
+    // issues 为空记「file-exists+non-empty」pass。
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "review",
+      action: "review",
+      gate: hasIssues ? "review-found" : "file-exists+non-empty",
+      result: "pass",
+      report: hasIssues
+        ? `${issues.length} issue(s) found in turn ${topic.reviewTurn + 1}`
+        : undefined,
+      progressive: true,
+    });
+    passed = true;
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after review: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("review", updated),
+  };
+  if (!passed!) {
+    (result as Record<string, unknown>).mustFix = gateReport;
+  }
+  return result;
+}
+
+// ── handleReviewFix ─────────────────────────────────────────
+
+/**
+ * handleReviewFix — review loop 内的修复动作（progressive，status 留在 reviewed）。
+ *
+ * 数据流：
+ *   校验 fixes[].issueId 存在且 status=open（不存在/已 fixed 抛 CwError）
+ *     → 事务{ 逐条 fixReviewIssue（标记 fixed + 记 commitHash/resolution/fixedAtTurn）
+ *       + appendGateHistory(review-fix, pass, progressive) }
+ *     → reload → buildNextAction("review_fix")（指向下一轮 review）。
+ *
+ * 不做 commit 校验：commitHash 只记录审计，不验证真实性（与 dev 的 commit 校验语义不同）。
+ * fixedAtTurn = 当前 reviewTurn（修复发生在哪一轮 review 之后）。
+ *
+ * 失败路径：fixes 里某 issueId 不存在于 topic.reviewIssues 或 status !== open → throw CwError。
+ */
+export function handleReviewFix(
+  params: ReviewFixParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const fixes = params.fixes ?? [];
+
+  // 校验所有 issueId 存在且 status=open（校验在事务外做，避免事务内 throw 触发回滚后又 throw）。
+  const issueMap = new Map<string, ReviewIssue>();
+  for (const issue of topic.reviewIssues) {
+    issueMap.set(issue.id, issue);
+  }
+  for (const fix of fixes) {
+    const issue = issueMap.get(fix.issueId);
+    if (!issue) {
+      throw new CwError(
+        `review_fix issueId 不存在: ${fix.issueId}（不存在于 topic.reviewIssues）`,
+      );
+    }
+    if (issue.status !== "open") {
+      throw new CwError(
+        `review_fix issueId ${fix.issueId} 状态为 ${issue.status}（只能修 open 的 issue）`,
+      );
+    }
+  }
+
+  // fixedAtTurn = 当前 reviewTurn（修复发生在哪一轮 review 之后）。
+  const fixedAtTurn = topic.reviewTurn;
+
+  deps.store.transaction(() => {
+    for (const fix of fixes) {
+      deps.store.fixReviewIssue(params.topicId, fix.issueId, {
+        commitHash: fix.commitHash,
+        resolution: fix.resolution,
+        fixedAtTurn,
+      });
+    }
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "review_fix",
+      action: "review_fix",
+      gate: "review-fix",
+      result: "pass",
+      report: `${fixes.length} issue(s) fixed at turn ${fixedAtTurn}`,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after review_fix: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("review_fix", updated),
+  };
 }
 
 // ── handleRetrospect ────────────────────────────────────────
@@ -1263,6 +1520,12 @@ export function handleReplan(
     deps.store.updateGatePassed(params.topicId, "dev", devGatePassed);
     const testGatePassed = computeGatePassed("test", reloaded);
     deps.store.updateGatePassed(params.topicId, "test", testGatePassed);
+
+    // replan 修改了 plan/testCases，旧的 review 闭环 + test 修复轨迹失效，清空重走。
+    // resetReviewLoop：reviewIssues=[], reviewTurn=0。
+    // resetTestLoop：testFixLog=[], testTurn=0。
+    deps.store.resetReviewLoop(params.topicId);
+    deps.store.resetTestLoop(params.topicId);
 
     deps.store.appendGateHistory(params.topicId, {
       phase: "plan",

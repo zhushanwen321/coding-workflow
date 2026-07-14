@@ -40,8 +40,10 @@ import {
   type PlanParams,
   type ReplanParams,
   type RetrospectParams,
+  type ReviewFixParams,
   type ReviewParams,
   type TddPlanParams,
+  type TestFixParams,
   type TestParams,
 } from "./actions.js";
 import { dispatch } from "./dispatch.js";
@@ -456,9 +458,25 @@ export function buildParams(
 
     case "review": {
       if (!topicId) throw new CwError("review 需要 --topicId");
-      const params: ReviewParams = { action: "review", topicId };
+      const params: ReviewParams = { action: "review", topicId, issues: [] };
       const rp = flag(parsed, "reviewPath");
       if (rp) params.reviewPath = rp;
+      // issues 从 stdin 读（可选，无 stdin 时为空数组 = 无问题）。
+      // stdin 有内容时解析为 JSON 数组；非数组/非 JSON → throw。
+      if (!isStdinTTY && stdinData.trim().length > 0) {
+        try {
+          const issues = JSON.parse(stdinData);
+          if (!Array.isArray(issues)) {
+            throw new CwError("review issues 必须是 JSON 数组");
+          }
+          params.issues = issues as ReviewParams["issues"];
+        } catch (e) {
+          if (e instanceof CwError) throw e;
+          throw new CwError(
+            `review issues JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
       return params;
     }
 
@@ -487,15 +505,42 @@ export function buildParams(
       return params;
     }
 
-    case "review_fix":
-    case "test_fix": {
-      // TODO(W6): review_fix / test_fix 的 CLI 参数解析 + handler 尚未接入。
-      // W1/W2 已加入 Action union + TRANSITIONS + store DAO，本分支在 W6 实现。
-      if (!topicId) throw new CwError(`${action} 需要 --topicId`);
-      throw new CwError(
-        `${action} CLI 入口尚未实现（计划在 W6 接入）。` +
-          `issue tracking store 方法已就绪：store.appendReviewIssues/fixReviewIssue/appendTestFix/incReviewTurn/incTestTurn/resetReviewLoop/resetTestLoop。`,
+    case "review_fix": {
+      if (!topicId) throw new CwError("review_fix 需要 --topicId");
+      // fixes 从 stdin 读（必须提供，每条含 issueId + commitHash + resolution）。
+      const fixesRaw = readJsonPayload(
+        flag(parsed, "fixesFile"),
+        stdinData,
+        isStdinTTY,
       );
+      if (!Array.isArray(fixesRaw)) {
+        throw new CwError("review_fix 的 fixes 需要是 JSON 数组");
+      }
+      const params: ReviewFixParams = {
+        action: "review_fix",
+        topicId,
+        fixes: fixesRaw as ReviewFixParams["fixes"],
+      };
+      return params;
+    }
+
+    case "test_fix": {
+      if (!topicId) throw new CwError("test_fix 需要 --topicId");
+      // fixes 从 stdin 读（必须提供，每条含 caseId + commitHash + resolution）。
+      const fixesRaw = readJsonPayload(
+        flag(parsed, "fixesFile"),
+        stdinData,
+        isStdinTTY,
+      );
+      if (!Array.isArray(fixesRaw)) {
+        throw new CwError("test_fix 的 fixes 需要是 JSON 数组");
+      }
+      const params: TestFixParams = {
+        action: "test_fix",
+        topicId,
+        fixes: fixesRaw as TestFixParams["fixes"],
+      };
+      return params;
     }
 
     default: {

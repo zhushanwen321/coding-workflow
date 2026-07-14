@@ -561,14 +561,14 @@ describe("dispatch review", () => {
     return { topicId, deps, store };
   }
 
-  it("review gate pass：传存在的报告文件 → status=reviewed, nextAction=test", () => {
+  it("review gate pass：传存在的报告文件 + issues=[] → status=reviewed, nextAction=test", () => {
     const { topicId, deps, store } = setupDevelopedTopic();
     // 创建 review.md 文件
     const reviewPath = join(tmpDir, "review.md");
     writeFileSync(reviewPath, "# Code Review\n审查通过");
 
     const result = dispatch(
-      { action: "review", topicId, reviewPath },
+      { action: "review", topicId, reviewPath, issues: [] },
       deps,
     );
 
@@ -586,7 +586,7 @@ describe("dispatch review", () => {
     const { topicId, deps } = setupDevelopedTopic();
 
     const result = dispatch(
-      { action: "review", topicId, reviewPath: "/nonexistent/review.md" },
+      { action: "review", topicId, reviewPath: "/nonexistent/review.md", issues: [] },
       deps,
     );
 
@@ -1486,5 +1486,346 @@ describe("dispatch clarify", () => {
     expect(topic!.clarifyRecords[1]!.id).toBe("CL2");
     // status 仍 created（progressive 不流转）
     expect(topic!.status).toBe("created");
+  });
+});
+
+// ── W3/W4/W5: review/review_fix/test/test_fix/replan reset ───
+
+describe("dispatch review loop（W3：review + review_fix）", () => {
+  /** 推进到 developed（dev gate pass），返回 topicId/deps/store。 */
+  function setupDevelopedTopic(): { topicId: string; deps: ActionDeps; store: CwStore } {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "review-loop", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passTddPlanGate(store, topicId);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    return { topicId, deps, store };
+  }
+
+  it("W3-1: review 带 issues=[R1,R2] → nextAction=review_fix，reviewIssues 存储 2 条, reviewTurn=1", () => {
+    const { topicId, deps, store } = setupDevelopedTopic();
+
+    const result = dispatch(
+      {
+        action: "review",
+        topicId,
+        issues: [
+          { severity: "must-fix", description: "问题1", file: "src/a.ts" },
+          { severity: "should-fix", description: "问题2" },
+        ],
+      },
+      deps,
+    );
+
+    expect(result.status).toBe("reviewed");
+    expect(result.nextAction.action).toBe("review_fix");
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.reviewIssues).toHaveLength(2);
+    expect(topic!.reviewIssues[0]!.id).toBe("R1");
+    expect(topic!.reviewIssues[0]!.severity).toBe("must-fix");
+    expect(topic!.reviewIssues[0]!.status).toBe("open");
+    expect(topic!.reviewIssues[0]!.foundAtTurn).toBe(1);
+    expect(topic!.reviewIssues[1]!.id).toBe("R2");
+    expect(topic!.reviewTurn).toBe(1);
+  });
+
+  it("W3-2: review 带 issues=[] → nextAction=test（无问题 gate pass）", () => {
+    const { topicId, deps } = setupDevelopedTopic();
+
+    const result = dispatch(
+      { action: "review", topicId, issues: [] },
+      deps,
+    );
+
+    expect(result.status).toBe("reviewed");
+    expect(result.nextAction.action).toBe("test");
+
+    // issues 为空 → 无 reviewIssues 写入，reviewTurn 仍 0
+    const topic = deps.store.loadTopic(topicId);
+    expect(topic!.reviewIssues).toHaveLength(0);
+    expect(topic!.reviewTurn).toBe(0);
+  });
+
+  it("W3-3: review_fix 标记 R1 fixed → nextAction=review，reviewIssues[0].status=fixed, 含 fix 证据", () => {
+    const { topicId, deps, store } = setupDevelopedTopic();
+    dispatch(
+      {
+        action: "review",
+        topicId,
+        issues: [{ severity: "must-fix", description: "问题1", file: "src/a.ts" }],
+      },
+      deps,
+    );
+
+    const result = dispatch(
+      {
+        action: "review_fix",
+        topicId,
+        fixes: [
+          {
+            issueId: "R1",
+            commitHash: "abc1234",
+            resolution: "修复了空指针",
+          },
+        ],
+      },
+      deps,
+    );
+
+    expect(result.nextAction.action).toBe("review");
+    expect(result.status).toBe("reviewed");
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.reviewIssues[0]!.status).toBe("fixed");
+    expect(topic!.reviewIssues[0]!.fix).toBeDefined();
+    expect(topic!.reviewIssues[0]!.fix!.commitHash).toBe("abc1234");
+    expect(topic!.reviewIssues[0]!.fix!.resolution).toBe("修复了空指针");
+    expect(topic!.reviewIssues[0]!.fix!.fixedAtTurn).toBe(1);
+  });
+
+  it("W3-4: review 达上限（reviewTurn=3）+ open issues → nextAction=test（强制进 test）", () => {
+    const { topicId, deps, store } = setupDevelopedTopic();
+    // 先过一轮 review 把 status 推到 reviewed + 开启 loop。
+    dispatch(
+      {
+        action: "review",
+        topicId,
+        issues: [{ severity: "must-fix", description: "问题1" }],
+      },
+      deps,
+    );
+    // incReviewTurn 到 3：当前已 1，再 inc 2 次，模拟已达 REVIEW_TURN_LIMIT
+    store.incReviewTurn(topicId);
+    store.incReviewTurn(topicId);
+    expect(store.loadTopic(topicId)!.reviewTurn).toBe(3);
+
+    // 再 review（progressive，reviewed 合法）带新 issues → buildNextAction 应判 overLimit → test
+    const result = dispatch(
+      {
+        action: "review",
+        topicId,
+        issues: [{ severity: "must-fix", description: "新问题" }],
+      },
+      deps,
+    );
+
+    expect(result.nextAction.action).toBe("test");
+  });
+
+  it("W3-5: review_fix 从 developed 调 → illegal_transition（GuardError）", () => {
+    const { topicId, deps } = setupDevelopedTopic();
+    // status=developed，review_fix 要求 reviewed
+    expect(() =>
+      dispatch(
+        {
+          action: "review_fix",
+          topicId,
+          fixes: [{ issueId: "R1", commitHash: "x", resolution: "y" }],
+        },
+        deps,
+      ),
+    ).toThrow(GuardError);
+  });
+
+  it("W3-6: review_fix 对不存在的 issueId → throw CwError", () => {
+    const { topicId, deps } = setupDevelopedTopic();
+    // 先过 review（status → reviewed）但 issues=[]（无 R1）
+    dispatch({ action: "review", topicId, issues: [] }, deps);
+
+    expect(() =>
+      dispatch(
+        {
+          action: "review_fix",
+          topicId,
+          fixes: [{ issueId: "R999-不存在", commitHash: "x", resolution: "y" }],
+        },
+        deps,
+      ),
+    ).toThrow(/不存在/);
+  });
+});
+
+describe("dispatch test loop（W4：test + test_fix）", () => {
+  /** 推进到 reviewed（review gate pass），返回 topicId/deps/store。 */
+  function setupReviewedTopic(): { topicId: string; deps: ActionDeps; store: CwStore } {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "test-loop", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passTddPlanGate(store, topicId);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    passReviewGate(store, topicId);
+    return { topicId, deps, store };
+  }
+
+  it("W4-1: test fail → nextAction=test_fix, testTurn=1（首次 fail inc）", () => {
+    const { topicId, deps, store } = setupReviewedTopic();
+
+    const result = dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+      },
+      deps,
+    );
+
+    expect(result.nextAction.action).toBe("test_fix");
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testTurn).toBe(1);
+  });
+
+  it("W4-2: test_fix 记录审计 → nextAction=test，testFixLog 有 1 条", () => {
+    const { topicId, deps, store } = setupReviewedTopic();
+    // 先 test 让 E1 fail + 进入 tested 状态
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+      },
+      deps,
+    );
+
+    const result = dispatch(
+      {
+        action: "test_fix",
+        topicId,
+        fixes: [
+          {
+            caseId: "E1",
+            commitHash: "fix123",
+            resolution: "修正了输出",
+          },
+        ],
+      },
+      deps,
+    );
+
+    expect(result.nextAction.action).toBe("test");
+    expect(result.status).toBe("tested");
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testFixLog).toHaveLength(1);
+    expect(topic!.testFixLog[0]!.caseId).toBe("E1");
+    expect(topic!.testFixLog[0]!.commitHash).toBe("fix123");
+    expect(topic!.testFixLog[0]!.turn).toBe(1);
+  });
+
+  it("W4-3: test 达上限（testTurn=5）+ failed → guidance 含熔断提示", () => {
+    const { topicId, deps, store } = setupReviewedTopic();
+    // 先 test 让 E1 fail
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+      },
+      deps,
+    );
+    // 手动把 testTurn 拉到 LIMIT（5）：当前已 1，再 inc 4 次
+    store.incTestTurn(topicId);
+    store.incTestTurn(topicId);
+    store.incTestTurn(topicId);
+    store.incTestTurn(topicId);
+    expect(store.loadTopic(topicId)!.testTurn).toBe(5);
+
+    // 再 test（progressive）E1 仍 fail → buildNextAction 判 overLimit → guidance 含熔断
+    const result = dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1", actual: { text: "still-wrong" } }],
+      },
+      deps,
+    );
+
+    expect(result.nextAction.action).toBe("test_fix");
+    expect(result.nextAction.guidance).toMatch(/上限|ask_user|replan/);
+  });
+
+  it("W4-4: test_fix 从 reviewed 调 → illegal_transition（GuardError）", () => {
+    const { topicId, deps } = setupReviewedTopic();
+    // status=reviewed，test_fix 要求 tested
+    expect(() =>
+      dispatch(
+        {
+          action: "test_fix",
+          topicId,
+          fixes: [{ caseId: "E1", commitHash: "x", resolution: "y" }],
+        },
+        deps,
+      ),
+    ).toThrow(GuardError);
+  });
+});
+
+describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", () => {
+  it("W5e: replan 清空 reviewIssues/testFixLog → reviewTurn=0, testTurn=0", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "replan-reset", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passTddPlanGate(store, topicId);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+
+    // 注入 reviewIssues + reviewTurn + testFixLog + testTurn（模拟走过 review/test loop）
+    store.appendReviewIssues(topicId, 1, [
+      { severity: "must-fix", description: "问题1" },
+    ]);
+    store.incReviewTurn(topicId);
+    store.appendTestFix(topicId, {
+      caseId: "E1",
+      commitHash: "x",
+      resolution: "y",
+      turn: 1,
+    });
+    store.incTestTurn(topicId);
+    expect(store.loadTopic(topicId)!.reviewIssues).toHaveLength(1);
+    expect(store.loadTopic(topicId)!.reviewTurn).toBe(1);
+    expect(store.loadTopic(topicId)!.testFixLog).toHaveLength(1);
+    expect(store.loadTopic(topicId)!.testTurn).toBe(1);
+
+    // replan（追加一个未 committed 的 wave，保留 W1）
+    const newPlan = {
+      format: "lite",
+      objective: "obj",
+      waves: [
+        { id: "W1", changes: ["change1"], dependsOn: [] },
+        { id: "W2", changes: ["change2"], dependsOn: ["W1"] },
+      ],
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
+
+    // replan 后 reviewIssues/testFixLog 清空，turn 归零
+    const topic = store.loadTopic(topicId);
+    expect(topic!.reviewIssues).toHaveLength(0);
+    expect(topic!.reviewTurn).toBe(0);
+    expect(topic!.testFixLog).toHaveLength(0);
+    expect(topic!.testTurn).toBe(0);
   });
 });

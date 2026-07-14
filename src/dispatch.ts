@@ -34,13 +34,17 @@ import {
   handleReplan,
   handleRetrospect,
   handleReview,
+  handleReviewFix,
   handleTddPlan,
   handleTest,
+  handleTestFix,
   type PlanParams,
   type ReplanParams,
   type RetrospectParams,
+  type ReviewFixParams,
   type ReviewParams,
   type TddPlanParams,
+  type TestFixParams,
   type TestParams,
 } from "./actions.js";
 import { guard } from "./state-machine.js";
@@ -118,8 +122,12 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleDev(params as DevParams, topic, deps);
     case "review":
       return handleReview(params as ReviewParams, topic, deps);
+    case "review_fix":
+      return handleReviewFix(params as ReviewFixParams, topic, deps);
     case "test":
       return handleTest(params as TestParams, topic, deps);
+    case "test_fix":
+      return handleTestFix(params as TestFixParams, topic, deps);
     case "retrospect":
       return handleRetrospect(params as RetrospectParams, topic, deps);
     case "closeout":
@@ -128,9 +136,6 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleReplan(params as ReplanParams, topic, deps);
     default: {
       // 穷尽性检查：CwParams 的 action 联合已全覆盖，default 不可达。
-      // 注意：review_fix/test_fix 已加入 Action union，但 CwParams 尚未含 ReviewFixParams/
-      // TestFixParams（W6 接入 dispatch handler 时补），所以这里 action 的 narrowed 类型
-      // 不含它们，_exhaustive: never 检查仍成立。
       // 保留兜底防御未来新增 action 忘加 case。
       const _exhaustive: never = action;
       void _exhaustive;

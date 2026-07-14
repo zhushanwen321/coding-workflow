@@ -330,7 +330,7 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.action).toBe("tdd_plan");
   });
 
-  it("test gate fail → nextAction.action=dev（回 dev 修代码）", () => {
+  it("test gate fail → nextAction.action=test_fix（进 test_fix loop，不再回 dev）", () => {
     const topic = makeTopic({
       status: "tested",
       testCases: [
@@ -348,8 +348,8 @@ describe("buildNextAction（U9-U11）", () => {
       ],
     });
     const na = buildNextAction("test", topic);
-    // test 有 case 未通过 → 回 dev（而非原地重跑 test）
-    expect(na.action).toBe("dev");
+    // test 有 case 未通过 → 进 test_fix loop（不再回 dev）
+    expect(na.action).toBe("test_fix");
     expect(na.testCases).toBeDefined();
   });
 
@@ -813,5 +813,134 @@ describe("review_fix / test_fix 状态机", () => {
       const na = buildNextAction("test_fix", topic);
       expect(na.guidance).toMatch(/上限|replan|ask_user/);
     });
+  });
+});
+
+// ── W5: buildNextAction review/test/review_fix/test_fix 改造 ──
+
+describe("buildNextAction review/test loop（W5）", () => {
+  it("W5-1: review 有 open issue → nextAction=review_fix", () => {
+    const topic = makeTopic({
+      status: "reviewed",
+      reviewTurn: 1,
+      reviewIssues: [
+        {
+          id: "R1",
+          severity: "must-fix",
+          description: "问题",
+          status: "open",
+          foundAtTurn: 1,
+        },
+      ],
+    });
+    const na = buildNextAction("review", topic);
+    expect(na.action).toBe("review_fix");
+  });
+
+  it("W5-2: review 无 issue（空数组）→ nextAction=test", () => {
+    const topic = makeTopic({
+      status: "reviewed",
+      reviewTurn: 0,
+      reviewIssues: [],
+    });
+    const na = buildNextAction("review", topic);
+    expect(na.action).toBe("test");
+  });
+
+  it("W5-3: review 无 issue（全已 fixed）→ nextAction=test", () => {
+    const topic = makeTopic({
+      status: "reviewed",
+      reviewTurn: 1,
+      reviewIssues: [
+        {
+          id: "R1",
+          severity: "must-fix",
+          description: "问题",
+          status: "fixed",
+          foundAtTurn: 1,
+          fix: { commitHash: "abc", resolution: "已修", fixedAtTurn: 1 },
+        },
+      ],
+    });
+    const na = buildNextAction("review", topic);
+    expect(na.action).toBe("test");
+  });
+
+  it("W5-4: review 达上限（reviewTurn>=3）+ open issues → nextAction=test（强制进 test）", () => {
+    const topic = makeTopic({
+      status: "reviewed",
+      reviewTurn: 3,
+      reviewIssues: [
+        {
+          id: "R1",
+          severity: "must-fix",
+          description: "未修",
+          status: "open",
+          foundAtTurn: 3,
+        },
+      ],
+    });
+    const na = buildNextAction("review", topic);
+    expect(na.action).toBe("test");
+    // guidance 标注未修复的 must-fix
+    expect(na.guidance).toMatch(/must-fix|强制/);
+  });
+
+  it("W5-5: review_fix → nextAction=review（下一轮复查）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 1 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.action).toBe("review");
+  });
+
+  it("W5-6: test fail → nextAction=test_fix（不再回 dev）", () => {
+    const topic = makeTopic({
+      status: "tested",
+      testTurn: 0,
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          status: "failed",
+          requiresScreenshot: false,
+          dependsOn: [],
+        },
+      ],
+    });
+    const na = buildNextAction("test", topic);
+    expect(na.action).toBe("test_fix");
+  });
+
+  it("W5-7: test_fix → nextAction=test（重跑）", () => {
+    const topic = makeTopic({ status: "tested", testTurn: 1 });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.action).toBe("test");
+  });
+
+  it("W5-8: test 达上限（testTurn>=5）+ failed → guidance 含熔断提示", () => {
+    const topic = makeTopic({
+      status: "tested",
+      testTurn: 5,
+      testCases: [
+        {
+          id: "E1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { text: "out" },
+          executor: "agent",
+          status: "failed",
+          requiresScreenshot: false,
+          dependsOn: [],
+        },
+      ],
+    });
+    const na = buildNextAction("test", topic);
+    // action 仍为 test_fix（不阻断），但 guidance 含熔断
+    expect(na.action).toBe("test_fix");
+    expect(na.guidance).toMatch(/上限|ask_user|replan/);
   });
 });
