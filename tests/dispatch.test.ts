@@ -1870,3 +1870,278 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
     expect(topic!.testTurn).toBe(0);
   });
 });
+
+// ── W5: post-closeout 评估（assess） ──────────────────────
+
+describe("dispatch assess（W5：post-closeout 评估）", () => {
+  /** 推进到 closed（closeout gate pass），返回 topicId/deps/store。 */
+  function setupClosedTopic(slug = "assess-topic"): {
+    topicId: string;
+    deps: ActionDeps;
+    store: CwStore;
+  } {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug, objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passTddPlanGate(store, topicId);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    passReviewGate(store, topicId);
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
+      },
+      deps,
+    );
+    // retrospect（需提供 retrospect.md 文件）
+    const retrospectDir = join(tmpDir, ".xyz-harness", slug);
+    mkdirSync(retrospectDir, { recursive: true });
+    const retrospectPath = join(retrospectDir, "retrospect.md");
+    writeFileSync(retrospectPath, "# Retrospect\n\n复盘内容");
+    dispatch({ action: "retrospect", topicId, retrospectPath }, deps);
+    dispatch({ action: "closeout", topicId }, deps);
+    return { topicId, deps, store };
+  }
+
+  it("W5-1: assess type=quality + score → 写入 AS1, status 仍 closed, assessments 含 1 条", () => {
+    const { topicId, deps, store } = setupClosedTopic();
+
+    const result = dispatch(
+      {
+        action: "assess",
+        topicId,
+        type: "quality",
+        score: 4,
+        notes: "代码结构清晰，类型安全到位",
+      },
+      deps,
+    );
+
+    // progressive：status 不变（始终 closed）
+    expect(result.status).toBe("closed");
+    // 不走 gate 机制，gatePassed 不变
+    expect(result.gatePassed.assess).toBeUndefined();
+    // assess 不进 nextAction 导航（action 为空）
+    expect(result.nextAction.action).toBeUndefined();
+    // 返回分配的 assessmentId
+    expect((result as Record<string, unknown>).assessmentId).toBe("AS1");
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.assessments).toHaveLength(1);
+    expect(topic!.assessments[0]!.id).toBe("AS1");
+    expect(topic!.assessments[0]!.type).toBe("quality");
+    expect(topic!.assessments[0]!.score).toBe(4);
+    expect(topic!.assessments[0]!.notes).toBe("代码结构清晰，类型安全到位");
+    expect(topic!.assessments[0]!.defect).toBeUndefined();
+    expect(topic!.assessments[0]!.assessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("W5-2: assess progressive——多次调用追加 AS1/AS2/AS3, status 不变", () => {
+    const { topicId, deps, store } = setupClosedTopic();
+
+    dispatch(
+      { action: "assess", topicId, type: "quality", score: 4, notes: "质量好" },
+      deps,
+    );
+    dispatch(
+      { action: "assess", topicId, type: "test", score: 3, notes: "测试覆盖一般" },
+      deps,
+    );
+    dispatch(
+      { action: "assess", topicId, type: "stability", notes: "稳定，无并发问题" },
+      deps,
+    );
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.assessments).toHaveLength(3);
+    expect(topic!.assessments.map((a) => a.id)).toEqual(["AS1", "AS2", "AS3"]);
+    expect(topic!.assessments[0]!.type).toBe("quality");
+    expect(topic!.assessments[1]!.type).toBe("test");
+    expect(topic!.assessments[2]!.type).toBe("stability");
+    expect(topic!.assessments[2]!.score).toBeUndefined();
+    // status 始终 closed
+    expect(topic!.status).toBe("closed");
+  });
+
+  it("W5-3: assess type=defect + defect 详情 → 写入完整缺陷记录, foundInReview=false", () => {
+    const { topicId, deps, store } = setupClosedTopic();
+
+    const result = dispatch(
+      {
+        action: "assess",
+        topicId,
+        type: "defect",
+        notes: "并发场景下数据丢失",
+        defect: {
+          severity: "major",
+          area: "store.ts",
+          rootCause: "边界遗漏",
+          foundInReview: false,
+        },
+      },
+      deps,
+    );
+
+    expect((result as Record<string, unknown>).assessmentId).toBe("AS1");
+
+    const topic = store.loadTopic(topicId);
+    const a = topic!.assessments[0]!;
+    expect(a.type).toBe("defect");
+    expect(a.defect).toBeDefined();
+    expect(a.defect!.severity).toBe("major");
+    expect(a.defect!.area).toBe("store.ts");
+    expect(a.defect!.rootCause).toBe("边界遗漏");
+    expect(a.defect!.foundInReview).toBe(false);
+  });
+
+  it("W5-4: assess type=defect 但缺 defect 字段 → throw CwError", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    expect(() =>
+      dispatch(
+        { action: "assess", topicId, type: "defect", notes: "有缺陷但不填详情" },
+        deps,
+      ),
+    ).toThrow(/defect 必填/);
+  });
+
+  it("W5-5: assess notes 为空 → throw CwError", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    expect(() =>
+      dispatch(
+        { action: "assess", topicId, type: "quality", notes: "   " },
+        deps,
+      ),
+    ).toThrow(/notes.*空/);
+  });
+
+  it("W5-6: assess 非法 type → throw CwError", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    expect(() =>
+      dispatch(
+        { action: "assess", topicId, type: "performance" as never, notes: "x" },
+        deps,
+      ),
+    ).toThrow(/type 非法/);
+  });
+
+  it("W5-7: assess score 超范围（6）→ throw CwError", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    expect(() =>
+      dispatch(
+        { action: "assess", topicId, type: "quality", score: 6, notes: "x" },
+        deps,
+      ),
+    ).toThrow(/score.*1-5/);
+  });
+
+  it("W5-8: assess 非 defect type 带 defect → throw CwError", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    expect(() =>
+      dispatch(
+        {
+          action: "assess",
+          topicId,
+          type: "quality",
+          notes: "x",
+          defect: {
+            severity: "minor",
+            area: "a",
+            rootCause: "b",
+            foundInReview: true,
+          },
+        },
+        deps,
+      ),
+    ).toThrow(/仅在 type=defect/);
+  });
+
+  it("W5-9: assess 从非 closed 状态调 → illegal_transition（GuardError）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "assess-guard", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    // status=created（未 closeout），assess 要求 closed
+    expect(() =>
+      dispatch(
+        { action: "assess", topicId, type: "quality", notes: "x" },
+        deps,
+      ),
+    ).toThrow(GuardError);
+    // 确认未写入任何 assessment
+    expect(store.loadTopic(topicId)!.assessments).toHaveLength(0);
+  });
+
+  it("W5-10: assess defect.severity 非法 → throw CwError", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    expect(() =>
+      dispatch(
+        {
+          action: "assess",
+          topicId,
+          type: "defect",
+          notes: "x",
+          defect: {
+            severity: "critical" as never,
+            area: "a",
+            rootCause: "b",
+            foundInReview: false,
+          },
+        },
+        deps,
+      ),
+    ).toThrow(/severity 非法/);
+  });
+
+  it("W5-11: assess 返回 assessments 摘要含全部已有记录", () => {
+    const { topicId, deps } = setupClosedTopic();
+
+    dispatch(
+      { action: "assess", topicId, type: "quality", score: 5, notes: "好" },
+      deps,
+    );
+    const result = dispatch(
+      {
+        action: "assess",
+        topicId,
+        type: "defect",
+        notes: "小问题",
+        defect: {
+          severity: "minor",
+          area: "types.ts",
+          rootCause: "类型错误",
+          foundInReview: true,
+        },
+      },
+      deps,
+    );
+
+    const assessments = (result as Record<string, unknown>).assessments as Array<{
+      id: string;
+      type: string;
+      defect?: { foundInReview: boolean };
+    }>;
+    expect(assessments).toHaveLength(2);
+    expect(assessments[0]!.id).toBe("AS1");
+    expect(assessments[1]!.id).toBe("AS2");
+    expect(assessments[1]!.defect!.foundInReview).toBe(true);
+  });
+});

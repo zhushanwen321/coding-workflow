@@ -26,6 +26,7 @@ import type { CwStore } from "./store.js";
  * clarify 插在 create 和 plan 之间——agent 先澄清需求/技术 spec + 记录 ADR，再写 plan。
  * tdd_plan 插在 plan 和 dev 之间——agent 先写测试代码 + test.json（红灯确认），再进 dev 写实现。
  * review_fix / test_fix：review/test loop 内的修复动作（progressive，闭环追踪用）。
+ * assess：post-closeout 人工评估（progressive，不进 guidance 主链路，只在命令参考表列出）。
  */
 export type Action =
   | "create"
@@ -39,7 +40,8 @@ export type Action =
   | "test_fix"
   | "retrospect"
   | "closeout"
-  | "replan";
+  | "replan"
+  | "assess";
 
 /**
  * 8 个 status（新增 tdd_inited）。
@@ -384,6 +386,46 @@ export interface TestFixEntry {
   turn: number;
 }
 
+// ── post-closeout 评估（assess 阶段产物） ──────────────────
+
+/** Assessment 类型——交付后评估的分类。 */
+export type AssessmentType = "quality" | "test" | "stability" | "defect";
+
+/** 缺陷严重度。 */
+export type DefectSeverity = "blocker" | "major" | "minor";
+
+/**
+ * 缺陷详情——AssessmentType=defect 时填写。
+ * foundInReview 是校准核心字段：标记该缺陷在 review 阶段是否已被发现。
+ * 积累后可算 review 召回率 = review 发现的缺陷 / 总缺陷。
+ */
+export interface AssessmentDefect {
+  severity: DefectSeverity;
+  /** 涉及的模块/功能区域。 */
+  area: string;
+  /** 根因分类（如"边界遗漏"/"类型错误"/"需求理解偏差"等）。 */
+  rootCause: string;
+  /** review 阶段是否已发现该问题。true=review 抓到了但没修干净 / false=review 完全漏了。 */
+  foundInReview: boolean;
+}
+
+/**
+ * Assessment — post-closeout 评估记录。
+ * progressive：closeout 后可多次调用，每次追加一条。
+ * 不改变 topic.status（始终为 closed）。
+ */
+export interface Assessment {
+  /** AS1, AS2... cw 在 topic 内自增分配。 */
+  id: string;
+  assessedAt: string;
+  type: AssessmentType;
+  /** 评分（可选，1-5）。不强制——有些评估是定性的。 */
+  score?: number;
+  notes: string;
+  /** type=defect 时填写。 */
+  defect?: AssessmentDefect;
+}
+
 export interface Topic {
   topicId: string;
   slug: string;
@@ -416,6 +458,8 @@ export interface Topic {
   testFixLog: TestFixEntry[];
   /** 当前是第几轮 test（初始 0，第一次 test 后变 1）。 */
   testTurn: number;
+  /** post-closeout 评估记录（progressive，每次 cw assess 追加一条，不改变 status）。 */
+  assessments: Assessment[];
 }
 
 // ── DAO seed 类型（plan.json 解析后写入 store 的输入形态） ─────

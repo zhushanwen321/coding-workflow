@@ -539,6 +539,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -576,6 +577,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -628,6 +630,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -666,6 +669,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W-nonexistent", topic);
@@ -710,6 +714,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -759,6 +764,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -794,6 +800,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, "nonexistent000000000000000000000000000000000000", "W1", topic);
@@ -829,6 +836,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
       reviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
+      assessments: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);

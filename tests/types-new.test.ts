@@ -264,6 +264,7 @@ describe("W1+W2: issue tracking 类型", () => {
           },
         ],
         testTurn: 1,
+        assessments: [],
       };
       expect(topic.reviewIssues).toHaveLength(1);
       expect(topic.reviewTurn).toBe(1);

@@ -92,6 +92,10 @@ create → clarify → plan → tdd_plan → dev → review → test → retrosp
 | `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
 | `replan` | 修改计划（--plan 改 dev-plan / --test 改 test.json） | `echo '<json>' \| cw replan --topicId <id> --plan` 或 `--test` |
 | `undefined` | 流程结束 | 无 |
+| `assess`（人工） | closeout 后提交交付质量评估（post-closeout，不在 nextAction 导航里） | `cw assess --topicId <id> --type quality --score 4 --notes "..."` |
+
+> **`assess` 是 post-closeout 人工评估**，**不进 nextAction 导航**——流程主链路在 closeout 后即结束（`nextAction.action` 为空）。
+> 设计者手动调 `cw assess` 记录交付质量数据，可多次调用（progressive，不改 status）。详见下文「post-closeout 评估（assess）」。
 
 ### clarify 阶段 + ADR 机制
 
@@ -238,6 +242,44 @@ echo '<devPlanJson>' | cw replan --topicId <id> --plan --testJsonFile <testJsonP
 未 committed/passed 的可删可改。新增 wave / testCase 总是允许的（append-only 的核心操作）。
 
 **replan 后的状态变化**：status 回退到 `planned`，需重走 tdd_plan → dev → review → test。已 committed 的 Wave 保留不动（progressive），dev 阶段只做新增的 wave。test 全量重跑（防回归）。
+
+## post-closeout 评估（assess）
+
+closeout 后（status=closed），设计者可手动调 `cw assess` 提交交付质量评估。**不在 nextAction 导航里**——流程主链路在 closeout 后即结束，assess 是人工触发的数据追加。
+
+**特点**：
+- progressive：可多次调用，每次追加一条评估记录（AS1, AS2...），不改 status（始终 closed）
+- 不走 gate 机制（不写 gateHistory），纯数据追加
+- 不进任何 guidance（closeout 的 nextAction 不提 assess）
+
+**四种评估类型**（`--type`）：
+
+| type | 用途 | 必填字段 |
+|------|------|---------|
+| `quality` | 代码质量评估（结构/类型安全/可读性） | notes（+ 可选 score 1-5） |
+| `test` | 测试质量评估（覆盖率/有效性/边界） | notes（+ 可选 score 1-5） |
+| `stability` | 稳定性评估（并发/异常/资源） | notes（+ 可选 score 1-5） |
+| `defect` | 缺陷登记（校准 review 召回率的核心） | notes + `--defect`（severity/area/rootCause/foundInReview） |
+
+**缺陷登记**（`type=defect`）是评估体系的核心——`foundInReview` 标记该缺陷在 review 阶段是否已被发现，积累后可算 review 召回率 = review 发现的缺陷 / 总缺陷。
+
+```bash
+# 简单评估
+cw assess --topicId <id> --type quality --score 4 --notes "代码结构清晰，类型安全到位"
+
+# 缺陷登记（校准核心）
+cw assess --topicId <id> --type defect --notes "并发场景下数据丢失" \
+  --defect '{"severity":"major","area":"store.ts","rootCause":"边界遗漏","foundInReview":false}'
+```
+
+**`--defect` 字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `severity` | 缺陷严重度：`blocker` / `major` / `minor` |
+| `area` | 涉及的模块/功能区域（如 "store.ts"） |
+| `rootCause` | 根因分类（如 "边界遗漏" / "类型错误" / "需求理解偏差"） |
+| `foundInReview` | review 阶段是否已发现该问题。`true`=review 抓到但没修干净 / `false`=review 完全漏了 |
 
 ## 前置检查
 

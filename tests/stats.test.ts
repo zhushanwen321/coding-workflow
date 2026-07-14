@@ -40,6 +40,7 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     reviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
+    assessments: [],
     ...overrides,
   };
 }

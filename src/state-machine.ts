@@ -157,6 +157,13 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     expectedStatuses: ["planned", "tdd_inited", "developed", "reviewed", "tested"],
     nextStatus: "planned",
   },
+  assess: {
+    // post-closeout 评估，progressive，不改 status（始终 closed）。
+    // 不进 guidance 主链路（人工触发，不在 buildNextAction 导航里）。
+    expectedStatuses: ["closed"],
+    nextStatus: "closed",
+    progressive: true,
+  },
 };
 
 // ── 单重 guard ──────────────────────────────────────────────
@@ -549,6 +556,14 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         guidance: `replan 完成（status=planned）。下一步：重走 tdd_plan——提交 test.json（testCases 可能已变），调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
         waves: waveProgress(topic),
         testCases: testCaseProgress(topic),
+      };
+    }
+    case "assess": {
+      // assess 不进 guidance 主链路——它是 post-closeout 人工触发的评估，不导航到下一阶段。
+      // status 始终为 closed（progressive），guidance 仅提示评估已记录。
+      return {
+        guidance:
+          "评估已记录。topic 保持 closed，可继续调 cw(assess) 追加更多评估（progressive）。",
       };
     }
   }

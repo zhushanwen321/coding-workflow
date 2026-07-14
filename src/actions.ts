@@ -1606,6 +1606,10 @@ const VALID_ASSESSMENT_TYPES: ReadonlySet<AssessmentType> = new Set([
   "defect",
 ]);
 
+/** assess score 的合法区间（1-5 整数）。 */
+const ASSESS_SCORE_MIN = 1;
+const ASSESS_SCORE_MAX = 5;
+
 /** 合法的 DefectSeverity 集合（校验用）。 */
 const VALID_DEFECT_SEVERITIES: ReadonlySet<DefectSeverity> = new Set([
   "blocker",
@@ -1640,11 +1644,11 @@ function validateAssessParams(params: AssessParams): void {
   if (params.score !== undefined) {
     if (
       !Number.isInteger(params.score) ||
-      params.score < 1 ||
-      params.score > 5
+      params.score < ASSESS_SCORE_MIN ||
+      params.score > ASSESS_SCORE_MAX
     ) {
       throw new CwError(
-        `assess 的 --score 必须是 1-5 的整数（当前: ${params.score}）`,
+        `assess 的 --score 必须是 ${ASSESS_SCORE_MIN}-${ASSESS_SCORE_MAX} 的整数（当前: ${params.score}）`,
       );
     }
   }

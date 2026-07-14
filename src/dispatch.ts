@@ -21,11 +21,13 @@
  */
 
 import {
+  type AssessParams,
   type ClarifyParams,
   type CloseoutParams,
   type CreateParams,
   type CwParams,
   type DevParams,
+  handleAssess,
   handleClarify,
   handleCloseout,
   handleCreate,
@@ -134,6 +136,8 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleCloseout(params as CloseoutParams, topic, deps);
     case "replan":
       return handleReplan(params as ReplanParams, topic, deps);
+    case "assess":
+      return handleAssess(params as AssessParams, topic, deps);
     default: {
       // 穷尽性检查：CwParams 的 action 联合已全覆盖，default 不可达。
       // 保留兜底防御未来新增 action 忘加 case。

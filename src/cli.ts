@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import minimist from "minimist";
 
 import {
+  type AssessParams,
   type ClarifyParams,
   type CloseoutParams,
   type CreateParams,
@@ -81,7 +82,7 @@ const EXIT_CW_ERROR = 1;
 /** 进程退出码：内部异常（未预期的错误）。 */
 const EXIT_INTERNAL_ERROR = 2;
 
-/** 合法 action 白名单（9 个 dispatch action + 2 个只读查询命令）。 */
+/** 合法 action 白名单（12 个 dispatch action + 3 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
   "clarify",
@@ -89,10 +90,13 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
   "tdd_plan",
   "dev",
   "review",
+  "review_fix",
   "test",
+  "test_fix",
   "retrospect",
   "closeout",
   "replan",
+  "assess",
 ];
 
 const READONLY_QUERIES = new Set(["status", "list", "stats"]);
@@ -540,6 +544,36 @@ export function buildParams(
         topicId,
         fixes: fixesRaw as TestFixParams["fixes"],
       };
+      return params;
+    }
+
+    case "assess": {
+      if (!topicId) throw new CwError("assess 需要 --topicId");
+      const type = flag(parsed, "type");
+      if (!type) throw new CwError("assess 需要 --type（quality/test/stability/defect）");
+      const notes = flag(parsed, "notes");
+      if (!notes) throw new CwError("assess 需要 --notes（至少一句话）");
+      const params: AssessParams = {
+        action: "assess",
+        topicId,
+        type: type as AssessParams["type"],
+        notes,
+      };
+      // score 可选（1-5 整数），handler 内校验范围。
+      const scoreRaw = parsed.score;
+      if (scoreRaw !== undefined) {
+        const score = Number(scoreRaw);
+        if (!Number.isInteger(score)) {
+          throw new CwError("assess 的 --score 必须是整数");
+        }
+        params.score = score;
+      }
+      // defect 可选（JSON 字符串），仅 type=defect 时有意义。
+      // 用 flag() 取值：同时兼容 --defect 和 --defect 两种写法（flag 不做 camelCase 转换，defect 无大写，等价）。
+      const defectRaw = flag(parsed, "defect");
+      if (defectRaw !== undefined) {
+        params.defect = parseJsonArg("defect", defectRaw) as AssessParams["defect"];
+      }
       return params;
     }
 

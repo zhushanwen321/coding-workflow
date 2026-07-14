@@ -54,6 +54,7 @@ function makeTopicWithFails(phase: Action, failCount: number): Topic {
     reviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
+    assessments: [],
   };
 }
 
