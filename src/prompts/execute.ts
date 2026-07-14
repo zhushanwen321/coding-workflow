@@ -6,7 +6,7 @@
  *
  * 与旧版的差异：
  * - 测试代码已在 tdd_plan 阶段写好（红灯已确认），dev 阶段只写实现让测试转绿
- * - test 失败统一回 dev（不再指回 test retry）
+ * - test 失败走 test_fix loop（不回 dev，不原地 retry）
  * - replan 支持 --plan / --test 两种模式
  */
 
@@ -83,6 +83,7 @@ commit 是 Wave 级验证锚点——CW 用 commit 存在性 + diff 非空校验
    - screenshotPath：仅当 testCase requiresScreenshot=true 时必传
 4. CW 按 expected 机器重算每条 case 的 pass/fail（不信任 agent 声明的 status，自己判）
 5. 全部 passed → test gate 通过，status 流转到 tested，nextAction 指向 retrospect
+6. 有 case failed → CW 指向 **test_fix**（不再回 dev）
 
 ### test 提交语义
 
@@ -90,18 +91,32 @@ commit 是 Wave 级验证锚点——CW 用 commit 存在性 + diff 非空校验
 - 每条 case CW 按 expected.text 与 actual.text 精确比较判定 pass/fail。
 - screenshotPath 指向不存在的文件 = 该 case 判 failed。
 
-### test 失败 → 回退到 dev（统一路径）
+### test 失败 → test fix loop
 
-test 有 case 未通过时，CW nextAction 指向 **dev**（不是 test retry）。
-分析 failureReason 后修复：
+test 有 case 未通过时，CW nextAction 指向 **test_fix**（不回 dev——所有 Wave 已 committed，dev 没有新任务）。
 
-| 原因 | 修复路径 | 命令 |
-|------|---------|------|
-| 代码 bug | 修代码 → 重 commit → cw(dev) → cw(review) → cw(test) | 直接改代码 |
-| expected 写错 | replan 修订 test.json | \`echo '<testJson>' \| cw replan --topicId <id> --test\` |
-| plan 设计有误 | replan 修订 dev-plan + test.json | \`echo '<json>' \| cw replan --topicId <id> --plan --test\` |
+\`\`\`
+test turn 1: U1 failed
+    ↓ CW 指向 test_fix
+test_fix: 分析 failureReason → 修代码 → commit → 提交修复审计
+    cw test-fix --topicId <id> --fixes '[
+      {"caseId":"U1","commitHash":"<sha>","resolution":"修复 add 返回值类型"}
+    ]'
+    ↓ CW 指向 test（重跑）
+test turn 2: 重跑 U1，提交新 actual
+    ↓ pass → 进 retrospect
+    ↓ 仍 fail → 继续 test_fix（最多 5 轮）
+\`\`\`
 
-是否需要 replan 由 agent / 用户讨论决定，CW 不自动路由——统一回 dev 修代码是最简路径。
+**test_fix 的 commitHash 只记录审计，不校验真实性**（与 review_fix 同理）。
+agent 修完代码后重跑失败的 testCase，提交新 actual，CW 用 expected 重新判定。
+
+如果是 expected 写错（不是代码 bug），调 replan：
+\`echo '<testJson>' | cw replan --topicId <id> --test\`
+
+### turn 上限
+
+最多 5 轮 test（TEST_TURN_LIMIT）。达上限后 CW 熔断：guidance 建议 agent 停下与用户确认，不自动进 retrospect。
 
 ## replan（修改计划）
 
@@ -129,7 +144,7 @@ replan 支持两种模式（可同时用）：
 ## gate fail 恢复
 
 - dev gate fail（commit 不真实/缺失）→ 修该 Wave commit 后重调 cw(dev)。
-- test gate fail → 回 dev 修代码（见上方"test 失败 → 回退到 dev"）。
+- test gate fail → 进 test_fix 修代码（见上方"test 失败 → test fix loop"）。
 - gate 熔断：连续 fail 达 5 次，guidance 换熔断文案，建议找用户人工介入。
 
 ## 本阶段禁止

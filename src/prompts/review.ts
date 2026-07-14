@@ -1,150 +1,121 @@
 /**
- * review 提示词 — dev 全 committed 后返回，指导 agent 做 3-subagent 分工代码审查。
+ * review 提示词 — dev 全 committed 后返回，指导 agent 做代码审查 + issue tracking。
  *
- * 触发点：state-machine.ts buildNextAction 的 dev（全 committed）和 review（retry）分支。
- * 交付物：review.md，落在 {workspacePath}/.xyz-harness/{slug}/changes/review.md，由 cw(review) 消费。
+ * 触发点：state-machine.ts buildNextAction 的 dev（全 committed）和 review（retry/fix loop）分支。
+ * 交付物：review.md + --issues 参数（结构化问题清单），由 cw(review) 消费。
  *
- * 设计意图：复盘反复证明「不强制 = 被跳过」（如 agent 认为「测试全绿 = 代码没问题」就跳过 review）。
- * review gate 用文件存在性强制审查环节存在，内容深度由 agent 按规模判断。
- *
- * 架构（Wave 4 改造）：从单 agent 自审改为 3-subagent 分工，对抗「自己写的代码自己审」盲区——
- *   - Subagent A（项目约定）：读项目 code-review skill，审项目特定约定
- *   - Subagent B（通用质量）：读 skill/review-agents/quality-criteria.md，审类型/错误/边界/测试
- *   - Subagent C（plan 完成度）：读 skill/review-agents/plan-completeness.md + dev-plan.json + changedFiles
- * 三个 subagent 职责正交，同一缺陷最多被一个抓到。
+ * review 采用 issue tracking + fix loop：
+ * - agent 审查后提交 issues（must-fix/should-fix/nit）
+ * - 有 must-fix issue → CW 指向 review_fix → agent 修代码 → review turn 2 复查
+ * - 无 issue → CW 指向 test
+ * - 最多 3 轮 review（REVIEW_TURN_LIMIT）
  */
 
 export const REVIEW_PROMPT = `
-[review 阶段] 3-subagent 分工代码审查
+[review 阶段] 代码审查 + issue tracking
 
 所有 Wave 已 committed（dev gate 通过）。在进入 test 之前，必须审查代码。
-复盘反复证明：跳过 review = 测试全绿但功能/边界缺失，到 closeout 才暴露。
 
-本阶段用 **3-subagent 分工**对抗盲区——主 agent 自己写的代码自己审容易漏，派独立 reviewer 做对抗性审查。
+## 审查流程
 
-## 步骤 0：能力发现（先做）
+1. 做代码审查（按下方维度）
+2. 把发现的问题整理成结构化 issues
+3. 写 review.md（含审查结论）
+4. 提交：
 
-1. 检查项目有没有 code-review skill：
-   - 找 \`skill/code-review/SKILL.md\` 或 \`.agents/skills/code-review/SKILL.md\` 或 agent 内置 code-review skill
-   - 有 → Subagent A 的审查依据就是它
-   - 没有 → Subagent A 退化为"按通用约定审"，在 review.md 里标注"项目无 code-review skill，A 维度判定为 warn"
-2. 读两份通用标准（CW 自带，路径相对项目根）：
-   - \`skill/review-agents/quality-criteria.md\`（Subagent B 用）
-   - \`skill/review-agents/plan-completeness.md\`（Subagent C 用）
-3. 收集审查输入：
-   - 本次 topic 的所有 commit：\`git log <dev 前的 base>..HEAD\`
-   - dev-plan.json 的 waves[].changes
-   - topic.waves[].changedFiles（dev 阶段 git diff-tree 持久化的实际改动文件，可从 \`cw status --topicId <topicId>\` 取）
+    cw review --topicId <topicId> --reviewPath <path> --issues '<issuesJson>'
 
-## 步骤 1：派 3 个 subagent（如支持）
+## 审查维度
 
-推荐用 subagent 做对抗性审查。每个 subagent 职责正交——同一缺陷最多被一个抓到。
+按以下维度审查（可用 subagent 分工，也可主 agent 自审）：
 
-### Subagent A：项目约定审查
+| 维度 | 审什么 |
+|------|--------|
+| 类型安全 | 禁 any、schema 同步、CwError vs Error 边界、type-only import |
+| 错误处理 | catch 不吞异常、exit code 映射、错误消息可读性 |
+| 边界条件 | 空数组/缺字段/非法 JSON/文件不存在 |
+| 测试覆盖 | 新逻辑有测试、edge case 覆盖、e2e 覆盖 |
+| plan 完成度 | dev-plan.json 的 changes 是否全部落地 |
 
-- **审什么**：是否符合项目特定约定——lint 规则、架构规范、命名规范、分层约定
-- **依据**：步骤 0 找到的 code-review skill（项目特有）
-- **怎么审**：grep 同类写法对照（如项目约定"catch 必须用 CwError"，grep 现有 catch 看本次改动是否符合）
-- **不审**：通用语言质量（类型安全、错误处理模式）那是 B 的事；功能完整性那是 C 的事
-- **输出**：维度"项目约定"的 pass/warn/fail 判定 + 问题清单
+## issues 参数
 
-### Subagent B：通用质量审查
+--issues 是 JSON 数组，每个元素是一个 issue：
 
-- **审什么**：语言/范式通用的代码质量——类型安全、错误处理、边界条件、测试有效性（4 维度）
-- **依据**：\`skill/review-agents/quality-criteria.md\`（CW 自带通用标准）
-- **怎么审**：按 quality-criteria.md 的 4 维度逐条判 pass/warn/fail
-- **不审**：项目特定约定（lint 规则、架构规范）那是 A 的事；功能完整性那是 C 的事
-- **输出**：4 个维度（类型安全 / 错误处理 / 边界条件 / 测试有效性）各一档 pass/warn/fail + 问题清单
+    [
+      {
+        "id": "R1",
+        "severity": "must-fix",
+        "description": "store.ts 的 appendReviewIssues 没有做 turn 校验",
+        "file": "src/store.ts:142"
+      },
+      {
+        "id": "R2",
+        "severity": "should-fix",
+        "description": "错误消息缺用法示例",
+        "file": "src/cli.ts:268"
+      }
+    ]
 
-### Subagent C：plan 完成度核对
+### severity 分级
 
-- **审什么**：功能完整性——plan 列的 changes 有没有落地 + plan 设计对不对（依赖、范围）
-- **依据**：\`skill/review-agents/plan-completeness.md\` + dev-plan.json + topic.waves[].changedFiles
-- **怎么审**：客观事实核对（非质量判断）——逐条读 waves[].changes，对照 changedFiles 判断落地率；审 dependsOn 合理性、wave 范围合理性
-- **不审**：代码实现质量（即使文件落地了，写得对不对那是 B 的事）
-- **输出**：落地率 + 未落地清单（must_fix）+ 设计问题清单（should_fix）
+| severity | 含义 | 行为 |
+|----------|------|------|
+| must-fix | 阻断性问题 | 有 must-fix → 进 review_fix 循环 |
+| should-fix | 重要但不阻断 | 记录但不阻断流程 |
+| nit | 风格/优化建议 | 记录但不阻断流程 |
 
-### 分工正交性约束（重要）
+**无问题时传空数组**：\`--issues '[]'\`。空数组 = 审查通过，直接进 test。
 
-三个 subagent 职责互斥：
+## review fix loop
 
-| subagent | 审的角度 | 判断方式 |
-|----------|---------|---------|
-| A | "是否符合项目约定" | grep 同类写法对照 |
-| B | "语言/范式通用质量" | 类型安全、错误处理 |
-| C | "功能完整性" | 客观事实核对，非质量判断 |
+\`\`\`
+review turn 1: 发现 [R1, R2]
+    ↓ CW 指向 review_fix
+review_fix: 修 R1 + R2 → commit → 提交修复
+    cw review-fix --topicId <id> --fixes '[
+      {"issueId":"R1","commitHash":"<sha>","resolution":"加 turn 校验"},
+      {"issueId":"R2","commitHash":"<sha>","resolution":"补用法示例"}
+    ]'
+    ↓ CW 指向 review（turn 2）
+review turn 2: 复查是否还有新问题
+    ↓ 无新问题（--issues '[]'）→ 进 test
+    ↓ 有新问题 → 继续 review_fix（最多 3 轮）
+\`\`\`
 
-**同一缺陷最多被一个 subagent 抓到。** 如果 A 和 B 都报同一个问题，说明分工边界不清晰——优先保留通用质量维度（B），删掉 A 的重复项。
+**review_fix 的 commitHash 只记录审计，不校验真实性**（不像 dev gate 做存在性+diff 校验）。
+这是有意设计：review 修复是代码质量改进，不是功能实现——audit 链足够追溯。
 
-## 步骤 1 备选：不支持 subagent 时
+### turn 上限
 
-如运行环境不支持 subagent（agent-agnostic），主 agent 自己按三个维度分别审查：
-- 先做 C（plan 完成度核对，客观事实，最容易判定）
-- 再做 B（按 quality-criteria.md 4 维度逐条判）
-- 最后做 A（项目约定，grep 对照）
-- 三个维度都要走完，不能省。在 review.md 顶部标注"未使用 subagent，主 agent 自审"。
+最多 3 轮 review（初始 + 2 轮 fix 复查）。达上限后 CW 强制进 test，guidance 标注未修复的 must-fix。
 
 ## 产出 review.md
 
-审查结果写入 review.md（落 .xyz-harness/<slug>/changes/ 目录）。汇总三个 subagent 的结果，格式：
+review.md 是给人类看的审查报告（落 .xyz-harness/<slug>/changes/ 目录）。--issues 是给 CW 的机器可读结构化数据。两者都要提交。
 
-\`\`\`markdown
-# Code Review — <slug>
+review.md 内容：
+- 审查范围（哪些 commit / 文件）
+- 发现的问题（表格形式，含 severity + 位置）
+- 评分汇总
 
-## 审查方式
-- [ ] 使用 3-subagent 分工 / [ ] 主 agent 自审（未支持 subagent）
-- code-review skill：有 / 无（A 维度依据）
+## 提交命令
 
-## 审查范围
-- commits: <base>..HEAD（N 个 commit）
+    cw review --topicId <topicId> --reviewPath <review.md> --issues '<issuesJson>'
 
-## 评分汇总
-| 维度 | 审查方 | 状态 | must_fix | should_fix |
-|------|--------|------|----------|------------|
-| 项目约定 | A | pass/warn/fail | 0 | 1 |
-| 类型安全 | B | pass | 0 | 0 |
-| 错误处理 | B | warn | 0 | 2 |
-| 边界条件 | B | pass | 0 | 0 |
-| 测试有效性 | B | pass | 0 | 0 |
-| plan 完成度 | C | pass/fail | 0 | 1 |
+- --reviewPath：review.md 的路径（gate 校验文件存在 + 非空）
+- --issues：结构化问题清单（空数组 = 无问题，直接进 test）
 
-状态判定：fail = 有 must_fix；warn = 有 should_fix 但无 must_fix；pass = 无问题或仅 nit。
-
-## 发现的问题
-| 维度 | 审查方 | 问题 | 严重度 | 位置 |
-|------|--------|------|--------|------|
-| 错误处理 | B | 空 catch 吞异常 | must_fix | src/xxx.ts:42 |
-| plan 完成度 | C | W2 changes[1] 未落地 | must_fix | 缺 src/gate.ts |
-
-## plan 完成度核对（Subagent C）
-- 总 changes 数：N，已落地：M，未落地：K
-- **落地率：M/N = XX%**
-- 未落地清单（must_fix）：...
-- 设计问题清单（should_fix）：...
-
-## 结论
-- must_fix 总数 > 0 → **禁止调 cw(review)**。先修代码，重新 commit + cw(dev)，再重走 review
-- must_fix = 0 → 调 cw(review) 提交本文件路径
-\`\`\`
-
-## 提交 review
-
-review.md 写完后提交：
-
-    cw review --topicId <topicId> --reviewPath <review.md 的绝对路径>
-
-- CW 校验 review.md 存在 + 非空（与 retrospect gate 同模式，只看文件存在性，不解析内容）
-- gate 通过 → status 流转到 reviewed，下一步跑 test
-- gate fail（文件不存在/空）→ 重写后重调 cw(review)
+gate fail（文件不存在/空）→ 重写后重调 cw(review)。
 
 ## 本阶段禁止
 
-- [禁止] 跳过 review 直接调 cw(test)（状态机 guard 会拒绝 illegal_transition）
-- [禁止] 写空的 review.md 应付（gate 只校验非空，但跳过实质审查 = 违背流程意图）
-- [禁止] review 发现 must_fix 但不修就调 cw(review)（先修代码，重新 commit + cw(dev)）
-- [禁止] 让多个 subagent 报同一个问题（同一缺陷最多一处报告，正交分工）
+- [禁止] 跳过 review 直接调 cw(test)（状态机 guard 会拒绝）
+- [禁止] 不传 --issues（必填，空数组也行）
+- [禁止] review 发现 must-fix 但不修就传空 issues（先修 → review_fix → 复查）
 
 ## 完成标志
 
-review.md 写完（含评分汇总表 + 3 个维度的发现）且 cw(review) gate 通过（status=reviewed）后，进入 test 阶段跑测试。
+review.md 写完 + cw(review) 提交后：
+- issues 为空 → 进 test
+- issues 非空 → 进 review_fix → 修复后复查
 `.trim();

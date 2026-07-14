@@ -84,8 +84,10 @@ create → clarify → plan → tdd_plan → dev → review → test → retrosp
 | `plan` | 明确范围后产出 **dev-plan.json**（只含 waves），提交 | `echo '<devPlanJson>' \| cw plan --topicId <id>` |
 | `tdd_plan` | 写测试代码（红灯）+ **test.json**（testCases + expected），提交 | `echo '<testJson>' \| cw tdd_plan --topicId <id>` |
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
-| `review` | 做 code review，产出 review.md | `cw review --topicId <id> --reviewPath <path>` |
+| `review` | 做 code review，产出 review.md + **--issues**（结构化问题清单） | `cw review --topicId <id> --reviewPath <path> --issues '[{"id":"R1","severity":"must-fix","description":"..."}]'` |
+| `review_fix` | 修复 review 发现的 issue，提交修复审计 | `cw review-fix --topicId <id> --fixes '[{"issueId":"R1","commitHash":"<sha>","resolution":"..."}]'` |
 | `test` | 跑测试，提交 actual 结果 | `cw test --topicId <id> --cases '[{"caseId":"U1","actual":{"text":"<结果>"}}]'` |
+| `test_fix` | 修复 test 失败的 case，提交修复审计 | `cw test-fix --topicId <id> --fixes '[{"caseId":"U1","commitHash":"<sha>","resolution":"..."}]'` |
 | `retrospect` | 写复盘报告（retrospect.md）+ 结构化回顾数据（retrospectData），提交 | `echo '<retrospectDataJson>' \| cw retrospect --topicId <id> --retrospect-path <path>` |
 | `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
 | `replan` | 修改计划（--plan 改 dev-plan / --test 改 test.json） | `echo '<json>' \| cw replan --topicId <id> --plan` 或 `--test` |
@@ -172,12 +174,37 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 
 | 场景 | fail 原因在哪 | 怎么修 |
 |------|-------------|--------|
-| plan/tdd_plan/review/retrospect/closeout gate fail | 顶层 `mustFix` | 修 mustFix 列出的问题，重调同一 action |
+| plan/tdd_plan/retrospect/closeout gate fail | 顶层 `mustFix` | 修 mustFix 列出的问题，重调同一 action |
+| review 发现 issue（issues 非空） | `reviewIssues` | 进 review_fix：修代码 → `cw review-fix` → 复查 |
 | dev gate fail（commit 不真实/缺失） | `taskResults[].reason` | 修该 Wave 的 commit，重调 `cw dev` |
-| test gate fail（结果 != 预期） | `caseResults[].failureReason` | **test retry**（progressive）：修代码 + commit → 重跑测试 → 重调 `cw test` 提交新 actual |
+| test gate fail（结果 != 预期） | `caseResults[].failureReason` | 进 test_fix：修代码 → `cw test-fix` → 重跑 test |
 
-**test 失败是 progressive retry**（原地停留，不回 dev）。test 是 Wave 无关的验证环节——所有 Wave 已 committed，修代码不需要重走 dev/review，直接重跑失败的 testCase 提交新 actual 即可。
-如果是 expected 写错（不是代码 bug），调 `cw replan --test` 修订 test.json。
+## issue tracking + fix loop
+
+review 和 test 阶段各有独立的 **fix loop**——发现问题 → 修复 → 复查，不回退到 dev。
+
+### review fix loop
+
+```
+cw review --issues '[R1,R2]'  → CW 指向 review_fix
+cw review-fix --fixes '[R1,R2]'  → CW 指向 review（turn 2 复查）
+cw review --issues '[]'  → 无新问题，进 test
+```
+
+- 最多 3 轮（REVIEW_TURN_LIMIT）。达上限强制进 test，guidance 标注未修复的 must-fix。
+- review_fix 的 commitHash 只记录审计，不校验真实性。
+
+### test fix loop
+
+```
+cw test --cases '[...]'  → U1 failed → CW 指向 test_fix
+cw test-fix --fixes '[{"caseId":"U1",...}]'  → CW 指向 test（重跑）
+cw test --cases '[{"caseId":"U1","actual":{"text":"正确值"}}]'  → U1 pass → 进 retrospect
+```
+
+- 最多 5 轮（TEST_TURN_LIMIT）。达上限熔断，不自动进 retrospect。
+- test_fix 的 commitHash 只记录审计，不校验真实性。
+- expected 写错 → 调 `cw replan --test`（不是代码 bug）。
 
 ## 修改计划（replan）
 
