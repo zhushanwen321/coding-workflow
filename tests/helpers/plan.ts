@@ -13,7 +13,7 @@
  */
 export function makeValidPlanJson(
   overrides: Record<string, unknown> = {},
-): unknown {
+): Record<string, unknown> {
   return {
     format: "lite",
     objective: "test objective",
@@ -48,7 +48,7 @@ export function makeValidPlanJson(
  */
 export function makeValidDevPlanJson(
   overrides: Record<string, unknown> = {},
-): unknown {
+): Record<string, unknown> {
   return {
     format: "lite",
     objective: "test objective",
@@ -63,7 +63,7 @@ export function makeValidDevPlanJson(
  */
 export function makeValidTestJson(
   overrides: Record<string, unknown> = {},
-): unknown {
+): Record<string, unknown> {
   return {
     testCases: [
       {

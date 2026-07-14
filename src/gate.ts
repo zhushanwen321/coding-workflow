@@ -22,16 +22,21 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseDevPlan, parseTestJson, type ParsedTestJson } from "./plan-parser.js";
+import { parseDevPlan, type ParsedTestJson,parseTestJson } from "./plan-parser.js";
 import {
   type Actual,
-  type Expected,
-  type TestCase,
-  type Topic,
-  type TestRunnerConfig,
   CwError,
+  type Expected,
   judgeByExpected,
+  type TestCase,
+  type TestRunnerConfig,
+  type Topic,
 } from "./types.js";
+
+// ── 常量 ─────────────────────────────────────────────────────
+
+/** POSIX exit code：命令未找到（shell 模式下 spawn 返回 127 而非 ENOENT 异常）。 */
+const EXIT_COMMAND_NOT_FOUND = 127;
 
 // ── GitValidator（从旧 gates.ts 1:1 移植） ──────────────────
 
@@ -312,7 +317,7 @@ export function redLightCheck(testCommand: string, cwd: string): RedLightResult 
     };
   } catch (e) {
     // spawn 异常（命令不存在等）→ 不是真正的「测试失败」，返回 redLight=false。
-    if (isENOENT(e) || getExitCode(e) === 127) {
+    if (isENOENT(e) || getExitCode(e) === EXIT_COMMAND_NOT_FOUND) {
       return {
         redLight: false,
         reason: `测试命令执行失败（spawn error，命令不存在）：${testCommand}`,
@@ -396,7 +401,7 @@ export function runTestRunner(
   } catch (e) {
     // spawn 异常 / 命令不存在（exit 127）→ 抛 CwError（基础设施异常）。
     // shell 模式下命令找不到返回 exit 127（POSIX 约定），而非 ENOENT 异常。
-    if (isENOENT(e) || getExitCode(e) === 127) {
+    if (isENOENT(e) || getExitCode(e) === EXIT_COMMAND_NOT_FOUND) {
       throw new CwError(
         `测试命令执行失败（spawn error，命令不存在）：${command}`,
       );

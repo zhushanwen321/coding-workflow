@@ -24,12 +24,25 @@
  *   - resolveDbPath 从 protocol.ts 搬到本文件（protocol.ts 整个烫掉）。
  */
 
-import minimist from "minimist";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import minimist from "minimist";
+
+import {
+  type CloseoutParams,
+  type CreateParams,
+  type CwParams,
+  type DevParams,
+  type PlanParams,
+  type ReplanParams,
+  type RetrospectParams,
+  type ReviewParams,
+  type TddPlanParams,
+  type TestParams,
+} from "./actions.js";
 import { dispatch } from "./dispatch.js";
 import { GitValidator } from "./gate.js";
 import { encodeCwd } from "./path-encoding.js";
@@ -38,27 +51,30 @@ import {
   type Action,
   type ActionDeps,
   type ActionResult,
+  CwError,
   type Status,
   type Topic,
-  CwError,
 } from "./types.js";
-import {
-  type CwParams,
-  type CloseoutParams,
-  type CreateParams,
-  type DevParams,
-  type PlanParams,
-  type ReplanParams,
-  type RetrospectParams,
-  type ReviewParams,
-  type TestParams,
-  type TddPlanParams,
-} from "./actions.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
-/** stdin/文件读取的大小上限（10MB），防 agent 误传巨型 payload 撑爆内存。 */
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const BYTES_PER_KB = 1024;
+const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
+
+/** stdin/文件读取的大小上限（MB），防 agent 误传巨型 payload 撑爆内存。 */
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * BYTES_PER_MB;
+
+/** JSON 序列化缩进空格数。 */
+const JSON_INDENT = 2;
+
+/** process.argv 中用户参数的起始索引（[0]=node, [1]=脚本路径）。 */
+const ARGV_USER_PARAMS_START = 2;
+
+/** 进程退出码：CwError（预期错误）。 */
+const EXIT_CW_ERROR = 1;
+/** 进程退出码：内部异常（未预期的错误）。 */
+const EXIT_INTERNAL_ERROR = 2;
 
 /** 合法 action 白名单（8 个 dispatch action + 2 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
@@ -150,7 +166,7 @@ function readJsonPayload(
     const stat = statSync(filePath);
     if (stat.size > MAX_FILE_SIZE_BYTES) {
       throw new CwError(
-        `文件大小 ${(stat.size / 1024 / 1024).toFixed(1)}MB 超过限制 ${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB`,
+        `文件大小 ${(stat.size / BYTES_PER_MB).toFixed(1)}MB 超过限制 ${MAX_FILE_SIZE_BYTES / BYTES_PER_MB}MB`,
       );
     }
     raw = readFileSync(filePath, "utf-8");
@@ -448,18 +464,19 @@ export function handleList(store: CwStore): ListEntry[] {
  *   - exit 2 = 内部异常（未预期的错误）
  */
 export function mapExitCode(err: Error): number {
-  return err instanceof CwError ? 1 : 2;
+  return err instanceof CwError ? EXIT_CW_ERROR : EXIT_INTERNAL_ERROR;
 }
 
 // ── main ─────────────────────────────────────────────────────
 
 async function main(argv: string[]): Promise<void> {
-  const parsed = minimist(argv.slice(2)) as ParsedArgs;
+  // argv[0]=node 路径, argv[1]=脚本路径, argv[2] 起才是用户参数
+  const parsed = minimist(argv.slice(ARGV_USER_PARAMS_START)) as ParsedArgs;
   const rawAction = parsed._[0];
 
   if (rawAction === undefined) {
     process.stderr.write("错误：未指定 action。用法：cw <action> [options]\n");
-    process.exit(1);
+    process.exit(EXIT_CW_ERROR);
   }
   const action = String(rawAction);
 
@@ -477,16 +494,16 @@ async function main(argv: string[]): Promise<void> {
         typeof parsed.topicId === "string" ? parsed.topicId : undefined;
       if (!topicId) {
         process.stderr.write("错误：status 需要 --topicId\n");
-        process.exit(1);
+        process.exit(EXIT_CW_ERROR);
       }
       const output = handleStatus(topicId, store);
-      process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+      process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
       return;
     }
 
     // action === "list"
     const output = handleList(store);
-    process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
     return;
   }
 
@@ -499,7 +516,7 @@ async function main(argv: string[]): Promise<void> {
         "list",
       ].join(", ")}\n`,
     );
-    process.exit(1);
+    process.exit(EXIT_CW_ERROR);
   }
 
   // 读取 stdin（plan/tdd_plan/replan 从这里读 JSON payload）。
@@ -519,7 +536,7 @@ async function main(argv: string[]): Promise<void> {
   const result: ActionResult = dispatch(params, deps);
 
   // 序列化 ActionResult → stdout JSON。
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
 }
 
 // ── 顶层 try/catch（稳定性保障） ─────────────────────────────
@@ -543,7 +560,7 @@ if (isCliEntry) {
   main(process.argv).catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`错误：${message}\n`);
-    const exitCode = err instanceof Error ? mapExitCode(err) : 2;
+    const exitCode = err instanceof Error ? mapExitCode(err) : EXIT_INTERNAL_ERROR;
     process.exit(exitCode);
   });
 }

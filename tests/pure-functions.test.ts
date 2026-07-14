@@ -7,21 +7,22 @@
  * - 通过 export 函数间接测 module-private：assertSafeSize（经 parseLitePlan）、
  *   countConsecutiveGateFails/熔断（经 buildNextAction）
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync,mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 
+import { afterEach,beforeEach, describe, expect, it } from "vitest";
+
+import { fileExistsCheck, GitValidator,testCheck } from "../src/gate.js";
 import { encodeCwd } from "../src/path-encoding.js";
-import { judgeByExpected, type Topic } from "../src/types.js";
-import { fileExistsCheck, testCheck, GitValidator } from "../src/gate.js";
-import { buildNextAction } from "../src/state-machine.js";
 import { parseLitePlan } from "../src/plan-parser.js";
+import { buildNextAction } from "../src/state-machine.js";
+import { type Action,judgeByExpected, type Topic } from "../src/types.js";
 
 // ── 辅助：构造带 gateHistory 的 topic（熔断测试用） ──────────
 
-function makeTopicWithFails(phase: string, failCount: number): Topic {
+function makeTopicWithFails(phase: Action, failCount: number): Topic {
   const gateHistory = [];
   for (let i = 0; i < failCount; i++) {
     gateHistory.push({

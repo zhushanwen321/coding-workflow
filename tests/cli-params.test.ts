@@ -4,13 +4,14 @@
  * buildParams 从 module-private export 后可单测。
  * 测试策略：构造 ParsedArgs 对象（模拟 minimist 输出），验证各 case 的参数校验。
  */
-import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildParams } from "../src/cli.js";
+import { describe, expect,it } from "vitest";
+
 import type { ParsedArgs } from "../src/cli.js";
+import { buildParams } from "../src/cli.js";
 import { CwError } from "../src/types.js";
 
 // 构造空 ParsedArgs（模拟 minimist 无 flag 输出）

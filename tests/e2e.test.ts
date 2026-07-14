@@ -8,21 +8,22 @@
  *   - 验证全链路：create → plan → tdd_plan → dev → review → test → retrospect → closeout
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { spawnSync } from "node:child_process";
 import {
+  existsSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
-  mkdirSync,
-  existsSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { execFileSync, spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { dirname,join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { afterAll,beforeAll, describe, expect, it } from "vitest";
 
 import { setupGitRepo } from "./helpers/git.js";
 
@@ -445,7 +446,7 @@ describe("补充: list 只读查询子命令", () => {
     const result = parseStdout(runCli(["list"], env));
     expect(Array.isArray(result)).toBe(true);
     // E1-E4 已创建多个 topic，list 应非空
-    expect((result as unknown[]).length).toBeGreaterThan(0);
+    expect((result as unknown as Record<string, unknown>[]).length).toBeGreaterThan(0);
   });
 });
 

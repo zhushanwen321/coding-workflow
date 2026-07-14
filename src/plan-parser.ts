@@ -15,7 +15,7 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import type { TestCaseSeed, WaveSeed, TestRunnerConfig } from "./types.js";
+import type { TestCaseSeed, TestRunnerConfig,WaveSeed } from "./types.js";
 import { CwError } from "./types.js";
 
 // ── DevPlanSchema（dev-plan.json，只含 waves） ──────────────

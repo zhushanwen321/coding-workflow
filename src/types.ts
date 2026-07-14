@@ -16,8 +16,8 @@
  * - Evidence 保留 gateHistory 快照（closeout 回溯用，reviewer 指出不能砍）
  */
 
-import type { CwStore } from "./store.js";
 import type { GitValidator } from "./gate.js";
+import type { CwStore } from "./store.js";
 
 // ── 状态机值对象 ────────────────────────────────────────────
 
@@ -193,6 +193,7 @@ export interface WaveSeed {
   id: string;
   dependsOn: string[];
   changes?: string[];
+  priority?: Priority;
 }
 
 export interface TestCaseSeed {

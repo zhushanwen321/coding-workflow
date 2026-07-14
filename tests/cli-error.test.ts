@@ -4,10 +4,11 @@
  * 替换了旧的 18 条字符串前缀匹配。现在 mapExitCode 只判 instanceof CwError。
  * GuardError extends CwError，所以 guard 拒绝也走 exit 1。
  */
-import { describe, it, expect } from "vitest";
+import { describe, expect,it } from "vitest";
+
 import { mapExitCode } from "../src/cli.js";
-import { CwError } from "../src/types.js";
 import { GuardError } from "../src/dispatch.js";
+import { CwError } from "../src/types.js";
 
 describe("mapExitCode (W4 typed error)", () => {
   it("CwError → exit 1", () => {

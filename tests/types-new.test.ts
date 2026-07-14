@@ -9,16 +9,17 @@
  * - Wave/TestCase/TestCaseSeed 包含 priority 字段
  * - TestCase/TestCaseSeed 包含 redCheck 字段
  */
-import { describe, it, expect } from "vitest";
+import { describe, expect,it } from "vitest";
+
 import type {
   Action,
-  Status,
   Priority,
-  Wave,
+  Status,
   TestCase,
   TestCaseSeed,
   TestRunnerConfig,
   TestRunnerMode,
+  Wave,
 } from "../src/types.js";
 
 describe("W1: 新增类型定义", () => {

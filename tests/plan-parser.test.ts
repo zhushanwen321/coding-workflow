@@ -4,13 +4,13 @@
  * 覆盖：合法结构解析成功、format 非 lite 抛错、waves 空抛错。
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect,it } from "vitest";
 
 import { parseLitePlan } from "../src/plan-parser.js";
 
 // ── 测试夹具：合法 plan.json ─────────────────────────────────
 
-function makeValidPlanJson(): unknown {
+function makeValidPlanJson(): Record<string, unknown> {
   return {
     format: "lite",
     objective: "test objective",
@@ -352,7 +352,7 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
 });
 
 describe("W2: parseTestJson（拆分后的 test.json）", () => {
-  function makeValidTestJson(): unknown {
+  function makeValidTestJson(): Record<string, unknown> {
     return {
       testCases: [
         {

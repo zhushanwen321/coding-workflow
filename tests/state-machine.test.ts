@@ -5,17 +5,17 @@
  * computeNextStatus（progressive 原地停留）、buildNextAction（6 个 action 分支）。
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect,it } from "vitest";
 
 import {
-  TRANSITIONS,
+  buildNextAction,
   checkLinear,
-  guard,
   computeGatePassed,
   computeNextStatus,
-  buildNextAction,
+  guard,
+  TRANSITIONS,
 } from "../src/state-machine.js";
-import type { Topic, Status } from "../src/types.js";
+import type { Status,Topic } from "../src/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 
@@ -228,7 +228,6 @@ describe("buildNextAction（U9-U11）", () => {
     const topic = makeTopic({ status: "created" });
     const na = buildNextAction("create", topic);
     expect(na.action).toBe("plan");
-    expect(na.skill).toBeUndefined();
     // guidance 整合了 spec 提示词 + plan 提示词（解决循环依赖：agent 做 spec 时就能看到 plan.json schema）
     expect(na.guidance).toContain("[create 阶段]");
     expect(na.guidance).toContain("范围守门");

@@ -22,18 +22,6 @@
 import { join } from "node:path";
 
 import {
-  type Actual,
-  type ActionDeps,
-  type ActionResult,
-  type Evidence,
-  type TestCase,
-  type TestCaseSeed,
-  type Topic,
-  type Wave,
-  type WaveSeed,
-  CwError,
-} from "./types.js";
-import {
   devCheck,
   fileExistsCheck,
   planCheck,
@@ -50,6 +38,18 @@ import {
   computeGatePassed,
   computeNextStatus,
 } from "./state-machine.js";
+import {
+  type ActionDeps,
+  type ActionResult,
+  type Actual,
+  CwError,
+  type Evidence,
+  type TestCase,
+  type TestCaseSeed,
+  type Topic,
+  type Wave,
+  type WaveSeed,
+} from "./types.js";
 
 // ── 参数类型（7 个 action）──────────────────────────────────
 

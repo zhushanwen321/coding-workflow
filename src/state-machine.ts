@@ -15,6 +15,7 @@
  * - gate 熔断不阻断只告警：连续 fail 达阈值后 nextAction guidance 换熔断文案。
  */
 
+import { DEV_PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT,SPEC_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
 import type {
   Action,
   GateHistoryEntry,
@@ -24,7 +25,6 @@ import type {
   Status,
   Topic,
 } from "./types.js";
-import { SPEC_PROMPT, DEV_PLAN_PROMPT, TDD_PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT } from "./prompts/index.js";
 
 // ── gate 熔断 ──────────────────────────────────────────────
 

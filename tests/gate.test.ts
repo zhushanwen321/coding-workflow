@@ -12,22 +12,23 @@
  * - P1 devCheck：commit 实际改动文件与 plan changes 对比，输出 extraFiles。
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { mkdirSync,mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { afterEach,beforeEach, describe, expect, it } from "vitest";
+
 import {
-  planCheck,
-  tddPlanCheck,
-  redLightCheck,
-  runTestRunner,
   devCheck,
   GitValidator,
+  planCheck,
+  redLightCheck,
+  runTestRunner,
+  tddPlanCheck,
 } from "../src/gate.js";
 import { CwError, type Topic } from "../src/types.js";
-import { setupGitRepo, commitFile } from "./helpers/git.js";
+import { commitFile,setupGitRepo } from "./helpers/git.js";
 import { makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
 
 // ── test.json helper（与 plan-parser.test.ts 的 makeValidTestJson 结构一致） ──

@@ -9,20 +9,20 @@
  *   - fileExistsCheck (retrospect/closeout) 用 tmp 文件真实验证。
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync,mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
+import { afterEach,beforeEach, describe, expect, it } from "vitest";
+
 import { dispatch, GuardError } from "../src/dispatch.js";
-import { CwStore } from "../src/store.js";
 import { GitValidator } from "../src/gate.js";
+import { CwStore } from "../src/store.js";
 import type { ActionDeps } from "../src/types.js";
 import { setupGitRepo } from "./helpers/git.js";
 import {
-  makeValidPlanJson,
   makeValidDevPlanJson,
+  makeValidPlanJson,
   makeValidTestJson,
 } from "./helpers/plan.js";
 
