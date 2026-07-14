@@ -5,7 +5,7 @@
  * guidance 直接携带方法论，不假设调用方有 skill 加载机制。
  *
  * 触发点：state-machine.ts buildNextAction 的 create 分支。
- * 交付物：plan.json（由 plan action 消费），落在 {workspacePath}/.xyz-harness/{slug}/。
+ * 交付物：dev-plan.json（由 plan action 消费），落在 {workspacePath}/.xyz-harness/{slug}/。
  */
 
 export const SPEC_PROMPT = `

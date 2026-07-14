@@ -88,6 +88,7 @@ interface WaveRecord {
   dependsOn: string[];
   committed: string | null;
   changes: string[];
+  priority?: Priority;
 }
 
 interface TestCaseRecord {
@@ -444,6 +445,7 @@ export class CwStore {
       dependsOn: r.dependsOn ?? [],
       committed: r.committed ?? null,
       changes: r.changes ?? [],
+      priority: r.priority,
     };
   }
 
@@ -474,6 +476,7 @@ export class CwStore {
       dependsOn: w.dependsOn,
       committed: null,
       changes: w.changes ?? [],
+      priority: w.priority,
     };
   }
 

@@ -139,6 +139,24 @@ describe("setWaveCommitted 幂等更新（U15）", () => {
   });
 });
 
+// ── 回归：Wave priority 持久化 ──────────────────────────────
+
+describe("Wave priority 持久化", () => {
+  it("wave priority 写入后 loadTopic 读回一致", () => {
+    const store = makeStore();
+    store.insertTopic(makeTopic({ topicId: "cw-wave-prio" }));
+    store.insertWaves("cw-wave-prio", [
+      { id: "W1", dependsOn: [], changes: ["c1"], priority: "P0" },
+      { id: "W2", dependsOn: ["W1"], changes: ["c2"], priority: "P2" },
+      { id: "W3", dependsOn: [], changes: ["c3"] }, // 不设 priority
+    ]);
+    const topic = store.loadTopic("cw-wave-prio");
+    expect(topic!.waves[0]!.priority).toBe("P0");
+    expect(topic!.waves[1]!.priority).toBe("P2");
+    expect(topic!.waves[2]!.priority).toBeUndefined();
+  });
+});
+
 // ── 补充：事务嵌套 + replaceUncommittedWaves ─────────────────
 
 describe("store 补充覆盖", () => {

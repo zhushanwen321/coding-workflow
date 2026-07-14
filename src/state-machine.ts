@@ -108,7 +108,8 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   plan: { expectedStatuses: ["created"], nextStatus: "planned" },
   tdd_plan: { expectedStatuses: ["planned"], nextStatus: "tdd_inited" },
   dev: {
-    expectedStatuses: ["tdd_inited", "developed"],
+    // dev 允许从 reviewed/tested 回退（test 失败后统一回 dev 修代码）
+    expectedStatuses: ["tdd_inited", "developed", "reviewed", "tested"],
     nextStatus: "developed",
     progressive: true,
   },
@@ -380,18 +381,12 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "replan": {
-      // replan 完成后，按 dev gate 是否通过分流。
-      // 通常 replan 追加新 wave 后 dev gate 会变 false（新 wave 未 committed）→ 指向 dev。
-      if (!computeGatePassed("dev", topic)) {
-        return {
-          action: "dev",
-          guidance: `replan 完成。下一步：实现新 wave + commit + 调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
-          waves: waveProgress(topic),
-        };
-      }
+      // replan 后 status=planned，必须先重走 tdd_plan（testCases 可能已变，需重新校验 + 写入）。
+      // 即使 dev gate 之前已通过，replan 修改了 plan/testCases 后也要重走全流程。
       return {
-        action: "test",
-        guidance: `replan 完成。dev gate 通过，下一步：跑测试 + 调 cw(test)。\n\n${EXECUTE_PROMPT}`,
+        action: "tdd_plan",
+        guidance: `replan 完成（status=planned）。下一步：重走 tdd_plan——提交 test.json（testCases 可能已变），调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
+        waves: waveProgress(topic),
         testCases: testCaseProgress(topic),
       };
     }

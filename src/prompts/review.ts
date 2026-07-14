@@ -30,7 +30,7 @@ export const REVIEW_PROMPT = `
 
 ### plan 覆盖核对（逐条对照）
 
-逐条核对 plan.json 每个 wave 的 changes 列表：
+逐条核对 dev-plan.json 每个 wave 的 changes 列表：
 - 每个文件级改动点是否都已落地（不只主路径，含 fallback / 边界 / 异常分支）
 - plan 列了但代码没实现的 = 未完成，必须补实现后重新 commit + cw(dev)
 - 代码改了但 plan 没列的 = 范围蔓延，确认是否必要

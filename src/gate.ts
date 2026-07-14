@@ -300,6 +300,11 @@ export interface RedLightResult {
  *
  * @param testCommand 测试命令字符串，直接传给 shell 执行（如 "npx vitest run"）
  * @param cwd 执行目录（绝对路径）
+ *
+ * TODO(安全): 当前用 shell:true 执行 testCommand，存在命令注入风险。
+ * testCommand 来自 testRunner.command（test.json），agent 产出，非常规可信输入。
+ * 后续应改为 shell:false + 命令拆分（如 ["/bin/sh", "-c", ...] 或直接用 spawn），
+ * 或在 prompt 中明确标注 command 字段会被 shell 执行。
  */
 export function redLightCheck(testCommand: string, cwd: string): RedLightResult {
   try {

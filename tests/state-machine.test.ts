@@ -345,6 +345,26 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.testCases).toBeDefined();
   });
 
+  it("test gate fail → dev 从 tested 状态合法（不 illegal_transition）", () => {
+    // 回归测试：dev.expectedStatuses 必须含 tested，否则 test fail 后回 dev 死锁
+    const verdict = checkLinear("dev", "tested");
+    expect(verdict.ok).toBe(true);
+  });
+
+  it("test gate fail → dev 从 reviewed 状态合法（不 illegal_transition）", () => {
+    // 回归测试：dev.expectedStatuses 必须含 reviewed
+    const verdict = checkLinear("dev", "reviewed");
+    expect(verdict.ok).toBe(true);
+  });
+
+  it("replan 后 nextAction 指向 tdd_plan（不是 dev）", () => {
+    // 回归测试：replan 后 status=planned，nextAction 必须指向 tdd_plan
+    // 否则 agent 调 cw dev 会 illegal_transition（dev 不接受 planned）
+    const topic = makeTopic({ status: "planned" });
+    const na = buildNextAction("replan", topic);
+    expect(na.action).toBe("tdd_plan");
+  });
+
   it("U10 补充: plan gate fail → nextAction 指回 plan retry", () => {
     const topic = makeTopic({
       status: "created",
