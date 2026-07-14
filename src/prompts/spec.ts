@@ -56,9 +56,10 @@ export const SPEC_PROMPT = `
 
 ## 完成标志
 
-三件事都弄清后，按下方 plan.json 格式产出 plan.json，然后提交：
+三件事都弄清后，按下方 dev-plan.json 格式产出 dev-plan.json，然后提交：
 
-    echo '<planJson>' | cw plan --topicId <topicId>
+    echo '<devPlanJson>' | cw plan --topicId <topicId>
 
-plan.json 的完整格式见下方「plan 阶段提示词」（本 guidance 已附带）。
+dev-plan.json 的完整格式见下方「dev-plan 阶段提示词」（本 guidance 已附带）。
+写完 dev-plan.json 后还要写 test.json（tdd_plan 阶段），但 spec 阶段只管 dev-plan.json。
 `.trim();

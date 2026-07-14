@@ -24,7 +24,7 @@ import type {
   Status,
   Topic,
 } from "./types.js";
-import { SPEC_PROMPT, PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT } from "./prompts/index.js";
+import { SPEC_PROMPT, DEV_PLAN_PROMPT, TDD_PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT } from "./prompts/index.js";
 
 // ── gate 熔断 ──────────────────────────────────────────────
 
@@ -70,10 +70,11 @@ function buildCircuitBreakerGuidance(phase: Action, fails: number): string {
  * dev 中途发现要追加 Wave 可以 replan」。append-only 约束在文案里点明，避免 agent 误改已 committed 项。
  */
 const REPLAN_GUIDANCE =
-  `如需追加 Wave 或调整未 committed 的 plan 项，调 cw replan 提交完整新版 plan.json：\n` +
-  `    echo '<newPlanJson>' | cw replan --topicId <topicId>\n` +
+  `如需修改计划，调 cw replan（支持 --plan 和 --test 两种模式）：\n` +
+  `    echo '<newDevPlanJson>' | cw replan --topicId <topicId> --plan   # 修订 dev-plan（追加 wave）\n` +
+  `    echo '<newTestJson>' | cw replan --topicId <topicId> --test      # 修订 test.json（调整 expected / 追加 case）\n` +
   `约束（append-only）：已 committed 的 wave 和已 passed 的 testCase 不可删改。` +
-  `replan 后 status 回退到 planned，需重新走 dev。`;
+  `replan 后 status 回退到 planned，需重走 tdd_plan → dev → review → test。`;
 
 /** 构造 replan alternative 项（status∈{planned, developed, reviewed, tested} 的 nextAction 用）。 */
 function replanAlternative(): NextActionAlternative {
@@ -249,12 +250,11 @@ function testCaseProgress(topic: Topic): NextAction["testCases"] {
 export function buildNextAction(action: Action, topic: Topic): NextAction {
   switch (action) {
     case "create": {
-      // create 后进入 spec 阶段：先明确范围与目标，再写 plan。
-      // guidance 同时带 spec + plan 提示词，agent 在做 spec 时就能看到 plan.json 格式，
-      // 避免「不知道 plan.json schema 就要调 cw plan → gate fail 才看到格式」的循环依赖。
+      // create 后进入 spec 阶段：先明确范围与目标，再写 dev-plan.json。
+      // guidance 同时带 spec + dev-plan 提示词，agent 在做 spec 时就能看到 dev-plan.json 格式。
       return {
         action: "plan",
-        guidance: `topic 已建立。下一步：明确任务范围与目标，完成后产出 plan.json 并提交。\n\n${SPEC_PROMPT}\n\n---\n\n${PLAN_PROMPT}`,
+        guidance: `topic 已建立。下一步：明确任务范围与目标，完成后产出 dev-plan.json 并提交。\n\n${SPEC_PROMPT}\n\n---\n\n${DEV_PLAN_PROMPT}`,
       };
     }
     case "plan": {
@@ -265,14 +265,13 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           guidance:
             fails >= GATE_RETRY_LIMIT
               ? buildCircuitBreakerGuidance("plan", fails)
-              : `plan gate FAIL。status 仍为 created——修 mustFix 后重调 cw(plan)。\n\n${PLAN_PROMPT}`,
+              : `plan gate FAIL。status 仍为 created——修 mustFix 后重调 cw(plan)。\n\n${DEV_PLAN_PROMPT}`,
         };
       }
       // plan gate 通过 → 进入 tdd_plan 阶段（写 test.json + 测试代码，红灯确认）。
-      // guidance 占位文本，完整 prompt 在 W8 更新。
       return {
         action: "tdd_plan",
-        guidance: `plan gate 通过。下一步：写测试代码 + test.json（定义 testCases + 可选 testRunner），调 cw(tdd_plan) 提交。\n\n${PLAN_PROMPT}`,
+        guidance: `plan gate 通过（status=planned）。下一步：写测试代码（红灯）+ test.json（定义 testCases + expected + 可选 testRunner），调 cw(tdd_plan) 提交。\n\n${TDD_PLAN_PROMPT}`,
         waves: waveProgress(topic),
         alternatives: [replanAlternative()],
       };
@@ -285,14 +284,13 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           guidance:
             fails >= GATE_RETRY_LIMIT
               ? buildCircuitBreakerGuidance("tdd_plan", fails)
-              : `tdd_plan gate FAIL。status 仍为 planned——修 mustFix 后重调 cw(tdd_plan)。\n\n${PLAN_PROMPT}`,
+              : `tdd_plan gate FAIL。status 仍为 planned——修 mustFix 后重调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
         };
       }
       // tdd_plan gate 通过 → 进入 dev 阶段（写实现，让测试转绿）。
-      // guidance 占位文本，完整 prompt 在 W8 更新。
       return {
         action: "dev",
-        guidance: `tdd_plan gate 通过，testCases 已写入。下一步：按 Wave 写实现让测试转绿，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
+        guidance: `tdd_plan gate 通过（status=tdd_inited），testCases 已写入。下一步：按 Wave 写实现让测试转绿，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };

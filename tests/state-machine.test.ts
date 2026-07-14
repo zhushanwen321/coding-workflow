@@ -232,8 +232,8 @@ describe("buildNextAction（U9-U11）", () => {
     // guidance 整合了 spec 提示词 + plan 提示词（解决循环依赖：agent 做 spec 时就能看到 plan.json schema）
     expect(na.guidance).toContain("[create 阶段]");
     expect(na.guidance).toContain("范围守门");
-    expect(na.guidance).toContain("[plan 阶段]");
-    expect(na.guidance).toContain("plan.json 结构");
+    expect(na.guidance).toContain("[dev-plan 阶段]");
+    expect(na.guidance).toContain("dev-plan.json 结构");
   });
 
   it("U10: plan gate pass 后 → nextAction.action=tdd_plan, waves 列表返回", () => {
