@@ -86,6 +86,8 @@ export default [
     files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/vitest.config.ts'],
     rules: {
       'max-lines-per-function': 'off',
+      // 测试文件随用例增长，1000 行限制不适用（社区标准对测试文件豁免）
+      'max-lines': 'off',
     },
   },
   // mock 桩文件：常含字面量数据表与桩实现，

@@ -33,6 +33,8 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     testCases: [],
     gateHistory: [],
     gatePassed: {},
+    clarifyRecords: [],
+    adrs: [],
     ...overrides,
   };
 }
@@ -224,15 +226,17 @@ describe("computeNextStatus progressive（U9b/U9c）", () => {
 // ── U9-U11: buildNextAction ─────────────────────────────────
 
 describe("buildNextAction（U9-U11）", () => {
-  it("U9: create 后 → nextAction.action=plan, guidance 含 spec+plan 提示词", () => {
+  it("U9: create 后 → nextAction.action=clarify, alternatives 含 plan, guidance 含 clarify 提示词", () => {
     const topic = makeTopic({ status: "created" });
     const na = buildNextAction("create", topic);
-    expect(na.action).toBe("plan");
-    // guidance 整合了 spec 提示词 + plan 提示词（解决循环依赖：agent 做 spec 时就能看到 plan.json schema）
-    expect(na.guidance).toContain("[create 阶段]");
-    expect(na.guidance).toContain("范围守门");
-    expect(na.guidance).toContain("[dev-plan 阶段]");
-    expect(na.guidance).toContain("dev-plan.json 结构");
+    expect(na.action).toBe("clarify");
+    // guidance 含 clarify 提示词（探索→预判→提问→ADR）
+    expect(na.guidance).toContain("[clarify 阶段]");
+    expect(na.guidance).toContain("澄清需求");
+    // plan 作为 alternative（清晰需求可直接跳过 clarify）
+    expect(na.alternatives).toBeDefined();
+    expect(na.alternatives!.length).toBeGreaterThanOrEqual(1);
+    expect(na.alternatives!.some((a) => a.action === "plan")).toBe(true);
   });
 
   it("U10: plan gate pass 后 → nextAction.action=tdd_plan, waves 列表返回", () => {
@@ -536,5 +540,117 @@ describe("tdd_plan 转换与 guard", () => {
   it("tdd_plan 无 pass 记录 → computeGatePassed=false", () => {
     const topic = makeTopic({ status: "planned" });
     expect(computeGatePassed("tdd_plan", topic)).toBe(false);
+  });
+});
+
+// ── clarify 状态机（TRANSITIONS / computeGatePassed / buildNextAction） ──
+
+describe("clarify 状态机", () => {
+  it("checkLinear(\"clarify\", \"created\") → ok=true", () => {
+    // clarify 在 created 状态合法（progressive，可多次调）。
+    expect(checkLinear("clarify", "created").ok).toBe(true);
+  });
+
+  it("checkLinear(\"clarify\", \"planned\") → ok=false, code=\"illegal_transition\"", () => {
+    // clarify 只在 created 合法，plan 之后不再允许。
+    const verdict = checkLinear("clarify", "planned");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+    }
+  });
+
+  it("computeGatePassed(\"clarify\", topic) 空 clarifyRecords → true", () => {
+    // 空数组（没走过 clarify）也算 pass——清晰需求可直接 plan。
+    const topic = makeTopic({ clarifyRecords: [] });
+    expect(computeGatePassed("clarify", topic)).toBe(true);
+  });
+
+  it("computeGatePassed(\"clarify\", topic) 全 resolved → true", () => {
+    const topic = makeTopic({
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "存储方案",
+          assessment: "a",
+          question: "q?",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(computeGatePassed("clarify", topic)).toBe(true);
+  });
+
+  it("computeGatePassed(\"clarify\", topic) 有 pending → false", () => {
+    const topic = makeTopic({
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "存储方案",
+          assessment: "a",
+          question: "q?",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "CL2",
+          kind: "requirement",
+          topic: "重试上限",
+          assessment: "a",
+          question: "q?",
+          status: "pending",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(computeGatePassed("clarify", topic)).toBe(false);
+  });
+
+  it("buildNextAction(\"clarify\", topic) 有 pending → action=\"clarify\"", () => {
+    const topic = makeTopic({
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "存储方案",
+          assessment: "a",
+          question: "q?",
+          status: "pending",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("clarify");
+  });
+
+  it("buildNextAction(\"clarify\", topic) 全 resolved → action=\"plan\", alternatives 含 clarify", () => {
+    const topic = makeTopic({
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "存储方案",
+          assessment: "a",
+          question: "q?",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("plan");
+    expect(na.alternatives).toBeDefined();
+    expect(na.alternatives!.some((a) => a.action === "clarify")).toBe(true);
+  });
+
+  it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"plan\"", () => {
+    // 空数组也算完成，推荐直接进 plan（无需澄清）。
+    const topic = makeTopic({ clarifyRecords: [] });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("plan");
   });
 });

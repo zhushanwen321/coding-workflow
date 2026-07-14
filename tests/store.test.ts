@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import { CwStore } from "../src/store.js";
-import type { Priority, Topic } from "../src/types.js";
+import type { AdrSeed, ClarifySeed, Priority, Topic } from "../src/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 
@@ -36,6 +36,8 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     testCases: [],
     gateHistory: [],
     gatePassed: {},
+    clarifyRecords: [],
+    adrs: [],
     ...overrides,
   };
 }
@@ -632,5 +634,136 @@ describe("stale-lock 清理", () => {
     // 验证写入成功（锁被正确获取+释放）
     const topic = store2.loadTopic("cw-test-topic");
     expect(topic!.status).toBe("planned");
+  });
+});
+
+// ── clarify + adr DAO（progressive，create→plan 之间） ──────
+
+describe("clarify + adr DAO", () => {
+  /** 构造一个合法的 ClarifySeed（默认不含 answer，pending 状态）。 */
+  function makeClarifySeed(overrides: Partial<ClarifySeed> = {}): ClarifySeed {
+    return {
+      kind: "technical",
+      topic: "状态存储方案",
+      assessment: "当前 store.ts 用 JSON + flock，并发写 >10 qps 时锁竞争明显。",
+      question: "状态存储维持 JSON 还是迁移 SQLite？",
+      ...overrides,
+    };
+  }
+
+  /** 构造一个合法的 AdrSeed。 */
+  function makeAdrSeed(overrides: Partial<AdrSeed> = {}): AdrSeed {
+    return {
+      title: "状态存储迁移 SQLite",
+      context: "JSON + flock 并发弱",
+      decision: "迁移 better-sqlite3",
+      alternatives: ["维持 JSON + flock"],
+      consequences: "并发好，引入原生依赖",
+      ...overrides,
+    };
+  }
+
+  it("appendClarifyRecord → 返回 CL1, loadTopic 拿到 clarifyRecords[0].id=CL1", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const id = store.appendClarifyRecord("cw-test-topic", makeClarifySeed());
+    expect(id).toBe("CL1");
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.clarifyRecords).toHaveLength(1);
+    expect(topic!.clarifyRecords[0]!.id).toBe("CL1");
+    expect(topic!.clarifyRecords[0]!.kind).toBe("technical");
+    expect(topic!.clarifyRecords[0]!.createdAt).toBeDefined();
+  });
+
+  it("appendClarifyRecord 含 answer → status=resolved, resolvedAt 非空", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.appendClarifyRecord(
+      "cw-test-topic",
+      makeClarifySeed({ answer: "迁移 SQLite" }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.clarifyRecords[0]!.status).toBe("resolved");
+    expect(topic!.clarifyRecords[0]!.answer).toBe("迁移 SQLite");
+    expect(topic!.clarifyRecords[0]!.resolvedAt).toBeDefined();
+  });
+
+  it("appendClarifyRecord 不含 answer → status=pending", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    store.appendClarifyRecord("cw-test-topic", makeClarifySeed());
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.clarifyRecords[0]!.status).toBe("pending");
+    expect(topic!.clarifyRecords[0]!.resolvedAt).toBeUndefined();
+  });
+
+  it("appendAdr → 返回 0001, loadTopic 拿到 adrs[0].id=0001", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const id = store.appendAdr("cw-test-topic", makeAdrSeed());
+    expect(id).toBe("0001");
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.adrs).toHaveLength(1);
+    expect(topic!.adrs[0]!.id).toBe("0001");
+    expect(topic!.adrs[0]!.title).toBe("状态存储迁移 SQLite");
+    // 缺省 status=accepted
+    expect(topic!.adrs[0]!.status).toBe("accepted");
+    expect(topic!.adrs[0]!.createdAt).toBeDefined();
+  });
+
+  it("updateClarifyRecord → patch adrId 后 loadTopic 读回 adrId", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const clarifyId = store.appendClarifyRecord("cw-test-topic", makeClarifySeed());
+    // 回填 adrId（模拟 handler 双写流程）
+    store.updateClarifyRecord("cw-test-topic", clarifyId, { adrId: "0001" });
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.clarifyRecords[0]!.adrId).toBe("0001");
+  });
+
+  it("多条 appendClarifyRecord id 自增（CL1, CL2）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const id1 = store.appendClarifyRecord(
+      "cw-test-topic",
+      makeClarifySeed({ topic: "主题1" }),
+    );
+    const id2 = store.appendClarifyRecord(
+      "cw-test-topic",
+      makeClarifySeed({ topic: "主题2" }),
+    );
+
+    expect(id1).toBe("CL1");
+    expect(id2).toBe("CL2");
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.clarifyRecords).toHaveLength(2);
+    expect(topic!.clarifyRecords.map((c) => c.id)).toEqual(["CL1", "CL2"]);
+  });
+
+  it("多条 appendAdr id 自增 padStart（0001, 0002）", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const id1 = store.appendAdr("cw-test-topic", makeAdrSeed({ title: "ADR1" }));
+    const id2 = store.appendAdr("cw-test-topic", makeAdrSeed({ title: "ADR2" }));
+
+    expect(id1).toBe("0001");
+    expect(id2).toBe("0002");
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.adrs).toHaveLength(2);
+    expect(topic!.adrs.map((a) => a.id)).toEqual(["0001", "0002"]);
   });
 });

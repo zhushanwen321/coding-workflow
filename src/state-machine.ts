@@ -15,7 +15,7 @@
  * - gate 熔断不阻断只告警：连续 fail 达阈值后 nextAction guidance 换熔断文案。
  */
 
-import { DEV_PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT,SPEC_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
 import type {
   Action,
   GateHistoryEntry,
@@ -105,6 +105,13 @@ export interface TransitionRule {
  */
 export const TRANSITIONS: Record<Action, TransitionRule> = {
   create: { expectedStatuses: [], nextStatus: "created" },
+  clarify: {
+    // clarify 是 advisory progressive action：不流转 status，created 状态下可多次调。
+    // 不阻断 plan——plan 的 expectedStatuses 仍含 created，清晰需求可直接跳过 clarify。
+    expectedStatuses: ["created"],
+    nextStatus: "created",
+    progressive: true,
+  },
   plan: { expectedStatuses: ["created"], nextStatus: "planned" },
   tdd_plan: { expectedStatuses: ["planned"], nextStatus: "tdd_inited" },
   dev: {
@@ -222,6 +229,13 @@ export function computeGatePassed(phase: Action, topic: Topic): boolean {
       topic.testCases.every((c) => c.status === "passed")
     );
   }
+  if (phase === "clarify") {
+    // clarify gatePassed：全 clarifyRecords 的 status ∈ {resolved, skipped}（无 pending）。
+    // 空数组（没走过 clarify）也算 pass——清晰需求直接 plan 合法。
+    // 注意：clarify gatePassed 不阻断 plan（plan 的 expectedStatuses 仍含 created），
+    // 只用于 buildNextAction 推荐导航（全 resolved → 推荐 plan）。
+    return topic.clarifyRecords.every((c) => c.status !== "pending");
+  }
   if (phase === "create" || phase === "replan") {
     return false;
   }
@@ -241,6 +255,16 @@ function testCaseProgress(topic: Topic): NextAction["testCases"] {
   return topic.testCases.map((c) => ({ id: c.id, status: c.status }));
 }
 
+/** clarifyRecords 进度摘要（nextAction.clarifyProgress 字段用）。 */
+function clarifyProgress(topic: Topic): NextAction["clarifyProgress"] {
+  return topic.clarifyRecords.map((c) => ({
+    id: c.id,
+    kind: c.kind,
+    status: c.status,
+    adrId: c.adrId,
+  }));
+}
+
 /**
  * buildNextAction — 按 action + gatePassed 推 nextAction（无 tier 分支）。
  *
@@ -251,11 +275,45 @@ function testCaseProgress(topic: Topic): NextAction["testCases"] {
 export function buildNextAction(action: Action, topic: Topic): NextAction {
   switch (action) {
     case "create": {
-      // create 后进入 spec 阶段：先明确范围与目标，再写 dev-plan.json。
-      // guidance 同时带 spec + dev-plan 提示词，agent 在做 spec 时就能看到 dev-plan.json 格式。
+      // create 后推荐先 clarify（澄清需求 + 记录 ADR），plan 作为 alternative（清晰需求可直接跳过）。
+      // guidance 带 CLARIFY_PROMPT（含完整方法论：探索→预判→提问→ADR）。
+      return {
+        action: "clarify",
+        guidance: `topic 已建立。下一步：澄清需求与目标（探索技术系统 → 形成预判 → 向用户提问 → 记录 ADR），完成后写 dev-plan.json。\n\n${CLARIFY_PROMPT}`,
+        alternatives: [
+          {
+            action: "plan",
+            guidance: `需求已足够清晰，直接写 dev-plan.json 提交。\n\n${DEV_PLAN_PROMPT}`,
+          },
+        ],
+      };
+    }
+    case "clarify": {
+      // clarify gate fail → 指回 retry
+      if (!computeGatePassed("clarify", topic)) {
+        // 注意：computeGatePassed("clarify") 对空数组返回 true，所以只有 pending 记录时才 fail。
+        // 但 clarify 的 gate fail 是 clarifyCheck（结构校验）失败，不是 computeGatePassed。
+        // 这里检查的是"有 pending 记录"——有 pending 说明还有未解决的澄清，继续 clarify。
+        const hasPending = topic.clarifyRecords.some((c) => c.status === "pending");
+        if (hasPending) {
+          return {
+            action: "clarify",
+            guidance: `仍有 pending 澄清记录未解决。继续提问或带 answer 提交 cw(clarify)。\n\n${CLARIFY_PROMPT}`,
+            clarifyProgress: clarifyProgress(topic),
+          };
+        }
+      }
+      // 全 resolved/skipped（或空数组）→ 推荐 plan，clarify 降为 alternative
       return {
         action: "plan",
-        guidance: `topic 已建立。下一步：明确任务范围与目标，完成后产出 dev-plan.json 并提交。\n\n${SPEC_PROMPT}\n\n---\n\n${DEV_PLAN_PROMPT}`,
+        guidance: `clarify 阶段完成（所有记录已 resolved/skipped，或无需澄清）。下一步：写 dev-plan.json 并提交。\n\n${DEV_PLAN_PROMPT}`,
+        clarifyProgress: clarifyProgress(topic),
+        alternatives: [
+          {
+            action: "clarify",
+            guidance: `如需继续澄清，提交 cw(clarify) 记录新问题。\n\n${CLARIFY_PROMPT}`,
+          },
+        ],
       };
     }
     case "plan": {

@@ -89,3 +89,24 @@ export function makeValidTestJson(
   };
 }
 
+/**
+ * clarifyJson 格式（单条，能过 clarifyCheck）。
+ * 含 kind/topic/assessment/question/options/recommendation，不含 answer（pending 状态）。
+ */
+export function makeValidClarifyJson(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    kind: "technical",
+    topic: "状态存储方案",
+    assessment: "当前 store.ts 用 JSON + flock，并发写 >10 qps 时锁竞争明显。",
+    question: "状态存储维持 JSON 还是迁移 SQLite？",
+    options: [
+      { id: "A", label: "维持 JSON + flock", tradeoff: "零依赖，并发弱" },
+      { id: "B", label: "迁移 better-sqlite3", tradeoff: "并发好，引入原生依赖" },
+    ],
+    recommendation: "B",
+    ...overrides,
+  };
+}
+

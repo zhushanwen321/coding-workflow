@@ -21,6 +21,7 @@ import { CwStore } from "../src/store.js";
 import type { ActionDeps } from "../src/types.js";
 import { setupGitRepo } from "./helpers/git.js";
 import {
+  makeValidClarifyJson,
   makeValidDevPlanJson,
   makeValidPlanJson,
   makeValidTestJson,
@@ -843,6 +844,42 @@ describe("dispatch closeout（U30）", () => {
     expect(phases).toContain("retrospect");
     expect(phases).toContain("closeout");
   });
+
+  it("U30 补充: closeout 后 evidence.coverage 填充测试通过率（杠杆 4）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "u30-cov", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    // 用 makeValidDevPlanJson（不含 testCases），避免 legacy testCases 与 passTddPlanGate 重复写入
+    dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passTddPlanGate(store, topicId);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    passReviewGate(store, topicId);
+    // 全部 testCase passed（E1 + E2）
+    dispatch(
+      { action: "test", topicId, cases: [
+        { caseId: "E1", actual: { text: "expected-output" } },
+        { caseId: "E2", actual: { text: "real-output" } },
+      ] },
+      deps,
+    );
+    const retrospectDir = join(tmpDir, ".xyz-harness", "u30-cov");
+    mkdirSync(retrospectDir, { recursive: true });
+    const retrospectPath = join(retrospectDir, "retrospect.md");
+    writeFileSync(retrospectPath, "# Retrospect\n\n复盘内容");
+    dispatch({ action: "retrospect", topicId, retrospectPath }, deps);
+    dispatch({ action: "closeout", topicId }, deps);
+
+    const topic = store.loadTopic(topicId);
+    // 杠杆 4：coverage 不再是 undefined，且全 passed 时 = 1
+    expect(topic!.evidence!.coverage).toBeDefined();
+    expect(topic!.evidence!.coverage).toBe(1);
+  });
 });
 
 // ── 补充：guard 拒绝路径（GuardError） ──────────────────────
@@ -1051,6 +1088,11 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     // testRunner 仍被存储
     const topic = store.loadTopic(topicId);
     expect(topic!.testRunner!.command).toBe('node -e "process.exit(1)"');
+
+    // 杠杆 1：红灯确认 → gateHistory 含 tdd-red-light pass 记录
+    const redGate = topic!.gateHistory.filter((g) => g.gate === "tdd-red-light");
+    expect(redGate).toHaveLength(1);
+    expect(redGate[0]!.result).toBe("pass");
   });
 
   it("testRunner + redCheck=true + 测试命令 exit 0（意外通过）→ mustFix 含红灯校验 warning, status 仍流转", () => {
@@ -1092,6 +1134,12 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
 
     const topic = store.loadTopic(topicId);
     expect(topic!.status).toBe("tdd_inited");
+
+    // 杠杆 1：红灯失败 → gateHistory 含 tdd-red-light fail 记录（含 report）
+    const redGate = topic!.gateHistory.filter((g) => g.gate === "tdd-red-light");
+    expect(redGate).toHaveLength(1);
+    expect(redGate[0]!.result).toBe("fail");
+    expect(redGate[0]!.report).toMatch(/红灯校验未通过/);
   });
 
   it("无 testRunner（agent 模式）+ redCheck=true → 不跑红灯校验, 无 mustFix", () => {
@@ -1206,5 +1254,237 @@ describe("dispatch replan --test（testCases 更新）", () => {
     expect(() =>
       dispatch({ action: "replan", topicId }, deps),
     ).toThrow(/requires --plan or --test/);
+  });
+});
+
+// ── dispatch clarify ───────────────────────────────────────
+
+describe("dispatch clarify", () => {
+  it("合法 clarifyJson（pending）→ clarifyRecords 写入 1 条, status 仍 created, nextAction 仍 clarify", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-pending", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    const result = dispatch(
+      { action: "clarify", topicId, clarifyJson: makeValidClarifyJson() },
+      deps,
+    );
+
+    // status 不流转（progressive），仍 created
+    expect(result.status).toBe("created");
+    // 有 pending 记录 → nextAction 仍是 clarify（继续提问或带 answer 提交）
+    expect(result.nextAction.action).toBe("clarify");
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.clarifyRecords).toHaveLength(1);
+    expect(topic!.clarifyRecords[0]!.status).toBe("pending");
+    // clarifyRecords[0] 含 kind/assessment/question，不含 answer
+    expect(topic!.clarifyRecords[0]!.kind).toBe("technical");
+    expect(topic!.clarifyRecords[0]!.assessment).toBeDefined();
+    expect(topic!.clarifyRecords[0]!.answer).toBeUndefined();
+  });
+
+  it("含 answer → resolved, nextAction=plan（全 resolved）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-resolved", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    const result = dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: makeValidClarifyJson({ answer: "迁移 SQLite，并发更好" }),
+      },
+      deps,
+    );
+
+    expect(result.status).toBe("created");
+    // 全 resolved → nextAction 推进到 plan
+    expect(result.nextAction.action).toBe("plan");
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.clarifyRecords).toHaveLength(1);
+    expect(topic!.clarifyRecords[0]!.status).toBe("resolved");
+    expect(topic!.clarifyRecords[0]!.answer).toBe("迁移 SQLite，并发更好");
+    expect(topic!.clarifyRecords[0]!.resolvedAt).toBeDefined();
+  });
+
+  it("含 adr + projectPath 文件存在 → 双写 clarifyRecords + adrs, clarifyRecord.adrId 非空", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-adr", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // 先在 workspace 写一个 adr md 文件（clarifyCheck 用 fileExistsCheck 校验存在）
+    const adrPath = join(tmpDir, "adr-0001.md");
+    writeFileSync(adrPath, "# ADR: 迁移 SQLite\n决策内容");
+
+    const result = dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: makeValidClarifyJson({
+          answer: "迁移 SQLite",
+          adr: {
+            title: "状态存储迁移 SQLite",
+            context: "JSON + flock 并发弱",
+            decision: "迁移 better-sqlite3",
+            alternatives: ["维持 JSON + flock"],
+            consequences: "并发好，引入原生依赖",
+            projectPath: adrPath,
+          },
+        }),
+      },
+      deps,
+    );
+
+    const topic = store.loadTopic(topicId);
+    // clarifyRecords 写入 1 条
+    expect(topic!.clarifyRecords).toHaveLength(1);
+    // adrs 写入 1 条
+    expect(topic!.adrs).toHaveLength(1);
+    // clarifyRecord.adrId 回填为分配的 adr id
+    expect(topic!.clarifyRecords[0]!.adrId).toBeDefined();
+    expect(topic!.clarifyRecords[0]!.adrId).toBe(topic!.adrs[0]!.id);
+    // clarifyProgress 暴露在 result（含 adrId）
+    const progress = (result as Record<string, unknown>).clarifyProgress as Array<{
+      id: string;
+      adrId?: string;
+    }>;
+    expect(progress[0]!.adrId).toBe(topic!.adrs[0]!.id);
+  });
+
+  it("含 adr + projectPath 文件不存在 → gate fail, gateHistory 有 fail 记录, mustFix 含文件不存在", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-adr-missing", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    const result = dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: makeValidClarifyJson({
+          answer: "迁移 SQLite",
+          adr: {
+            title: "状态存储迁移 SQLite",
+            context: "JSON + flock 并发弱",
+            decision: "迁移 better-sqlite3",
+            alternatives: ["维持 JSON + flock"],
+            consequences: "并发好，引入原生依赖",
+            projectPath: join(tmpDir, "不存在的路径.md"),
+          },
+        }),
+      },
+      deps,
+    );
+
+    // gate fail：status 仍 created（progressive 不流转），clarifyRecords 未写入
+    expect(result.status).toBe("created");
+    const topic = store.loadTopic(topicId);
+    expect(topic!.clarifyRecords).toHaveLength(0);
+    // gateHistory 有 clarify phase 的 fail 记录
+    const clarifyFails = topic!.gateHistory.filter(
+      (g) => g.phase === "clarify" && g.result === "fail",
+    );
+    expect(clarifyFails.length).toBeGreaterThanOrEqual(1);
+    // mustFix 含 "文件不存在"
+    const mustFix = (result as Record<string, unknown>).mustFix;
+    expect(mustFix).toBeDefined();
+    expect(String(mustFix)).toMatch(/文件不存在/);
+  });
+
+  it("批量 clarifyJson（数组 2 条）→ clarifyRecords 写入 2 条", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-batch", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // 数组传 2 条：第 1 条含 answer（resolved），第 2 条不含 answer（pending）
+    const batch = [
+      makeValidClarifyJson({ topic: "主题1", answer: "答案1" }),
+      makeValidClarifyJson({ topic: "主题2" }),
+    ];
+    const result = dispatch(
+      { action: "clarify", topicId, clarifyJson: batch },
+      deps,
+    );
+
+    const topic = store.loadTopic(topicId);
+    expect(topic!.clarifyRecords).toHaveLength(2);
+    expect(topic!.clarifyRecords[0]!.topic).toBe("主题1");
+    expect(topic!.clarifyRecords[0]!.status).toBe("resolved");
+    expect(topic!.clarifyRecords[1]!.topic).toBe("主题2");
+    expect(topic!.clarifyRecords[1]!.status).toBe("pending");
+    // 有 pending → nextAction 仍 clarify
+    expect(result.nextAction.action).toBe("clarify");
+  });
+
+  it("clarify 不阻断 plan：create → 直接 plan（不先 clarify）→ plan gate 通过, status=planned", () => {
+    const { deps } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-skip", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // 不先 clarify，直接 plan
+    const result = dispatch(
+      { action: "plan", topicId, planJson: makeValidPlanJson() },
+      deps,
+    );
+
+    // plan gate 通过，status=planned
+    expect(result.status).toBe("planned");
+    expect(result.nextAction.action).toBe("tdd_plan");
+    expect(result.gatePassed.plan).toBe(true);
+  });
+
+  it("progressive 多次 clarify → clarifyRecords 有 2 条, status 仍 created", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-progressive", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // 第 1 条 clarify
+    dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: makeValidClarifyJson({ topic: "主题1" }),
+      },
+      deps,
+    );
+    // 第 2 条 clarify
+    dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: makeValidClarifyJson({ topic: "主题2" }),
+      },
+      deps,
+    );
+
+    const topic = store.loadTopic(topicId);
+    // clarifyRecords 有 2 条（progressive append-only）
+    expect(topic!.clarifyRecords).toHaveLength(2);
+    expect(topic!.clarifyRecords[0]!.id).toBe("CL1");
+    expect(topic!.clarifyRecords[1]!.id).toBe("CL2");
+    // status 仍 created（progressive 不流转）
+    expect(topic!.status).toBe("created");
   });
 });

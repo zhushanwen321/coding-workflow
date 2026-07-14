@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseDevPlan, type ParsedTestJson,parseTestJson } from "./plan-parser.js";
+import { parseClarifyJson, type ParsedClarify, type ParsedDevPlan, parseDevPlan, type ParsedTestJson, parseTestJson } from "./plan-parser.js";
 import {
   type Actual,
   CwError,
@@ -164,6 +164,8 @@ export class GitValidator {
 export interface PlanCheckResult {
   result: "pass" | "fail";
   report: string;
+  /** 范围守门 warning（result=pass 但范围可能过大，不阻断） */
+  warning?: string;
 }
 
 /**
@@ -192,11 +194,44 @@ export function planCheck(planJson: unknown): PlanCheckResult {
       };
     }
 
-    return { result: "pass", report: "" };
+    return { result: "pass", report: "", ...checkPlanScopeWarning(parsed) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { result: "fail", report: msg };
   }
+}
+
+/// 范围守门阈值。超过 = 返回 warning（不阻断），提示 agent 考虑拆分 topic。
+const SCOPE_WARN_WAVES = 10;
+const SCOPE_WARN_FILES = 15;
+
+/**
+ * checkPlanScopeWarning — 范围守门客观信号检查（warning 不阻断）。
+ *
+ * engine 层面只能从 dev-plan.json 的结构数据客观推断，不做语义判断。
+ * 可判定的维度：waves 数量、涉及文件数（从 changes 文本提取路径）。
+ * 不可判定的维度（仍由 prompt 把关）：是否涉及状态机/架构变更、是否需要架构决策。
+ */
+function checkPlanScopeWarning(
+  parsed: ParsedDevPlan,
+): { warning?: string } {
+  const allChanges = parsed.waves.flatMap((w) => w.changes ?? []);
+  const files = extractFilesFromChanges(allChanges);
+
+  const warnings: string[] = [];
+  if (parsed.waves.length > SCOPE_WARN_WAVES) {
+    warnings.push(
+      `waves 数量 ${parsed.waves.length} 超过 ${SCOPE_WARN_WAVES}，考虑拆分为多个 topic`,
+    );
+  }
+  if (files.size > SCOPE_WARN_FILES) {
+    warnings.push(
+      `涉及文件数 ${files.size} 超过 ${SCOPE_WARN_FILES}，考虑拆分或升级流程`,
+    );
+  }
+
+  if (warnings.length === 0) return {};
+  return { warning: warnings.join("; ") };
 }
 
 // ── tddPlanCheck（调 parseTestJson，校验 testCases） ────────────
@@ -270,6 +305,24 @@ export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
       report:
         `expected.text 为模糊结论词（不允许填 passed/ok/success 等，需写具体判定条件）: ` +
         fuzzyIds.join(", "),
+    };
+  }
+
+  // P1: 检查 expected 空判据（url 和 text 都缺 = 无法机器判定）。
+  // 无判据的 testCase 到 test 阶段会被 judgeByExpected 判 failed「no judgeable field」，
+  // 在 tdd_plan 前置拦截避免浪费整个 dev 周期。
+  const noJudgeableIds: string[] = [];
+  for (const tc of parsed.testCases) {
+    if (tc.expected.url === undefined && tc.expected.text === undefined) {
+      noJudgeableIds.push(tc.id);
+    }
+  }
+  if (noJudgeableIds.length > 0) {
+    return {
+      result: "fail",
+      report:
+        `expected 缺少判据字段（url 和 text 至少填一个）: ${noJudgeableIds.join(", ")}。` +
+        `无判据的 testCase 无法被 CW 机器判定，到 test 阶段会被直接判 failed。`,
     };
   }
 
@@ -622,4 +675,75 @@ export function fileExistsCheck(path: string): FileExistsResult {
     return { result: "fail", report: `file is empty: ${path}` };
   }
   return { result: "pass", report: "" };
+}
+
+// ── clarifyCheck（clarify gate，结构校验 + ADR projectPath 文件存在） ──
+
+export interface ClarifyCheckResult {
+  result: "pass" | "fail";
+  report: string;
+  /** 解析后的 clarify seeds（pass 时供 handler 写入 store） */
+  parsed?: ParsedClarify[];
+}
+
+/**
+ * clarifyCheck — clarifyJson 结构校验 + ADR projectPath 文件存在校验。
+ *
+ * 校验链：
+ *   1. parseClarifyJson（size guard + typebox schema + extract）→ fail 时 report 带具体 schema 错误
+ *   2. 对每条 parsed 中的 adr.projectPath（若存在）调 fileExistsCheck 校验文件存在
+ *      ADR 要求是文件而非目录（与 fileExistsCheck 对目录放行不同），所以额外检查 isFile
+ *
+ * 失败路径：
+ *   - parseClarifyJson throw（size/schema）→ fail
+ *   - adr.projectPath 不存在/为目录/为空文件 → fail + report 指明哪条记录
+ *
+ * 与 planCheck/tddPlanCheck 的区别：clarifyCheck 是 progressive gate（status 不流转），
+ * gate pass 只 append gateHistory(pass)，不 updateStatus。
+ */
+export function clarifyCheck(clarifyJson: unknown): ClarifyCheckResult {
+  let parsed: ParsedClarify[];
+  try {
+    parsed = parseClarifyJson(clarifyJson);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { result: "fail", report: msg };
+  }
+
+  // 逐条校验 ADR projectPath（若存在）
+  for (let i = 0; i < parsed.length; i++) {
+    const adr = parsed[i].clarifySeed.adr;
+    if (!adr || !adr.projectPath) continue;
+
+    const path = adr.projectPath;
+    if (path.length === 0) {
+      return {
+        result: "fail",
+        report: `clarify[${i}].adr.projectPath 为空字符串`,
+      };
+    }
+    if (!existsSync(path)) {
+      return {
+        result: "fail",
+        report: `clarify[${i}].adr.projectPath 文件不存在: ${path}（先写 docs/adr/ 文件再提交）`,
+      };
+    }
+    const stat = statSync(path);
+    // ADR 必须是文件，不是目录（与 fileExistsCheck 对目录放行的行为不同）
+    if (stat.isDirectory()) {
+      return {
+        result: "fail",
+        report: `clarify[${i}].adr.projectPath 是目录而非文件: ${path}`,
+      };
+    }
+    const content = readFileSync(path, "utf8").trim();
+    if (content.length === 0) {
+      return {
+        result: "fail",
+        report: `clarify[${i}].adr.projectPath 文件为空: ${path}`,
+      };
+    }
+  }
+
+  return { result: "pass", report: "", parsed };
 }

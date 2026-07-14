@@ -22,6 +22,7 @@
 import { join } from "node:path";
 
 import {
+  clarifyCheck,
   devCheck,
   fileExistsCheck,
   planCheck,
@@ -43,6 +44,7 @@ import {
   type ActionDeps,
   type ActionResult,
   type Actual,
+  type ClarifyRecord,
   CwError,
   type Evidence,
   type TestCase,
@@ -59,6 +61,13 @@ export interface CreateParams {
   slug: string;
   objective: string;
   workspacePath?: string;
+}
+
+export interface ClarifyParams {
+  action: "clarify";
+  topicId: string;
+  /** clarifyJson 内容（CLI 从 stdin 读为对象，支持单条或批量数组）。 */
+  clarifyJson: unknown;
 }
 
 export interface PlanParams {
@@ -125,6 +134,7 @@ export interface ReplanParams {
 
 export type CwParams =
   | CreateParams
+  | ClarifyParams
   | PlanParams
   | TddPlanParams
   | DevParams
@@ -161,6 +171,8 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     testCases: [],
     gateHistory: [],
     gatePassed: {},
+    clarifyRecords: [],
+    adrs: [],
   };
 
   deps.store.transaction(() => {
@@ -180,6 +192,114 @@ function buildTopicId(slug: string): string {
   const ISO_DATE_PREFIX_LEN = 10;
   const date = new Date().toISOString().slice(0, ISO_DATE_PREFIX_LEN);
   return `cw-${date}-${slug}`;
+}
+
+// ── handleClarify ───────────────────────────────────────────
+
+/**
+ * handleClarify — 渐进式澄清记录提交（progressive，不流转 status）。
+ *
+ * 数据流：
+ *   clarifyCheck(clarifyJson)（结构校验 + ADR projectPath 文件存在）
+ *     → 事务{ 逐条 appendClarifyRecord（+ 若含 adr: appendAdr + updateClarifyRecord 回填 adrId）
+ *       + appendGateHistory(clarify, pass/fail, progressive:true) }
+ *     → reload → buildNextAction("clarify")
+ *
+ * progressive 语义：status 始终为 created（TRANSITIONS.clarify.nextStatus=created, progressive=true），
+ * 可多次调用，每次追加新的澄清记录。
+ *
+ * gate fail 语义：clarifyCheck 结构校验失败 → gateHistory append fail，nextAction 指回 clarify retry。
+ * 与 plan/tdd_plan 的 gate fail 不同：clarify gate fail 时 status 本就不变（created），无需特别处理。
+ *
+ * ADR 双写流程：
+ *   - clarifySeed 含 adr 时，先 appendAdr 拿到分配的 adrId
+ *   - 再 appendClarifyRecord 时回填 adrId 到 clarifyRecord
+ *   - 注意：appendClarifyRecord 已含 answer → status=resolved，adrId 通过 updateClarifyRecord 回填
+ *
+ * 失败路径：
+ *   - clarifyCheck fail（结构/schema/projectPath 文件不存在）→ status 不变 + gateHistory fail + mustFix
+ */
+export function handleClarify(
+  params: ClarifyParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  // topic 参数由 dispatch 统一签名传入，handleClarify 不读 topic 当前状态
+  // （progressive append-only，只追加记录不改状态）。
+  void topic;
+  const check = clarifyCheck(params.clarifyJson);
+
+  let passed: boolean;
+  deps.store.transaction(() => {
+    if (check.result === "fail") {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "clarify",
+        action: "clarify",
+        gate: "clarify-schema",
+        result: "fail",
+        report: check.report,
+        progressive: true,
+      });
+      passed = false;
+      return;
+    }
+
+    // gate pass：逐条写入 clarifyRecord + 关联 ADR
+    const parsed = check.parsed!;
+    for (const item of parsed) {
+      const seed = item.clarifySeed;
+
+      // 若含 ADR，先 appendAdr 拿到分配的 id
+      let adrId: string | undefined;
+      if (seed.adr) {
+        adrId = deps.store.appendAdr(params.topicId, seed.adr);
+      }
+
+      // appendClarifyRecord 返回分配的 clarifyRecord id
+      const clarifyId = deps.store.appendClarifyRecord(params.topicId, seed);
+
+      // 回填 adrId 到 clarifyRecord（关联 ADR 与 clarify）
+      if (adrId) {
+        deps.store.updateClarifyRecord(params.topicId, clarifyId, { adrId });
+        // 也回填 clarifyId 到 adr（双向关联）——当前 store 无 updateAdr，通过 appendAdr 时不带 clarifyId
+        // 暂时只做单向关联（clarifyRecord.adrId → adr），adr.clarifyId 留空，后续如需可加 updateAdr
+      }
+    }
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "clarify",
+      action: "clarify",
+      gate: "clarify-schema",
+      result: "pass",
+      progressive: true,
+    });
+    passed = true;
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after clarify: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("clarify", updated),
+  };
+  // 暴露 clarifyProgress 供调用方查看进度
+  (result as Record<string, unknown>).clarifyProgress = updated.clarifyRecords.map(
+    (c: ClarifyRecord) => ({
+      id: c.id,
+      kind: c.kind,
+      status: c.status,
+      adrId: c.adrId,
+    }),
+  );
+  if (!passed!) {
+    (result as Record<string, unknown>).mustFix = check.report;
+  }
+  return result;
 }
 
 // ── gateAdvance（file-gate 深函数）─────────────────────────
@@ -330,6 +450,9 @@ export function handlePlan(
   if (!passed!) {
     // gate fail 时附 mustFix，方便 agent 诊断（不改变 ActionResult 结构契约）。
     (result as Record<string, unknown>).mustFix = check.report;
+  } else if (check.warning) {
+    // gate pass 但范围可能过大 → warning 挂 mustFix（不阻断 status，agent 可选拆分或继续）。
+    (result as Record<string, unknown>).mustFix = `范围守门 warning（不阻断）：${check.warning}`;
   }
   return result;
 }
@@ -423,9 +546,31 @@ export function handleTddPlan(
 
   // 事务外：gate pass 后，对 redCheck=true 的 testCase 跑红灯校验（仅当配置了 testRunner）。
   // 不改变 status（已是 tdd_inited），红灯校验失败只作为 warning 写入 mustFix。
+  // 红灯结果追加 gateHistory（独立 gate 名 tdd-red-light），供事后复盘 TDD 纪律执行情况。
   const redWarnings = runRedLightVerification(updated);
   if (redWarnings.length > 0) {
     (result as Record<string, unknown>).mustFix = redWarnings.join("\n");
+    deps.store.transaction(() => {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "tdd_plan",
+        action: "tdd_plan",
+        gate: "tdd-red-light",
+        result: "fail",
+        report: redWarnings.join("\n"),
+        progressive: false,
+      });
+    });
+  } else if (updated.testRunner) {
+    // 配置了 testRunner 且红灯全通过（含无 redCheck case 的情况）→ 记 pass 证明红灯验证执行过。
+    deps.store.transaction(() => {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "tdd_plan",
+        action: "tdd_plan",
+        gate: "tdd-red-light",
+        result: "pass",
+        progressive: false,
+      });
+    });
   }
   return result;
 }
@@ -755,6 +900,10 @@ export function handleCloseout(
       }
       const evidence: Evidence = {
         closedAt: new Date().toISOString(),
+        coverage: fresh.testCases.length > 0
+          ? fresh.testCases.filter((c) => c.status === "passed").length /
+            fresh.testCases.length
+          : 0,
         gateHistory: fresh.gateHistory,
       };
       deps.store.setEvidence(params.topicId, evidence);

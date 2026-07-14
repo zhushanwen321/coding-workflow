@@ -121,7 +121,8 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     expect(createResult.topicId).toMatch(/^cw-\d{4}-\d{2}-\d{2}-e1-full$/);
     const topicId = createResult.topicId as string;
     const nextAction = createResult.nextAction as Record<string, unknown>;
-    expect(nextAction.action).toBe("plan");
+    // create 后推荐 clarify（advisory），但可直接跳 plan（alternative）
+    expect(nextAction.action).toBe("clarify");
 
     // 2. plan（stdin 传 dev-plan.json，只含 waves）
     const planJson = JSON.stringify({

@@ -37,7 +37,13 @@ import { dirname } from "node:path";
 
 import type {
   Action,
+  AdrRecord,
+  AdrSeed,
   Artifacts,
+  ClarifyKind,
+  ClarifyOption,
+  ClarifyRecord,
+  ClarifySeed,
   Evidence,
   GateHistoryEntry,
   Priority,
@@ -123,11 +129,44 @@ interface GateHistoryRecord {
   progressive: boolean;
 }
 
+interface ClarifyStoreRecord {
+  topicId: string;
+  id: string;
+  kind: ClarifyKind;
+  topic: string;
+  assessment: string;
+  question: string;
+  options?: ClarifyOption[];
+  recommendation?: string;
+  presentationPath?: string;
+  answer?: string;
+  status: "pending" | "resolved" | "skipped";
+  resolvedAt?: string;
+  adrId?: string;
+  createdAt: string;
+}
+
+interface AdrStoreRecord {
+  topicId: string;
+  id: string;
+  title: string;
+  status: "proposed" | "accepted";
+  context: string;
+  decision: string;
+  alternatives: string[];
+  consequences: string;
+  clarifyId?: string;
+  projectPath?: string;
+  createdAt: string;
+}
+
 interface CwJsonFile {
   topics: TopicRecord[];
   waves: WaveRecord[];
   testCases: TestCaseRecord[];
   gateHistory: GateHistoryRecord[];
+  clarifyRecords: ClarifyStoreRecord[];
+  adrs: AdrStoreRecord[];
 }
 
 // ── 常量 ─────────────────────────────────────────────────────
@@ -136,6 +175,8 @@ const LOCK_MAX_RETRIES = 50;
 const LOCK_RETRY_DELAY_MS = 100;
 const LOCK_STALE_TIMEOUT_MS = 30_000;
 const INT32_BYTES = 4;
+/** ADR ID 最小宽度（padStart 补零，如 "0001"）。 */
+const ADR_ID_WIDTH = 4;
 
 // ── CwStore ──────────────────────────────────────────────────
 
@@ -177,6 +218,8 @@ export class CwStore {
     if (!Array.isArray(data.waves)) data.waves = [];
     if (!Array.isArray(data.testCases)) data.testCases = [];
     if (!Array.isArray(data.gateHistory)) data.gateHistory = [];
+    if (!Array.isArray(data.clarifyRecords)) data.clarifyRecords = [];
+    if (!Array.isArray(data.adrs)) data.adrs = [];
     return data;
   }
 
@@ -186,6 +229,8 @@ export class CwStore {
       waves: [],
       testCases: [],
       gateHistory: [],
+      clarifyRecords: [],
+      adrs: [],
     };
   }
 
@@ -393,12 +438,7 @@ export class CwStore {
     const data = this.getActiveData();
     const record = data.topics.find((t) => t.topicId === topicId);
     if (!record) return null;
-    const waves = data.waves.filter((w) => w.topicId === topicId);
-    const testCases = data.testCases.filter((tc) => tc.topicId === topicId);
-    const gateHistory = data.gateHistory
-      .filter((g) => g.topicId === topicId)
-      .sort((a, b) => a.id - b.id);
-    return this.assembleTopic(record, waves, testCases, gateHistory);
+    return this.assembleTopicFromData(record, topicId, data);
   }
 
   /**
@@ -407,16 +447,37 @@ export class CwStore {
    */
   listTopics(): Topic[] {
     const data = this.getActiveData();
-    return data.topics.map((record) => {
-      const waves = data.waves.filter((w) => w.topicId === record.topicId);
-      const testCases = data.testCases.filter(
-        (tc) => tc.topicId === record.topicId,
-      );
-      const gateHistory = data.gateHistory
-        .filter((g) => g.topicId === record.topicId)
-        .sort((a, b) => a.id - b.id);
-      return this.assembleTopic(record, waves, testCases, gateHistory);
-    });
+    return data.topics.map((record) =>
+      this.assembleTopicFromData(record, record.topicId, data),
+    );
+  }
+
+  /**
+   * 从 CwJsonFile 的各集合按 topicId 过滤 + 组装 Topic。
+   * loadTopic / listTopics 共用，避免两处重复过滤逻辑。
+   */
+  private assembleTopicFromData(
+    record: TopicRecord,
+    topicId: string,
+    data: CwJsonFile,
+  ): Topic {
+    const waves = data.waves.filter((w) => w.topicId === topicId);
+    const testCases = data.testCases.filter((tc) => tc.topicId === topicId);
+    const gateHistory = data.gateHistory
+      .filter((g) => g.topicId === topicId)
+      .sort((a, b) => a.id - b.id);
+    const clarifyRecords = data.clarifyRecords.filter(
+      (c) => c.topicId === topicId,
+    );
+    const adrs = data.adrs.filter((a) => a.topicId === topicId);
+    return this.assembleTopic(
+      record,
+      waves,
+      testCases,
+      gateHistory,
+      clarifyRecords,
+      adrs,
+    );
   }
 
   private assembleTopic(
@@ -424,6 +485,8 @@ export class CwStore {
     waves: WaveRecord[],
     testCases: TestCaseRecord[],
     gateHistory: GateHistoryRecord[],
+    clarifyRecords: ClarifyStoreRecord[],
+    adrs: AdrStoreRecord[],
   ): Topic {
     return {
       topicId: topic.topicId,
@@ -440,6 +503,8 @@ export class CwStore {
       evidence: topic.evidence,
       artifacts: topic.artifacts,
       testRunner: topic.testRunner,
+      clarifyRecords: clarifyRecords.map((c) => this.mapClarifyRecord(c)),
+      adrs: adrs.map((a) => this.mapAdrRecord(a)),
     };
   }
 
@@ -512,6 +577,39 @@ export class CwStore {
       ts: r.ts,
       report: r.report,
       progressive: r.progressive,
+    };
+  }
+
+  private mapClarifyRecord(r: ClarifyStoreRecord): ClarifyRecord {
+    return {
+      id: r.id,
+      kind: r.kind,
+      topic: r.topic,
+      assessment: r.assessment,
+      question: r.question,
+      options: r.options,
+      recommendation: r.recommendation,
+      presentationPath: r.presentationPath,
+      answer: r.answer,
+      status: r.status,
+      resolvedAt: r.resolvedAt,
+      adrId: r.adrId,
+      createdAt: r.createdAt,
+    };
+  }
+
+  private mapAdrRecord(r: AdrStoreRecord): AdrRecord {
+    return {
+      id: r.id,
+      title: r.title,
+      status: r.status,
+      context: r.context,
+      decision: r.decision,
+      alternatives: r.alternatives ?? [],
+      consequences: r.consequences,
+      clarifyId: r.clarifyId,
+      projectPath: r.projectPath,
+      createdAt: r.createdAt,
     };
   }
 
@@ -675,6 +773,93 @@ export class CwStore {
       .filter((g) => g.topicId === topicId)
       .sort((a, b) => a.id - b.id)
       .map((g) => this.mapGateHistoryRecord(g));
+  }
+
+  // ── clarify + adr DAO（progressive，create→plan 之间） ─────
+
+  /**
+   * 追加一条 clarify 记录。id 由 cw 在 topic 内自增分配（CL1, CL2...）。
+   * 返回分配的 id，供 handler 回填 adrId 关联。
+   */
+  appendClarifyRecord(topicId: string, seed: ClarifySeed): string {
+    let assignedId = "";
+    this.executeWrite(() => {
+      const data = this.fileData!;
+      const existing = data.clarifyRecords.filter(
+        (c) => c.topicId === topicId,
+      );
+      const nextN = existing.length + 1;
+      assignedId = `CL${nextN}`;
+      const now = new Date().toISOString();
+      const status = seed.answer ? "resolved" : "pending";
+      const record: ClarifyStoreRecord = {
+        topicId,
+        id: assignedId,
+        kind: seed.kind,
+        topic: seed.topic,
+        assessment: seed.assessment,
+        question: seed.question,
+        options: seed.options,
+        recommendation: seed.recommendation,
+        presentationPath: seed.presentationPath,
+        answer: seed.answer,
+        status,
+        resolvedAt: seed.answer ? now : undefined,
+        createdAt: now,
+      };
+      data.clarifyRecords.push(record);
+    });
+    return assignedId;
+  }
+
+  /**
+   * 追加一条 ADR 记录。id 由 cw 在 topic 内自增分配（0001, 0002...，padStart 4）。
+   * 返回分配的 id，供 handler 回填 clarifyRecord.adrId 关联。
+   */
+  appendAdr(topicId: string, seed: AdrSeed): string {
+    let assignedId = "";
+    this.executeWrite(() => {
+      const data = this.fileData!;
+      const existing = data.adrs.filter((a) => a.topicId === topicId);
+      const nextN = existing.length + 1;
+      assignedId = String(nextN).padStart(ADR_ID_WIDTH, "0");
+      const record: AdrStoreRecord = {
+        topicId,
+        id: assignedId,
+        title: seed.title,
+        status: seed.status ?? "accepted",
+        context: seed.context,
+        decision: seed.decision,
+        alternatives: seed.alternatives ?? [],
+        consequences: seed.consequences,
+        clarifyId: undefined,
+        projectPath: seed.projectPath,
+        createdAt: new Date().toISOString(),
+      };
+      data.adrs.push(record);
+    });
+    return assignedId;
+  }
+
+  /**
+   * 按 topicId + recordId patch clarify 记录的可变字段。
+   * 参考 updateTestCase 的逐字段 in 检查模式。
+   */
+  updateClarifyRecord(
+    topicId: string,
+    recordId: string,
+    patch: Partial<Pick<ClarifyRecord, "answer" | "status" | "resolvedAt" | "adrId">>,
+  ): void {
+    this.executeWrite(() => {
+      const rec = this.fileData!.clarifyRecords.find(
+        (c) => c.topicId === topicId && c.id === recordId,
+      );
+      if (!rec) return;
+      if ("answer" in patch) rec.answer = patch.answer;
+      if ("status" in patch) rec.status = patch.status as ClarifyRecord["status"];
+      if ("resolvedAt" in patch) rec.resolvedAt = patch.resolvedAt;
+      if ("adrId" in patch) rec.adrId = patch.adrId;
+    });
   }
 
   // ── lifecycle ──────────────────────────────────────────────

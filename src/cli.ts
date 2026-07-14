@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import minimist from "minimist";
 
 import {
+  type ClarifyParams,
   type CloseoutParams,
   type CreateParams,
   type CwParams,
@@ -76,9 +77,10 @@ const EXIT_CW_ERROR = 1;
 /** 进程退出码：内部异常（未预期的错误）。 */
 const EXIT_INTERNAL_ERROR = 2;
 
-/** 合法 action 白名单（8 个 dispatch action + 2 个只读查询命令）。 */
+/** 合法 action 白名单（9 个 dispatch action + 2 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
+  "clarify",
   "plan",
   "tdd_plan",
   "dev",
@@ -250,6 +252,17 @@ export function buildParams(
       if (!objective) throw new CwError("create 需要 --objective");
       const params: CreateParams = { action, slug, objective };
       if (workspacePath) params.workspacePath = workspacePath;
+      return params;
+    }
+
+    case "clarify": {
+      if (!topicId) throw new CwError("clarify 需要 --topicId");
+      const clarifyJson = readJsonPayload(
+        flag(parsed, "clarifyJsonFile"),
+        stdinData,
+        isStdinTTY,
+      );
+      const params: ClarifyParams = { action: "clarify", topicId, clarifyJson };
       return params;
     }
 

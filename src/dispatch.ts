@@ -21,10 +21,12 @@
  */
 
 import {
+  type ClarifyParams,
   type CloseoutParams,
   type CreateParams,
   type CwParams,
   type DevParams,
+  handleClarify,
   handleCloseout,
   handleCreate,
   handleDev,
@@ -106,6 +108,8 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
 
   // action 分派。
   switch (action) {
+    case "clarify":
+      return handleClarify(params as ClarifyParams, topic, deps);
     case "plan":
       return handlePlan(params as PlanParams, topic, deps);
     case "tdd_plan":

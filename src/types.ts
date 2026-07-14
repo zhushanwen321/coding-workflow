@@ -22,11 +22,13 @@ import type { CwStore } from "./store.js";
 // ── 状态机值对象 ────────────────────────────────────────────
 
 /**
- * 8 个正向 action + replan（共 9 个）。
+ * 9 个正向 action + replan（共 10 个）。
+ * clarify 插在 create 和 plan 之间——agent 先澄清需求/技术 spec + 记录 ADR，再写 plan。
  * tdd_plan 插在 plan 和 dev 之间——agent 先写测试代码 + test.json（红灯确认），再进 dev 写实现。
  */
 export type Action =
   | "create"
+  | "clarify"
   | "plan"
   | "tdd_plan"
   | "dev"
@@ -155,6 +157,7 @@ export interface GateHistoryEntry {
 
 export interface Evidence {
   closedAt: string;
+  /** 测试通过率 = passed testCases / total testCases（closeout 时计算）。 */
   coverage?: number;
   /** gate 历史快照，closeout 后可回溯完整 gate 判定轨迹（reviewer 指出不能砍） */
   gateHistory: GateHistoryEntry[];
@@ -169,6 +172,90 @@ export interface Artifacts {
   reviewAt?: string;
   retrospectPath?: string;
   retrospectAt?: string;
+}
+
+// ── 澄清记录 + ADR（create → plan 之间的 clarify 阶段） ─────
+
+/**
+ * 澄清分类。
+ * - requirement：需求 spec 澄清，阻塞串联业务用例的逻辑歧义。
+ * - technical：技术 spec 澄清，涉及技术选型、架构设计、关键 ADR。
+ */
+export type ClarifyKind = "requirement" | "technical";
+
+/**
+ * 简单问题的选项（对应 AskUserQuestion 工具的选项式提问）。
+ */
+export interface ClarifyOption {
+  id: string;
+  label: string;
+  /** 该选项的取舍点，帮助用户决策。 */
+  tradeoff?: string;
+}
+
+/**
+ * ClarifyRecord — create→plan 之间 progressive 记录的澄清条目。
+ *
+ * 设计参考 mattpocock 的 grill-with-docs（先探索后提问 + 留下 paper trail），
+ * 适配 cw 的 agent-agnostic 约束：cw 只提供记录机制，不强制 agent 真去问用户。
+ * 每条记录由 agent 调 cw clarify 时写入，渐进式（progressive），status 不流转。
+ *
+ * 禁止空问：assessment 字段必须非空——提问前 agent 必须先探索技术系统，
+ * 形成背景 + 预判 + 推荐。空问 = 把探索成本转嫁给用户。
+ */
+export interface ClarifyRecord {
+  /** CL1, CL2... cw 在 topic 内自增分配。 */
+  id: string;
+  kind: ClarifyKind;
+  /** 一句话主题，便于检索。 */
+  topic: string;
+  /** agent 探索后的技术背景 + 预判和推荐。禁止空。 */
+  assessment: string;
+  question: string;
+  /** 简单问题：选项式（对应 AskUserQuestion）。复杂问题留空，用 presentationPath。 */
+  options?: ClarifyOption[];
+  /** 推荐的 option.id。 */
+  recommendation?: string;
+  /** 复杂问题：方案对比 md/html 路径（.xyz-harness/{slug}/clarify-CL1.md）。 */
+  presentationPath?: string;
+  /** 用户回答（agent 转述）。pending 阶段为空。 */
+  answer?: string;
+  status: "pending" | "resolved" | "skipped";
+  resolvedAt?: string;
+  /** 若该澄清产生了 ADR，指向 AdrRecord.id。 */
+  adrId?: string;
+  createdAt: string;
+}
+
+/**
+ * ADR — 架构决策记录，clarify 阶段的双写产物之一。
+ *
+ * 双写机制：agent 写项目 docs/adr/{id}-{title}.md（人可读，git tracked），
+ * cw clarify 带 adr 字段（含 projectPath），cw 用 fileExistsCheck 校验文件存在后
+ * 写入 topic.adrs（结构化数据，machine-readable）。
+ *
+ * 触发条件（采用 mattpocock domain-modeling 三条原则）：
+ * 只有同时满足①难以逆转②没有上下文会让人觉得意外③真实取舍，才记 ADR。
+ * 任一缺失则跳过。多数 session 产生 0-1 个 ADR 是正常的。
+ */
+export interface AdrRecord {
+  /** 0001, 0002... cw 在 topic 内自增分配，padStart(4, "0")。 */
+  id: string;
+  title: string;
+  status: "proposed" | "accepted";
+  /** 决策背景（为什么需要做这个决策）。 */
+  context: string;
+  /** 决策内容。 */
+  decision: string;
+  /** 考虑过的替代方案。 */
+  alternatives: string[];
+  /** 决策后果（正面 + 负面）。 */
+  consequences: string;
+  /** 来源 ClarifyRecord.id。 */
+  clarifyId?: string;
+  /** agent 写的项目 docs/adr/ 文件路径，cw 用 fileExistsCheck 校验。 */
+  projectPath?: string;
+  createdAt: string;
 }
 
 export interface Topic {
@@ -187,6 +274,10 @@ export interface Topic {
   artifacts?: Artifacts;
   /** tdd_plan 阶段从 test.json 写入的项目级测试执行配置。 */
   testRunner?: TestRunnerConfig;
+  /** clarify 阶段的澄清记录（progressive，create→plan 之间）。 */
+  clarifyRecords: ClarifyRecord[];
+  /** clarify 阶段产生的 ADR 记录（与 docs/adr/ md 文件双写）。 */
+  adrs: AdrRecord[];
 }
 
 // ── DAO seed 类型（plan.json 解析后写入 store 的输入形态） ─────
@@ -209,6 +300,39 @@ export interface TestCaseSeed {
   dependsOn?: string[];
   priority?: Priority;
   redCheck?: boolean;
+}
+
+/**
+ * ClarifySeed — clarifyJson 解析后写入 store 的输入形态。
+ * 不含 id/createdAt/status——由 cw 在 appendClarifyRecord 时填充。
+ */
+export interface ClarifySeed {
+  kind: ClarifyKind;
+  topic: string;
+  assessment: string;
+  question: string;
+  options?: ClarifyOption[];
+  recommendation?: string;
+  presentationPath?: string;
+  /** 用户回答。非空时 cw 自动设 status=resolved + resolvedAt。 */
+  answer?: string;
+  /** 关联的 ADR seed（若该澄清产生了 ADR）。 */
+  adr?: AdrSeed;
+}
+
+/**
+ * AdrSeed — ClarifySeed.adr 字段的输入形态。
+ * 不含 id/createdAt/clarifyId——由 cw 在 appendAdr 时填充。
+ */
+export interface AdrSeed {
+  title: string;
+  status?: "proposed" | "accepted";
+  context: string;
+  decision: string;
+  alternatives: string[];
+  consequences: string;
+  /** 项目 docs/adr/ 文件路径，cw 用 fileExistsCheck 校验存在。 */
+  projectPath?: string;
 }
 
 // ── TestRunner 配置（test.json 顶层，定义如何执行测试） ──────
@@ -267,6 +391,13 @@ export interface NextAction {
   guidance: string;
   waves?: Array<{ id: string; committed: boolean }>;
   testCases?: Array<{ id: string; status: TestCase["status"] }>;
+  /** clarify 阶段的澄清记录进度摘要。 */
+  clarifyProgress?: Array<{
+    id: string;
+    kind: ClarifyKind;
+    status: ClarifyRecord["status"];
+    adrId?: string;
+  }>;
   /** 当前状态下同样合法的可选 action（主推荐在 action 字段）。 */
   alternatives?: NextActionAlternative[];
 }

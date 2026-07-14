@@ -5,6 +5,7 @@
  * 故放 src/prompts/ 而非外部文档。engine 不假设调用方有 skill 加载机制。
  */
 
+export { CLARIFY_PROMPT } from "./clarify.js";
 export { DEV_PLAN_PROMPT, PLAN_PROMPT } from "./dev-plan.js";
 export { EXECUTE_PROMPT } from "./execute.js";
 export { REVIEW_PROMPT } from "./review.js";

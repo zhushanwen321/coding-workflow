@@ -293,7 +293,8 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
 
 // ── W2: parseDevPlan + parseTestJson 新增测试 ─────────────────
 
-import { parseDevPlan, parseTestJson } from "../src/plan-parser.js";
+import { parseClarifyJson, parseDevPlan, parseTestJson } from "../src/plan-parser.js";
+import { CwError } from "../src/types.js";
 
 describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
   it("只含 waves 不含 testCases → legacyTestCases undefined", () => {
@@ -446,5 +447,79 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
       ],
     };
     expect(() => parseTestJson(json)).toThrow(/cycle|环形/i);
+  });
+});
+
+// ── clarify: parseClarifyJson（单条 + 批量 + schema 校验） ─────
+
+describe("parseClarifyJson", () => {
+  it("单条合法 json → 返回数组长度 1，clarifySeed.kind 正确", () => {
+    const json = {
+      kind: "requirement",
+      topic: "登录失败重试次数上限",
+      assessment: "当前无重试限制，可能被暴力破解。",
+      question: "登录失败重试次数上限设为多少？",
+    };
+    const parsed = parseClarifyJson(json);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.clarifySeed.kind).toBe("requirement");
+    expect(parsed[0]!.clarifySeed.topic).toBe("登录失败重试次数上限");
+  });
+
+  it("批量数组（2 条）→ 返回数组长度 2", () => {
+    const json = [
+      { kind: "requirement", topic: "t1", assessment: "a1", question: "q1?" },
+      { kind: "technical", topic: "t2", assessment: "a2", question: "q2?" },
+    ];
+    const parsed = parseClarifyJson(json);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]!.clarifySeed.kind).toBe("requirement");
+    expect(parsed[1]!.clarifySeed.kind).toBe("technical");
+  });
+
+  it("空数组 → throw CwError", () => {
+    expect(() => parseClarifyJson([])).toThrow(CwError);
+  });
+
+  it("kind 缺失 → throw（schema 校验）", () => {
+    // kind 是必填，缺失触发 typebox Value.Check 失败。
+    const json = { topic: "t", assessment: "a", question: "q?" };
+    expect(() => parseClarifyJson(json)).toThrow();
+  });
+
+  it("assessment 缺失 → throw（schema 校验）", () => {
+    const json = { kind: "technical", topic: "t", question: "q?" };
+    expect(() => parseClarifyJson(json)).toThrow();
+  });
+
+  it("含 adr 字段 → clarifySeed.adr 非空，adr.title 正确", () => {
+    const json = {
+      kind: "technical",
+      topic: "t",
+      assessment: "a",
+      question: "q?",
+      adr: {
+        title: "采用 SQLite 存储方案",
+        context: "JSON+flock 并发不足",
+        decision: "迁移到 better-sqlite3",
+        alternatives: ["维持 JSON"],
+        consequences: "引入原生依赖但并发更好",
+      },
+    };
+    const parsed = parseClarifyJson(json);
+    expect(parsed[0]!.clarifySeed.adr).toBeDefined();
+    expect(parsed[0]!.clarifySeed.adr!.title).toBe("采用 SQLite 存储方案");
+    expect(parsed[0]!.clarifySeed.adr!.alternatives).toEqual(["维持 JSON"]);
+  });
+
+  it("不含 adr 字段 → clarifySeed.adr 为 undefined", () => {
+    const json = {
+      kind: "technical",
+      topic: "t",
+      assessment: "a",
+      question: "q?",
+    };
+    const parsed = parseClarifyJson(json);
+    expect(parsed[0]!.clarifySeed.adr).toBeUndefined();
   });
 });

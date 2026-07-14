@@ -113,8 +113,17 @@ gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_p
 [MANDATORY] 每个测试文件写完后必须跑一次，确认**红灯**（测试因实现不存在而失败）。
 如果测试已经 pass（绿灯）= 违反 TDD（先写了实现再补测试），必须回退。
 
-redCheck=true 的 case，CW 会在后续版本自动跑红灯校验（exit code ≠ 0 确认红灯）。
-当前版本红灯校验由 agent 自行执行（跑测试确认 fail），CW 只做结构校验。
+### 自动红灯校验（配置 testRunner 时）
+
+test.json 配置了 testRunner 时，CW 在 tdd_plan gate 通过后自动跑红灯校验：
+- 对 redCheck=true 的 testCase 执行 testRunner.command，确认 exit code ≠ 0（红灯）
+- 结果记录到 gateHistory（gate 名 tdd-red-light），供事后复盘 TDD 纪律执行情况
+- 红灯校验**不阻断** status 流转（仍进入 tdd_inited），但失败时 mustFix 带 warning
+
+### 手动红灯校验（未配置 testRunner 时）
+
+未配置 testRunner 时，红灯校验由 agent 自行执行——跑测试确认 fail。
+CW 只做 test.json 结构校验，不自动跑测试命令。
 
 ## testRunner 各语言配置示例
 

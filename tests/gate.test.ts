@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import {
+  clarifyCheck,
   devCheck,
   GitValidator,
   planCheck,
@@ -29,7 +30,7 @@ import {
 } from "../src/gate.js";
 import { CwError, type Topic } from "../src/types.js";
 import { commitFile,setupGitRepo } from "./helpers/git.js";
-import { makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
+import { makeValidClarifyJson, makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
 
 // ── test.json helper（与 plan-parser.test.ts 的 makeValidTestJson 结构一致） ──
 
@@ -159,6 +160,45 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
     });
     const result = planCheck(planJson);
     expect(result.result).toBe("pass");
+  });
+});
+
+describe("planCheck 范围守门 warning（杠杆 3）", () => {
+  it("waves 数量超过阈值 → pass + warning 含 waves 数量", () => {
+    const waves = Array.from({ length: 11 }, (_, i) => ({
+      id: `W${i + 1}`,
+      changes: [`change ${i + 1}`],
+      dependsOn: i > 0 ? [`W${i}`] : [],
+    }));
+    const devPlan = { format: "lite", objective: "big task", waves };
+    const result = planCheck(devPlan);
+    expect(result.result).toBe("pass");
+    expect(result.warning).toBeDefined();
+    expect(result.warning).toContain("11");
+  });
+
+  it("涉及文件数超过阈值 → pass + warning 含文件数", () => {
+    const changes = Array.from({ length: 16 }, (_, i) => `修改 src/file${i + 1}.ts`);
+    const devPlan = {
+      format: "lite",
+      objective: "many files",
+      waves: [{ id: "W1", changes, dependsOn: [] }],
+    };
+    const result = planCheck(devPlan);
+    expect(result.result).toBe("pass");
+    expect(result.warning).toBeDefined();
+    expect(result.warning).toContain("16");
+  });
+
+  it("范围在阈值内 → pass 无 warning", () => {
+    const devPlan = {
+      format: "lite",
+      objective: "small task",
+      waves: [{ id: "W1", changes: ["修改 src/a.ts"], dependsOn: [] }],
+    };
+    const result = planCheck(devPlan);
+    expect(result.result).toBe("pass");
+    expect(result.warning).toBeUndefined();
   });
 });
 
@@ -316,6 +356,36 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
   });
 });
 
+describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
+  it("expected.url 和 text 都缺 → fail，报告列出 testCase id", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("E1");
+    expect(result.report).toContain("判据");
+    // E2 有 text，不应出现在报告中
+    expect(result.report).not.toContain("E2");
+  });
+
+  it("多个 testCase 空判据 → fail，报告列出所有空判据 id", () => {
+    const testJson = {
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    const result = tddPlanCheck(testJson);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("E1");
+    expect(result.report).toContain("E2");
+  });
+});
+
 // ── redLightCheck（执行测试命令确认红灯） ───────────────────
 
 describe("redLightCheck", () => {
@@ -463,6 +533,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -494,6 +566,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -540,6 +614,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -572,6 +648,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W-nonexistent", topic);
@@ -610,6 +688,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -653,6 +733,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
@@ -682,6 +764,8 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, "nonexistent000000000000000000000000000000000000", "W1", topic);
@@ -711,10 +795,105 @@ describe("P1: devCheck 文件覆盖校验", () => {
       testCases: [],
       gateHistory: [],
       gatePassed: {},
+      clarifyRecords: [],
+      adrs: [],
     };
 
     const result = devCheck(validator, commitHash, "W1", topic);
     expect(result.valid).toBe(true); // 宽松模式：有 extraFiles 不 fail
     expect(result.extraFiles).toContain("src/extra.ts");
+  });
+});
+
+// ── clarifyCheck（clarify gate，结构校验 + ADR projectPath 文件存在） ──
+
+describe("clarifyCheck", () => {
+  it("合法 clarifyJson（单条，含 kind/assessment/question）→ pass", () => {
+    const result = clarifyCheck(makeValidClarifyJson());
+    expect(result.result).toBe("pass");
+    expect(result.report).toBe("");
+    expect(result.parsed).toBeDefined();
+    expect(result.parsed).toHaveLength(1);
+  });
+
+  it("合法 clarifyJson（批量数组，2 条）→ pass，parsed.length=2", () => {
+    const json = [
+      { kind: "requirement", topic: "t1", assessment: "a1", question: "q1?" },
+      { kind: "technical", topic: "t2", assessment: "a2", question: "q2?" },
+    ];
+    const result = clarifyCheck(json);
+    expect(result.result).toBe("pass");
+    expect(result.parsed).toHaveLength(2);
+  });
+
+  it("kind 不在 requirement|technical 范围 → fail", () => {
+    const json = makeValidClarifyJson({ kind: "other" });
+    const result = clarifyCheck(json);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("kind");
+    expect(result.parsed).toBeUndefined();
+  });
+
+  // assessment 空串被 schema 拒绝（Type.String({ minLength: 1 })）——禁止空问约束
+  it("assessment 为空字符串 → fail（schema minLength:1 约束）", () => {
+    const json = makeValidClarifyJson({ assessment: "" });
+    const result = clarifyCheck(json);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("assessment");
+  });
+
+  it("含 adr 且 adr.projectPath 指向真实存在的文件 → pass", () => {
+    // 在 tmpDir 写一个真实的 ADR 文件，projectPath 指向它。
+    const adrPath = join(tmpDir, "adr.md");
+    writeFileSync(adrPath, "# ADR\n");
+
+    const json = makeValidClarifyJson({
+      adr: {
+        title: "采用 SQLite 存储方案",
+        context: "JSON+flock 并发不足",
+        decision: "迁移到 better-sqlite3",
+        alternatives: ["维持 JSON"],
+        consequences: "引入原生依赖但并发更好",
+        projectPath: adrPath,
+      },
+    });
+    const result = clarifyCheck(json);
+    expect(result.result).toBe("pass");
+    expect(result.parsed).toBeDefined();
+    expect(result.parsed![0]!.clarifySeed.adr).toBeDefined();
+  });
+
+  it("含 adr 但 adr.projectPath 文件不存在 → fail", () => {
+    const json = makeValidClarifyJson({
+      adr: {
+        title: "ADR",
+        context: "ctx",
+        decision: "dec",
+        alternatives: ["alt"],
+        consequences: "cons",
+        projectPath: join(tmpDir, "nonexistent-adr.md"),
+      },
+    });
+    const result = clarifyCheck(json);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("文件不存在");
+    expect(result.parsed).toBeUndefined();
+  });
+
+  it("含 adr 但 adr.projectPath 是目录而非文件 → fail", () => {
+    // projectPath 指向 tmpDir（目录），ADR 必须是文件而非目录。
+    const json = makeValidClarifyJson({
+      adr: {
+        title: "ADR",
+        context: "ctx",
+        decision: "dec",
+        alternatives: ["alt"],
+        consequences: "cons",
+        projectPath: tmpDir,
+      },
+    });
+    const result = clarifyCheck(json);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("目录");
   });
 });
