@@ -15,7 +15,7 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import type { AdrSeed, ClarifySeed, TestCaseSeed, TestRunnerConfig, WaveSeed } from "./types.js";
+import type { AdrSeed, ClarifySeed, TestCaseSeed, TestRunnerConfig, WaveChange, WaveSeed } from "./types.js";
 import { CwError } from "./types.js";
 
 // ── DevPlanSchema（dev-plan.json，只含 waves） ──────────────
@@ -35,7 +35,12 @@ export const DevPlanSchema = Type.Object({
   waves: Type.Array(
     Type.Object({
       id: Type.String(),
-      changes: Type.Array(Type.String()),
+      changes: Type.Array(
+        Type.Object({
+          file: Type.String(),
+          description: Type.String(),
+        }),
+      ),
       dependsOn: Type.Array(Type.String()),
       priority: Type.Optional(
         Type.Union([Type.Literal("P0"), Type.Literal("P1"), Type.Literal("P2")]),
@@ -50,7 +55,7 @@ export const DevPlanSchema = Type.Object({
  * test.json 的 typebox schema。
  *
  * testCases：测试用例定义（id/layer/scenario/steps/expected/executor/priority/redCheck）。
- * testRunner：可选的项目级测试执行配置（mode/command/cwd/path）。
+ * testRunner：必选的项目级测试执行配置（mode/command/cwd/path）——CW 需要它跑红灯校验和 test 机器重算。
  */
 export const TestJsonSchema = Type.Object({
   testCases: Type.Array(
@@ -72,19 +77,17 @@ export const TestJsonSchema = Type.Object({
       redCheck: Type.Optional(Type.Boolean()),
     }),
   ),
-  testRunner: Type.Optional(
-    Type.Object({
-      mode: Type.Union([
-        Type.Literal("nodejs"),
-        Type.Literal("python"),
-        Type.Literal("java"),
-        Type.Literal("custom"),
-      ]),
-      command: Type.Optional(Type.String()),
-      cwd: Type.Optional(Type.String()),
-      path: Type.Optional(Type.String()),
-    }),
-  ),
+  testRunner: Type.Object({
+    mode: Type.Union([
+      Type.Literal("nodejs"),
+      Type.Literal("python"),
+      Type.Literal("java"),
+      Type.Literal("custom"),
+    ]),
+    command: Type.Optional(Type.String()),
+    cwd: Type.Optional(Type.String()),
+    path: Type.Optional(Type.String()),
+  }),
 });
 
 // ── 向后兼容：旧版 LitePlanSchema（同时含 waves + testCases） ──
@@ -103,7 +106,12 @@ export const LegacyPlanSchema = Type.Object({
   waves: Type.Array(
     Type.Object({
       id: Type.String(),
-      changes: Type.Array(Type.String()),
+      changes: Type.Array(
+        Type.Object({
+          file: Type.String(),
+          description: Type.String(),
+        }),
+      ),
       dependsOn: Type.Array(Type.String()),
       priority: Type.Optional(
         Type.Union([Type.Literal("P0"), Type.Literal("P1"), Type.Literal("P2")]),
@@ -150,7 +158,7 @@ export interface ParsedDevPlan {
 
 export interface ParsedTestJson {
   testCases: TestCaseSeed[];
-  testRunner?: TestRunnerConfig;
+  testRunner: TestRunnerConfig;
 }
 
 // ── size / depth guard（T2.17 超 1MB 拒 / T2.29 深嵌套爆栈防护） ──
@@ -280,7 +288,7 @@ function extractDevPlan(json: unknown): ParsedDevPlan {
     objective: string;
     waves: Array<{
       id: string;
-      changes: string[];
+      changes: WaveChange[];
       dependsOn: string[];
       priority?: "P0" | "P1" | "P2";
     }>;
@@ -350,7 +358,7 @@ function extractTestJson(json: unknown): ParsedTestJson {
       priority?: "P0" | "P1" | "P2";
       redCheck?: boolean;
     }>;
-    testRunner?: TestRunnerConfig;
+    testRunner: TestRunnerConfig;
   };
   return {
     testCases: obj.testCases.map((c) => ({

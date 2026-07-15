@@ -271,8 +271,8 @@ describe("dispatch dev（U20-U21）", () => {
     // plan 含 W1 + W2（无依赖）
     const twoWavePlan = makeValidPlanJson({
       waves: [
-        { id: "W1", changes: ["change1"], dependsOn: [] },
-        { id: "W2", changes: ["change2"], dependsOn: [] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: [] },
       ],
     });
     dispatch({ action: "plan", topicId, planJson: twoWavePlan }, deps);
@@ -400,7 +400,7 @@ describe("dispatch test（U22-U24c）", () => {
     const planJson = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: ["c"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
@@ -459,7 +459,7 @@ describe("dispatch test（U22-U24c）", () => {
     const planJson = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: ["c"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
@@ -626,8 +626,8 @@ describe("dispatch replan（U25-U29）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: ["change1"], dependsOn: [] },
-        { id: "W2", changes: ["change2"], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
@@ -678,7 +678,7 @@ describe("dispatch replan（U25-U29）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: ["modified-change"], dependsOn: [] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "modified-change" }], dependsOn: [] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
@@ -713,7 +713,7 @@ describe("dispatch replan（U25-U29）", () => {
     const newPlan = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
         { id: "E2", layer: "mock", scenario: "s", steps: "st", expected: { text: "mock-output" }, executor: "agent", requiresScreenshot: false },
         { id: "E3", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
@@ -746,7 +746,7 @@ describe("dispatch replan（U25-U29）", () => {
     const newPlan = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "modified-expected" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
@@ -776,7 +776,7 @@ describe("dispatch replan（U25-U29）", () => {
     const newPlan = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "corrected-expected" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "corrected-real" }, executor: "agent", requiresScreenshot: false },
@@ -816,12 +816,20 @@ describe("dispatch closeout（U30）", () => {
       deps,
     );
 
-    // retrospect（需提供 retrospect.md 文件）
+    // retrospect（需提供 retrospect.md 文件 + retrospectData 结构化数据）
     const retrospectDir = join(tmpDir, ".xyz-harness", "u30");
     mkdirSync(retrospectDir, { recursive: true });
     const retrospectPath = join(retrospectDir, "retrospect.md");
     writeFileSync(retrospectPath, "# Retrospect\n\n复盘内容");
-    dispatch({ action: "retrospect", topicId, retrospectPath }, deps);
+    dispatch(
+      {
+        action: "retrospect",
+        topicId,
+        retrospectPath,
+        retrospectData: { knownRisks: [], processIssues: [] },
+      },
+      deps,
+    );
 
     // closeout：topicDir = tmpDir/.xyz-harness/u30（目录，已由上面 mkdir 创建）
     const result = dispatch({ action: "closeout", topicId }, deps);
@@ -872,7 +880,15 @@ describe("dispatch closeout（U30）", () => {
     mkdirSync(retrospectDir, { recursive: true });
     const retrospectPath = join(retrospectDir, "retrospect.md");
     writeFileSync(retrospectPath, "# Retrospect\n\n复盘内容");
-    dispatch({ action: "retrospect", topicId, retrospectPath }, deps);
+    dispatch(
+      {
+        action: "retrospect",
+        topicId,
+        retrospectPath,
+        retrospectData: { knownRisks: [], processIssues: [] },
+      },
+      deps,
+    );
     dispatch({ action: "closeout", topicId }, deps);
 
     const topic = store.loadTopic(topicId);
@@ -990,6 +1006,7 @@ describe("dispatch tdd_plan", () => {
               requiresScreenshot: false,
             },
           ],
+          testRunner: { mode: "nodejs", command: "npx vitest run" },
         },
       },
       deps,
@@ -1095,9 +1112,10 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     expect(redGate[0]!.result).toBe("pass");
   });
 
-  it("testRunner + redCheck=true + 测试命令 exit 0（意外通过）→ mustFix 含红灯校验 warning, status 仍流转", () => {
+  it("testRunner + redCheck=true + 测试命令 exit 0（意外通过）→ 红灯校验阻断, status 回退 planned, gatePassed.tdd_plan=false", () => {
     const { topicId, deps, store } = setupPlannedTopic();
-    // 测试命令 exit 0（模拟测试意外通过）→ redLightCheck redLight=false → warning。
+    // 测试命令 exit 0（模拟测试意外通过 = 绿灯 = 违反 TDD）→ redLightCheck redLight=false。
+    // 新行为：红灯校验阻断 status 流转——回退到 planned，gatePassed.tdd_plan=false。
     const testJson = {
       testCases: [
         {
@@ -1124,27 +1142,31 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     };
     const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
 
-    // status 仍正常流转到 tdd_inited（红灯校验失败不阻断流转，只 warning）
-    expect(result.status).toBe("tdd_inited");
-    expect(result.gatePassed.tdd_plan).toBe(true);
-    // 红灯校验失败 → mustFix 含 warning（不阻断但提示 agent）
+    // 红灯校验失败 → status 回退到 planned（不再流转到 tdd_inited）
+    expect(result.status).toBe("planned");
+    expect(result.gatePassed.tdd_plan).toBe(false);
+    // mustFix 含红灯校验失败信息（阻断提示）
     const mustFix = (result as Record<string, unknown>).mustFix;
     expect(mustFix).toBeDefined();
-    expect(String(mustFix)).toMatch(/红灯校验未通过/);
+    expect(String(mustFix)).toMatch(/红灯校验失败/);
+    // nextAction 指回 tdd_plan retry
+    expect(result.nextAction.action).toBe("tdd_plan");
 
     const topic = store.loadTopic(topicId);
-    expect(topic!.status).toBe("tdd_inited");
+    expect(topic!.status).toBe("planned");
 
-    // 杠杆 1：红灯失败 → gateHistory 含 tdd-red-light fail 记录（含 report）
+    // 红灯失败 → gateHistory 含 tdd-red-light fail 记录（含 report）
     const redGate = topic!.gateHistory.filter((g) => g.gate === "tdd-red-light");
     expect(redGate).toHaveLength(1);
     expect(redGate[0]!.result).toBe("fail");
     expect(redGate[0]!.report).toMatch(/红灯校验未通过/);
   });
 
-  it("无 testRunner（agent 模式）+ redCheck=true → 不跑红灯校验, 无 mustFix", () => {
+  it("testRunner 必选——缺失时 schema 拒绝（gate fail）", () => {
     const { topicId, deps } = setupPlannedTopic();
-    const testJson = {
+    // testRunner 不再 Optional（TestJsonSchema 强制必选）——缺失时 tddPlanCheck 转 gate fail。
+    const { testRunner, ...withoutRunner } = {
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
       testCases: [
         {
           id: "E1",
@@ -1166,14 +1188,19 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           requiresScreenshot: false,
         },
       ],
-      // 不配 testRunner → agent 自己负责红灯，engine 不跑 redLightCheck
-    };
-    const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
+    } as Record<string, unknown>;
+    void testRunner;
+    const result = dispatch(
+      { action: "tdd_plan", topicId, testJson: withoutRunner },
+      deps,
+    );
 
-    expect(result.status).toBe("tdd_inited");
-    expect(result.gatePassed.tdd_plan).toBe(true);
-    // 无 testRunner → 不跑红灯校验 → 无 mustFix
-    expect((result as Record<string, unknown>).mustFix).toBeUndefined();
+    // 缺 testRunner → schema 校验失败 → gate fail，status 不变（仍 planned）
+    expect(result.status).toBe("planned");
+    expect(result.gatePassed.tdd_plan).toBeFalsy();
+    const mustFix = (result as Record<string, unknown>).mustFix;
+    expect(mustFix).toBeDefined();
+    expect(String(mustFix)).toMatch(/testRunner/);
   });
 });
 
@@ -1223,6 +1250,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
           requiresScreenshot: false,
         },
       ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
     const result = dispatch(
       { action: "replan", topicId, testJson: newTestJson },
@@ -1270,6 +1298,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
         { id: "E3", layer: "mock", scenario: "s3", steps: "st",
           expected: { text: "new-case" }, executor: "vitest", requiresScreenshot: false },
       ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
     // 不应 throw（E1/E2 已 passed 但 expected 未变 → 合法；E3 新增）
     const result = dispatch(
@@ -1857,8 +1886,8 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: ["change1"], dependsOn: [] },
-        { id: "W2", changes: ["change2"], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
@@ -1909,12 +1938,20 @@ describe("dispatch assess（W5：post-closeout 评估）", () => {
       },
       deps,
     );
-    // retrospect（需提供 retrospect.md 文件）
+    // retrospect（需提供 retrospect.md 文件 + retrospectData 结构化数据）
     const retrospectDir = join(tmpDir, ".xyz-harness", slug);
     mkdirSync(retrospectDir, { recursive: true });
     const retrospectPath = join(retrospectDir, "retrospect.md");
     writeFileSync(retrospectPath, "# Retrospect\n\n复盘内容");
-    dispatch({ action: "retrospect", topicId, retrospectPath }, deps);
+    dispatch(
+      {
+        action: "retrospect",
+        topicId,
+        retrospectPath,
+        retrospectData: { knownRisks: [], processIssues: [] },
+      },
+      deps,
+    );
     dispatch({ action: "closeout", topicId }, deps);
     return { topicId, deps, store };
   }

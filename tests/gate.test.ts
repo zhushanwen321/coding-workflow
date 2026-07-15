@@ -56,6 +56,7 @@ function makeValidTestJson(): unknown {
         requiresScreenshot: false,
       },
     ],
+    testRunner: { mode: "nodejs", command: "npx vitest run" },
   };
 }
 
@@ -78,7 +79,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
     const devPlan = {
       format: "lite",
       objective: "test obj",
-      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{file: "src/app.ts", description: "change1"}], dependsOn: [] }],
     };
     const result = planCheck(devPlan);
     expect(result.result).toBe("pass");
@@ -104,7 +105,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
   });
 
   it("format 非 lite → gate fail（parseDevPlan 抛错被捕获）", () => {
-    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: ["a"], dependsOn: [] }] };
+    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: [{file: "src/a.ts", description: "a"}], dependsOn: [] }] };
     const result = planCheck(devPlan);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("format");
@@ -167,7 +168,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
   it("waves 数量超过阈值 → pass + warning 含 waves 数量", () => {
     const waves = Array.from({ length: 11 }, (_, i) => ({
       id: `W${i + 1}`,
-      changes: [`change ${i + 1}`],
+      changes: [{file: `src/w${i + 1}.ts`, description: `change ${i + 1}`}],
       dependsOn: i > 0 ? [`W${i}`] : [],
     }));
     const devPlan = { format: "lite", objective: "big task", waves };
@@ -178,7 +179,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
   });
 
   it("涉及文件数超过阈值 → pass + warning 含文件数", () => {
-    const changes = Array.from({ length: 16 }, (_, i) => `修改 src/file${i + 1}.ts`);
+    const changes = Array.from({ length: 16 }, (_, i) => ({file: `src/file${i + 1}.ts`, description: "改文件"}));
     const devPlan = {
       format: "lite",
       objective: "many files",
@@ -194,7 +195,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
     const devPlan = {
       format: "lite",
       objective: "small task",
-      waves: [{ id: "W1", changes: ["修改 src/a.ts"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{file: "src/a.ts", description: "修改"}], dependsOn: [] }],
     };
     const result = planCheck(devPlan);
     expect(result.result).toBe("pass");
@@ -216,14 +217,17 @@ describe("tddPlanCheck 对合法 test.json 返回 pass", () => {
 
 describe("tddPlanCheck 对空 testCases 返回 fail", () => {
   it("testCases 为空数组 → fail", () => {
-    const result = tddPlanCheck({ testCases: [] });
+    const result = tddPlanCheck({
+      testCases: [],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
+    });
     expect(result.result).toBe("fail");
     expect(result.report).toContain("testCases");
     expect(result.parsed).toBeUndefined();
   });
 
   it("test.json 缺 testCases 字段（schema 错）→ fail", () => {
-    const result = tddPlanCheck({});
+    const result = tddPlanCheck({ testRunner: { mode: "nodejs", command: "npx vitest run" } });
     expect(result.result).toBe("fail");
     expect(result.parsed).toBeUndefined();
   });
@@ -243,6 +247,7 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
           requiresScreenshot: false,
         },
       ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
     const result = tddPlanCheck(testJson);
     expect(result.result).toBe("fail");
@@ -262,6 +267,7 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
           requiresScreenshot: false,
         },
       ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
     const result = tddPlanCheck(testJson);
     expect(result.result).toBe("fail");
@@ -270,8 +276,12 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
 });
 
 describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
+  // testRunner 必选（TestJsonSchema 强制），所有 fixture 共用一份合法配置。
+  const testRunner = { mode: "nodejs" as const, command: "npx vitest run" };
+
   it("expected.text='passed' → fail", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -285,6 +295,7 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 
   it("expected.text='OK'（大写）→ fail", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "OK" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -297,6 +308,7 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 
   it("expected.text='success' → fail", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -308,6 +320,7 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 
   it("expected.text='成功'（中文）→ fail", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "成功" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -319,6 +332,7 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 
   it("多个 testCase 部分模糊 → fail，报告列出所有模糊 id", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s1", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "mock", scenario: "s2", steps: "st", expected: { text: "返回 { status: 'ok', data: [1,2,3] }" }, executor: "agent", requiresScreenshot: false },
@@ -335,6 +349,7 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 
   it("expected.text 含 'ok' 但非纯 'ok' → pass", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "status is ok, count=42" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -346,6 +361,7 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 
   it("expected 只有 url 无 text → pass（不检查 url）", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { url: "http://localhost:3000" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -357,8 +373,11 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
 });
 
 describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
+  const testRunner = { mode: "nodejs" as const, command: "npx vitest run" };
+
   it("expected.url 和 text 都缺 → fail，报告列出 testCase id", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
@@ -374,6 +393,7 @@ describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
 
   it("多个 testCase 空判据 → fail，报告列出所有空判据 id", () => {
     const testJson = {
+      testRunner,
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
@@ -527,7 +547,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: ["修改 src/app.ts 加功能"],
+          changes: [{file: "src/app.ts", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -565,7 +585,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: ["修改 src/app.ts 加功能"],
+          changes: [{file: "src/app.ts", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -618,7 +638,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: ["修改 src/app.ts 加功能"],
+          changes: [{file: "src/app.ts", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -657,7 +677,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: ["修改 src/app.ts 加功能"],
+          changes: [{file: "src/app.ts", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -752,7 +772,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: ["创建 src/store.ts 实现数据持久化"],
+          changes: [{file: "src/store.ts", description: "实现数据持久化"}],
         },
       ],
       testCases: [],
@@ -788,7 +808,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: null,
-          changes: ["修改 src/app.ts 加功能"],
+          changes: [{file: "src/app.ts", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -824,7 +844,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: ["修改 src/app.ts 加功能"],
+          changes: [{file: "src/app.ts", description: "加功能"}],
         },
       ],
       testCases: [],

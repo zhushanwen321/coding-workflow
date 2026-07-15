@@ -334,6 +334,25 @@ export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
     };
   }
 
+  // testRunner 必选——CW 需要它跑红灯校验（tdd_plan 阶段）和 test 机器重算（test 阶段）。
+  // schema 层已强制 testRunner 存在（非 Optional），这里做语义校验：mode 对应的 command/path 必须有值。
+  const runner = parsed.testRunner;
+  if (runner.mode === "custom") {
+    if (!runner.path) {
+      return {
+        result: "fail",
+        report: "testRunner.mode=custom 时 path 必填（自定义脚本路径）。",
+      };
+    }
+  } else {
+    if (!runner.command) {
+      return {
+        result: "fail",
+        report: `testRunner.mode=${runner.mode} 时 command 必填（如 "npx vitest run"、"python -m pytest"）。`,
+      };
+    }
+  }
+
   return { result: "pass", report: "", parsed };
 }
 
@@ -524,25 +543,13 @@ function getStringField(e: unknown, field: "stdout" | "stderr"): string {
 // ── devCheck（调 GitValidator.validate） ─────────────────────
 
 /**
- * P1: 从 plan changes 描述中提取文件路径。
- * changes 格式如 "修改 src/store.ts 加 fileLock 方法"，
- * 用正则匹配 "修改/创建/删除/更新/新增/add/modify/create/delete/update + 路径.ext"。
+ * 从结构化 WaveChange[] 提取文件路径集合。
+ * 取代旧版 extractFilesFromChanges（正则从自然语言提取）——changes 现在是结构化 {file, description}[]。
  */
-const PLAN_FILE_RE =
-  /(?:修改|创建|删除|更新|新增|add|modify|create|delete|update)\s+([\w./-]+(?:\.\w+))/gi;
-
-/**
- * 从 plan changes 描述中提取文件路径。stats.ts 复杂度分桶也复用此函数。
- */
-export function extractFilesFromChanges(changes: string[]): Set<string> {
+export function extractFilesFromChanges(changes: { file: string }[]): Set<string> {
   const files = new Set<string>();
-  for (const change of changes) {
-    // 每次 exec 重置 lastIndex（g flag）
-    PLAN_FILE_RE.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = PLAN_FILE_RE.exec(change)) !== null) {
-      if (match[1]) files.add(match[1]);
-    }
+  for (const c of changes) {
+    if (c.file) files.add(c.file);
   }
   return files;
 }

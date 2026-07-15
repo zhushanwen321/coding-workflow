@@ -17,7 +17,10 @@ function makeValidPlanJson(): Record<string, unknown> {
     waves: [
       {
         id: "W1",
-        changes: ["change A", "change B"],
+        changes: [
+          { file: "src/app.ts", description: "change A" },
+          { file: "src/app.ts", description: "change B" },
+        ],
         dependsOn: [],
       },
     ],
@@ -42,7 +45,10 @@ describe("parseLitePlan 合法结构（U16）", () => {
     const parsed = parseLitePlan(makeValidPlanJson());
     expect(parsed.waves).toHaveLength(1);
     expect(parsed.waves[0]!.id).toBe("W1");
-    expect(parsed.waves[0]!.changes).toEqual(["change A", "change B"]);
+    expect(parsed.waves[0]!.changes).toEqual([
+      { file: "src/app.ts", description: "change A" },
+      { file: "src/app.ts", description: "change B" },
+    ]);
     expect(parsed.waves[0]!.dependsOn).toEqual([]);
 
     expect(parsed.legacyTestCases).toHaveLength(1);
@@ -56,7 +62,7 @@ describe("parseLitePlan 合法结构（U16）", () => {
     const json = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: ["x"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "x" }], dependsOn: [] }],
       testCases: [
         {
           id: "E1",
@@ -151,8 +157,8 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
     const json = {
       ...makeValidPlanJson(),
       waves: [
-        { id: "W1", changes: ["a"], dependsOn: ["W2"] },
-        { id: "W2", changes: ["b"], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: ["W2"] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"] },
       ],
       testCases: [
         {
@@ -181,7 +187,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
   it("wave 自环（W1 dependsOn W1）→ 抛错含 cycle", () => {
     const json = {
       ...makeValidPlanJson(),
-      waves: [{ id: "W1", changes: ["a"], dependsOn: ["W1"] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: ["W1"] }],
       testCases: [
         {
           id: "E1",
@@ -201,9 +207,9 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
     const json = {
       ...makeValidPlanJson(),
       waves: [
-        { id: "W1", changes: ["a"], dependsOn: ["W3"] },
-        { id: "W2", changes: ["b"], dependsOn: ["W1"] },
-        { id: "W3", changes: ["c"], dependsOn: ["W2"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: ["W3"] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"] },
+        { id: "W3", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: ["W2"] },
       ],
       testCases: [
         {
@@ -262,9 +268,9 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
     const json = {
       ...makeValidPlanJson(),
       waves: [
-        { id: "W1", changes: ["a"], dependsOn: [] },
-        { id: "W2", changes: ["b"], dependsOn: ["W1"] },
-        { id: "W3", changes: ["c"], dependsOn: ["W2"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"] },
+        { id: "W3", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: ["W2"] },
       ],
       testCases: [
         {
@@ -301,7 +307,9 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
     const json = {
       format: "lite",
       objective: "test obj",
-      waves: [{ id: "W1", changes: ["change1"], dependsOn: [], priority: "P0" }],
+      waves: [
+        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [], priority: "P0" },
+      ],
     };
     const parsed = parseDevPlan(json);
     expect(parsed.waves).toHaveLength(1);
@@ -314,7 +322,7 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
     const json = {
       format: "lite",
       objective: "test obj",
-      waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
@@ -337,8 +345,8 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: ["a"], dependsOn: [], priority: "P0" },
-        { id: "W2", changes: ["b"], dependsOn: ["W1"], priority: "P2" },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: [], priority: "P0" },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"], priority: "P2" },
       ],
     };
     const parsed = parseDevPlan(json);
@@ -379,6 +387,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           redCheck: false,
         },
       ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
   }
 
@@ -412,9 +421,12 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
     expect(parsed.testRunner!.path).toBe(".cw/run-tests.sh");
   });
 
-  it("testRunner 省略 → testRunner undefined", () => {
-    const parsed = parseTestJson(makeValidTestJson());
-    expect(parsed.testRunner).toBeUndefined();
+  it("testRunner 缺失 → schema 报错（testRunner 已必选）", () => {
+    // testRunner 不再 Optional（TestJsonSchema 强制必选）——缺失时 schema 校验抛错。
+    expect(() => parseTestJson(makeValidTestJson())).not.toThrow();
+    const { testRunner, ...withoutRunner } = makeValidTestJson() as Record<string, unknown>;
+    void testRunner;
+    expect(() => parseTestJson(withoutRunner)).toThrow(/testRunner/);
   });
 
   it("testCases 缺失 → 抛错", () => {
@@ -445,6 +457,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           dependsOn: ["U1"],
         },
       ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
     expect(() => parseTestJson(json)).toThrow(/cycle|环形/i);
   });

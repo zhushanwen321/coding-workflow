@@ -17,7 +17,9 @@ export function makeValidPlanJson(
   return {
     format: "lite",
     objective: "test objective",
-    waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+    waves: [
+      { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+    ],
     testCases: [
       {
         id: "E1",
@@ -52,14 +54,19 @@ export function makeValidDevPlanJson(
   return {
     format: "lite",
     objective: "test objective",
-    waves: [{ id: "W1", changes: ["change1"], dependsOn: [] }],
+    waves: [
+      { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+    ],
     ...overrides,
   };
 }
 
 /**
- * test.json 格式（testCases + 可选 testRunner）。
+ * test.json 格式（testCases + testRunner 必选）。
  * mock + real 分层齐全，expected.text 非模糊值，能过 tddPlanCheck。
+ *
+ * testRunner 必填（TestJsonSchema 不再 Optional）——CW 用它跑红灯校验和 test 机器重算。
+ * command 指向一个 exit 1 的命令（红灯确认），避免 dispatch tdd_plan 默认场景意外触发红灯回退。
  */
 export function makeValidTestJson(
   overrides: Record<string, unknown> = {},
@@ -85,6 +92,7 @@ export function makeValidTestJson(
         requiresScreenshot: false,
       },
     ],
+    testRunner: { mode: "nodejs", command: 'node -e "process.exit(1)"' },
     ...overrides,
   };
 }

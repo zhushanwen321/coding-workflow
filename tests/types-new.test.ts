@@ -58,7 +58,7 @@ describe("W1: 新增类型定义", () => {
         id: "W1",
         dependsOn: [],
         committed: null,
-        changes: ["change1"],
+        changes: [{ file: "src/app.ts", description: "change1" }],
         priority: "P0",
       };
       expect(wave.priority).toBe("P0");

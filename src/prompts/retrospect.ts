@@ -91,7 +91,7 @@ retrospect.md 写完 + retrospectData 构造好后提交：
     echo '<retrospectDataJson>' | cw retrospect --topicId <topicId> --retrospectPath <retrospect.md 绝对路径>
 
 - CW 校验 retrospect.md 存在 + 非空（gate 门）
-- retrospectData 可选——不提供也能 gate pass（向后兼容），但建议提供（评估数据来源）
+- retrospectData **必填**——不传则 gate fail，必须通过 stdin 传入
 - gate 通过 → status 流转到 retrospected，下一步 closeout
 
 ## 本阶段禁止

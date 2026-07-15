@@ -2,7 +2,7 @@
  * tdd-plan 提示词 — dev-plan gate 通过后 / tdd-plan gate fail retry 时返回。
  *
  * 触发点：state-machine.ts buildNextAction 的 plan 分支（gate pass）和 tdd_plan 分支（retry）。
- * 交付物：test.json（testCases + 可选 testRunner），由 cw tdd_plan 消费。
+ * 交付物：test.json（testCases + testRunner 必选），由 cw tdd_plan 消费。
  *
  * 本阶段核心：agent 已知要实现什么（dev-plan.json 的 waves），先写测试代码（红灯），
  * 再写 test.json 定义 testCases + expected。expected 来源于测试断言，不是猜的。
@@ -78,9 +78,10 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
 - **requiresScreenshot**: 是否要求截图（mock 层 false，real 层视用例需要）
 - **dependsOn**: 测试调度依赖（前置 case 先通过）
 
-### testRunner（可选）
+### testRunner（必选）
 
-定义项目级测试执行策略。不配置时 agent 自己跑测试后提交 actual（agent 模式）。
+定义项目级测试执行策略。**必填**——CW 用它跑红灯校验（tdd_plan 阶段）和 test 机器重算（test 阶段）。
+没有测试框架的项目不适用 CW（CW 的核心价值就是 TDD + 机器验证）。
 
 | mode | command 示例 | 适用 |
 |------|------------|------|
@@ -102,6 +103,7 @@ agent 先写了测试代码（如 \`expect(add(1,1)).toBe(2)\`），expected 直
 ## tdd_plan gate 校验
 
 - testCases 非空
+- testRunner 必选（mode 合法 + command 或 path 有值）
 - mock 层 + real 层各至少 1 个
 - expected.text 不可填 passed/ok/success 等结论词
 - 环形 dependsOn 检测
@@ -113,17 +115,14 @@ gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_p
 [MANDATORY] 每个测试文件写完后必须跑一次，确认**红灯**（测试因实现不存在而失败）。
 如果测试已经 pass（绿灯）= 违反 TDD（先写了实现再补测试），必须回退。
 
-### 自动红灯校验（配置 testRunner 时）
+### CW 自动红灯校验
 
-test.json 配置了 testRunner 时，CW 在 tdd_plan gate 通过后自动跑红灯校验：
+CW 在 tdd_plan gate 通过后自动跑红灯校验（testRunner 必选）：
 - 执行 testRunner.command 一次（整体跑），确认 exit code ≠ 0（红灯——实现尚未写，测试应全 fail）
-- 结果记录到 gateHistory（gate 名 tdd-red-light），供事后复盘 TDD 纪律执行情况
-- 红灯校验**不阻断** status 流转（仍进入 tdd_inited），但失败时 mustFix 带 warning
+- **红灯校验阻断 status 流转**——绿灯（exit code=0）时 status 回退到 planned，nextAction 指回 tdd_plan retry
+- 红灯 pass → status 流转到 tdd_inited，结果记录到 gateHistory（gate 名 tdd-red-light）
 
-### 手动红灯校验（未配置 testRunner 时）
-
-未配置 testRunner 时，红灯校验由 agent 自行执行——跑测试确认 fail。
-CW 只做 test.json 结构校验，不自动跑测试命令。
+绿灯 = 你先写了实现再补测试 = 违反 TDD。必须删除实现代码，确保测试在实现缺失时 fail，再提交。
 
 ## testRunner 各语言配置示例
 

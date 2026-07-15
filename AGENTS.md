@@ -8,7 +8,7 @@
 
 ```bash
 npm run check:all   # tsc 类型检查（src + tests）
-npm test            # vitest run（393 个测试，含真实子进程 e2e）
+npm test            # vitest run（444 个测试，含真实子进程 e2e）
 npm run lint        # eslint src/ tests/
 npm run build       # tsc 编译到 dist/
 ```
@@ -33,7 +33,7 @@ npm run build       # tsc 编译到 dist/
 ## 测试规范
 
 - 零 mock：真实 CwStore + tmp 目录 + 真实 git 子进程
-- e2e 测试用子进程跑真实 `cw` CLI 命令
+- e2e 测试用子进程跑真实 `cw` CLI 命令；拆分到 `tests/e2e-*.test.ts` 系列，共享基建在 `tests/helpers/e2e.ts`（`runCli`/`setupToDeveloped` 等阶段 helper）。编写指南见 [TEST-STRATEGY.md](./TEST-STRATEGY.md)「E2E 测试编写指南」
 - 每个 handler 都有 dispatch 层测试（不直接调 handler，走完整 dispatch 路径）
 
 ## 文档索引

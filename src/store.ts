@@ -59,11 +59,46 @@ import type {
   TestRunnerConfig,
   Topic,
   Wave,
+  WaveChange,
   WaveSeed,
 } from "./types.js";
 import { CwError } from "./types.js";
 
 const JSON_INDENT = 2;
+
+// ── 旧格式 changes 迁移 ─────────────────────────────────────
+
+/**
+ * 旧格式 changes 路径提取正则——从自然语言描述中尽力提取文件路径。
+ * 匹配常见模式："动词 src/path.ts"、"src/path.ts: 描述"、"src/path.ts 描述"。
+ * 仅用于旧 _cw.json 读时迁移，新格式（WaveChange[]）不需要此函数。
+ */
+const LEGACY_PATH_RE =
+  /(?:修改|创建|删除|更新|新增|重构|add|modify|create|delete|update|refactor)\s+([\w./-]+(?:\.\w+))|([\w./-]+(?:\.\w+))\s*[:：]/;
+
+/**
+ * migrateChanges — 旧格式 changes（string[]）迁移为 WaveChange[]。
+ *
+ * 新格式（{file, description}[]）原样返回。
+ * 旧格式（string[]）每条转成 {file: 尽量提取的路径, description: 原文本}。
+ * 提取不出路径时 file 为空字符串（不阻断，复杂度分桶会忽略空 file）。
+ */
+function migrateChanges(
+  changes: WaveChange[] | string[] | undefined,
+): WaveChange[] {
+  if (!changes || changes.length === 0) return [];
+  // 新格式：元素是对象（有 file 字段）
+  if (typeof changes[0] === "object") {
+    return changes as WaveChange[];
+  }
+  // 旧格式：元素是 string
+  return (changes as unknown as string[]).map((s) => {
+    LEGACY_PATH_RE.lastIndex = 0;
+    const m = s.match(LEGACY_PATH_RE);
+    const file = m?.[1] ?? m?.[2] ?? "";
+    return { file, description: s };
+  });
+}
 
 // ── appendGateHistory 入参（seed，无 id/ts，由 store 填充） ────
 
@@ -111,7 +146,7 @@ interface WaveRecord {
   id: string;
   dependsOn: string[];
   committed: string | null;
-  changes: string[];
+  changes: WaveChange[];
   priority?: Priority;
   changedFiles?: string[];
 }
@@ -544,7 +579,7 @@ export class CwStore {
       id: r.id,
       dependsOn: r.dependsOn ?? [],
       committed: r.committed ?? null,
-      changes: r.changes ?? [],
+      changes: migrateChanges(r.changes),
       priority: r.priority,
       changedFiles: r.changedFiles,
     };

@@ -43,7 +43,7 @@ export interface Complexity {
  * - complex：waves ≥ 10 或 files ≥ 15（复用 SCOPE_WARN 阈值）
  * - medium：其他
  *
- * files 从 waves[].changes 文本提取路径估算（extractFilesFromChanges）。
+ * files 从 waves[].changes[].file 结构化字段提取（extractFilesFromChanges）。
  */
 /** simple 分桶的阈值：waves 和 files 都不超过这些值。 */
 const SIMPLE_MAX_WAVES = 3;

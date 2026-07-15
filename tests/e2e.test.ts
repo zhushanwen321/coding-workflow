@@ -2,108 +2,41 @@
  * e2e 测试 — E1-E4（真实子进程跑 dist/cli.js）。
  *
  * 测试策略：
- *   - 每个测试 beforeAll: git init tmp 目录 + 创建非空 commit（供 dev gate GitValidator 校验）
- *   - CW_HOME 指向 tmp 子目录，env 传递给子进程（per-cwd 隔离）
+ *   - 每个测试用 createE2eEnv 产出独立隔离环境（git init tmp + CW_HOME + 初始 commit）
  *   - 用 spawnSync 真实 node 子进程调 dist/cli.js
  *   - 验证全链路：create → plan → tdd_plan → dev → review → test → retrospect → closeout
- */
-
-import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname,join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { afterAll,beforeAll, describe, expect, it } from "vitest";
-
-import { setupGitRepo } from "./helpers/git.js";
-
-// ── 路径常量 ────────────────────────────────────────────────
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const CLI_PATH = join(__dirname, "..", "dist", "cli.js");
-
-// ── 子进程辅助 ──────────────────────────────────────────────
-
-interface CliResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * runCli — 真实子进程调 dist/cli.js。
+ *   - 阶段推进逻辑提取到 tests/helpers/e2e.ts（runCli/parseStdout/setupTo* 系列）
  *
- * 关键：cwd 默认设为 workspaceDir，这样不传 --workspace 时，CLI 默认 workspacePath=process.cwd()
- * = workspaceDir，encodeCwd(workspaceDir) 一致，db 路径跨子命令一致。
+ * 其他 action（clarify/review_fix/test_fix/assess/init/stats/gate-fail）
+ * 的 E2E 测试见 e2e-*.test.ts 系列（拆分自本文件）。
  */
-function runCli(
-  args: string[],
-  env: Record<string, string>,
-  options: { input?: string; cwd?: string } = {},
-): CliResult {
-  const mergedEnv = {
-    ...process.env,
-    ...env,
-    PATH: process.env.PATH ?? "",
-  };
-  const result = spawnSync("node", [CLI_PATH, ...args], {
-    env: mergedEnv as NodeJS.ProcessEnv,
-    encoding: "utf8",
-    // cwd 默认 workspaceDir（CLI 默认 workspacePath=process.cwd()，保证 encodeCwd 一致）
-    cwd: options.cwd ?? workspaceDir,
-    input: options.input,
-    timeout: 30000,
-  });
-  return {
-    exitCode: result.status ?? -1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
-}
 
-/** 解析 CLI stdout 为 JSON。 */
-function parseStdout(result: CliResult): Record<string, unknown> {
-  expect(result.exitCode, `CLI exit code should be 0, stderr: ${result.stderr}`).toBe(0);
-  const trimmed = result.stdout.trim();
-  expect(trimmed.length).toBeGreaterThan(0);
-  return JSON.parse(trimmed) as Record<string, unknown>;
-}
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-// ── git 仓库辅助（setupGitRepo 从 helpers/git.ts import） ────
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import {
+  createE2eEnv,
+  disposeE2eEnv,
+  type E2eEnv,
+  parseStdout,
+  retrospectMdPath,
+  reviewMdPath,
+  runCli,
+} from "./helpers/e2e.js";
+import { makeValidDevPlanJson, makeValidTestJson } from "./helpers/plan.js";
 
 // ── 共享测试环境 ────────────────────────────────────────────
 
-let workspaceDir: string;
-let cwHome: string;
-let env: Record<string, string>;
-let commitHash: string;
+let e: E2eEnv;
 
 beforeAll(() => {
-  // 确认 dist/cli.js 已 build
-  if (!existsSync(CLI_PATH)) {
-    throw new Error(`dist/cli.js 不存在，请先 npm run build。路径: ${CLI_PATH}`);
-  }
-
-  workspaceDir = realpathSync(mkdtempSync(join(tmpdir(), "cw-e2e-ws-")));
-  cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-e2e-home-")));
-  env = { CW_HOME: cwHome };
-  commitHash = setupGitRepo(workspaceDir);
+  e = createE2eEnv();
 });
 
 afterAll(() => {
-  rmSync(workspaceDir, { recursive: true, force: true });
-  rmSync(cwHome, { recursive: true, force: true });
+  disposeE2eEnv(e);
 });
 
 // ── E1: 全链子进程跑通 ──────────────────────────────────────
@@ -113,8 +46,8 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     // 1. create
     const createResult = parseStdout(
       runCli(
-        ["create", "--slug", "e1-full", "--objective", "E2E 全链测试", "--workspace", workspaceDir],
-        env,
+        ["create", "--slug", "e1-full", "--objective", "E2E 全链测试", "--workspace", e.workspaceDir],
+        e,
       ),
     );
     expect(createResult.status).toBe("created");
@@ -128,10 +61,10 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     const planJson = JSON.stringify({
       format: "lite",
       objective: "E2E 全链测试",
-      waves: [{ id: "W1", changes: ["实现功能"], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "实现功能" }], dependsOn: [] }],
     });
     const planResult = parseStdout(
-      runCli(["plan", "--topicId", topicId], env, { input: planJson }),
+      runCli(["plan", "--topicId", topicId], e, { input: planJson }),
     );
     expect(planResult.status).toBe("planned");
     // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
@@ -144,30 +77,9 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     expect(planAlts![0].action).toBe("replan");
 
     // 2b. tdd_plan（stdin 传 test.json，含 testCases）
-    const testJson = JSON.stringify({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "验证全链",
-          steps: "跑 cw 命令",
-          expected: { text: "exit code 0, output verified" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        {
-          id: "E2",
-          layer: "real",
-          scenario: "real layer integration",
-          steps: "run integration check",
-          expected: { text: "integration verified" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
-    });
+    const testJson = JSON.stringify(makeValidTestJson());
     const tddPlanResult = parseStdout(
-      runCli(["tdd_plan", "--topicId", topicId], env, { input: testJson }),
+      runCli(["tdd_plan", "--topicId", topicId], e, { input: testJson }),
     );
     expect(tddPlanResult.status).toBe("tdd_inited");
     expect((tddPlanResult.nextAction as Record<string, unknown>).action).toBe("dev");
@@ -180,9 +92,9 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
           "--topicId",
           topicId,
           "--tasks",
-          JSON.stringify([{ waveId: "W1", commitHash }]),
+          JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }]),
         ],
-        env,
+        e,
       ),
     );
     expect(devResult.status).toBe("developed");
@@ -191,14 +103,13 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     expect((devResult.nextAction as Record<string, unknown>).action).toBe("review");
 
     // 4. review（需 review.md 文件，写到 .xyz-harness/<slug>/changes/review.md）
-    const reviewDir = join(workspaceDir, ".xyz-harness", "e1-full", "changes");
-    mkdirSync(reviewDir, { recursive: true });
-    const reviewPath = join(reviewDir, "review.md");
+    const reviewPath = reviewMdPath(e.workspaceDir, "e1-full");
+    mkdirSync(join(e.workspaceDir, ".xyz-harness", "e1-full", "changes"), { recursive: true });
     writeFileSync(reviewPath, "# Code Review\n\n审查通过");
     const reviewResult = parseStdout(
       runCli(
         ["review", "--topicId", topicId, "--reviewPath", reviewPath],
-        env,
+        e,
       ),
     );
     expect(reviewResult.status).toBe("reviewed");
@@ -214,25 +125,25 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
           topicId,
           "--cases",
           JSON.stringify([
-            { caseId: "E1", actual: { text: "exit code 0, output verified" } },
-            { caseId: "E2", actual: { text: "integration verified" } },
+            { caseId: "E1", actual: { text: "expected-output" } },
+            { caseId: "E2", actual: { text: "real-output" } },
           ]),
         ],
-        env,
+        e,
       ),
     );
     expect(testResult.status).toBe("tested");
     expect(testResult.gatePassed).toMatchObject({ test: true });
 
     // 6. retrospect（需 retrospect.md 文件）
-    const retrospectDir = join(workspaceDir, ".xyz-harness", "e1-full");
-    mkdirSync(retrospectDir, { recursive: true });
-    const retrospectPath = join(retrospectDir, "retrospect.md");
+    const retrospectPath = retrospectMdPath(e.workspaceDir, "e1-full");
+    mkdirSync(join(e.workspaceDir, ".xyz-harness", "e1-full"), { recursive: true });
     writeFileSync(retrospectPath, "# Retrospect\n\nE2E 复盘内容");
     const retroResult = parseStdout(
       runCli(
         ["retrospect", "--topicId", topicId, "--retrospect-path", retrospectPath],
-        env,
+        e,
+        { input: JSON.stringify({ knownRisks: [], processIssues: [] }) },
       ),
     );
     expect(retroResult.status).toBe("retrospected");
@@ -240,7 +151,7 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
 
     // 7. closeout
     const closeoutResult = parseStdout(
-      runCli(["closeout", "--topicId", topicId], env),
+      runCli(["closeout", "--topicId", topicId], e),
     );
     expect(closeoutResult.status).toBe("closed");
     expect(closeoutResult.evidence).toBeDefined();
@@ -250,7 +161,7 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
 
     // 8. status 查询验证（只读子命令）
     const statusResult = parseStdout(
-      runCli(["status", "--topicId", topicId], env),
+      runCli(["status", "--topicId", topicId], e),
     );
     expect(statusResult.status).toBe("closed");
   });
@@ -263,8 +174,8 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
     // create + plan（2 个 wave）
     const createResult = parseStdout(
       runCli(
-        ["create", "--slug", "e2-progressive", "--objective", "渐进式测试", "--workspace", workspaceDir],
-        env,
+        ["create", "--slug", "e2-progressive", "--objective", "渐进式测试", "--workspace", e.workspaceDir],
+        e,
       ),
     );
     const topicId = createResult.topicId as string;
@@ -273,42 +184,22 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
       format: "lite",
       objective: "渐进式测试",
       waves: [
-        { id: "W1", changes: ["wave1"], dependsOn: [] },
-        { id: "W2", changes: ["wave2"], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "wave1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "wave2" }], dependsOn: ["W1"] },
       ],
     });
-    runCli(["plan", "--topicId", topicId], env, { input: planJson });
+    runCli(["plan", "--topicId", topicId], e, { input: planJson });
 
     // tdd_plan（test.json 含 testCases，推进到 tdd_inited 才能 dev）
-    const testJson = JSON.stringify({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "exit code 0, wave committed" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        {
-          id: "E2",
-          layer: "real",
-          scenario: "real layer integration",
-          steps: "run integration check",
-          expected: { text: "integration verified" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
+    runCli(["tdd_plan", "--topicId", topicId], e, {
+      input: JSON.stringify(makeValidTestJson()),
     });
-    runCli(["tdd_plan", "--topicId", topicId], env, { input: testJson });
 
     // 第一次 dev：只提交 W1
     const dev1 = parseStdout(
       runCli(
-        ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash }])],
-        env,
+        ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }])],
+        e,
       ),
     );
     expect(dev1.status).toBe("developed");
@@ -317,8 +208,8 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
     // 第二次 dev：提交 W2（progressive，不应报 illegal_transition）
     const dev2 = parseStdout(
       runCli(
-        ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W2", commitHash }])],
-        env,
+        ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W2", commitHash: e.commitHash }])],
+        e,
       ),
     );
     expect(dev2.status).toBe("developed"); // 原地停留
@@ -334,8 +225,8 @@ describe("E3: 非法跳步（created 直接到 test）被拒绝", () => {
   it("exit code 非 0 + stderr 含 illegal_transition", () => {
     const createResult = parseStdout(
       runCli(
-        ["create", "--slug", "e3-skip", "--objective", "跳步测试", "--workspace", workspaceDir],
-        env,
+        ["create", "--slug", "e3-skip", "--objective", "跳步测试", "--workspace", e.workspaceDir],
+        e,
       ),
     );
     const topicId = createResult.topicId as string;
@@ -343,7 +234,7 @@ describe("E3: 非法跳步（created 直接到 test）被拒绝", () => {
     // created 直接到 test（跳过 plan/dev）
     const result = runCli(
       ["test", "--topicId", topicId, "--cases", JSON.stringify([{ caseId: "E1", actual: {} }])],
-      env,
+      e,
     );
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("illegal_transition");
@@ -357,46 +248,23 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
     // create + plan + dev W1
     const createResult = parseStdout(
       runCli(
-        ["create", "--slug", "e4-replan", "--objective", "replan 测试", "--workspace", workspaceDir],
-        env,
+        ["create", "--slug", "e4-replan", "--objective", "replan 测试", "--workspace", e.workspaceDir],
+        e,
       ),
     );
     const topicId = createResult.topicId as string;
 
-    const planJson = JSON.stringify({
-      format: "lite",
-      objective: "replan 测试",
-      waves: [{ id: "W1", changes: ["w1"], dependsOn: [] }],
+    runCli(["plan", "--topicId", topicId], e, {
+      input: JSON.stringify(makeValidDevPlanJson()),
     });
-    runCli(["plan", "--topicId", topicId], env, { input: planJson });
 
     // tdd_plan（推进到 tdd_inited 才能 dev）
-    const testJson = JSON.stringify({
-      testCases: [
-        {
-          id: "E1",
-          layer: "mock",
-          scenario: "s",
-          steps: "st",
-          expected: { text: "exit code 0, wave committed" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-        {
-          id: "E2",
-          layer: "real",
-          scenario: "real layer integration",
-          steps: "run integration check",
-          expected: { text: "integration verified" },
-          executor: "agent",
-          requiresScreenshot: false,
-        },
-      ],
+    runCli(["tdd_plan", "--topicId", topicId], e, {
+      input: JSON.stringify(makeValidTestJson()),
     });
-    runCli(["tdd_plan", "--topicId", topicId], env, { input: testJson });
     runCli(
-      ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash }])],
-      env,
+      ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }])],
+      e,
     );
 
     // replan：追加 W2（保留 W1）。replan 无 flag → 从 stdin 读 planJson（旧格式含 testCases 兼容）。
@@ -404,19 +272,19 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
       format: "lite",
       objective: "replan 测试（追加 W2）",
       waves: [
-        { id: "W1", changes: ["w1"], dependsOn: [] },
-        { id: "W2", changes: ["w2"], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "w2" }], dependsOn: ["W1"] },
       ],
     });
     const replanResult = parseStdout(
-      runCli(["replan", "--topicId", topicId], env, { input: newPlan }),
+      runCli(["replan", "--topicId", topicId], e, { input: newPlan }),
     );
     // status 回退 planned（developed → planned）
     expect(replanResult.status).toBe("planned");
 
     // 验证 status 子命令看到 W1 + W2
     const statusResult = parseStdout(
-      runCli(["status", "--topicId", topicId], env),
+      runCli(["status", "--topicId", topicId], e),
     );
     const waves = statusResult.waves as Array<{ id: string; committed: boolean }>;
     const waveIds = waves.map((w) => w.id).sort();
@@ -432,7 +300,7 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
     });
     const deleteResult = runCli(
       ["replan", "--topicId", topicId],
-      env,
+      e,
       { input: deletePlan },
     );
     expect(deleteResult.exitCode).not.toBe(0);
@@ -444,7 +312,7 @@ describe("E4: replan 场景（dev 中追加 wave）", () => {
 
 describe("补充: list 只读查询子命令", () => {
   it("list 返回所有 topic 数组", () => {
-    const result = parseStdout(runCli(["list"], env));
+    const result = parseStdout(runCli(["list"], e));
     expect(Array.isArray(result)).toBe(true);
     // E1-E4 已创建多个 topic，list 应非空
     expect((result as unknown as Record<string, unknown>[]).length).toBeGreaterThan(0);
@@ -469,7 +337,7 @@ describe("补充: db 文件落盘验证", () => {
       }
       return null;
     };
-    const dbFile = findDb(cwHome);
+    const dbFile = findDb(e.cwHome);
     expect(dbFile).not.toBeNull();
     // 验证是合法 JSON
     const content = readFileSync(dbFile!, "utf8");

@@ -576,10 +576,9 @@ export function handlePlan(
  *   → 事务外对 redCheck=true 的 testCase 跑 redLightCheck（仅当配置了 testRunner）
  *   → buildNextAction("tdd_plan")。
  *
- * 红灯校验（事务外）：testRunner 存在时，对 redCheck=true 的 testCase 跑测试命令，
- * 确认测试如期失败（红灯）。失败（非红灯）只作为 warning 写入 result.mustFix，不阻断
- * status 流转——红灯校验是「锦上添花」的机器验证，失败可能只是 testRunner 配置问题，
- * agent 看到 mustFix 可以选择修测试或忽略。
+ * 红灯校验（事务外）：testRunner 必选（tddPlanCheck 保证），对 redCheck=true 的 testCase 跑测试命令，
+ * 确认测试如期失败（红灯）。红灯 fail（绿灯 = 先写了实现）阻断 status 流转——回退到 planned，
+ * nextAction 指回 tdd_plan retry，mustFix 提示 agent 确保测试在实现缺失时 fail。
  *
  * gate fail 语义：status 不变（仍 planned），gateHistory append fail，
  * nextAction 指回 tdd_plan retry。
@@ -652,13 +651,16 @@ export function handleTddPlan(
     return result;
   }
 
-  // 事务外：gate pass 后，对 redCheck=true 的 testCase 跑红灯校验（仅当配置了 testRunner）。
-  // 不改变 status（已是 tdd_inited），红灯校验失败只作为 warning 写入 mustFix。
-  // 红灯结果追加 gateHistory（独立 gate 名 tdd-red-light），供事后复盘 TDD 纪律执行情况。
+  // 红灯校验（事务外执行——调 execFileSync 跑测试命令，不能在事务内持锁）。
+  // testRunner 已必选（tddPlanCheck 保证），红灯校验阻断 status 流转：
+  //   - 红灯 fail（绿灯 = 先写了实现）→ 回退 status 到 planned，nextAction 指回 tdd_plan retry
+  //   - 红灯 pass 或无 redCheck case → 正常流转到 tdd_inited
   const redWarnings = runRedLightVerification(updated);
   if (redWarnings.length > 0) {
-    (result as Record<string, unknown>).mustFix = redWarnings.join("\n");
+    // 红灯校验失败——回退 status（tdd_inited → planned），gatePassed 置 false。
     deps.store.transaction(() => {
+      deps.store.updateStatus(params.topicId, "planned");
+      deps.store.updateGatePassed(params.topicId, "tdd_plan", false);
       deps.store.appendGateHistory(params.topicId, {
         phase: "tdd_plan",
         action: "tdd_plan",
@@ -668,18 +670,32 @@ export function handleTddPlan(
         progressive: false,
       });
     });
-  } else if (updated.testRunner) {
-    // 配置了 testRunner 且红灯全通过（含无 redCheck case 的情况）→ 记 pass 证明红灯验证执行过。
-    deps.store.transaction(() => {
-      deps.store.appendGateHistory(params.topicId, {
-        phase: "tdd_plan",
-        action: "tdd_plan",
-        gate: "tdd-red-light",
-        result: "pass",
-        progressive: false,
-      });
-    });
+    // reload 拿回退后的状态
+    const rolledBack = deps.store.loadTopic(params.topicId);
+    if (!rolledBack) {
+      throw new Error(`topic not found after red-light rollback: ${params.topicId}`);
+    }
+    const failResult: ActionResult = {
+      topicId: params.topicId,
+      status: rolledBack.status,
+      gatePassed: rolledBack.gatePassed,
+      nextAction: buildNextAction("tdd_plan", rolledBack),
+    };
+    (failResult as Record<string, unknown>).mustFix =
+      `红灯校验失败（测试已 pass = 实现已存在 = 违反 TDD）。必须确保测试在实现缺失时 fail（红灯），再提交。\n${redWarnings.join("\n")}`;
+    return failResult;
   }
+
+  // 红灯校验通过（或无 redCheck case）→ 记 pass 到 gateHistory。
+  deps.store.transaction(() => {
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "tdd_plan",
+      action: "tdd_plan",
+      gate: "tdd-red-light",
+      result: "pass",
+      progressive: false,
+    });
+  });
   return result;
 }
 
@@ -1250,13 +1266,13 @@ function validateRetrospectData(
 }
 
 /**
- * handleRetrospect — weak gate（文件存在 + 非空）+ 可选结构化数据，委托 gateAdvance。
+ * handleRetrospect — weak gate（文件存在 + 非空）+ 必选结构化数据，委托 gateAdvance。
  *
  * gate pass → status=retrospected + 记录 retrospectPath/retrospectAt artifacts +
- *   若提供 retrospectData：校验后存入 topic.retrospectData（derived 由 cw 自动算覆盖）。
+ *   校验 retrospectData 后存入 topic.retrospectData（derived 由 cw 自动算覆盖）。
  * gate fail → status 不变（仍 tested）+ nextAction 指回 retry。
  *
- * retrospectData 是可选增强，不阻断 gate——校验失败只记 warning，gate 仍 pass。
+ * retrospectData 必选——未传或校验失败 = gate fail（阻断 status 流转）。
  */
 export function handleRetrospect(
   params: RetrospectParams,
@@ -1264,7 +1280,62 @@ export function handleRetrospect(
   deps: ActionDeps,
 ): ActionResult {
   const path = params.retrospectPath ?? "";
-  let retrospectWarning: string | undefined;
+
+  // retrospectData 必选校验（gate 前置）。
+  // 未传 → gate fail。校验失败 → gate fail。
+  if (params.retrospectData === undefined) {
+    deps.store.transaction(() => {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "retrospect",
+        action: "retrospect",
+        gate: "file-exists+non-empty",
+        result: "fail",
+        report: "retrospectData 必填——通过 stdin 传入 knownRisks + processIssues JSON",
+        progressive: false,
+      });
+    });
+    const updated = deps.store.loadTopic(params.topicId);
+    if (!updated) {
+      throw new Error(`topic not found after retrospect fail: ${params.topicId}`);
+    }
+    const failResult: ActionResult = {
+      topicId: params.topicId,
+      status: updated.status,
+      gatePassed: updated.gatePassed,
+      nextAction: buildNextAction("retrospect", updated),
+    };
+    (failResult as Record<string, unknown>).mustFix =
+      "retrospectData 必填——通过 stdin 传入 knownRisks + processIssues JSON。\n" +
+      "格式：echo '{\"knownRisks\":[...],\"processIssues\":[...]}' | cw retrospect --topicId <id> --retrospectPath <path>";
+    return failResult;
+  }
+
+  const validated = validateRetrospectData(params.retrospectData);
+  if (validated.error) {
+    deps.store.transaction(() => {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "retrospect",
+        action: "retrospect",
+        gate: "file-exists+non-empty",
+        result: "fail",
+        report: `retrospectData 校验失败：${validated.error}`,
+        progressive: false,
+      });
+    });
+    const updated = deps.store.loadTopic(params.topicId);
+    if (!updated) {
+      throw new Error(`topic not found after retrospect fail: ${params.topicId}`);
+    }
+    const failResult: ActionResult = {
+      topicId: params.topicId,
+      status: updated.status,
+      gatePassed: updated.gatePassed,
+      nextAction: buildNextAction("retrospect", updated),
+    };
+    (failResult as Record<string, unknown>).mustFix =
+      `retrospectData 校验失败：${validated.error}`;
+    return failResult;
+  }
 
   const result = gateAdvance(
     "retrospect",
@@ -1279,28 +1350,16 @@ export function handleRetrospect(
         retrospectAt: new Date().toISOString(),
       });
 
-      // 结构化数据存储（可选，校验失败不阻断 gate）
-      if (params.retrospectData !== undefined) {
-        const validated = validateRetrospectData(params.retrospectData);
-        if (validated.error) {
-          retrospectWarning = `retrospectData 校验失败（已跳过存储）：${validated.error}`;
-          return;
-        }
-        const derived = computeRetrospectDerived(topic);
-        const data: RetrospectData = {
-          derived,
-          knownRisks: validated.knownRisks ?? [],
-          processIssues: validated.processIssues ?? [],
-        };
-        deps.store.setRetrospectData(params.topicId, data);
-      }
+      const derived = computeRetrospectDerived(topic);
+      const data: RetrospectData = {
+        derived,
+        knownRisks: validated.knownRisks ?? [],
+        processIssues: validated.processIssues ?? [],
+      };
+      deps.store.setRetrospectData(params.topicId, data);
     },
   );
 
-  // gate pass 但 retrospectData 校验失败 → warning 挂 mustFix（不阻断 status）
-  if (retrospectWarning) {
-    (result as Record<string, unknown>).mustFix = retrospectWarning;
-  }
   return result;
 }
 

@@ -370,7 +370,15 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "tdd_plan": {
-      if (!computeGatePassed("tdd_plan", topic)) {
+      // 红灯校验失败阻断流转：handleTddPlan 在红灯 fail 时回退 status 到 planned 并
+      // append tdd-red-light(fail)。computeGatePassed 只看 test-json-schema pass 记录
+      // （会漏判红灯 fail），这里补判：最近一条 tdd-red-light 为 fail → 视为 gate fail retry。
+      const lastRedLight = [...topic.gateHistory]
+        .reverse()
+        .find((g) => g.gate === "tdd-red-light");
+      const redLightBlocked =
+        lastRedLight !== undefined && lastRedLight.result === "fail";
+      if (!computeGatePassed("tdd_plan", topic) || redLightBlocked) {
         const fails = countConsecutiveGateFails(topic.gateHistory, "tdd_plan");
         return {
           action: "tdd_plan",
@@ -557,7 +565,10 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         };
       }
       return {
-        guidance: "topic 已关闭（closed）。本次编码流程结束。",
+        guidance:
+          "topic 已关闭。本次编码流程结束。\n\n" +
+          "交付后如发现质量问题，可调 cw assess 记录评估数据（quality/test/stability/defect），" +
+          "用于校准 review 召回率和交付质量趋势。详见 SKILL.md「post-closeout 评估（assess）」。",
       };
     }
     case "replan": {
