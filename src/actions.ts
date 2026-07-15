@@ -30,6 +30,7 @@ import {
   tddPlanCheck,
   testCheck,
 } from "./gate.js";
+import { runInit } from "./init.js";
 import {
   type ParsedDevPlan,
   parseDevPlan,
@@ -260,11 +261,34 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     deps.store.insertTopic(topic);
   });
 
+  const nextAction = buildNextAction("create", topic);
+
+  // create 后检测项目文档基建（不阻断）。必备文档缺失/骨架态/漂移时，在 guidance 前拼 init 提示。
+  // 引导 agent 先调 `cw init` 扫描补齐，再继续 clarify/plan。
+  // 这是建议非硬阻断——保持 create 的 guard ok:true 哲学（单重 guard 只防跳步，入口不加硬门槛）。
+  const initResult = runInit(deps.workspacePath);
+  if (!initResult.ready) {
+    const notReady = initResult.docs.filter(
+      (d) => d.level === "必备" && d.status !== "ok",
+    );
+    if (notReady.length > 0) {
+      const summary = notReady
+        .map((d) => `${d.path}（${d.status === "missing" ? "缺失" : d.status === "skeleton" ? "骨架态" : "漂移"}）`)
+        .join("、");
+      nextAction.guidance =
+        `⚠️ 项目文档基建未就绪。必备文档：${summary}。\n` +
+        `建议先调 \`cw init\` 扫描文档基建（返回缺失清单 + 骨架内容），` +
+        `按用户确认用 write 工具补齐后再继续。\n` +
+        `（建议不阻断——可直接继续 clarify/plan，但文档缺失会影响后续阶段质量）\n\n` +
+        nextAction.guidance;
+    }
+  }
+
   return {
     topicId,
     status: topic.status,
     gatePassed: topic.gatePassed,
-    nextAction: buildNextAction("create", topic),
+    nextAction,
   };
 }
 

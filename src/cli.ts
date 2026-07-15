@@ -49,6 +49,7 @@ import {
 } from "./actions.js";
 import { dispatch } from "./dispatch.js";
 import { GitValidator } from "./gate.js";
+import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
 import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
@@ -750,6 +751,14 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  // init 是 topic 之前的基建诊断，不进状态机（无 topic 可 loadTopic）。
+  // 与 status/list/stats 同级，在 cli.ts 直接处理，不经 dispatch。
+  if (action === "init") {
+    const result = runInit(workspacePath);
+    process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
+    return;
+  }
+
   // dispatch action 合法性校验。
   if (!VALID_DISPATCH_ACTIONS.includes(action as Action)) {
     process.stderr.write(
@@ -758,6 +767,7 @@ async function main(argv: string[]): Promise<void> {
         "status",
         "list",
         "stats",
+        "init",
       ].join(", ")}\n`,
     );
     process.exit(EXIT_CW_ERROR);
