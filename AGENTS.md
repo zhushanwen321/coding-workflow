@@ -8,7 +8,7 @@
 
 ```bash
 npm run check:all   # tsc 类型检查（src + tests）
-npm test            # vitest run（444 个测试，含真实子进程 e2e）
+npm test            # vitest run（464 个测试，含真实子进程 e2e）
 npm run lint        # eslint src/ tests/
 npm run build       # tsc 编译到 dist/
 ```
@@ -35,6 +35,12 @@ npm run build       # tsc 编译到 dist/
 - 零 mock：真实 CwStore + tmp 目录 + 真实 git 子进程
 - e2e 测试用子进程跑真实 `cw` CLI 命令；拆分到 `tests/e2e-*.test.ts` 系列，共享基建在 `tests/helpers/e2e.ts`（`runCli`/`setupToDeveloped` 等阶段 helper）。编写指南见 [TEST-STRATEGY.md](./TEST-STRATEGY.md)「E2E 测试编写指南」
 - 每个 handler 都有 dispatch 层测试（不直接调 handler，走完整 dispatch 路径）
+- `[BUG-HUNT]` 前缀的测试标记已确认但未修复的 bug，故意保持红色直到 bug 修复。修复后测试转绿，保留 `[BUG-HUNT]` 前缀作为历史标记
+
+## CI 约定
+
+- release workflow（`.github/workflows/release.yml`）由 `v*` tag push 触发，跑 `npm ci → build → test → pack --dry-run → npm publish --provenance`
+- GitHub Actions warning "Node.js 20 is deprecated, forced to run on Node.js 24"（来自 `actions/checkout@v4` 和 `actions/setup-node@v4`）**可忽略**——不影响发布，action 升级待官方稳定后再做
 
 ## 文档索引
 

@@ -8,8 +8,6 @@
  *   - mattpocock grill-with-docs：先探索后提问（代码能答的自己查）+ 留下 paper trail（ADR + glossary）
  *   - superpowers brainstorming：探索 → 澄清 → 方案 → 设计批准
  *   - 适配 cw 的 agent-agnostic 约束：cw 只提供记录机制，不强制 agent 真去问用户
- *
- * 与 spec.ts 的关系：spec.ts 的方法论大部分迁移到此处，spec.ts 降级为 create guidance 的简短引用。
  */
 
 export const CLARIFY_PROMPT = `
