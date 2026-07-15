@@ -925,17 +925,26 @@ export class CwStore {
 
   insertTestCases(topicId: string, cases: TestCaseSeed[]): void {
     this.executeWrite(() => {
-      // 去重：已存在同 topicId+id 的 testCase 不重复插入。
-      const existingIds = new Set(
-        this.fileData!.testCases
-          .filter((tc) => tc.topicId === topicId)
-          .map((tc) => tc.id),
+      // upsert 语义：已 passed 的 testCase 保留不动（append-only 保护）；
+      // failed/pending 的重置为 pending（清空 actual/failureReason）——重走 tdd_plan 意味着重新开始 TDD 循环。
+      // 之前按 id 去重直接跳过会导致旧 failed case 卡死，replan 后重走 tdd_plan 无法重置。
+      const existing = this.fileData!.testCases.filter(
+        (tc) => tc.topicId === topicId,
       );
+      const existingMap = new Map(existing.map((tc) => [tc.id, tc]));
       for (const c of cases) {
-        if (!existingIds.has(c.id)) {
+        const old = existingMap.get(c.id);
+        if (!old) {
+          // 新 case：插入。
           this.fileData!.testCases.push(this.testCaseSeedToRecord(topicId, c));
-          existingIds.add(c.id);
+        } else if (old.status !== "passed") {
+          // 已存在但非 passed：重置为 pending，清空运行时字段。
+          old.status = "pending";
+          old.actual = undefined;
+          old.screenshotPath = undefined;
+          old.failureReason = undefined;
         }
+        // passed 的保留不动。
       }
     });
   }

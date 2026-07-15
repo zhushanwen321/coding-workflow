@@ -968,12 +968,21 @@ export function handleTestFix(
 ): ActionResult {
   const fixes = params.fixes ?? [];
 
-  // 校验所有 caseId 存在（校验在事务外做）。
-  const caseIds = new Set(topic.testCases.map((c) => c.id));
+  // 校验所有 caseId 存在且 status=failed（校验在事务外做）。
+  // 对称 review_fix 的 status=open 守门——只允许对真正失败的 case 提交 fix，
+  // 防止对已 passed/pending 的 case 提交 fix 污染 testFixLog + 虚增 testTurn。
+  const caseMap = new Map(topic.testCases.map((c) => [c.id, c]));
   for (const fix of fixes) {
-    if (!caseIds.has(fix.caseId)) {
+    const tc = caseMap.get(fix.caseId);
+    if (!tc) {
       throw new CwError(
         `test_fix caseId 不存在: ${fix.caseId}（不存在于 topic.testCases）`,
+      );
+    }
+    if (tc.status !== "failed") {
+      throw new CwError(
+        `test_fix caseId ${fix.caseId} 当前 status=${tc.status}，只有 failed 的 case 才能提交 test_fix` +
+          `（对称 review_fix 的 status=open 守门——对已 passed 的 case 提交 fix 会污染审计）`,
       );
     }
   }
@@ -1420,7 +1429,8 @@ type AppendOnlyViolation =
   | { type: "wave_deleted_committed"; waveId: string; reason: string }
   | { type: "wave_modified_committed"; waveId: string; reason: string }
   | { type: "case_deleted_passed"; caseId: string; reason: string }
-  | { type: "case_modified_passed"; caseId: string; reason: string };
+  | { type: "case_modified_passed"; caseId: string; reason: string }
+  | { type: "case_expected_tampered_failed"; caseId: string; reason: string };
 
 export interface ReplanSummary {
   addedWaves: string[];
@@ -1481,7 +1491,7 @@ function validateAppendOnly(
     }
   }
 
-  // TestCase 校验：已 passed 的不可删/改。
+  // TestCase 校验：已 passed 的不可删/改；failed 的 expected 不可改（防作弊）。
   for (const old of oldTestCases) {
     const match = newCases.find((c) => c.id === old.id);
     if (!match) {
@@ -1518,6 +1528,20 @@ function validateAppendOnly(
           type: "case_modified_passed",
           caseId: old.id,
           reason: `已 passed 的 testCase ${old.id} 的 ${differ.join("/")} 不能修改`,
+        });
+      }
+    } else if (old.status === "failed") {
+      // failed 的 testCase expected 不可改——防「fail → 改 expected 匹配 actual → pass」作弊。
+      // 其他语义字段（layer/scenario/steps 等）允许调整（replan 可能需要重构测试）。
+      if (
+        JSON.stringify(match.expected ?? {}) !== JSON.stringify(old.expected ?? {})
+      ) {
+        violations.push({
+          type: "case_expected_tampered_failed",
+          caseId: old.id,
+          reason:
+            `已 failed 的 testCase ${old.id} 的 expected 不能修改` +
+            `——防止「fail → 改 expected 匹配 actual → pass」作弊路径`,
         });
       }
     }
