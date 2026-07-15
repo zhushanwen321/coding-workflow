@@ -48,7 +48,7 @@ import {
   type TestParams,
 } from "./actions.js";
 import { dispatch } from "./dispatch.js";
-import { GitValidator } from "./gate.js";
+import { GitValidator, reviewIssueCheck } from "./gate.js";
 import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
 import { computeStats, computeStatsAll } from "./stats.js";
@@ -467,20 +467,23 @@ export function buildParams(
       const rp = flag(parsed, "reviewPath");
       if (rp) params.reviewPath = rp;
       // issues 从 stdin 读（可选，无 stdin 时为空数组 = 无问题）。
-      // stdin 有内容时解析为 JSON 数组；非数组/非 JSON → throw。
+      // stdin 有内容时解析为 JSON 数组；非 JSON → throw；逐元素 schema 校验。
       if (!isStdinTTY && stdinData.trim().length > 0) {
+        let issuesRaw: unknown;
         try {
-          const issues = JSON.parse(stdinData);
-          if (!Array.isArray(issues)) {
-            throw new CwError("review issues 必须是 JSON 数组");
-          }
-          params.issues = issues as ReviewParams["issues"];
+          issuesRaw = JSON.parse(stdinData);
         } catch (e) {
-          if (e instanceof CwError) throw e;
           throw new CwError(
             `review issues JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
+        // 逐元素 schema 校验（替代原来只查 Array.isArray 的弱校验，
+        // 避免 agent 传 [{"foo":"bar"}] 导致 severity 为 undefined、must-fix 被静默降级）。
+        const check = reviewIssueCheck(issuesRaw);
+        if (check.result === "fail") {
+          throw new CwError(check.report);
+        }
+        params.issues = check.parsed!;
       }
       return params;
     }

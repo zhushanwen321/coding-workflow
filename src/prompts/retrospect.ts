@@ -75,6 +75,14 @@ derived 段由 cw 从执行数据自动派生，包含：
 
 即使填了 derived 也会被 cw 覆盖——不信任 agent 自报的执行数据。
 
+### 未闭环的 review issues
+
+如果 CW 返回的 nextAction 或 topic 数据中有未闭环的 should-fix/nit issue（status=open），
+retrospect 应该评估它们：
+- 判断是否需要在本次交付前处理（如 should-fix 涉及重要质量风险）
+- 如果接受不修，在 processIssues 里记录「哪些 should-fix/nit 被有意跳过及原因」
+- 这样保证 issue 不会被静默遗忘
+
 ## retrospect.md 与 retrospectData 的分工
 
 | 产物 | 给谁读 | 内容 |

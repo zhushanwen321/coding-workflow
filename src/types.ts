@@ -359,6 +359,19 @@ export interface RuntimeEnv {
 // ── review / test issue tracking（闭环追踪） ───────────────
 
 /**
+ * ReviewIssueCategory — review issue 的审查维度分类。
+ *
+ * 用于事后统计 review 盲区分布（哪些维度的 issue 被遗漏）。agent 可选填，
+ * 不提供时 CW 不报错（向后兼容旧数据）。
+ */
+export type ReviewIssueCategory =
+  | "type-safety"
+  | "error-handling"
+  | "edge-case"
+  | "test-coverage"
+  | "plan-completeness";
+
+/**
  * ReviewIssue — Review 阶段 agent 声明的问题（主观，CW 不验证内容，只追踪闭环）。
  *
  * 设计：CW 不判定 issue 的内容是否合理（review 是主观的），只追踪「声明的 issue 是否
@@ -372,6 +385,8 @@ export interface ReviewIssue {
   description: string;
   /** 关联代码位置，如 "src/types.ts:42"。 */
   file?: string;
+  /** 审查维度（可选），用于事后统计 review 盲区分布。 */
+  category?: ReviewIssueCategory;
   status: "open" | "fixed";
   /** 第几轮 review 发现的（1-based）。 */
   foundAtTurn: number;
@@ -538,6 +553,8 @@ export interface ReviewIssueSubmission {
   severity: "must-fix" | "should-fix" | "nit";
   description: string;
   file?: string;
+  /** 审查维度（可选），用于事后统计 review 盲区分布。 */
+  category?: ReviewIssueCategory;
 }
 
 /**

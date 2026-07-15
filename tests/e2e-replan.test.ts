@@ -194,7 +194,7 @@ describe("[BUG-HUNT] replan 后 reviewIssues 应清空（对照组）", () => {
     // review_fix 引用 R1——清空后重新分配的 R1 应 status=open
     const fixResult = runCli(["review_fix", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { issueId: "R1", commitHash: "c", resolution: "fix new R1" },
+        { issueId: "R1", commitHash: "abc1234", resolution: "fix new R1" },
       ]),
     });
     expect(
@@ -297,5 +297,50 @@ describe("[BUG-HUNT] retrospect/closeout 后 replan 被 guard 拒——状态死
     // 记录死锁行为：retrospected 下 replan 被拒
     expect(replanResult.exitCode).not.toBe(0);
     expect(replanResult.stderr).toContain("illegal_transition");
+  });
+});
+
+// ── --test only 不 reset review loop（P2-8：选择性 reset）─────
+//
+// replan --test（不改 plan）时代码没变，review 审查结论仍有效。
+// reviewIssues 应保留，不触发 resetReviewLoop。
+
+describe("--test only 不清空 reviewIssues（代码没变，审查结论有效）", () => {
+  it("replan --test only → reviewIssues 保留，再 review 发现新 issue 时 id 从 R2 继续", () => {
+    const topicId = setupToDevelopedLocal("p28-test-only-review");
+
+    // review 发现 issue（R1）
+    parseStdout(
+      runCli(["review", "--topicId", topicId], e, {
+        input: JSON.stringify([{ severity: "must-fix", description: "issue1" }]),
+      }),
+    );
+
+    // replan 只 --test（不 --plan），代码没变
+    const testFile = join(e.workspaceDir, "test.json");
+    writeFileSync(testFile, localTestJson);
+    parseStdout(
+      runCli(["replan", "--topicId", topicId, "--test", "--testJsonFile", testFile], e),
+    );
+
+    // 重走 tdd_plan + dev（progressive，W1 已 committed）
+    runCli(["tdd_plan", "--topicId", topicId], e, { input: localTestJson });
+    runCli(["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }])], e);
+
+    // 再 review 发现新 issue——reviewIssues 未清空，id 从 R2 继续（R1 仍存在）
+    const reviewResult = parseStdout(
+      runCli(["review", "--topicId", topicId], e, {
+        input: JSON.stringify([{ severity: "must-fix", description: "new issue" }]),
+      }),
+    );
+    expect(reviewResult.status).toBe("reviewed");
+
+    // R1 仍存在（open），新 issue 是 R2——验证 reviewIssues 没被清空
+    const fixR2 = runCli(["review_fix", "--topicId", topicId], e, {
+      input: JSON.stringify([
+        { issueId: "R2", commitHash: "abc1234", resolution: "fix R2" },
+      ]),
+    });
+    expect(fixR2.exitCode).toBe(0);
   });
 });

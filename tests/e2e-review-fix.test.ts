@@ -112,7 +112,7 @@ describe("E6c: 完整 loop——review(issues)→fix→review(空)→nextAction=
     ]);
     // review_fix 修掉
     reviewFix(topicId, [
-      { issueId: "R1", commitHash: "fix1", resolution: "已修" },
+      { issueId: "R1", commitHash: "abc1234", resolution: "已修" },
     ]);
     // 重新 review，无新问题（空 issues）
     const result = reviewNoIssues(topicId);
@@ -132,11 +132,11 @@ describe("E6d: 连续 3 轮 review 带 issues → 强制转 test", () => {
     // 第 1 轮：review 带 issues → reviewTurn=1
     reviewWithIssues(topicId, [{ severity: "must-fix", description: "round1" }]);
     // 修（不重新 review，直接开第 2 轮 review）
-    reviewFix(topicId, [{ issueId: "R1", commitHash: "c1", resolution: "r1" }]);
+    reviewFix(topicId, [{ issueId: "R1", commitHash: "abc1234", resolution: "r1" }]);
 
     // 第 2 轮：又发现新 issues → reviewTurn=2
     reviewWithIssues(topicId, [{ severity: "must-fix", description: "round2" }]);
-    reviewFix(topicId, [{ issueId: "R2", commitHash: "c2", resolution: "r2" }]);
+    reviewFix(topicId, [{ issueId: "R2", commitHash: "def5678", resolution: "r2" }]);
 
     // 第 3 轮：又发现新 issues → reviewTurn=3 达上限
     const result = reviewWithIssues(topicId, [
@@ -164,5 +164,60 @@ describe("E6e: review_fix 传不存在的 issueId → exit≠0", () => {
     });
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("不存在");
+  });
+});
+
+// ── E6f: review issues schema 校验（reviewIssueCheck）─────────
+
+describe("E6f: review issues schema 校验 → 无效输入 exit≠0", () => {
+  it("severity 不在枚举 → exit≠0, stderr 含 severity", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-bad-severity");
+    const result = runCli(["review", "--topicId", topicId], e, {
+      input: JSON.stringify([
+        { severity: "blocker", description: "问题1" },
+      ]),
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("severity");
+  });
+
+  it("description 缺失 → exit≠0, stderr 含 description", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-missing-desc");
+    const result = runCli(["review", "--topicId", topicId], e, {
+      input: JSON.stringify([
+        { severity: "must-fix" },
+      ]),
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("description");
+  });
+
+  it("非对象元素（字符串）→ exit≠0", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-non-object");
+    const result = runCli(["review", "--topicId", topicId], e, {
+      input: JSON.stringify(["just-a-string"]),
+    });
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  it("有效 issues（含可选 category）→ 正常通过", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-valid-category");
+    const result = reviewWithIssues(topicId, [
+      { severity: "must-fix", description: "问题1", category: "type-safety" },
+    ]);
+    expect(result.status).toBe("reviewed");
+    const na = result.nextAction as Record<string, unknown>;
+    expect(na.action).toBe("review_fix");
+  });
+
+  it("category 不在枚举 → exit≠0, stderr 含 category", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-bad-category");
+    const result = runCli(["review", "--topicId", topicId], e, {
+      input: JSON.stringify([
+        { severity: "must-fix", description: "问题1", category: "unknown" },
+      ]),
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("category");
   });
 });

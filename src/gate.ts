@@ -28,6 +28,8 @@ import {
   CwError,
   type Expected,
   judgeByExpected,
+  type ReviewIssueCategory,
+  type ReviewIssueSubmission,
   type TestCase,
   type TestRunnerConfig,
   type Topic,
@@ -696,6 +698,115 @@ export function fileExistsCheck(path: string): FileExistsResult {
     return { result: "fail", report: `file is empty: ${path}` };
   }
   return { result: "pass", report: "" };
+}
+
+// ── reviewIssueCheck（review issues schema 校验） ─────────────
+
+export interface ReviewIssueCheckResult {
+  result: "pass" | "fail";
+  report: string;
+  /** 校验通过的 issues（pass 时供 handler 写入 store） */
+  parsed?: ReviewIssueSubmission[];
+}
+
+/** severity 合法枚举值集合（reviewIssueCheck 逐元素校验用）。 */
+const REVIEW_SEVERITIES = new Set(["must-fix", "should-fix", "nit"]);
+
+/** category 合法枚举值集合（reviewIssueCheck 逐元素校验用）。 */
+const REVIEW_CATEGORIES = new Set<ReviewIssueCategory>([
+  "type-safety",
+  "error-handling",
+  "edge-case",
+  "test-coverage",
+  "plan-completeness",
+]);
+
+/**
+ * reviewIssueCheck — review issues 的逐元素 schema 校验。
+ *
+ * 校验链：
+ *   1. 必须是数组
+ *   2. 每个元素必须有 severity（枚举值）+ description（非空字符串）
+ *   3. file 可选但提供时必须是非空字符串
+ *   4. category 可选但提供时必须是枚举值
+ *
+ * 与 planCheck/tddPlanCheck 的区别：reviewIssueCheck 不用 typebox（issues 结构简单，
+ * 手写校验更直白），直接逐字段 typeof + 枚举检查。
+ *
+ * 失败路径：任何一条 issue 不合规 → fail + report 指明第几条、哪个字段。
+ *
+ * 背景修复：原先 cli.ts review case 只做 Array.isArray 弱校验，agent 传
+ * `[{"foo":"bar"}]` 也能通过，导致 severity 为 undefined，buildNextAction 里的
+ * `severity === "must-fix"` 永远 false，must-fix 被静默降级。
+ */
+export function reviewIssueCheck(raw: unknown): ReviewIssueCheckResult {
+  if (!Array.isArray(raw)) {
+    return { result: "fail", report: "issues 必须是 JSON 数组" };
+  }
+
+  const issues: ReviewIssueSubmission[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return {
+        result: "fail",
+        report: `issues[${i}] 不是对象`,
+      };
+    }
+    const obj = item as Record<string, unknown>;
+
+    // severity：枚举值校验（最关键字段，buildNextAction 用它判 must-fix）。
+    if (!REVIEW_SEVERITIES.has(String(obj.severity))) {
+      return {
+        result: "fail",
+        report: `issues[${i}].severity 无效: ${JSON.stringify(obj.severity)}`,
+      };
+    }
+
+    // description：非空字符串（trim 后仍需有内容）。
+    if (
+      typeof obj.description !== "string" ||
+      obj.description.trim().length === 0
+    ) {
+      return {
+        result: "fail",
+        report: `issues[${i}].description 缺失或为空`,
+      };
+    }
+
+    // file：可选，但提供时必须是字符串。
+    if (
+      obj.file !== undefined &&
+      typeof obj.file !== "string"
+    ) {
+      return {
+        result: "fail",
+        report: `issues[${i}].file 必须是字符串`,
+      };
+    }
+
+    // category：可选，但提供时必须是合法枚举值。
+    if (
+      obj.category !== undefined &&
+      !REVIEW_CATEGORIES.has(obj.category as ReviewIssueCategory)
+    ) {
+      return {
+        result: "fail",
+        report: `issues[${i}].category 无效: ${JSON.stringify(obj.category)}`,
+      };
+    }
+
+    issues.push({
+      severity: obj.severity as ReviewIssueSubmission["severity"],
+      description: obj.description,
+      ...(obj.file !== undefined ? { file: obj.file } : {}),
+      ...(obj.category !== undefined
+        ? { category: obj.category as ReviewIssueCategory }
+        : {}),
+    });
+  }
+
+  return { result: "pass", report: "", parsed: issues };
 }
 
 // ── clarifyCheck（clarify gate，结构校验 + ADR projectPath 文件存在） ──

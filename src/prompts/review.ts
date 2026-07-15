@@ -44,27 +44,44 @@ issues 通过 stdin 传入，是 JSON 数组，每个元素是一个 issue：
     echo '[
       {
         "severity": "must-fix",
+        "category": "edge-case",
         "description": "store.ts 的 appendReviewIssues 没有做 turn 校验",
         "file": "src/store.ts:142"
       },
       {
         "severity": "should-fix",
+        "category": "error-handling",
         "description": "错误消息缺用法示例",
         "file": "src/cli.ts:268"
       }
     ]' | cw review --topicId <topicId> --reviewPath <path>
 
-> 注意：severity 用 \`must-fix\` / \`should-fix\` / \`nit\`（连字符），id 由 CW 自动分配（R1, R2...），不要手填。
+> 注意：severity 用 \`must-fix\` / \`should-fix\` / \`nit\`（连字符），id 由 CW 自动分配（R1, R2...），不要手填。但提交 issues stdin 时只放 must-fix / should-fix，nit 不进 issues（见下方 severity 分级）。
 
 ### severity 分级
 
 | severity | 含义 | 行为 |
 |----------|------|------|
-| must-fix | 阻断性问题 | 有 must-fix → 进 review_fix 循环 |
-| should-fix | 重要但不阻断 | 记录但不阻断流程 |
-| nit | 风格/优化建议 | 记录但不阻断流程 |
+| must-fix | 阻断性问题 | 通过 stdin issues 提交；有 must-fix → 进 review_fix 循环 |
+| should-fix | 重要但不阻断 | 通过 stdin issues 提交；记录但不阻断流程 |
+| nit | 风格/优化建议 | 只写 review.md，不进 issues |
+
+> **discipline（重点）**：只有 must-fix / should-fix 进 issues stdin（机器追踪闭环）；nit 只写在 review.md 里（人可读报告）。
+> 原因：nit 是风格/优化建议，进 issue tracking 会占满 turn 上限（3 轮），把真正的 must-fix 挤掉、被强制推到 test。nit 在 review.md 里提就足够让人看到。
 
 **无问题时传空数组**：\`echo '[]' | cw review ...\`。空数组 = 审查通过，直接进 test。
+
+### category 字段
+
+可选，取以下 5 个值之一（对应审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
+
+| category | 对应维度 |
+|----------|----------|
+| \`type-safety\` | 类型安全 |
+| \`error-handling\` | 错误处理 |
+| \`edge-case\` | 边界条件 |
+| \`test-coverage\` | 测试覆盖 |
+| \`plan-completeness\` | plan 完成度 |
 
 ## review fix loop
 
@@ -89,9 +106,9 @@ review turn 2: 复查是否还有新问题
 
 最多 3 轮 review（初始 + 2 轮 fix 复查）。达上限后 CW 强制进 test，guidance 标注未修复的 must-fix。
 
-## 产出 review.md
+## 产出 review.md（必填）
 
-review.md 是给人类看的审查报告（落 .xyz-harness/<slug>/changes/ 目录）。issues（通过 stdin 传入）是给 CW 的机器可读结构化数据。两者都要提交。
+review.md 是必填交付物——与 plan/tdd_plan/retrospect 的文件校验对称，不产出 review.md 一律 gate fail。它是给人类看的审查报告（落 .xyz-harness/<slug>/changes/ 目录）；issues（通过 stdin 传入）是给 CW 的机器可读结构化数据。两者都要提交，缺一不可。
 
 review.md 内容：
 - 审查范围（哪些 commit / 文件）
@@ -102,7 +119,7 @@ review.md 内容：
 
     echo '<issuesJson>' | cw review --topicId <topicId> --reviewPath <review.md>
 
-- --reviewPath：review.md 的路径（gate 校验文件存在 + 非空）
+- --reviewPath：review.md 的路径（必填——gate 校验文件存在 + 非空）。代码签名上 reviewPath 可选，但 prompt 层面纪律要求必须写 review.md 并通过 --reviewPath 提交，与 plan/tdd_plan/retrospect 的文件校验对称。漏传 = gate fail = 重写。
 - issues：通过 stdin 传入的结构化问题清单（空数组 = 无问题，直接进 test）
 
 gate fail（文件不存在/空）→ 重写后重调 cw(review)。

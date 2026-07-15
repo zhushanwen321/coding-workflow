@@ -552,10 +552,20 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
               : `retrospect gate FAIL。修 mustFix 后重调 cw(retrospect)。\n\n${RETROSPECT_PROMPT}`,
         };
       }
+      // 检查未闭环的 should-fix/nit（status=open 的非 must-fix issue），提醒 retrospect 记录。
+      const openNonMustFix = topic.reviewIssues.filter(
+        (i) => i.status === "open" && i.severity !== "must-fix",
+      );
+      const unclosedNote =
+        openNonMustFix.length > 0
+          ? `\n\n注意：有 ${openNonMustFix.length} 个未闭环的 should-fix/nit issue（status=open）。` +
+            `在 retrospect 的 processIssues 里记录「哪些被有意跳过及原因」，避免静默遗忘。`
+          : "";
       return {
         action: "closeout",
         guidance:
-          "retrospect gate 通过。下一步：调 cw(closeout) 归档 topic。\n\ncloseout gate 检查项：topic 目录（.xyz-harness/<slug>/）存在。retrospect.md 已在里面所以会自动通过。",
+          "retrospect gate 通过。下一步：调 cw(closeout) 归档 topic。\n\ncloseout gate 检查项：topic 目录（.xyz-harness/<slug>/）存在。retrospect.md 已在里面所以会自动通过。" +
+          unclosedNote,
       };
     }
     case "closeout": {

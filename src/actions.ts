@@ -1049,12 +1049,11 @@ export function handleReview(
   // reviewPath 提供时做 fileExistsCheck（前置条件）。fail → gate fail，status 不变。
   const fileCheck =
     path.length > 0 ? fileExistsCheck(path) : { result: "pass" as const, report: "" };
-
-  let passed: boolean;
-  let gateReport: string | undefined;
+  // passed 在 transaction 外算完（fileCheck 已经算完，无需在闭包内赋值）。
+  const passed = fileCheck.result === "pass";
 
   deps.store.transaction(() => {
-    if (fileCheck.result === "fail") {
+    if (!passed) {
       // 前置条件失败 → gate fail，status 不变。
       deps.store.appendGateHistory(params.topicId, {
         phase: "review",
@@ -1064,8 +1063,6 @@ export function handleReview(
         report: fileCheck.report,
         progressive: true,
       });
-      passed = false;
-      gateReport = fileCheck.report;
       return;
     }
 
@@ -1104,7 +1101,6 @@ export function handleReview(
         : undefined,
       progressive: true,
     });
-    passed = true;
   });
 
   const updated = deps.store.loadTopic(params.topicId);
@@ -1118,8 +1114,8 @@ export function handleReview(
     gatePassed: updated.gatePassed,
     nextAction: buildNextAction("review", updated),
   };
-  if (!passed!) {
-    (result as Record<string, unknown>).mustFix = gateReport;
+  if (!passed) {
+    (result as Record<string, unknown>).mustFix = fileCheck.report;
   }
   return result;
 }
@@ -1135,7 +1131,8 @@ export function handleReview(
  *       + appendGateHistory(review-fix, pass, progressive) }
  *     → reload → buildNextAction("review_fix")（指向下一轮 review）。
  *
- * 不做 commit 校验：commitHash 只记录审计，不验证真实性（与 dev 的 commit 校验语义不同）。
+ * commitHash 只做格式校验（7-40 字符 hex git hash），不做存在性校验——保持 audit-only 语义
+ * （与 dev 的 commit 校验语义不同，不调 git 验证真实性）。
  * fixedAtTurn = 当前 reviewTurn（修复发生在哪一轮 review 之后）。
  *
  * 失败路径：fixes 里某 issueId 不存在于 topic.reviewIssues 或 status !== open → throw CwError。
@@ -1162,6 +1159,17 @@ export function handleReviewFix(
     if (issue.status !== "open") {
       throw new CwError(
         `review_fix issueId ${fix.issueId} 状态为 ${issue.status}（只能修 open 的 issue）`,
+      );
+    }
+  }
+
+  // commitHash 格式校验（只查格式，不做存在性校验——保持 audit-only 语义）。
+  // git hash：7-40 字符的十六进制字符串（短/长 hash 均允许）。
+  const GIT_HASH_RE = /^[0-9a-f]{7,40}$/;
+  for (const fix of fixes) {
+    if (!GIT_HASH_RE.test(fix.commitHash)) {
+      throw new CwError(
+        `review_fix commitHash 格式无效: "${fix.commitHash}"（应为 7-40 字符十六进制 git hash）`,
       );
     }
   }
@@ -1645,11 +1653,18 @@ export function handleReplan(
     const testGatePassed = computeGatePassed("test", reloaded);
     deps.store.updateGatePassed(params.topicId, "test", testGatePassed);
 
-    // replan 修改了 plan/testCases，旧的 review 闭环 + test 修复轨迹失效，清空重走。
-    // resetReviewLoop：reviewIssues=[], reviewTurn=0。
-    // resetTestLoop：testFixLog=[], testTurn=0。
-    deps.store.resetReviewLoop(params.topicId);
-    deps.store.resetTestLoop(params.topicId);
+    // replan 修改了 plan/testCases，旧的闭环数据按改动范围选择性清空：
+    //   - hasPlan（代码会变）→ review 审的旧代码失效 → resetReviewLoop
+    //     + 旧 testFixLog 是旧代码修复轨迹，新代码下无意义 → resetTestLoop
+    //   - hasTest && !hasPlan（只改 testCases，代码没变）→ review 数据仍有效，不 reset
+    //     只有 testCases 变了 → resetTestLoop
+    // 核心区分：--test only 时代码不变，review 结论（reviewIssues）仍然成立。
+    if (hasPlan) {
+      deps.store.resetReviewLoop(params.topicId);
+      deps.store.resetTestLoop(params.topicId);
+    } else if (hasTest) {
+      deps.store.resetTestLoop(params.topicId);
+    }
 
     deps.store.appendGateHistory(params.topicId, {
       phase: "plan",
