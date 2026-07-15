@@ -6,7 +6,8 @@ description: >-
   coding task through the cw CLI state machine. 唯一入口：bash 调 `cw create`，
   之后按返回的 nextAction.guidance 驱动全流程（create→plan→dev→test→retrospect→closeout）。
   guidance 内嵌完整阶段提示词（spec/plan/execute 方法论），不需读外部文档。
-  Not for pure planning without CW. Not for design-only.
+  Not for pure planning without CW. Not for design-only. 不适合纯分析/调研/设计任务——
+  只有要写代码+测试的编码任务才用 CW，否则不要 cw create（会留下无意义的废弃 topic）。
 ---
 
 # CW CLI（编码流程编排器）
@@ -14,6 +15,21 @@ description: >-
 > **唯一入口：`cw create`。** 不需要记忆任何 action 列表。
 > create 之后，CLI 返回的 `nextAction.guidance` 携带完整阶段提示词（如何做 spec / 如何写 plan / 如何 execute），
 > agent 按 guidance 一步步推进，直到 `nextAction.action` 为空（流程结束）。
+
+## 适用边界
+
+**适合 CW**：有明确目标的编码任务（要写代码 + 测试），愿意走 plan → tdd_plan → dev → review → test 全流程。
+
+**不适合 CW**（不要 cw create）：
+
+| 场景 | 为什么不适合 | 该怎么做 |
+|------|-----------|---------|
+| 纯分析/设计任务 | 不产出代码，CW 的 wave/testCase 无内容可填 | 直接做，不 create topic |
+| 探索性调研 | 目标不明确，无法拆 wave | 先调研清楚，再决定是否走 CW |
+| 只想体验/验证 CW 入口 | create 后不会走完全流程，留下废弃 topic | 读 SKILL.md + 手动跑命令，不要真 create |
+| 改一两行的小修复 | CW 流程开销 > 收益 | 直接改，不 create topic |
+
+**判断标准**：如果你不会走完 plan → dev → test → closeout，就不要 create。废弃 topic 污染 stats 聚合数据。
 
 ## 核心铁律
 
@@ -24,6 +40,8 @@ description: >-
 [强制] **通过 bash 调 `cw` 命令**：agent 用 bash 工具执行 `cw <action> [flags]`，读 stdout 的 JSON。不假设有 tool 注册机制（CW 是 agent-agnostic CLI）。
 
 [强制] **不绕过状态机**：不调 CW 就无法推进状态。跳过某阶段直接调后面的 action → guard 拒绝（illegal_transition）。
+
+[强制] **create 即承诺走完全流程**：`cw create` 后，从 plan 到 closeout 的所有编码工作必须通过 cw 命令推进。不要 create 之后用 agent harness 的 plan mode / EnterPlanMode 绕过 CW 流程——CW 有自己的 plan 阶段（cw plan），两者不兼容。如果发现任务不适合走 CW（如纯分析），和用户确认后放弃 topic，不要静默跳过。
 
 ## 唯一入口
 

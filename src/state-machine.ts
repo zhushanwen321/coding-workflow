@@ -310,14 +310,19 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
   switch (action) {
     case "create": {
       // create 后推荐先 clarify（澄清需求 + 记录 ADR），plan 作为 alternative（清晰需求可直接跳过）。
-      // guidance 带 CLARIFY_PROMPT（含完整方法论：探索→预判→提问→ADR）。
+      // guidance 开头是流程契约声明（create 即承诺走完全流程），然后带 CLARIFY_PROMPT。
+      const createContract =
+        `你已进入 CW 流程。从现在起到 closeout，所有编码工作必须通过 cw 命令推进：\n` +
+        `- 不要使用 agent harness 的 plan mode / EnterPlanMode（CW 有自己的 plan 阶段：cw plan）\n` +
+        `- 不要绕过状态机直接写代码（每个 wave 的 commit 必须通过 cw dev 提交）\n` +
+        `- 如果发现任务不适合走 CW（如纯分析/设计），和用户确认后放弃 topic，不要静默跳过\n\n`;
       return {
         action: "clarify",
-        guidance: `topic 已建立。下一步：澄清需求与目标（探索技术系统 → 形成预判 → 向用户提问 → 记录 ADR），完成后写 dev-plan.json。\n\n${CLARIFY_PROMPT}`,
+        guidance: `${createContract}topic 已建立。下一步：澄清需求与目标（探索技术系统 → 形成预判 → 向用户提问 → 记录 ADR），完成后写 dev-plan.json。\n\n${CLARIFY_PROMPT}`,
         alternatives: [
           {
             action: "plan",
-            guidance: `需求已足够清晰，直接写 dev-plan.json 提交。\n\n${DEV_PLAN_PROMPT}`,
+            guidance: `${createContract}需求已足够清晰，直接写 dev-plan.json 提交。\n\n${DEV_PLAN_PROMPT}`,
           },
         ],
       };
