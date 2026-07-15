@@ -9,7 +9,7 @@
  * 文档（review.md / retrospect.md）用 <details> 默认折叠，可展开。
  */
 
-import type { AdrRecord, ClarifyRecord, Topic } from "./types.js";
+import type { AdrRecord, ClarifyRecord, SpecSection, Topic } from "./types.js";
 import type { StatsOutput } from "./stats.js";
 
 // ── 类型 ────────────────────────────────────────────────────
@@ -278,6 +278,135 @@ ${recordItems}
     </div>` : '<p class="muted-note">No clarify records.</p>'}
     ${adrItems ? `<h3 class="sub-h" style="margin-top:1.25rem">Architecture Decisions</h3>
 ${adrItems}` : ""}
+  </section>`;
+}
+
+// ── Spec（结构化 spec 章节） ────────────────────────────────
+
+function renderSpec(topic: Topic): string {
+  const sections = topic.specSections ?? [];
+  if (sections.length === 0) return "";
+
+  // 按固定顺序分组（不管提交顺序）
+  const getByType = <T extends SpecSection["type"]>(type: T) =>
+    sections.filter((s): s is Extract<SpecSection, { type: T }> => s.type === type);
+
+  const parts: string[] = [];
+
+  // 1. background（md → mdToHtml）
+  for (const bg of getByType("background")) {
+    parts.push(`<div class="spec-md">${mdToHtml(bg.content)}</div>`);
+  }
+
+  // 2. goals（结构化表格）
+  const goals = sections.find((s): s is Extract<SpecSection, { type: "goals" }> => s.type === "goals");
+  if (goals) {
+    parts.push(`<h3 class="sub-h">Goals</h3><table><thead><tr><th>ID</th><th>Goal</th><th>Success Criteria</th></tr></thead><tbody>`);
+    for (const g of goals.items) {
+      parts.push(`<tr><td><code>${esc(g.id)}</code></td><td>${esc(g.goal)}</td><td>${esc(g.successCriteria)}</td></tr>`);
+    }
+    parts.push(`</tbody></table>`);
+  }
+
+  // 3. functionalRequirements（表格列：ID / Title / Detail，detail 用 mdToHtml）
+  const frs = sections.find(
+    (s): s is Extract<SpecSection, { type: "functionalRequirements" }> => s.type === "functionalRequirements",
+  );
+  if (frs) {
+    parts.push(`<h3 class="sub-h">Functional Requirements</h3><table><thead><tr><th>ID</th><th>Title</th><th>Detail</th></tr></thead><tbody>`);
+    for (const fr of frs.items) {
+      parts.push(`<tr><td><code>${esc(fr.id)}</code></td><td>${esc(fr.title)}</td><td><div class="spec-md">${mdToHtml(fr.detail)}</div></td></tr>`);
+    }
+    parts.push(`</tbody></table>`);
+  }
+
+  // 4. acceptanceCriteria（表格列：ID / Condition / Verification badge）
+  const acs = sections.find(
+    (s): s is Extract<SpecSection, { type: "acceptanceCriteria" }> => s.type === "acceptanceCriteria",
+  );
+  if (acs) {
+    parts.push(`<h3 class="sub-h">Acceptance Criteria</h3><table><thead><tr><th>ID</th><th>Condition</th><th>Verification</th></tr></thead><tbody>`);
+    for (const ac of acs.items) {
+      const vBadge = ac.verification
+        ? `<span class="badge b-info">${esc(ac.verification)}</span>`
+        : `<span class="muted-note">—</span>`;
+      parts.push(`<tr><td><code>${esc(ac.id)}</code></td><td>${esc(ac.condition)}</td><td>${vBadge}</td></tr>`);
+    }
+    parts.push(`</tbody></table>`);
+  }
+
+  // 5. businessCases（卡片列表：UC id + actor + scenario + expectedResult）
+  const ucs = sections.find(
+    (s): s is Extract<SpecSection, { type: "businessCases" }> => s.type === "businessCases",
+  );
+  if (ucs) {
+    const cards = ucs.items
+      .map(
+        (uc) => `      <div class="spec-card">
+        <div class="spec-card-head">
+          <code>${esc(uc.id)}</code>
+          <span class="badge b-info">${esc(uc.actor)}</span>
+        </div>
+        <p><strong>Scenario:</strong> ${esc(uc.scenario)}</p>
+        <p class="muted-note"><strong>Expected:</strong> ${esc(uc.expectedResult)}</p>
+      </div>`,
+      )
+      .join("\n");
+    parts.push(`<h3 class="sub-h">Business Cases</h3><div class="spec-card-list">
+${cards}
+    </div>`);
+  }
+
+  // 6. decisions（表格列：ID / Decision / Rationale）
+  const decs = sections.find(
+    (s): s is Extract<SpecSection, { type: "decisions" }> => s.type === "decisions",
+  );
+  if (decs) {
+    parts.push(`<h3 class="sub-h">Decisions</h3><table><thead><tr><th>ID</th><th>Decision</th><th>Rationale</th></tr></thead><tbody>`);
+    for (const d of decs.items) {
+      parts.push(`<tr><td><code>${esc(d.id)}</code></td><td>${esc(d.decision)}</td><td>${esc(d.rationale)}</td></tr>`);
+    }
+    parts.push(`</tbody></table>`);
+  }
+
+  // 7. constraints（md → mdToHtml）
+  for (const c of getByType("constraints")) {
+    parts.push(`<h3 class="sub-h">Constraints</h3><div class="spec-md">${mdToHtml(c.content)}</div>`);
+  }
+
+  // 8. complexity（rating badge + rationale md）
+  const complexity = sections.find(
+    (s): s is Extract<SpecSection, { type: "complexity" }> => s.type === "complexity",
+  );
+  if (complexity) {
+    const ratingClass =
+      complexity.rating === "high" ? "b-fail" : complexity.rating === "medium" ? "b-warn" : "b-pass";
+    parts.push(`<h3 class="sub-h">Complexity</h3><div class="spec-md"><p><span class="badge ${ratingClass}">${esc(complexity.rating)}</span></p>${mdToHtml(complexity.rationale)}</div>`);
+  }
+
+  // 9. outOfScope（列表）
+  const oos = sections.find(
+    (s): s is Extract<SpecSection, { type: "outOfScope" }> => s.type === "outOfScope",
+  );
+  if (oos) {
+    const items = oos.items.map((i) => `<li>${esc(i)}</li>`).join("\n");
+    parts.push(`<h3 class="sub-h">Out of Scope</h3><ul class="spec-list">
+${items}
+    </ul>`);
+  }
+
+  // 10. section 兜底（md → mdToHtml，每个用 <details> 折叠，sectionName 做 summary）
+  for (const sec of getByType("section")) {
+    parts.push(`<details class="spec-section-item">
+      <summary>${esc(sec.sectionName)}</summary>
+      <div class="spec-md">${mdToHtml(sec.content)}</div>
+    </details>`);
+  }
+
+  return `
+  <section>
+    <h2>Spec</h2>
+    ${parts.join("\n")}
   </section>`;
 }
 
@@ -634,6 +763,36 @@ export function generateReport(topic: Topic, stats: StatsOutput, docs?: ReportDo
   .adr-body ul { margin: 0.2rem 0 0.4rem 1.2rem; }
   .adr-path { margin-top: 0.3rem; }
 
+  /* ── Spec ───────────────────────────────────────────── */
+  .spec-md { padding: 0.3rem 0; font-size: 0.85rem; }
+  .spec-md p { margin-bottom: 0.4rem; }
+  .spec-md table { margin: 0.4rem 0; }
+  .spec-card-list { display: flex; flex-direction: column; gap: 0.6rem; }
+  .spec-card {
+    padding: 0.6rem 0.8rem; border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .spec-card-head {
+    display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; flex-wrap: wrap;
+  }
+  .spec-card p { font-size: 0.84rem; margin-bottom: 0.25rem; }
+  .spec-list { margin: 0.2rem 0 0.4rem 1.2rem; }
+  .spec-list li { font-size: 0.85rem; margin-bottom: 0.2rem; }
+  .spec-section-item {
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); overflow: hidden;
+  }
+  .spec-section-item > summary {
+    padding: 0.5rem 0.75rem; cursor: pointer;
+    font-size: 0.85rem; font-weight: 500; color: var(--ink);
+    list-style: none;
+  }
+  .spec-section-item > summary::-webkit-details-marker { display: none; }
+  .spec-section-item > summary::before { content: "\\25B8"; color: var(--faint); font-size: 0.7rem; margin-right: 0.4rem; }
+  .spec-section-item[open] > summary::before { content: "\\25BE"; }
+  .spec-section-item .spec-md { padding: 0.5rem 0.8rem 0.65rem; border-top: 1px solid var(--border-soft); }
+
   /* ── Doc artifact（折叠文档） ───────────────────────── */
   .doc-artifact {
     margin-bottom: 0.6rem;
@@ -695,6 +854,7 @@ export function generateReport(topic: Topic, stats: StatsOutput, docs?: ReportDo
 ${renderHeader(topic, stats)}
 ${renderOverview(topic, stats)}
 ${renderClarify(topic, safeDocs)}
+${renderSpec(topic)}
 ${renderWaves(topic)}
 ${renderTestCases(topic)}
 ${renderGateTrail(topic)}

@@ -92,7 +92,7 @@ create → clarify → plan → tdd_plan → dev → review → test → retrosp
 
 | nextAction.action | 你要做的 | cw 命令 |
 |-------------------|---------|---------|
-| `clarify` | 探索技术系统 + 澄清需求/技术 spec + 记录 ADR（advisory，可跳过） | `echo '<clarifyJson>' \| cw clarify --topicId <id>` |
+| `clarify` | 探索技术系统 + 澄清需求/技术 spec + 记录 ADR + 可选提交结构化 spec 章节（FR/AC/UC 等）（advisory，可跳过） | `echo '<clarifyJson>' \| cw clarify --topicId <id>` |
 | `plan` | 明确范围后产出 **dev-plan.json**（只含 waves），提交 | `echo '<devPlanJson>' \| cw plan --topicId <id>` |
 | `tdd_plan` | 写测试代码（红灯）+ **test.json**（testCases + expected），提交 | `echo '<testJson>' \| cw tdd_plan --topicId <id>` |
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
