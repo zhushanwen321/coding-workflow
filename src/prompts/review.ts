@@ -2,7 +2,7 @@
  * review 提示词 — dev 全 committed 后返回，指导 agent 做代码审查 + issue tracking。
  *
  * 触发点：state-machine.ts buildNextAction 的 dev（全 committed）和 review（retry/fix loop）分支。
- * 交付物：review.md + --issues 参数（结构化问题清单），由 cw(review) 消费。
+ * 交付物：review.md + issues（通过 stdin 传入的结构化问题清单），由 cw(review) 消费。
  *
  * review 采用 issue tracking + fix loop：
  * - agent 审查后提交 issues（must-fix/should-fix/nit）
@@ -23,7 +23,7 @@ export const REVIEW_PROMPT = `
 3. 写 review.md（含审查结论）
 4. 提交：
 
-    cw review --topicId <topicId> --reviewPath <path> --issues '<issuesJson>'
+    echo '<issuesJson>' | cw review --topicId <topicId> --reviewPath <path>
 
 ## 审查维度
 
@@ -39,22 +39,22 @@ export const REVIEW_PROMPT = `
 
 ## issues 参数
 
---issues 是 JSON 数组，每个元素是一个 issue：
+issues 通过 stdin 传入，是 JSON 数组，每个元素是一个 issue：
 
-    [
+    echo '[
       {
-        "id": "R1",
         "severity": "must-fix",
         "description": "store.ts 的 appendReviewIssues 没有做 turn 校验",
         "file": "src/store.ts:142"
       },
       {
-        "id": "R2",
         "severity": "should-fix",
         "description": "错误消息缺用法示例",
         "file": "src/cli.ts:268"
       }
-    ]
+    ]' | cw review --topicId <topicId> --reviewPath <path>
+
+> 注意：severity 用 \`must-fix\` / \`should-fix\` / \`nit\`（连字符），id 由 CW 自动分配（R1, R2...），不要手填。
 
 ### severity 分级
 
@@ -64,7 +64,7 @@ export const REVIEW_PROMPT = `
 | should-fix | 重要但不阻断 | 记录但不阻断流程 |
 | nit | 风格/优化建议 | 记录但不阻断流程 |
 
-**无问题时传空数组**：\`--issues '[]'\`。空数组 = 审查通过，直接进 test。
+**无问题时传空数组**：\`echo '[]' | cw review ...\`。空数组 = 审查通过，直接进 test。
 
 ## review fix loop
 
@@ -72,13 +72,13 @@ export const REVIEW_PROMPT = `
 review turn 1: 发现 [R1, R2]
     ↓ CW 指向 review_fix
 review_fix: 修 R1 + R2 → commit → 提交修复
-    cw review-fix --topicId <id> --fixes '[
+    echo '[
       {"issueId":"R1","commitHash":"<sha>","resolution":"加 turn 校验"},
       {"issueId":"R2","commitHash":"<sha>","resolution":"补用法示例"}
-    ]'
+    ]' | cw review_fix --topicId <id>
     ↓ CW 指向 review（turn 2）
 review turn 2: 复查是否还有新问题
-    ↓ 无新问题（--issues '[]'）→ 进 test
+    ↓ 无新问题（echo '[]' | cw review ...）→ 进 test
     ↓ 有新问题 → 继续 review_fix（最多 3 轮）
 \`\`\`
 
@@ -91,7 +91,7 @@ review turn 2: 复查是否还有新问题
 
 ## 产出 review.md
 
-review.md 是给人类看的审查报告（落 .xyz-harness/<slug>/changes/ 目录）。--issues 是给 CW 的机器可读结构化数据。两者都要提交。
+review.md 是给人类看的审查报告（落 .xyz-harness/<slug>/changes/ 目录）。issues（通过 stdin 传入）是给 CW 的机器可读结构化数据。两者都要提交。
 
 review.md 内容：
 - 审查范围（哪些 commit / 文件）
@@ -100,17 +100,17 @@ review.md 内容：
 
 ## 提交命令
 
-    cw review --topicId <topicId> --reviewPath <review.md> --issues '<issuesJson>'
+    echo '<issuesJson>' | cw review --topicId <topicId> --reviewPath <review.md>
 
 - --reviewPath：review.md 的路径（gate 校验文件存在 + 非空）
-- --issues：结构化问题清单（空数组 = 无问题，直接进 test）
+- issues：通过 stdin 传入的结构化问题清单（空数组 = 无问题，直接进 test）
 
 gate fail（文件不存在/空）→ 重写后重调 cw(review)。
 
 ## 本阶段禁止
 
 - [禁止] 跳过 review 直接调 cw(test)（状态机 guard 会拒绝）
-- [禁止] 不传 --issues（必填，空数组也行）
+- [禁止] 不传 issues（必填，空数组也行——通过 stdin 管道传）
 - [禁止] review 发现 must-fix 但不修就传空 issues（先修 → review_fix → 复查）
 
 ## 完成标志

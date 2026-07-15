@@ -84,13 +84,13 @@ create → clarify → plan → tdd_plan → dev → review → test → retrosp
 | `plan` | 明确范围后产出 **dev-plan.json**（只含 waves），提交 | `echo '<devPlanJson>' \| cw plan --topicId <id>` |
 | `tdd_plan` | 写测试代码（红灯）+ **test.json**（testCases + expected），提交 | `echo '<testJson>' \| cw tdd_plan --topicId <id>` |
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
-| `review` | 做 code review，产出 review.md + **--issues**（结构化问题清单） | `cw review --topicId <id> --reviewPath <path> --issues '[{"id":"R1","severity":"must-fix","description":"..."}]'` |
-| `review_fix` | 修复 review 发现的 issue，提交修复审计 | `cw review-fix --topicId <id> --fixes '[{"issueId":"R1","commitHash":"<sha>","resolution":"..."}]'` |
+| `review` | 做 code review，产出 review.md + 结构化问题清单（stdin） | `echo '<issuesJson>' \| cw review --topicId <id> --reviewPath <path>` |
+| `review_fix` | 修复 review 发现的 issue，提交修复审计 | `echo '<fixesJson>' \| cw review_fix --topicId <id>` |
 | `test` | 跑测试，提交 actual 结果 | `cw test --topicId <id> --cases '[{"caseId":"U1","actual":{"text":"<结果>"}}]'` |
-| `test_fix` | 修复 test 失败的 case，提交修复审计 | `cw test-fix --topicId <id> --fixes '[{"caseId":"U1","commitHash":"<sha>","resolution":"..."}]'` |
+| `test_fix` | 修复 test 失败的 case，提交修复审计 | `echo '<fixesJson>' \| cw test_fix --topicId <id>` |
 | `retrospect` | 写复盘报告（retrospect.md）+ 结构化回顾数据（retrospectData），提交 | `echo '<retrospectDataJson>' \| cw retrospect --topicId <id> --retrospect-path <path>` |
-| `closeout` | 归档 topic | `cw closeout --topicId <id> --evidence "<证据>"` |
-| `replan` | 修改计划（--plan 改 dev-plan / --test 改 test.json） | `echo '<json>' \| cw replan --topicId <id> --plan` 或 `--test` |
+| `closeout` | 归档 topic，返回 evidence（coverage + gateHistory） | `cw closeout --topicId <id>` |
+| `replan` | 修改计划（--plan 改 dev-plan / --test 改 test.json） | `echo '<devPlanJson>' \| cw replan --topicId <id> --plan` 或 `cw replan --topicId <id> --test --testJsonFile <path>` |
 | `undefined` | 流程结束 | 无 |
 | `assess`（人工） | closeout 后提交交付质量评估（post-closeout，不在 nextAction 导航里） | `cw assess --topicId <id> --type quality --score 4 --notes "..."` |
 
@@ -179,9 +179,9 @@ gate fail 时 `nextAction.action` **指回当前 action**（retry），不是下
 | 场景 | fail 原因在哪 | 怎么修 |
 |------|-------------|--------|
 | plan/tdd_plan/retrospect/closeout gate fail | 顶层 `mustFix` | 修 mustFix 列出的问题，重调同一 action |
-| review 发现 issue（issues 非空） | `reviewIssues` | 进 review_fix：修代码 → `cw review-fix` → 复查 |
+| review 发现 issue（issues 非空） | `reviewIssues` | 进 review_fix：修代码 → `cw review_fix` → 复查 |
 | dev gate fail（commit 不真实/缺失） | `taskResults[].reason` | 修该 Wave 的 commit，重调 `cw dev` |
-| test gate fail（结果 != 预期） | `caseResults[].failureReason` | 进 test_fix：修代码 → `cw test-fix` → 重跑 test |
+| test gate fail（结果 != 预期） | `caseResults[].failureReason` | 进 test_fix：修代码 → `cw test_fix` → 重跑 test |
 
 ## issue tracking + fix loop
 
@@ -190,9 +190,9 @@ review 和 test 阶段各有独立的 **fix loop**——发现问题 → 修复 
 ### review fix loop
 
 ```
-cw review --issues '[R1,R2]'  → CW 指向 review_fix
-cw review-fix --fixes '[R1,R2]'  → CW 指向 review（turn 2 复查）
-cw review --issues '[]'  → 无新问题，进 test
+echo '[{"severity":"must-fix","description":"...","file":"src/x.ts:1"}]' | cw review --topicId <id> --reviewPath <path>  → CW 指向 review_fix
+echo '[{"issueId":"R1","commitHash":"<sha>","resolution":"..."}]' | cw review_fix --topicId <id>  → CW 指向 review（turn 2 复查）
+echo '[]' | cw review --topicId <id> --reviewPath <path>  → 无新问题，进 test
 ```
 
 - 最多 3 轮（REVIEW_TURN_LIMIT）。达上限强制进 test，guidance 标注未修复的 must-fix。
@@ -201,14 +201,14 @@ cw review --issues '[]'  → 无新问题，进 test
 ### test fix loop
 
 ```
-cw test --cases '[...]'  → U1 failed → CW 指向 test_fix
-cw test-fix --fixes '[{"caseId":"U1",...}]'  → CW 指向 test（重跑）
-cw test --cases '[{"caseId":"U1","actual":{"text":"正确值"}}]'  → U1 pass → 进 retrospect
+cw test --topicId <id> --cases '[...]'  → U1 failed → CW 指向 test_fix
+echo '[{"caseId":"U1","commitHash":"<sha>","resolution":"..."}]' | cw test_fix --topicId <id>  → CW 指向 test（重跑）
+cw test --topicId <id> --cases '[{"caseId":"U1","actual":{"text":"正确值"}}]'  → U1 pass → 进 retrospect
 ```
 
-- 最多 5 轮（TEST_TURN_LIMIT）。达上限熔断，不自动进 retrospect。
+- 最多 5 轮（TEST_TURN_LIMIT）。达上限强制进 retrospect（打破死循环），在复盘中记录未通过原因。
 - test_fix 的 commitHash 只记录审计，不校验真实性。
-- expected 写错 → 调 `cw replan --test`（不是代码 bug）。
+- expected 写错 → 调 `cw replan --test --testJsonFile <path>`（不是代码 bug）。
 
 ## 修改计划（replan）
 
@@ -223,13 +223,13 @@ echo '<newDevPlanJson>' | cw replan --topicId <id> --plan
 ### --test：修订 test.json（追加/调整 testCase / 修正 expected）
 
 ```bash
-echo '<newTestJson>' | cw replan --topicId <id> --test
+cw replan --topicId <id> --test --testJsonFile <testJsonFilePath>
 ```
 
 ### 同时修订两个文件
 
 ```bash
-echo '<devPlanJson>' | cw replan --topicId <id> --plan --testJsonFile <testJsonPath>
+echo '<devPlanJson>' | cw replan --topicId <id> --plan --test --testJsonFile <testJsonPath>
 ```
 
 **append-only 约束**（不可违反，违反则 replan 抛错 + mustFix）：
@@ -288,6 +288,55 @@ cw assess --topicId <id> --type defect --notes "并发场景下数据丢失" \
 - **`cw` 命令可用**：`which cw` 能找到。未安装 → `npm install -g @zhushanwen/coding-workflow`
 - **git 仓库已初始化**：`git rev-parse --git-dir` 能跑通（dev/test 需要真实 commit）
 - **workspace 可写**：交付物（plan.json / retrospect.md）落在 `<cwd>/.xyz-harness/<slug>/`
+
+## 项目文档基建诊断（cw init，可选）
+
+`cw create` 之前可先调 `cw init` 检测项目文档基建。这是 topic 之前的只读诊断命令，**不进状态机**（无 topic，与 status/list/stats 同级）。
+
+[OPTIONAL] **何时调用**：首次在某个项目用 CW 时，或 `cw create` 的 guidance 提示文档基建未就绪时。已有完整文档的项目可跳过。
+
+```bash
+cw init
+# → JSON：{ docRoot, mainConfig, docs: [...], ready }
+```
+
+**返回结构**：
+
+```jsonc
+{
+  "docRoot": "/path/to/project",
+  "mainConfig": "AGENTS.md",       // 或 "CLAUDE.md"，缺失为 null
+  "ready": true,                    // 必备文档全 ok 且无 stale
+  "docs": [
+    {
+      "name": "主配置（必备）",
+      "level": "必备",
+      "status": "missing",          // ok | missing | skeleton | stale
+      "path": "AGENTS.md",
+      "detail": "缺失（必备）",
+      "skeleton": "# {项目名}\n..."  // status=missing 时附带骨架内容
+    }
+  ]
+}
+```
+
+**文档分级与状态**：
+
+| 级别 | 文档 | status 含义 |
+|------|------|------------|
+| 必备 | AGENTS.md（或 CLAUDE.md）、README.md、CONTEXT.md | missing/skeleton/stale 影响 ready |
+| 推荐 | ARCHITECTURE.md、PRODUCT.md、NFR.md | 不影响 ready，按需补齐 |
+| 可选 | TEST-STRATEGY.md、DESIGN-LOG.md | 不影响 ready |
+
+状态：`ok`=已沉淀 / `missing`=缺失（附骨架）/ `skeleton`=含 ASCII 占位符未沉淀 / `stale`=ARCHITECTURE/NFR 非骨架但模块名或验证标识符与源码漂移。
+
+**补齐流程**（agent 收到 init 结果后）：
+1. 看 `docs` 数组，筛出 `status !== "ok"` 的必备项
+2. 向用户确认是否补齐（[MANDATORY] 不自动覆盖已有文档，只补缺失项）
+3. 用 `skeleton` 字段的内容，通过 write 工具创建文件到 `docRoot` 路径
+4. 补齐后可重跑 `cw init` 验证 `ready=true`
+
+**绝不覆盖已有文档**——cw init 只扫描报告，不碰文件系统。
 
 ## 数据存储（cwd 隔离机制）
 
