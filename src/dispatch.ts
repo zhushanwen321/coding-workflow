@@ -21,15 +21,19 @@
  */
 
 import {
+  type AbortParams,
   type AssessParams,
   type ClarifyParams,
   type CloseoutParams,
+  type ConfirmClarifyParams,
   type CreateParams,
   type CwParams,
   type DevParams,
+  handleAbort,
   handleAssess,
   handleClarify,
   handleCloseout,
+  handleConfirmClarify,
   handleCreate,
   handleDev,
   handlePlan,
@@ -134,6 +138,10 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleRetrospect(params as RetrospectParams, topic, deps);
     case "closeout":
       return handleCloseout(params as CloseoutParams, topic, deps);
+    case "confirm_clarify":
+      return handleConfirmClarify(params as ConfirmClarifyParams, topic, deps);
+    case "abort":
+      return handleAbort(params as AbortParams, topic, deps);
     case "replan":
       return handleReplan(params as ReplanParams, topic, deps);
     case "assess":

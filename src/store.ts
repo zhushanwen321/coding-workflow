@@ -53,6 +53,7 @@ import type {
   ReviewIssueSubmission,
   RuntimeEnv,
   SpecSection,
+  SpecVersion,
   Status,
   TestCase,
   TestCaseSeed,
@@ -142,6 +143,8 @@ interface TopicRecord {
   assessments?: Assessment[];
   /** clarify 阶段产出的结构化 spec 章节（可选，向后兼容旧 _cw.json 数据）。 */
   specSections?: SpecSection[];
+  /** spec 替换时的历史版本快照（可选，向后兼容旧 _cw.json 数据）。 */
+  specHistory?: SpecVersion[];
 }
 
 interface WaveRecord {
@@ -492,6 +495,7 @@ export class CwStore {
         testTurn: topic.testTurn,
         assessments: topic.assessments,
         specSections: topic.specSections,
+        specHistory: topic.specHistory,
       };
       this.fileData!.topics.push(record);
     });
@@ -576,6 +580,7 @@ export class CwStore {
       testTurn: topic.testTurn ?? 0,
       assessments: topic.assessments ?? [],
       specSections: topic.specSections ?? [],
+      specHistory: topic.specHistory ?? [],
     };
   }
 
@@ -1091,6 +1096,30 @@ export class CwStore {
       if (!topic) return;
       const existing = topic.specSections ?? [];
       topic.specSections = [...existing, ...sections];
+    });
+  }
+
+  /**
+   * FR-2: 替换 spec 章节（spec 可修改）。
+   *
+   * 把当前 specSections 整体快照归档到 specHistory（version 自增），
+   * 然后替换 specSections 为新内容。spec 是规划产物（非执行产物），允许修改。
+   */
+  replaceSpecSections(topicId: string, sections: SpecSection[], reason: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const currentSections = topic.specSections ?? [];
+      const history = topic.specHistory ?? [];
+      const version = history.length + 1;
+      const snapshot: SpecVersion = {
+        version,
+        archivedAt: new Date().toISOString(),
+        sections: currentSections,
+        reason,
+      };
+      topic.specHistory = [...history, snapshot];
+      topic.specSections = sections;
     });
   }
 

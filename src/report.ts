@@ -12,6 +12,89 @@
 import type { AdrRecord, ClarifyRecord, SpecSection, Topic } from "./types.js";
 import type { StatsOutput } from "./stats.js";
 
+// ── gen-spec（FR-1: 生成确认 md） ────────────────────────────
+
+/**
+ * genSpecMd — FR-1: 从 topic 的 clarifyRecords + specSections 生成确认 md。
+ *
+ * gen-spec 命令调用。md 文件放到 tmpdir，agent open 给用户看。
+ * 用户确认后调 cw confirm_clarify。
+ */
+export function genSpecMd(topic: Topic): string {
+  const lines: string[] = [];
+  lines.push(`# Spec 确认：${topic.slug}`);
+  lines.push("");
+  lines.push(`**Objective**: ${topic.objective}`);
+  lines.push("");
+
+  // clarifyRecords
+  if (topic.clarifyRecords.length > 0) {
+    lines.push("## 澄清记录");
+    lines.push("");
+    for (const c of topic.clarifyRecords) {
+      lines.push(`### ${c.id}: ${c.topic} [${c.status}]`);
+      lines.push(`- **问题**: ${c.question}`);
+      if (c.assessment) lines.push(`- **背景**: ${c.assessment}`);
+      if (c.answer) lines.push(`- **结论**: ${c.answer}`);
+      lines.push("");
+    }
+  }
+
+  // specSections
+  if (topic.specSections.length > 0) {
+    lines.push("## Spec");
+    lines.push("");
+    for (const section of topic.specSections) {
+      lines.push(renderSpecSectionMd(section));
+      lines.push("");
+    }
+  }
+
+  if (topic.clarifyRecords.length === 0 && topic.specSections.length === 0) {
+    lines.push("（尚未提交任何澄清记录或 spec 章节）");
+  }
+
+  lines.push("---");
+  lines.push("确认无误后，请告知 agent 继续。如需修改，告诉 agent 要改什么。");
+  return lines.join("\n");
+}
+
+/** 渲染单个 SpecSection 为 md 片段。 */
+function renderSpecSectionMd(section: SpecSection): string {
+  switch (section.type) {
+    case "functionalRequirements":
+      return "### 功能需求\n\n" +
+        section.items.map((fr) => `- **${fr.id}**: ${fr.title} — ${fr.detail}`).join("\n");
+    case "acceptanceCriteria":
+      return "### 验收标准\n\n" +
+        section.items.map((ac) => `- **${ac.id}**: ${ac.condition}${ac.verification ? ` (${ac.verification})` : ""}`).join("\n");
+    case "businessCases":
+      return "### 业务用例\n\n" +
+        section.items.map((uc) => `- **${uc.id}**: ${uc.actor} — ${uc.scenario} → ${uc.expectedResult}`).join("\n");
+    case "decisions":
+      return "### 决策\n\n" +
+        section.items.map((d) => `- **${d.id}**: ${d.decision}（${d.rationale}）`).join("\n");
+    case "complexity":
+      return `### 复杂度: ${section.rating}\n\n${section.rationale}`;
+    case "outOfScope":
+      return "### 不做\n\n" + section.items.map((s) => `- ${s}`).join("\n");
+    case "goals":
+      return "### 目标\n\n" +
+        section.items.map((g) => `- **${g.id}**: ${g.goal}（成功标准：${g.successCriteria}）`).join("\n");
+    case "background":
+      return `### 背景\n\n${section.content}`;
+    case "constraints":
+      return `### 约束\n\n${section.content}`;
+    case "section":
+      return `### ${section.sectionName}\n\n${section.content}`;
+    default: {
+      const _exhaustive: never = section;
+      void _exhaustive;
+      return "";
+    }
+  }
+}
+
 // ── 类型 ────────────────────────────────────────────────────
 
 /**

@@ -246,7 +246,9 @@ describe("E2: dispatch plan FR 覆盖 warning", () => {
       deps,
     );
 
-    // plan 只覆盖 FR-1
+    // plan 只覆盖 FR-1（FR-1 状态机改动：plan 前需 confirm_clarify）
+    store.updateStatus(topicId, "clarify_confirmed");
+    store.updateGatePassed(topicId, "confirm_clarify", true);
     const result = dispatch(
       {
         action: "plan",
@@ -273,5 +275,66 @@ describe("E2: dispatch plan FR 覆盖 warning", () => {
     const mustFix = (result as Record<string, unknown>).mustFix as string | undefined;
     expect(mustFix).toBeDefined();
     expect(mustFix).toContain("FR-2");
+  });
+});
+
+// ── FR-2: replaceSpecSections + specHistory（AC-4） ──────────
+
+describe("FR-2 AC-4: replaceSpecSections + specHistory", () => {
+  it("replaceSpecSections 后 specHistory 含旧版快照 + specSections 是新内容", () => {
+    const { store, topicId } = createTmpStore("spec-replace");
+    // 先 append 初始 spec
+    store.appendSpecSections(topicId, [
+      { type: "functionalRequirements", items: [{ id: "FR-1", title: "旧", detail: "旧描述" }] },
+    ]);
+    // replace
+    store.replaceSpecSections(topicId, [
+      { type: "functionalRequirements", items: [{ id: "FR-1", title: "新", detail: "新描述" }] },
+    ], "需求变更：FR-1 细节调整");
+    const topic = store.loadTopic(topicId)!;
+    // specSections 是新内容
+    const fr = topic.specSections.find((s) => s.type === "functionalRequirements");
+    expect(fr).toBeDefined();
+    if (fr && fr.type === "functionalRequirements") {
+      expect(fr.items[0]!.title).toBe("新");
+    }
+    // specHistory 含旧版快照
+    expect(topic.specHistory).toBeDefined();
+    expect(topic.specHistory!.length).toBe(1);
+    expect(topic.specHistory![0]!.version).toBe(1);
+    const oldFr = topic.specHistory![0]!.sections.find(
+      (s) => s.type === "functionalRequirements",
+    );
+    if (oldFr && oldFr.type === "functionalRequirements") {
+      expect(oldFr.items[0]!.title).toBe("旧");
+    }
+  });
+
+  it("多次 replace → specHistory 版本号递增", () => {
+    const { store, topicId } = createTmpStore("spec-replace-multi");
+    store.appendSpecSections(topicId, [
+      { type: "background", content: "v0" },
+    ]);
+    store.replaceSpecSections(topicId, [
+      { type: "background", content: "v1" },
+    ], "第一次修改");
+    store.replaceSpecSections(topicId, [
+      { type: "background", content: "v2" },
+    ], "第二次修改");
+    const topic = store.loadTopic(topicId)!;
+    expect(topic.specHistory!.length).toBe(2);
+    expect(topic.specHistory![0]!.version).toBe(1);
+    expect(topic.specHistory![1]!.version).toBe(2);
+  });
+});
+
+// ── FR-3: abort + stats 排除（AC-5） ─────────────────────────
+
+describe("FR-3 AC-5: abort + stats 排除", () => {
+  it("abort 后 status=aborted", () => {
+    const { store, topicId } = createTmpStore("abort-test");
+    store.updateStatus(topicId, "aborted");
+    const topic = store.loadTopic(topicId)!;
+    expect(topic.status).toBe("aborted");
   });
 });

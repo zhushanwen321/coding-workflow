@@ -902,6 +902,37 @@ export function reviewIssueCheck(raw: unknown): ReviewIssueCheckResult {
   return { result: "pass", report: "", parsed: issues };
 }
 
+// ── confirmClarifyCheck（FR-1: confirm gate 条件校验） ───────
+
+export interface ConfirmClarifyCheckResult {
+  result: "pass" | "fail";
+  report: string;
+}
+
+/**
+ * confirmClarifyCheck — FR-1: confirm_clarify 的 gate 条件。
+ *
+ * 条件：至少 1 条 status 为 resolved 或 skipped 的 clarifyRecord。
+ * 空数组或全 pending → fail（防静默跳过 clarify）。
+ *
+ * 注意：这个 check 只验证"有记录"，不验证记录内容是否真实（CW 是 agent-agnostic 的，
+ * 无法区分 agent 自填还是用户说的）。gate 的价值是强制 agent 至少停下来做一次显式确认。
+ */
+export function confirmClarifyCheck(topic: Topic): ConfirmClarifyCheckResult {
+  const hasResolvedOrSkipped = topic.clarifyRecords.some(
+    (c) => c.status === "resolved" || c.status === "skipped",
+  );
+  if (!hasResolvedOrSkipped) {
+    return {
+      result: "fail",
+      report:
+        "confirm_clarify 需要至少 1 条 resolved 或 skipped 的 clarifyRecord。" +
+        "如果确认无需澄清，先提交一条 skipped 记录（cw clarify 带 status=skipped），再 confirm。",
+    };
+  }
+  return { result: "pass", report: "" };
+}
+
 // ── clarifyCheck（clarify gate，结构校验 + ADR projectPath 文件存在） ──
 
 export interface ClarifyCheckResult {

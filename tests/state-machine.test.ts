@@ -57,9 +57,18 @@ describe("checkLinear / guard（U1-U5）", () => {
     expect(TRANSITIONS.create.nextStatus).toBe("created");
   });
 
-  it("U2: plan action, status=created → guard 通过", () => {
-    const verdict = checkLinear("plan", "created");
+  it("U2: plan action, status=clarify_confirmed → guard 通过（FR-1 新增前置 gate）", () => {
+    // FR-1: plan 的 expectedStatuses 从 [created] 改为 [clarify_confirmed]
+    const verdict = checkLinear("plan", "clarify_confirmed");
     expect(verdict.ok).toBe(true);
+  });
+
+  it("AC-1: plan action, status=created（未 confirm）→ guard 拒绝（FR-1 核心防跳过 gate）", () => {
+    const verdict = checkLinear("plan", "created");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+    }
   });
 
   it("U3: dev action, status=created → guard 拒绝(illegal_transition)", () => {
@@ -232,17 +241,15 @@ describe("computeNextStatus progressive（U9b/U9c）", () => {
 // ── U9-U11: buildNextAction ─────────────────────────────────
 
 describe("buildNextAction（U9-U11）", () => {
-  it("U9: create 后 → nextAction.action=clarify, alternatives 含 plan, guidance 含 clarify 提示词", () => {
+  it("U9: create 后 → nextAction.action=clarify, guidance 含 clarify 提示词", () => {
     const topic = makeTopic({ status: "created" });
     const na = buildNextAction("create", topic);
     expect(na.action).toBe("clarify");
     // guidance 含 clarify 提示词（探索→预判→提问→ADR）
     expect(na.guidance).toContain("[clarify 阶段]");
     expect(na.guidance).toContain("澄清需求");
-    // plan 作为 alternative（清晰需求可直接跳过 clarify）
-    expect(na.alternatives).toBeDefined();
-    expect(na.alternatives!.length).toBeGreaterThanOrEqual(1);
-    expect(na.alternatives!.some((a) => a.action === "plan")).toBe(true);
+    // FR-1: plan 不再作为 alternative（created 状态下 plan 会 illegal_transition）
+    // 必须先 clarify → confirm_clarify → plan
   });
 
   it("U10: plan gate pass 后 → nextAction.action=tdd_plan, waves 列表返回", () => {
@@ -432,42 +439,29 @@ describe("buildNextAction（U9-U11）", () => {
 // ── 状态机全链路 status 校验 ─────────────────────────────────
 
 describe("状态机线性转换完整性", () => {
-  it("8 个 status 的线性序列合法", () => {
-    const statuses: Status[] = [
-      "created",
-      "planned",
-      "tdd_inited",
-      "developed",
-      "reviewed",
-      "tested",
-      "retrospected",
-      "closed",
+  it("线性序列合法（含 clarify_confirmed）", () => {
+    // FR-1: plan 前必须经过 confirm_clarify（created → clarify_confirmed → planned）
+    const sequence: Array<{ status: Status; action: string }> = [
+      { status: "created", action: "confirm_clarify" },
+      { status: "clarify_confirmed", action: "plan" },
+      { status: "planned", action: "tdd_plan" },
+      { status: "tdd_inited", action: "dev" },
+      { status: "developed", action: "review" },
+      { status: "reviewed", action: "test" },
+      { status: "tested", action: "retrospect" },
     ];
-    // 每个 status 对应的合法 action（非 progressive 路径）
-    const actionByStatus: Record<
-      Status,
-      "plan" | "tdd_plan" | "dev" | "review" | "test" | "retrospect" | "closeout"
-    > = {
-      created: "plan",
-      planned: "tdd_plan",
-      tdd_inited: "dev",
-      developed: "review",
-      reviewed: "test",
-      tested: "retrospect",
-      retrospected: "closeout",
-      closed: "closeout", // closed 是终态，仅用于穷尽
-    };
 
-    for (const status of statuses.slice(0, 7)) {
-      const action = actionByStatus[status];
-      const verdict = checkLinear(action, status);
+    for (const { status, action } of sequence) {
+      const verdict = checkLinear(action as never, status);
       expect(verdict.ok, `${action} from ${status} should pass`).toBe(true);
     }
   });
 
-  it("TRANSITIONS 含全部 9 个 action", () => {
+  it("TRANSITIONS 含全部 action（含 confirm_clarify + abort）", () => {
     const actions = [
       "create",
+      "clarify",
+      "confirm_clarify",
       "plan",
       "tdd_plan",
       "dev",
@@ -476,6 +470,7 @@ describe("状态机线性转换完整性", () => {
       "retrospect",
       "closeout",
       "replan",
+      "abort",
     ];
     for (const a of actions) {
       expect(TRANSITIONS).toHaveProperty(a);
@@ -559,13 +554,48 @@ describe("clarify 状态机", () => {
     expect(checkLinear("clarify", "created").ok).toBe(true);
   });
 
+  it("checkLinear(\"clarify\", \"clarify_confirmed\") → ok=true（FR-1 回头修改）", () => {
+    // FR-1: clarify 在 clarify_confirmed 也合法（用户看了确认文档后改 spec 再重新 confirm）。
+    expect(checkLinear("clarify", "clarify_confirmed").ok).toBe(true);
+  });
+
   it("checkLinear(\"clarify\", \"planned\") → ok=false, code=\"illegal_transition\"", () => {
-    // clarify 只在 created 合法，plan 之后不再允许。
+    // clarify 只在 created/clarify_confirmed 合法，plan 之后不再允许。
     const verdict = checkLinear("clarify", "planned");
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.code).toBe("illegal_transition");
     }
+  });
+
+  it("AC-1: checkLinear(\"confirm_clarify\", \"created\") → ok=true（FR-1 状态流转）", () => {
+    expect(checkLinear("confirm_clarify", "created").ok).toBe(true);
+  });
+
+  it("confirm_clarify progressive：checkLinear(\"confirm_clarify\", \"clarify_confirmed\") → ok=true", () => {
+    // FR-1: confirm_clarify 在 clarify_confirmed 也合法（重新 confirm 覆盖旧 md）。
+    expect(checkLinear("confirm_clarify", "clarify_confirmed").ok).toBe(true);
+  });
+
+  it("abort 从各 status 合法（FR-3）", () => {
+    // FR-3: abort 从所有非终态 status 合法
+    const nonTerminal: Status[] = [
+      "created",
+      "clarify_confirmed",
+      "planned",
+      "tdd_inited",
+      "developed",
+      "reviewed",
+      "tested",
+      "retrospected",
+    ];
+    for (const s of nonTerminal) {
+      const verdict = checkLinear("abort", s);
+      expect(verdict.ok, `abort from ${s} should pass`).toBe(true);
+    }
+    // abort 从终态不合法
+    expect(checkLinear("abort", "closed").ok).toBe(false);
+    expect(checkLinear("abort", "aborted").ok).toBe(false);
   });
 
   it("computeGatePassed(\"clarify\", topic) 空 clarifyRecords → true", () => {
@@ -650,16 +680,17 @@ describe("clarify 状态机", () => {
       ],
     });
     const na = buildNextAction("clarify", topic);
-    expect(na.action).toBe("plan");
+    // FR-1: 有 resolved 记录 → 推荐 confirm_clarify（不再直接 plan）
+    expect(na.action).toBe("confirm_clarify");
     expect(na.alternatives).toBeDefined();
     expect(na.alternatives!.some((a) => a.action === "clarify")).toBe(true);
   });
 
-    it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"plan\"", () => {
-    // 空数组也算完成，推荐直接进 plan（无需澄清）。
+    it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"clarify\"", () => {
+    // FR-1: 空数组时不能 confirm（gate 会拒）→ 继续指向 clarify。
     const topic = makeTopic({ clarifyRecords: [] });
     const na = buildNextAction("clarify", topic);
-    expect(na.action).toBe("plan");
+    expect(na.action).toBe("clarify");
   });
 });
 
@@ -947,5 +978,64 @@ describe("buildNextAction review/test loop（W5）", () => {
     // overLimit 时强制 action=retrospect（不再 test_fix），打破 test↔test_fix 死循环
     expect(na.action).toBe("retrospect");
     expect(na.guidance).toMatch(/上限|强制/);
+  });
+});
+
+// ── FR-1: buildNextAction confirm_clarify 分支 ───────────────
+
+describe("FR-1: buildNextAction confirm_clarify 分支", () => {
+  it("created 状态（有 resolved clarifyRecord）→ nextAction=confirm_clarify", () => {
+    const topic = makeTopic({
+      status: "created",
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "test",
+          assessment: "背景",
+          question: "Q?",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const na = buildNextAction("clarify", topic);
+    // 有 resolved 记录 → 主推荐 confirm_clarify（不再停在 clarify）
+    expect(na.action).toBe("confirm_clarify");
+  });
+
+  it("created 状态（无 clarifyRecord）→ nextAction 仍 clarify（还没探索）", () => {
+    const topic = makeTopic({ status: "created", clarifyRecords: [] });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("clarify");
+  });
+
+  it("created 状态（有 pending clarifyRecord）→ nextAction 仍 clarify（等用户回答）", () => {
+    const topic = makeTopic({
+      status: "created",
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "test",
+          assessment: "背景",
+          question: "Q?",
+          status: "pending",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("clarify");
+  });
+});
+
+// ── FR-3: buildNextAction abort 分支 ─────────────────────────
+
+describe("FR-3: buildNextAction abort 分支", () => {
+  it("abort 后 nextAction.action 为空（终态）", () => {
+    const topic = makeTopic({ status: "aborted" });
+    const na = buildNextAction("abort", topic);
+    expect(na.action).toBeUndefined();
   });
 });

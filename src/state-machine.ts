@@ -16,7 +16,7 @@
  *   REVIEW/TEST_TURN_LIMIT（loop 轮数上限）达上限后强制前推到下一阶段（review→test, test→retrospect）。
  */
 
-import { CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
 import type {
   Action,
   GateHistoryEntry,
@@ -115,13 +115,22 @@ export interface TransitionRule {
 export const TRANSITIONS: Record<Action, TransitionRule> = {
   create: { expectedStatuses: [], nextStatus: "created" },
   clarify: {
-    // clarify 是 advisory progressive action：不流转 status，created 状态下可多次调。
-    // 不阻断 plan——plan 的 expectedStatuses 仍含 created，清晰需求可直接跳过 clarify。
-    expectedStatuses: ["created"],
+    // clarify 是 progressive action：created/clarify_confirmed 状态下可多次调。
+    // FR-1: 含 clarify_confirmed 让用户看确认文档后能回头追加/修改再重新 confirm。
+    expectedStatuses: ["created", "clarify_confirmed"],
     nextStatus: "created",
     progressive: true,
   },
-  plan: { expectedStatuses: ["created"], nextStatus: "planned" },
+  confirm_clarify: {
+    // FR-1: confirm_clarify 流转 created → clarify_confirmed。
+    // progressive：clarify_confirmed 状态下再 confirm 合法（重新生成确认 md 覆盖旧文件）。
+    expectedStatuses: ["created", "clarify_confirmed"],
+    nextStatus: "clarify_confirmed",
+    progressive: true,
+  },
+  // FR-1: plan 前必须经过 confirm_clarify。
+  // FR-6 向后兼容：含 planned（旧 topic 已 plan 过的重调不拒绝）。
+  plan: { expectedStatuses: ["clarify_confirmed", "planned"], nextStatus: "planned" },
   tdd_plan: { expectedStatuses: ["planned"], nextStatus: "tdd_inited" },
   dev: {
     // dev 只从 tdd_inited/developed 进入。
@@ -158,6 +167,20 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   replan: {
     expectedStatuses: ["planned", "tdd_inited", "developed", "reviewed", "tested"],
     nextStatus: "planned",
+  },
+  // FR-3: abort 从所有非终态 status 合法，流转到 aborted 终态。
+  abort: {
+    expectedStatuses: [
+      "created",
+      "clarify_confirmed",
+      "planned",
+      "tdd_inited",
+      "developed",
+      "reviewed",
+      "tested",
+      "retrospected",
+    ],
+    nextStatus: "aborted",
   },
   assess: {
     // post-closeout 评估，progressive，不改 status（始终 closed）。
@@ -317,8 +340,9 @@ function specProgress(topic: Topic): NextAction["specProgress"] {
 export function buildNextAction(action: Action, topic: Topic): NextAction {
   switch (action) {
     case "create": {
-      // create 后推荐先 clarify（澄清需求 + 记录 ADR），plan 作为 alternative（清晰需求可直接跳过）。
-      // guidance 开头是流程契约声明（create 即承诺走完全流程），然后带 CLARIFY_PROMPT。
+      // create 后推荐 clarify（澄清需求 + 记录 ADR）。
+      // FR-1: plan 不再作为 alternative——created 状态下 plan 会 illegal_transition。
+      // 必须先 clarify → confirm_clarify → plan。
       const createContract =
         `你已进入 CW 流程。从现在起到 closeout，所有编码工作必须通过 cw 命令推进：\n` +
         `- 不要使用 agent harness 的 plan mode / EnterPlanMode（CW 有自己的 plan 阶段：cw plan）\n` +
@@ -326,13 +350,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         `- 如果发现任务不适合走 CW（如纯分析/设计），和用户确认后放弃 topic，不要静默跳过\n\n`;
       return {
         action: "clarify",
-        guidance: `${createContract}topic 已建立。下一步：澄清需求与目标（探索技术系统 → 形成预判 → 向用户提问 → 记录 ADR），完成后写 dev-plan.json。\n\n${CLARIFY_PROMPT}`,
-        alternatives: [
-          {
-            action: "plan",
-            guidance: `${createContract}需求已足够清晰，直接写 dev-plan.json 提交。\n\n${DEV_PLAN_PROMPT}`,
-          },
-        ],
+        guidance: `${createContract}topic 已建立。下一步：澄清需求与目标（探索技术系统 → 形成预判 → 向用户提问 → 记录 ADR），完成后调 cw confirm_clarify。\n\n${CLARIFY_PROMPT}`,
       };
     }
     case "clarify": {
@@ -351,16 +369,44 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           };
         }
       }
-      // 全 resolved/skipped（或空数组）→ 推荐 plan，clarify 降为 alternative
+      // FR-1: 有 resolved/skipped 记录 → 推荐 confirm_clarify。
+      // 空数组 → 继续 clarify（还没探索，confirm gate 会拒绝）。
+      const hasResolvedOrSkipped = topic.clarifyRecords.some(
+        (c) => c.status === "resolved" || c.status === "skipped",
+      );
+      if (!hasResolvedOrSkipped) {
+        return {
+          action: "clarify",
+          guidance: `尚未提交任何澄清记录。先探索技术系统，提交 cw(clarify) 记录澄清或显式 skip。\n\n${CLARIFY_PROMPT}`,
+          clarifyProgress: clarifyProgress(topic),
+          specProgress: specProgress(topic),
+        };
+      }
+      // 有 resolved/skipped → 推荐 confirm_clarify（FR-1: plan 前必须 confirm）。
       return {
-        action: "plan",
-        guidance: `clarify 阶段完成（所有记录已 resolved/skipped，或无需澄清）。下一步：写 dev-plan.json 并提交。\n\n${DEV_PLAN_PROMPT}`,
+        action: "confirm_clarify",
+        guidance: `clarify 阶段完成（所有记录已 resolved/skipped）。下一步：调 cw(gen-spec) 生成确认文档并 open 给用户看，用户确认后调 cw(confirm_clarify)。\n\n${CONFIRM_CLARIFY_PROMPT}`,
         clarifyProgress: clarifyProgress(topic),
         specProgress: specProgress(topic),
         alternatives: [
           {
             action: "clarify",
             guidance: `如需继续澄清，提交 cw(clarify) 记录新问题。\n\n${CLARIFY_PROMPT}`,
+          },
+        ],
+      };
+    }
+    case "confirm_clarify": {
+      // FR-1: confirm_clarify 通过 → 进 plan（写 dev-plan.json）。
+      return {
+        action: "plan",
+        guidance: `需求已确认（clarify_confirmed）。下一步：写 dev-plan.json 并提交。\n\n${DEV_PLAN_PROMPT}`,
+        clarifyProgress: clarifyProgress(topic),
+        specProgress: specProgress(topic),
+        alternatives: [
+          {
+            action: "clarify",
+            guidance: `如需修改需求，提交 cw(clarify) 追加/修改记录，再重新 cw(confirm_clarify)。\n\n${CLARIFY_PROMPT}`,
           },
         ],
       };
@@ -630,6 +676,20 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         guidance:
           "评估已记录。topic 保持 closed，可继续调 cw(assess) 追加更多评估（progressive）。",
       };
+    }
+    case "abort": {
+      // FR-3: abort 后 aborted 终态，action 为空（流程结束）。
+      return {
+        guidance:
+          "topic 已终止（aborted）。该 topic 不会计入 stats 聚合。\n" +
+          "如需重新开发，请 cw create 新建 topic。",
+      };
+    }
+    default: {
+      // 穷尽性检查 + 终态兜底
+      const _exhaustive: never = action;
+      void _exhaustive;
+      return { guidance: "" };
     }
   }
 }

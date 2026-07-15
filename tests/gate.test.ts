@@ -21,6 +21,7 @@ import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import {
   clarifyCheck,
+  confirmClarifyCheck,
   devCheck,
   GitValidator,
   planCheck,
@@ -31,6 +32,7 @@ import {
 import { CwError, type Topic } from "../src/types.js";
 import { commitFile,setupGitRepo } from "./helpers/git.js";
 import { makeValidClarifyJson, makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
+import { checkLinear as checkLinearExternal } from "../src/state-machine.js";
 
 // ── test.json helper（与 plan-parser.test.ts 的 makeValidTestJson 结构一致） ──
 
@@ -963,5 +965,158 @@ describe("clarifyCheck", () => {
     const result = clarifyCheck(json);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("目录");
+  });
+});
+
+// ── FR-1: confirmClarifyCheck（confirm gate 条件校验） ───────
+
+describe("FR-1: confirmClarifyCheck", () => {
+  it("至少 1 条 resolved clarifyRecord → pass", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "a",
+          question: "q",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+    };
+    // FR-1: confirm gate 至少 1 条 resolved/skipped
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("pass");
+  });
+
+  it("无 clarifyRecord → fail（防静默跳过）", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("clarifyRecord");
+  });
+
+  it("只有 pending（未 resolved）→ fail", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "a",
+          question: "q",
+          status: "pending",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("fail");
+  });
+
+  it("skipped 也算合法（agent 判断无需澄清）", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "已探索，需求清晰无需澄清",
+          question: "无需澄清",
+          status: "skipped",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("pass");
+  });
+});
+
+// ── FR-6: planCheck 向后兼容 ──────────────────────────────────
+
+describe("FR-6: planCheck 向后兼容（旧 topic 已 planned）", () => {
+  it("AC-6: status=planned 的旧 topic 再次 plan → 不报 illegal_transition", () => {
+    // FR-6: 旧 topic 已 planned（没有 clarify_confirmed）不应该被新 gate 拦住。
+    // 向后兼容逻辑在 guard（checkLinear）层：plan.expectedStatuses 需含 planned。
+    // 但这里测 planCheck 本身不额外拒绝——planCheck 只验 schema。
+    // 真正的兼容在 TRANSITIONS.plan.expectedStatuses 需含 planned（已过 plan 的旧 topic 重调合法）。
+    const verdict = checkLinearExternal("plan", "planned");
+    expect(verdict.ok).toBe(true);
   });
 });

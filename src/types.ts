@@ -31,6 +31,7 @@ import type { CwStore } from "./store.js";
 export type Action =
   | "create"
   | "clarify"
+  | "confirm_clarify"
   | "plan"
   | "tdd_plan"
   | "dev"
@@ -41,21 +42,26 @@ export type Action =
   | "retrospect"
   | "closeout"
   | "replan"
+  | "abort"
   | "assess";
 
 /**
- * 8 个 status（新增 tdd_inited）。
+ * 10 个 status（新增 clarify_confirmed + aborted）。
+ * clarify_confirmed：clarify gate 通过（用户确认需求），允许进 plan。
+ * aborted：终止态（agent 主动放弃 topic），不可恢复。
  * tdd_inited：tdd_plan gate 通过，测试代码 + test.json 已写入，等待 dev 阶段实现。
  */
 export type Status =
   | "created"
+  | "clarify_confirmed"
   | "planned"
   | "tdd_inited"
   | "developed"
   | "reviewed"
   | "tested"
   | "retrospected"
-  | "closed";
+  | "closed"
+  | "aborted";
 
 // ── judgeByExpected ─────────────────────────────────────────
 
@@ -331,6 +337,24 @@ export type SpecSection =
   // 兜底章节
   | { type: "section"; sectionName: string; content: string };
 
+/**
+ * SpecVersion — spec 历史版本快照（spec 替换时归档）。
+ *
+ * spec 是规划产物（非执行产物），允许修改。每次 replaceSpecSections 时，
+ * 当前 specSections 整体快照推入 specHistory，version 自增。
+ * report/retrospect 可引用 specHistory 看 spec 变更轨迹。
+ */
+export interface SpecVersion {
+  /** 版本号（1-based，首次替换归档 v1）。 */
+  version: number;
+  /** 归档时间。 */
+  archivedAt: string;
+  /** 归档时的 spec 快照。 */
+  sections: SpecSection[];
+  /** 替换原因（agent 提供）。 */
+  reason: string;
+}
+
 // ── 澄清记录 + ADR（create → plan 之间的 clarify 阶段） ─────
 
 /**
@@ -556,6 +580,8 @@ export interface Topic {
   clarifyRecords: ClarifyRecord[];
   /** clarify 阶段产出的结构化 spec 章节（progressive，与 clarifyRecords 独立）。 */
   specSections: SpecSection[];
+  /** spec 替换时的历史版本快照（replaceSpecSections 归档，report 渲染变更日志）。 */
+  specHistory: SpecVersion[];
   /** clarify 阶段产生的 ADR 记录（与 docs/adr/ md 文件双写）。 */
   adrs: AdrRecord[];
   /** review 阶段声明的问题列表（闭环追踪，CW 不验证内容只追踪 fixed）。 */

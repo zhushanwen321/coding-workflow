@@ -120,6 +120,21 @@ function passTddPlanGateStatus(store: CwStore, topicId: string): void {
   });
 }
 
+/**
+ * 在 create 之后、plan 之前手动注入 confirm_clarify gate pass（跳过 confirm gate）。
+ *
+ * 状态机新增 confirm_clarify action（插在 create 和 plan 之间）：plan 的
+ * expectedStatuses 从 ["created"] 改为 ["clarify_confirmed", "planned"]。所以测试里
+ * 调 plan 前必须先把 status 推进到 clarify_confirmed + 标记 confirm_clarify gate pass。
+ *
+ * 直接操作 store 而非调 dispatch confirm_clarify（这些测试不是测 clarify 流程的，
+ * 避免每个测试都先构造 resolved clarifyRecord 过 confirm gate）。
+ */
+function confirmClarify(store: CwStore, topicId: string): void {
+  store.updateStatus(topicId, "clarify_confirmed");
+  store.updateGatePassed(topicId, "confirm_clarify", true);
+}
+
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "cw-dispatch-test-"));
   dbPath = join(tmpDir, "cw.json");
@@ -140,6 +155,7 @@ describe("dispatch plan（U19）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
 
     const result = dispatch(
       { action: "plan", topicId, planJson: makeValidPlanJson() },
@@ -165,6 +181,7 @@ describe("dispatch plan（U19）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
 
     const result = dispatch(
       { action: "plan", topicId, planJson: makeValidDevPlanJson() },
@@ -185,13 +202,14 @@ describe("dispatch plan（U19）", () => {
 // ── U19b: dispatch plan gate fail ───────────────────────────
 
 describe("dispatch plan gate fail（U19b）", () => {
-  it("U19b: format 非 lite → status 不变(仍 created), gateHistory append fail, nextAction 指回 plan", () => {
+  it("U19b: format 非 lite → status 不变(仍 clarify_confirmed), gateHistory append fail, nextAction 指回 plan", () => {
     const { deps, store } = makeDeps();
     const createResult = dispatch(
       { action: "create", slug: "u19b", objective: "obj", workspacePath: tmpDir },
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
 
     const result = dispatch(
       {
@@ -202,7 +220,7 @@ describe("dispatch plan gate fail（U19b）", () => {
       deps,
     );
 
-    expect(result.status).toBe("created");
+    expect(result.status).toBe("clarify_confirmed");
     expect(result.nextAction.action).toBe("plan");
     const topic = store.loadTopic(topicId);
     const planFails = topic!.gateHistory.filter(
@@ -223,6 +241,7 @@ describe("dispatch dev（U20-U21）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
     passTddPlanGate(store, topicId);
@@ -246,6 +265,7 @@ describe("dispatch dev（U20-U21）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
     passTddPlanGate(store, topicId);
@@ -268,6 +288,7 @@ describe("dispatch dev（U20-U21）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     // plan 含 W1 + W2（无依赖）
     const twoWavePlan = makeValidPlanJson({
       waves: [
@@ -320,6 +341,7 @@ describe("dispatch test（U22-U24c）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     // 新格式 dev-plan.json（不含 testCases），testCases 由 passTddPlanGate 注入。
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate（同时写 testCases）。
@@ -397,6 +419,7 @@ describe("dispatch test（U22-U24c）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     const planJson = {
       format: "lite",
       objective: "obj",
@@ -456,6 +479,7 @@ describe("dispatch test（U22-U24c）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     const planJson = {
       format: "lite",
       objective: "obj",
@@ -551,6 +575,7 @@ describe("dispatch review", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
     passTddPlanGate(store, topicId);
@@ -607,6 +632,7 @@ describe("dispatch replan（U25-U29）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
     passTddPlanGate(store, topicId);
@@ -798,6 +824,7 @@ describe("dispatch closeout（U30）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
     passTddPlanGate(store, topicId);
@@ -860,6 +887,7 @@ describe("dispatch closeout（U30）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     // 用 makeValidDevPlanJson（不含 testCases），避免 legacy testCases 与 passTddPlanGate 重复写入
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     passTddPlanGate(store, topicId);
@@ -945,6 +973,7 @@ describe("dispatch tdd_plan", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     return { topicId, deps, store };
   }
@@ -1027,6 +1056,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     return { topicId, deps, store };
   }
@@ -1214,6 +1244,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     passTddPlanGate(store, topicId);
     // 此时 status=tdd_inited，testCases=[E1,E2]
@@ -1276,6 +1307,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     passTddPlanGate(store, topicId);
     // 模拟 wave 已 committed + testCase 已 passed 的场景
@@ -1318,6 +1350,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
     passTddPlanGate(store, topicId);
 
@@ -1357,7 +1390,7 @@ describe("dispatch clarify", () => {
     expect(topic!.clarifyRecords[0]!.answer).toBeUndefined();
   });
 
-  it("含 answer → resolved, nextAction=plan（全 resolved）", () => {
+  it("含 answer → resolved, nextAction=confirm_clarify（全 resolved，FR-1: plan 前必须 confirm）", () => {
     const { deps, store } = makeDeps();
     const createResult = dispatch(
       { action: "create", slug: "clarify-resolved", objective: "obj", workspacePath: tmpDir },
@@ -1375,8 +1408,8 @@ describe("dispatch clarify", () => {
     );
 
     expect(result.status).toBe("created");
-    // 全 resolved → nextAction 推进到 plan
-    expect(result.nextAction.action).toBe("plan");
+    // 全 resolved → nextAction 推进到 confirm_clarify（FR-1: plan 前必须先 confirm）
+    expect(result.nextAction.action).toBe("confirm_clarify");
 
     const topic = store.loadTopic(topicId);
     expect(topic!.clarifyRecords).toHaveLength(1);
@@ -1502,15 +1535,17 @@ describe("dispatch clarify", () => {
     expect(result.nextAction.action).toBe("clarify");
   });
 
-  it("clarify 不阻断 plan：create → 直接 plan（不先 clarify）→ plan gate 通过, status=planned", () => {
-    const { deps } = makeDeps();
+  it("confirm_clarify 后 plan：create → confirm_clarify → plan（无需先提 clarifyRecord）→ plan gate 通过, status=planned", () => {
+    const { deps, store } = makeDeps();
     const createResult = dispatch(
       { action: "create", slug: "clarify-skip", objective: "obj", workspacePath: tmpDir },
       deps,
     );
     const topicId = createResult.topicId;
+    // confirm_clarify gate（直接操作 store 跳过 confirm gate 检查）
+    confirmClarify(store, topicId);
 
-    // 不先 clarify，直接 plan
+    // confirm 后直接 plan
     const result = dispatch(
       { action: "plan", topicId, planJson: makeValidPlanJson() },
       deps,
@@ -1570,6 +1605,7 @@ describe("dispatch review loop（W3：review + review_fix）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     passTddPlanGate(store, topicId);
     dispatch(
@@ -1732,6 +1768,7 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     passTddPlanGate(store, topicId);
     dispatch(
@@ -1857,6 +1894,7 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     passTddPlanGate(store, topicId);
     dispatch(
@@ -1920,6 +1958,7 @@ describe("dispatch assess（W5：post-closeout 评估）", () => {
       deps,
     );
     const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
     passTddPlanGate(store, topicId);
     dispatch(

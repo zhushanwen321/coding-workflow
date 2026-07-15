@@ -6,6 +6,7 @@
  */
 
 export { CLARIFY_PROMPT } from "./clarify.js";
+export { CONFIRM_CLARIFY_PROMPT } from "./confirm-clarify.js";
 export { DEV_PLAN_PROMPT, PLAN_PROMPT } from "./dev-plan.js";
 export { EXECUTE_PROMPT } from "./execute.js";
 export { RETROSPECT_PROMPT } from "./retrospect.js";

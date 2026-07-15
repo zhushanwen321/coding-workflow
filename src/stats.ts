@@ -421,12 +421,15 @@ function aggregateBuckets(topics: Topic[]): BucketAgg[] {
  * 分组顺序按首次出现的顺序（Map 保持插入序），桶顺序固定 simple → medium → complex。
  */
 export function computeStatsAll(topics: Topic[]): StatsAllOutput {
+  // FR-3: 排除 aborted topic（废弃 topic 不污染 stats 聚合）。
+  const activeTopics = topics.filter((t) => t.status !== "aborted");
+
   // 按 GroupKey 字符串分组，保持插入顺序。
   const groupOrder: string[] = [];
   const groupKeyMap = new Map<string, GroupKey>();
   const groupTopicsMap = new Map<string, Topic[]>();
 
-  for (const topic of topics) {
+  for (const topic of activeTopics) {
     const key = groupKeyOf(topic);
     const keyStr = groupKeyToString(key);
     if (!groupKeyMap.has(keyStr)) {

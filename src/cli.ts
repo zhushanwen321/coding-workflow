@@ -35,6 +35,8 @@ import {
   type AssessParams,
   type ClarifyParams,
   type CloseoutParams,
+  type ConfirmClarifyParams,
+  type AbortParams,
   type CreateParams,
   type CwParams,
   type DevParams,
@@ -51,7 +53,7 @@ import { dispatch } from "./dispatch.js";
 import { GitValidator, reviewIssueCheck } from "./gate.js";
 import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
-import { generateReport, type ReportDocs } from "./report.js";
+import { generateReport, genSpecMd, type ReportDocs } from "./report.js";
 import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
 import {
@@ -84,10 +86,11 @@ const EXIT_CW_ERROR = 1;
 /** 进程退出码：内部异常（未预期的错误）。 */
 const EXIT_INTERNAL_ERROR = 2;
 
-/** 合法 action 白名单（12 个 dispatch action + 3 个只读查询命令）。 */
+/** 合法 action 白名单（14 个 dispatch action + 4 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
   "clarify",
+  "confirm_clarify",
   "plan",
   "tdd_plan",
   "dev",
@@ -98,10 +101,11 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
   "retrospect",
   "closeout",
   "replan",
+  "abort",
   "assess",
 ];
 
-const READONLY_QUERIES = new Set(["status", "list", "stats", "report"]);
+const READONLY_QUERIES = new Set(["status", "list", "stats", "report", "gen-spec"]);
 
 // ── RuntimeEnv 默认值 + env.json ────────────────────────────
 
@@ -377,6 +381,16 @@ export function buildParams(
       );
       const params: ClarifyParams = { action: "clarify", topicId, clarifyJson };
       return params;
+    }
+
+    case "confirm_clarify": {
+      if (!topicId) throw new CwError("confirm_clarify 需要 --topicId");
+      return { action: "confirm_clarify", topicId } as ConfirmClarifyParams;
+    }
+
+    case "abort": {
+      if (!topicId) throw new CwError("abort 需要 --topicId");
+      return { action: "abort", topicId } as AbortParams;
     }
 
     case "plan": {
@@ -799,6 +813,29 @@ async function main(argv: string[]): Promise<void> {
       writeFileSync(reportPath, html, "utf-8");
       process.stdout.write(
         JSON.stringify({ topicId, reportPath }, null, JSON_INDENT) + "\n",
+      );
+      return;
+    }
+
+    if (action === "gen-spec") {
+      // FR-1: gen-spec 是只读命令，从 clarifyRecords + specSections 生成确认 md。
+      const topicId =
+        typeof parsed.topicId === "string" ? parsed.topicId : undefined;
+      if (!topicId) {
+        process.stderr.write("错误：gen-spec 需要 --topicId\n");
+        process.exit(EXIT_CW_ERROR);
+      }
+      const topic = store.loadTopic(topicId);
+      if (!topic) {
+        process.stderr.write(`错误：topic not found: ${topicId}\n`);
+        process.exit(EXIT_CW_ERROR);
+      }
+      const md = genSpecMd(topic);
+      const safeSlug = topic.slug.replace(/[^a-zA-Z0-9-]/g, "-");
+      const specPath = join(tmpdir(), `cw-spec-${safeSlug}.md`);
+      writeFileSync(specPath, md, "utf-8");
+      process.stdout.write(
+        JSON.stringify({ topicId, specPath }, null, JSON_INDENT) + "\n",
       );
       return;
     }

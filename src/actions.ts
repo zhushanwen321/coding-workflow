@@ -23,6 +23,7 @@ import { join } from "node:path";
 
 import {
   clarifyCheck,
+  confirmClarifyCheck,
   devCheck,
   fileExistsCheck,
   planCheck,
@@ -167,6 +168,18 @@ export interface CloseoutParams {
   topicId: string;
 }
 
+/** FR-1: confirm_clarify 参数——用户确认需求后提交，流转 created → clarify_confirmed。 */
+export interface ConfirmClarifyParams {
+  action: "confirm_clarify";
+  topicId: string;
+}
+
+/** FR-3: abort 参数——终止 topic，流转到 aborted 终态。 */
+export interface AbortParams {
+  action: "abort";
+  topicId: string;
+}
+
 export interface ReplanParams {
   action: "replan";
   topicId: string;
@@ -195,6 +208,7 @@ export interface AssessParams {
 export type CwParams =
   | CreateParams
   | ClarifyParams
+  | ConfirmClarifyParams
   | PlanParams
   | TddPlanParams
   | DevParams
@@ -205,6 +219,7 @@ export type CwParams =
   | TestFixParams
   | CloseoutParams
   | ReplanParams
+  | AbortParams
   | AssessParams;
 
 // ── handleCreate ────────────────────────────────────────────
@@ -256,6 +271,7 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     testTurn: 0,
     assessments: [],
     specSections: [],
+    specHistory: [],
   };
 
   deps.store.transaction(() => {
@@ -1433,6 +1449,113 @@ export function handleCloseout(
       deps.store.setEvidence(params.topicId, evidence);
     },
   );
+}
+
+// ── handleConfirmClarify ───────────────────────────────────
+
+/**
+ * handleConfirmClarify — FR-1: clarify 阶段用户确认 gate。
+ *
+ * gate 条件：至少 1 条 resolved/skipped 的 clarifyRecord（confirmClarifyCheck）。
+ * gate pass → status 流转 created → clarify_confirmed + gatePassed + gateHistory。
+ * gate fail → status 不变 + gateHistory(fail) + mustFix。
+ *
+ * confirm_clarify 不生成文档——文档由 gen-spec 只读命令生成。
+ * confirm_clarify 只做 gate + 状态流转。
+ */
+export function handleConfirmClarify(
+  params: ConfirmClarifyParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const check = confirmClarifyCheck(topic);
+
+  let passed: boolean;
+  deps.store.transaction(() => {
+    if (check.result === "fail") {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "confirm_clarify",
+        action: "confirm_clarify",
+        gate: "has-clarify-record",
+        result: "fail",
+        report: check.report,
+        progressive: false,
+      });
+      passed = false;
+      return;
+    }
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("confirm_clarify", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "confirm_clarify", true);
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "confirm_clarify",
+      action: "confirm_clarify",
+      gate: "has-clarify-record",
+      result: "pass",
+      progressive: false,
+    });
+    passed = true;
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after confirm_clarify: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("confirm_clarify", updated),
+  };
+  if (!passed!) {
+    (result as Record<string, unknown>).mustFix = check.report;
+  }
+  return result;
+}
+
+// ── handleAbort ────────────────────────────────────────────
+
+/**
+ * handleAbort — FR-3: 终止 topic，流转到 aborted 终态。
+ *
+ * 无 gate（abort 无条件执行——agent 调了就是确认要终止）。
+ * status 流转到 aborted，gateHistory 记录 abort 事件。
+ * aborted 是终态，不可恢复。
+ */
+export function handleAbort(
+  params: AbortParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  deps.store.transaction(() => {
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("abort", topic.status),
+    );
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "abort",
+      action: "abort",
+      gate: "user-requested",
+      result: "pass",
+      progressive: false,
+      report: `aborted from status=${topic.status}`,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after abort: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("abort", updated),
+  };
 }
 
 // ── handleReplan ────────────────────────────────────────────
