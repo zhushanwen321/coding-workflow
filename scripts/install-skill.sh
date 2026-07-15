@@ -30,19 +30,27 @@ TARGETS=(
 for target in "${TARGETS[@]}"; do
   mkdir -p "$(dirname "$target")"
 
-  # 已存在（symlink 或目录）→ 检查是否指向同一源
+  # 已存在（symlink 或目录）→ 检查是否需要处理
   if [ -e "$target" ] || [ -L "$target" ]; then
     current=""
     if [ -L "$target" ]; then
       current="$(readlink "$target")"
     fi
-    if [ "$current" = "$SKILL_SRC" ]; then
+
+    # 悬空 symlink（目标已不存在，如 npm uninstall / nvm 切版本后）→ 直接删除重建
+    if [ -L "$target" ] && [ ! -e "$target" ]; then
+      echo "→ $target 是悬空 symlink（目标已不存在），重建"
+      rm -f "$target"
+    elif [ "$current" = "$SKILL_SRC" ]; then
       echo "✓ $target 已指向正确源，跳过"
       continue
+    else
+      # 指向不同源或不是 symlink → 备份后重建
+      # 先清理上一次遗留的 .bak（可能是目录，rm -rf 确保删干净）
+      rm -rf "${target}.bak"
+      echo "→ $target 已存在但指向不同位置，备份为 ${target}.bak"
+      mv "$target" "${target}.bak"
     fi
-    # 指向不同源或不是 symlink → 备份后重建
-    echo "→ $target 已存在但指向不同位置，备份为 ${target}.bak"
-    mv "$target" "${target}.bak" 2>/dev/null || true
   fi
 
   ln -s "$SKILL_SRC" "$target"

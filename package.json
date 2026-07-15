@@ -41,7 +41,8 @@
     "check:all": "npm run check && npm run check:tests",
     "lint": "eslint src/ tests/",
     "test": "vitest run",
-    "postinstall": "bash scripts/install-skill.sh"
+    "postinstall": "bash scripts/install-skill.sh",
+    "preuninstall": "bash scripts/uninstall-skill.sh"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0",
