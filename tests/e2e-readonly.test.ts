@@ -12,6 +12,8 @@
  * 真实子进程跑 dist/cli.js，独立隔离环境。
  */
 
+import { existsSync, readFileSync } from "node:fs";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -20,18 +22,25 @@ import {
   type E2eEnv,
   parseStdout,
   runCli,
+  setupToClosed,
   setupToTested,
 } from "./helpers/e2e.js";
 
 let e: E2eEnv;
 let emptyEnv: E2eEnv; // 专测空库 list/stats --all
 let topicId: string;
+let closedTopicId: string;
+let closedSlug: string;
 
 beforeAll(() => {
   e = createE2eEnv();
   emptyEnv = createE2eEnv();
   // 走到一个有完整 gate 数据的 topic（tested 阶段 gate 齐全）
   topicId = setupToTested(e, "e9-stats").topicId;
+  // 走到 closed 的 topic（report 需要完整数据）
+  const closed = setupToClosed(e, "e9-report");
+  closedTopicId = closed.topicId;
+  closedSlug = closed.slug;
 });
 
 afterAll(() => {
@@ -102,5 +111,43 @@ describe("E9d: list 空库 → []；非空 → ListEntry 结构", () => {
     expect(first.slug).toBeDefined();
     expect(first.status).toBeDefined();
     expect(first.createdAt).toBeDefined();
+  });
+});
+
+// ── E9e: report 生成 HTML 报告 ───────────────────────────────
+
+describe("E9e: report 生成可视化 HTML", () => {
+  it("report --topicId → 返回 reportPath，HTML 文件存在且含关键内容", () => {
+    const result = parseStdout(
+      runCli(["report", "--topicId", closedTopicId], e),
+    );
+    expect(result.topicId).toBe(closedTopicId);
+    expect(result.reportPath).toBeDefined();
+    expect(typeof result.reportPath).toBe("string");
+
+    const reportPath = result.reportPath as string;
+    expect(existsSync(reportPath)).toBe(true);
+
+    // 读 HTML 内容，验证关键字段已注入
+    const html = readFileSync(reportPath, "utf-8");
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain(closedSlug);
+    expect(html).toContain("Gate Execution Trail");
+    expect(html).toContain("Wave Changes");
+    expect(html).toContain("Test Cases");
+    expect(html).toContain("Retrospect");
+    // 暗色主题验证
+    expect(html).toContain("--bg:");
+  });
+
+  it("report 不存在的 topicId → exit≠0, stderr 含 topic not found", () => {
+    const result = runCli(["report", "--topicId", "cw-9999-01-01-nope"], e);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("topic not found");
+  });
+
+  it("report 缺 --topicId → exit≠0", () => {
+    const result = runCli(["report"], e);
+    expect(result.exitCode).not.toBe(0);
   });
 });
