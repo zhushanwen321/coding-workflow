@@ -30,6 +30,7 @@ import {
   judgeByExpected,
   type ReviewIssueCategory,
   type ReviewIssueSubmission,
+  type SpecSection,
   type TestCase,
   type TestRunnerConfig,
   type Topic,
@@ -191,7 +192,7 @@ export interface PlanCheckResult {
  *   - format !== "lite" / 非 object / size 超 1MB / schema 不符 / 环形 dependsOn → fail。
  *   - waves 空数组 → fail（schema 允许空数组，planCheck 额外校验非空）。
  */
-export function planCheck(planJson: unknown): PlanCheckResult {
+export function planCheck(planJson: unknown, specSections?: SpecSection[]): PlanCheckResult {
   try {
     const parsed = parseDevPlan(planJson);
 
@@ -203,7 +204,18 @@ export function planCheck(planJson: unknown): PlanCheckResult {
       };
     }
 
-    return { result: "pass", report: "", ...checkPlanScopeWarning(parsed) };
+    // 合并 scope warning + FR 覆盖 warning
+    const warnings: string[] = [];
+    const scopeWarning = checkPlanScopeWarning(parsed);
+    if (scopeWarning.warning) warnings.push(scopeWarning.warning);
+    const frWarning = checkFrCoverage(parsed, specSections);
+    if (frWarning) warnings.push(frWarning);
+
+    return {
+      result: "pass",
+      report: "",
+      ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}),
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { result: "fail", report: msg };
@@ -244,6 +256,81 @@ function checkPlanScopeWarning(
   return { warning: warnings.join("; ") };
 }
 
+/**
+ * checkFrCoverage — plan waves 是否覆盖 spec 的功能需求（warning 不阻断）。
+ *
+ * 宽松匹配：FR 的 id 或 title 出现在任一 wave 的 changes[].description 里 = 覆盖。
+ * 未覆盖的 FR 列入 warning，提示 agent 检查是否有遗漏（可能是有意的缩范围）。
+ *
+ * 无 spec 或 spec 无 FR 时返回 undefined（不触发检查）。
+ */
+export function checkFrCoverage(
+  parsed: ParsedDevPlan,
+  specSections?: SpecSection[],
+): string | undefined {
+  if (!specSections || specSections.length === 0) return undefined;
+
+  // 聚合所有 FR
+  const frs: Array<{ id: string; title: string }> = [];
+  for (const s of specSections) {
+    if (s.type === "functionalRequirements") {
+      for (const fr of s.items) {
+        frs.push({ id: fr.id, title: fr.title });
+      }
+    }
+  }
+  if (frs.length === 0) return undefined;
+
+  // plan 的所有 description 拼成一个搜索池
+  const allDescs = parsed.waves
+    .flatMap((w) => w.changes ?? [])
+    .map((c) => `${c.description} ${c.file}`)
+    .join(" ");
+
+  const unmatched = frs.filter(
+    (fr) => !allDescs.includes(fr.id) && !allDescs.includes(fr.title),
+  );
+
+  if (unmatched.length === 0) return undefined;
+  return `以下 spec FR 可能在 plan 中未覆盖（检查是否有意缩范围）：${unmatched.map((f) => f.id).join(", ")}`;
+}
+
+/**
+ * checkAcMapping — test cases 是否映射 spec 的验收标准（warning 不阻断）。
+ *
+ * 宽松匹配：AC 的 id 出现在任一 testCase 的 scenario 或 steps 里 = 映射。
+ * 未映射的 AC 列入 warning，提示 agent 检查测试是否遗漏验收条件。
+ *
+ * 无 spec 或 spec 无 AC 时返回 undefined（不触发检查）。
+ */
+export function checkAcMapping(
+  parsed: ParsedTestJson,
+  specSections?: SpecSection[],
+): string | undefined {
+  if (!specSections || specSections.length === 0) return undefined;
+
+  // 聚合所有 AC id
+  const acIds: string[] = [];
+  for (const s of specSections) {
+    if (s.type === "acceptanceCriteria") {
+      for (const ac of s.items) {
+        acIds.push(ac.id);
+      }
+    }
+  }
+  if (acIds.length === 0) return undefined;
+
+  // test 的所有 scenario + steps 拼成搜索池
+  const searchText = parsed.testCases
+    .map((tc) => `${tc.scenario} ${tc.steps}`)
+    .join(" ");
+
+  const unmapped = acIds.filter((id) => !searchText.includes(id));
+
+  if (unmapped.length === 0) return undefined;
+  return `以下 spec AC 在 test 中可能未映射（检查是否遗漏验收条件）：${unmapped.join(", ")}`;
+}
+
 // ── tddPlanCheck（调 parseTestJson，校验 testCases） ────────────
 
 export interface TddPlanCheckResult {
@@ -251,6 +338,8 @@ export interface TddPlanCheckResult {
   report: string;
   /** 解析后的 testCases（pass 时供 handler 写入 store） */
   parsed?: ParsedTestJson;
+  /** AC 映射 warning（result=pass 但 AC 可能未全覆盖，不阻断） */
+  warning?: string;
 }
 
 /// P0: 模糊 expected 值正则（不区分大小写，全词匹配）。
@@ -269,7 +358,7 @@ const FUZZY_EXPECTED_RE =
  *
  * pass 时返回 parsed，供 handler 写入 store。fail 时 parsed 为 undefined。
  */
-export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
+export function tddPlanCheck(testJson: unknown, specSections?: SpecSection[]): TddPlanCheckResult {
   let parsed: ParsedTestJson;
   try {
     parsed = parseTestJson(testJson);
@@ -355,7 +444,10 @@ export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
     }
   }
 
-  return { result: "pass", report: "", parsed };
+  // AC 映射 warning（不阻断）
+  const acWarning = checkAcMapping(parsed, specSections);
+
+  return { result: "pass", report: "", parsed, ...(acWarning ? { warning: acWarning } : {}) };
 }
 
 // ── redLightCheck（执行测试命令确认红灯） ─────────────────────
@@ -719,6 +811,7 @@ const REVIEW_CATEGORIES = new Set<ReviewIssueCategory>([
   "edge-case",
   "test-coverage",
   "plan-completeness",
+  "design-consistency",
 ]);
 
 /**

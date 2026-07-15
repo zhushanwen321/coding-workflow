@@ -379,6 +379,12 @@ export function handleClarify(
       result: "pass",
       progressive: true,
     });
+    // 聚合所有条目的 specSections（挂在 ParsedClarify 上，不在 ClarifySeed 上），一次性 append。
+    // specSections 是 progressive append-only，与 clarifyRecord/adr 同语义。
+    const allSpecSections = parsed.flatMap((item) => item.specSections ?? []);
+    if (allSpecSections.length > 0) {
+      deps.store.appendSpecSections(params.topicId, allSpecSections);
+    }
     passed = true;
   });
 
@@ -503,7 +509,7 @@ export function handlePlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = planCheck(params.planJson);
+  const check = planCheck(params.planJson, topic.specSections);
 
   let passed: boolean;
   deps.store.transaction(() => {
@@ -524,6 +530,11 @@ export function handlePlan(
     // planCheck 内部已调 parseDevPlan 成功，这里再调一次拿 parsed（parseDevPlan 是纯函数，幂等）。
     const parsed = parseDevPlan(params.planJson);
     deps.store.insertWaves(params.topicId, parsed.waves);
+    // 持久化 objective（如果 dev-plan.json 提供了与 create 时不同的 objective）。
+    // create 时存的 objective 可能是占位/草稿，plan 阶段 dev-plan.json 的 objective 更权威——同步覆盖。
+    if (parsed.objective && parsed.objective !== topic.objective) {
+      deps.store.updateObjective(params.topicId, parsed.objective);
+    }
     // 向后兼容：旧格式 plan.json 同时含 testCases（extractDevPlan 提取到 legacyTestCases）。
     // 新格式 dev-plan.json 不含 testCases（test.json 在 tdd_plan 阶段提交），跳过 insertTestCases。
     if (parsed.legacyTestCases && parsed.legacyTestCases.length > 0) {
@@ -596,7 +607,7 @@ export function handleTddPlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = tddPlanCheck(params.testJson);
+  const check = tddPlanCheck(params.testJson, topic.specSections);
 
   let passed: boolean;
   deps.store.transaction(() => {
@@ -650,6 +661,9 @@ export function handleTddPlan(
   if (!passed!) {
     (result as Record<string, unknown>).mustFix = check.report;
     return result;
+  } else if (check.warning) {
+    // gate pass 但 AC 映射可能未全覆盖 → warning 挂 mustFix（不阻断 status，对称 handlePlan 的 warning 处理）。
+    (result as Record<string, unknown>).mustFix = `AC 映射 warning（不阻断）：${check.warning}`;
   }
 
   // 红灯校验（事务外执行——调 execFileSync 跑测试命令，不能在事务内持锁）。
