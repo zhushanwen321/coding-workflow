@@ -85,6 +85,22 @@ commit 是 Wave 级验证锚点——CW 用 commit 存在性 + diff 非空校验
 5. 全部 passed → test gate 通过，status 流转到 tested，nextAction 指向 retrospect
 6. 有 case failed → CW 指向 **test_fix**（不再回 dev）
 
+### 全绿质量自检（test 全 pass 时执行）
+
+[MANDATORY] 全绿不等于无 bug。tdd_plan 阶段定义的 testCases 是在你还没写实现时设计的——
+那时你对代码的认知是**不完整的**。现在实现已完成、测试已跑过，你有了实际数据来回答：
+
+**「这套测试真的能发现 bug，还是只是恰好没失败？」**
+
+全 pass 时逐条自问：
+- 这条 case 测的是 happy path 还是异常路径？如果全是 happy path，说明测试套件没有防线
+- 实现里有哪个分支/边界，对应的 testCase 没覆盖到？（实现过程中新发现的分支是测试盲区）
+- 如果我现在故意改坏实现（如删掉某个错误处理），有多少 case 会变红？如果答案是零，这些 case 是覆盖率填充
+
+自检发现问题时的处理：
+- 测试有盲区 → 调 \`cw replan --topicId <id> --test --testJsonFile <path>\` 补 case，重跑验证
+- 自检无问题（测试确有防线）→ 正常进 retrospect，把自检结论写进 processIssues（证明做过自检而非跳过）
+
 ### test 提交语义
 
 - cw(test) 可分多次调用（渐进式）。
@@ -95,10 +111,23 @@ commit 是 Wave 级验证锚点——CW 用 commit 存在性 + diff 非空校验
 
 test 有 case 未通过时，CW nextAction 指向 **test_fix**（不回 dev——所有 Wave 已 committed，dev 没有新任务）。
 
+**[MANDATORY] test_fix 的第一件事不是修代码，是归因**。failure 有两种来源，处理方式完全不同：
+
+| failure 原因 | 怎么判断 | 怎么修 |
+|-------------|---------|--------|
+| **代码真有 bug**（实现逻辑错/漏了边界处理） | 对照 expected 检查实现——expected 是你在 tdd_plan 从测试断言提取的，它是基准，实现偏离基准 = bug | 改实现代码 → commit → 重跑 testCase → 提交新 actual |
+| **expected 写错**（断言值本身不正确，或需求理解有误） | expected 不符合实际正确行为——比如你写 expected="2" 但正确答案确实是 "3" | 调 \`cw replan --topicId <id> --test --testJsonFile <path>\` 修正 expected → 重跑 |
+
+[禁止] 不做归因直接改代码——如果 expected 本身错了，改代码让错的 expected 通过 = 把 bug 永久固化进代码
+[禁止] 不做归因直接改 expected——如果代码真有 bug，改 expected 迎合实现 = 把 bug 合法化
+
+归因纪律的核心：**expected 是 tdd_plan 阶段从测试断言提取的基准，优先级高于实现**。先信 expected，
+只在确凿证明 expected 本身有误时才改 expected。
+
 \`\`\`
 test turn 1: U1 failed
     ↓ CW 指向 test_fix
-test_fix: 分析 failureReason → 修代码 → commit → 提交修复审计
+test_fix: 归因 → 确认是代码 bug → 修代码 → commit → 提交修复审计
     echo '[
       {"caseId":"U1","commitHash":"<sha>","resolution":"修复 add 返回值类型"}
     ]' | cw test_fix --topicId <id>
@@ -110,9 +139,6 @@ test turn 2: 重跑 U1，提交新 actual
 
 **test_fix 的 commitHash 只记录审计，不校验真实性**（与 review_fix 同理）。
 agent 修完代码后重跑失败的 testCase，提交新 actual，CW 用 expected 重新判定。
-
-如果是 expected 写错（不是代码 bug），调 replan：
-\`cw replan --topicId <id> --test --testJsonFile <testJsonFilePath>\`
 
 ### turn 上限
 

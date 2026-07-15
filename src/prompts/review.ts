@@ -34,8 +34,21 @@ export const REVIEW_PROMPT = `
 | 类型安全 | 禁 any、schema 同步、CwError vs Error 边界、type-only import |
 | 错误处理 | catch 不吞异常、exit code 映射、错误消息可读性 |
 | 边界条件 | 空数组/缺字段/非法 JSON/文件不存在 |
-| 测试覆盖 | 新逻辑有测试、edge case 覆盖、e2e 覆盖 |
+| 测试质量 | 测试能否发现真 bug（见下方「测试质量审查」专节，不只是覆盖率数字） |
 | plan 完成度 | dev-plan.json 的 changes 是否全部落地 |
+
+### 测试质量审查（review 阶段是测试跑之前的最后校验窗口）
+
+test 还没跑，test.json 已在 tdd_plan 阶段定稿。review 是用「已完成的实现」反查「测试设计」的最后机会——
+test 一旦跑起来全绿，弱测试会被当成功放过。在此时审查测试设计质量：
+
+- **盲区检查**：实现里有 N 个分支/错误处理，testCase 覆盖了几个？漏的分支在 test 阶段不会被触发
+- **防线检查**：如果 testCase 全是 happy path（正常输入 → 正常输出），它们是覆盖率填充，不是 bug 防线
+- **对称性检查**：成功路径有守门（如校验输入），失败路径有没有？（如「创建有校验，删除有没有」）
+
+发现问题时的处理：
+- 测试设计有盲区 → 补 case 再进 test（replan --test），而非让弱测试全绿通过
+- 测试质量 OK → 在 review.md 里说明测试覆盖了哪些风险路径（证明审过而非跳过）
 
 ## issues 参数
 
