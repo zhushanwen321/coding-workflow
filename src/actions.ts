@@ -255,6 +255,7 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     testFixLog: [],
     testTurn: 0,
     assessments: [],
+    specSections: [],
   };
 
   deps.store.transaction(() => {

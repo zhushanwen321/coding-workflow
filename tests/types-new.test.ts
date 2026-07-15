@@ -244,6 +244,7 @@ describe("W1+W2: issue tracking 类型", () => {
         gateHistory: [],
         gatePassed: {},
         clarifyRecords: [],
+        specSections: [],
         adrs: [],
         reviewIssues: [
           {

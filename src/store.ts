@@ -52,6 +52,7 @@ import type {
   ReviewIssue,
   ReviewIssueSubmission,
   RuntimeEnv,
+  SpecSection,
   Status,
   TestCase,
   TestCaseSeed,
@@ -139,6 +140,8 @@ interface TopicRecord {
   testTurn?: number;
   /** post-closeout 评估记录（可选，向后兼容旧 _cw.json 数据）。 */
   assessments?: Assessment[];
+  /** clarify 阶段产出的结构化 spec 章节（可选，向后兼容旧 _cw.json 数据）。 */
+  specSections?: SpecSection[];
 }
 
 interface WaveRecord {
@@ -488,6 +491,7 @@ export class CwStore {
         testFixLog: topic.testFixLog,
         testTurn: topic.testTurn,
         assessments: topic.assessments,
+        specSections: topic.specSections,
       };
       this.fileData!.topics.push(record);
     });
@@ -571,6 +575,7 @@ export class CwStore {
       testFixLog: topic.testFixLog ?? [],
       testTurn: topic.testTurn ?? 0,
       assessments: topic.assessments ?? [],
+      specSections: topic.specSections ?? [],
     };
   }
 
@@ -687,6 +692,14 @@ export class CwStore {
     });
   }
 
+  updateObjective(topicId: string, objective: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.objective = objective;
+    });
+  }
+
   updateGatePassed(topicId: string, phase: Action, passed: boolean): void {
     this.executeWrite(() => {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
@@ -770,6 +783,7 @@ export class CwStore {
           file: issue.file,
           status: "open",
           foundAtTurn: turn,
+          ...(issue.category ? { category: issue.category } : {}),
         };
         existing.push(record);
         nextN++;
@@ -1065,6 +1079,19 @@ export class CwStore {
       data.clarifyRecords.push(record);
     });
     return assignedId;
+  }
+
+  /**
+   * 追加 spec 章节（progressive，与 clarifyRecords 独立）。
+   * 参考 appendClarifyRecord 的 append-only 模式：旧 specSections 保留，新章节往后拼。
+   */
+  appendSpecSections(topicId: string, sections: SpecSection[]): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.specSections ?? [];
+      topic.specSections = [...existing, ...sections];
+    });
   }
 
   /**

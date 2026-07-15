@@ -15,7 +15,15 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import type { AdrSeed, ClarifySeed, TestCaseSeed, TestRunnerConfig, WaveChange, WaveSeed } from "./types.js";
+import type {
+  AdrSeed,
+  ClarifySeed,
+  SpecSection,
+  TestCaseSeed,
+  TestRunnerConfig,
+  WaveChange,
+  WaveSeed,
+} from "./types.js";
 import { CwError } from "./types.js";
 
 // ── DevPlanSchema（dev-plan.json，只含 waves） ──────────────
@@ -377,6 +385,121 @@ function extractTestJson(json: unknown): ParsedTestJson {
   };
 }
 
+// ── SpecSectionSchema（clarify 阶段产出的结构化 spec 章节） ─
+
+/**
+ * SpecSection 的 typebox schema，对应 SpecSection 联合类型。
+ *
+ * 用 Type.Union 组合 10 种章节变体，每种靠 type literal 判别：
+ *   - 结构化章节（CW 校验内容）：functionalRequirements / acceptanceCriteria / businessCases /
+ *     decisions / complexity / outOfScope / goals
+ *   - md 章节（CW 只存不校验）：background / constraints
+ *   - 兜底章节（agent 自定义章节名）：section
+ *
+ * 设计依据：对 118 个真实 spec.md 的内容模式统计（见 types.ts SpecSection 注释）。
+ */
+export const SpecSectionSchema = Type.Union([
+  // 结构化章节
+  Type.Object({
+    type: Type.Literal("functionalRequirements"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        title: Type.String(),
+        detail: Type.String(),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("acceptanceCriteria"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        condition: Type.String(),
+        verification: Type.Optional(
+          Type.Union([Type.Literal("unit"), Type.Literal("manual"), Type.Literal("review")]),
+        ),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("businessCases"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        actor: Type.String(),
+        scenario: Type.String(),
+        expectedResult: Type.String(),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("decisions"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        decision: Type.String(),
+        rationale: Type.String(),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("complexity"),
+    rating: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+    rationale: Type.String(),
+  }),
+  Type.Object({
+    type: Type.Literal("outOfScope"),
+    items: Type.Array(Type.String()),
+  }),
+  Type.Object({
+    type: Type.Literal("goals"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        goal: Type.String(),
+        successCriteria: Type.String(),
+      }),
+    ),
+  }),
+  // md 章节
+  Type.Object({
+    type: Type.Literal("background"),
+    content: Type.String(),
+  }),
+  Type.Object({
+    type: Type.Literal("constraints"),
+    content: Type.String(),
+  }),
+  // 兜底章节
+  Type.Object({
+    type: Type.Literal("section"),
+    sectionName: Type.String(),
+    content: Type.String(),
+  }),
+]);
+
+// ── parseSpecSections（spec 章节数组入口） ──────────────────
+
+/**
+ * parseSpecSections — 解析 clarifyJson 里的 specSections 数组。
+ *
+ * 校验链：assertSafeSize → 逐元素 assertSchema(SpecSectionSchema)。
+ * 返回 SpecSection[]，由 handler progressive append 到 topic.specSections。
+ *
+ * 入参必须是数组（clarifyJson 顶层 specSections 字段）；非数组/空数组报错。
+ */
+export function parseSpecSections(json: unknown): SpecSection[] {
+  assertSafeSize(json, "specSections");
+  if (!Array.isArray(json)) {
+    throw new CwError("invalid specSections json: not an array");
+  }
+  return json.map((item, i) => {
+    assertSchema(SpecSectionSchema, item, `specSections[${i}]`);
+    return item as SpecSection;
+  });
+}
+
 // ── parseClarifyJson（clarifyJson 入口，支持单条+批量） ──────
 
 /**
@@ -401,6 +524,7 @@ export const ClarifySchema = Type.Object({
     ),
   ),
   recommendation: Type.Optional(Type.String()),
+  specSections: Type.Optional(Type.Array(SpecSectionSchema)),
   presentationPath: Type.Optional(Type.String()),
   answer: Type.Optional(Type.String()),
   adr: Type.Optional(
@@ -420,6 +544,11 @@ export const ClarifySchema = Type.Object({
 
 export interface ParsedClarify {
   clarifySeed: ClarifySeed;
+  /**
+   * clarifyJson 顶层 specSections 字段（可选）。
+   * 不属于 ClarifySeed——挂在 ParsedClarify 上直接返回，由 handler append 到 topic.specSections。
+   */
+  specSections?: SpecSection[];
 }
 
 /**
@@ -452,6 +581,7 @@ function extractClarify(json: unknown): ParsedClarify {
     question: string;
     options?: Array<{ id: string; label: string; tradeoff?: string }>;
     recommendation?: string;
+    specSections?: unknown;
     presentationPath?: string;
     answer?: string;
     adr?: {
@@ -489,7 +619,13 @@ function extractClarify(json: unknown): ParsedClarify {
     clarifySeed.adr = adrSeed;
   }
 
-  return { clarifySeed };
+  // specSections 已被 ClarifySchema 校验过结构，这里走 parseSpecSections 做逐元素
+  // assertSchema + size guard，提取为 SpecSection[]（不属于 ClarifySeed，挂在 ParsedClarify 上）。
+  const result: ParsedClarify = { clarifySeed };
+  if (obj.specSections !== undefined) {
+    result.specSections = parseSpecSections(obj.specSections);
+  }
+  return result;
 }
 
 // ── 向后兼容别名 ─────────────────────────────────────────────

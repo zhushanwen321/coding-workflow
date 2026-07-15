@@ -34,6 +34,7 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     gateHistory: [],
     gatePassed: {},
     clarifyRecords: [],
+    specSections: [],
     adrs: [],
     // review/test-fix 机制的空默认值（与 review-fix wave 并行开发的 types 字段）。
     reviewIssues: [],

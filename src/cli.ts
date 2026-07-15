@@ -51,7 +51,7 @@ import { dispatch } from "./dispatch.js";
 import { GitValidator, reviewIssueCheck } from "./gate.js";
 import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
-import { generateReport } from "./report.js";
+import { generateReport, type ReportDocs } from "./report.js";
 import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
 import {
@@ -762,7 +762,37 @@ async function main(argv: string[]): Promise<void> {
         process.exit(EXIT_CW_ERROR);
       }
       const stats = computeStats(topic);
-      const html = generateReport(topic, stats);
+      // 读 review.md / retrospect.md 文档内容。
+      // artifacts 路径可能是相对的（如 .xyz-harness/...），用 workspacePath 解析。
+      const resolveArtifact = (p: string | undefined): string | undefined => {
+        if (!p) return undefined;
+        return isAbsolute(p) ? p : join(workspacePath, p);
+      };
+      const readDocSafe = (p: string | undefined): string | undefined => {
+        if (!p || !existsSync(p)) return undefined;
+        try {
+          return readFileSync(p, "utf-8");
+        } catch {
+          return undefined;
+        }
+      };
+      const docs: ReportDocs = {
+        reviewDoc: readDocSafe(resolveArtifact(topic.artifacts?.reviewPath)),
+        retrospectDoc: readDocSafe(resolveArtifact(topic.artifacts?.retrospectPath)),
+        clarifyDocs: Object.fromEntries(
+          (topic.clarifyRecords ?? [])
+            .filter((cr) => cr.presentationPath)
+            .map((cr) => [cr.id, readDocSafe(resolveArtifact(cr.presentationPath))])
+            .filter(([, v]) => v !== undefined),
+        ),
+        adrDocs: Object.fromEntries(
+          (topic.adrs ?? [])
+            .filter((a) => a.projectPath)
+            .map((a) => [a.id, readDocSafe(resolveArtifact(a.projectPath))])
+            .filter(([, v]) => v !== undefined),
+        ),
+      };
+      const html = generateReport(topic, stats, docs);
       // 写临时文件，文件名含 topic slug 便于识别。
       const safeSlug = topic.slug.replace(/[^a-zA-Z0-9-]/g, "-");
       const reportPath = join(tmpdir(), `cw-report-${safeSlug}.html`);

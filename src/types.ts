@@ -252,6 +252,85 @@ export interface RetrospectData {
   processIssues: string[];
 }
 
+// ── 结构化 spec 章节（clarify 阶段产出，plan/review/test 追溯） ──
+
+/**
+ * 功能需求——spec 的核心结构化条目。
+ * 来自对 118 个真实 spec.md 的统计：67% 文件有 FR-* 子节。
+ */
+export interface FunctionalRequirement {
+  id: string;
+  title: string;
+  /** 详细描述（可含 md 代码块/表格）。 */
+  detail: string;
+}
+
+/**
+ * 验收标准——可判定的完成条件。
+ * 84% 文件有 AC-* 子节。verification 标注如何验证。
+ */
+export interface AcceptanceCriterion {
+  id: string;
+  condition: string;
+  verification?: "unit" | "manual" | "review";
+}
+
+/**
+ * 业务用例——Actor 视角的使用场景。
+ * 42% 文件有 UC-* 子节。
+ */
+export interface BusinessCase {
+  id: string;
+  actor: string;
+  scenario: string;
+  expectedResult: string;
+}
+
+/**
+ * 决策记录——spec 阶段的技术/产品决策。
+ * 25% 文件有此章节。
+ */
+export interface SpecDecision {
+  id: string;
+  decision: string;
+  rationale: string;
+}
+
+/**
+ * 目标——可衡量的业务目标。
+ * 19% 文件有目标树结构。
+ */
+export interface SpecGoal {
+  id: string;
+  goal: string;
+  successCriteria: string;
+}
+
+/**
+ * SpecSection — spec 的一个章节，progressive append 到 topic.specSections。
+ *
+ * 分三类：
+ *   1. 结构化章节（CW 校验内容 + report 模板渲染）：FR/AC/UC/decisions/complexity/outOfScope/goals
+ *   2. md 章节（CW 只存不校验 + report mdToHtml）：background/constraints
+ *   3. 兜底章节（agent 自定义章节名）：section
+ *
+ * 设计依据：对 ~/Code 下 6 个项目 118 个 spec.md 的内容模式统计。
+ */
+export type SpecSection =
+  // 结构化章节
+  | { type: "functionalRequirements"; items: FunctionalRequirement[] }
+  | { type: "acceptanceCriteria"; items: AcceptanceCriterion[] }
+  | { type: "businessCases"; items: BusinessCase[] }
+  | { type: "decisions"; items: SpecDecision[] }
+  | { type: "complexity"; rating: "low" | "medium" | "high"; rationale: string }
+  | { type: "outOfScope"; items: string[] }
+  | { type: "goals"; items: SpecGoal[] }
+  // md 章节
+  | { type: "background"; content: string }
+  | { type: "constraints"; content: string }
+  // 兜底章节
+  | { type: "section"; sectionName: string; content: string };
+
 // ── 澄清记录 + ADR（create → plan 之间的 clarify 阶段） ─────
 
 /**
@@ -369,7 +448,8 @@ export type ReviewIssueCategory =
   | "error-handling"
   | "edge-case"
   | "test-coverage"
-  | "plan-completeness";
+  | "plan-completeness"
+  | "design-consistency";
 
 /**
  * ReviewIssue — Review 阶段 agent 声明的问题（主观，CW 不验证内容，只追踪闭环）。
@@ -474,6 +554,8 @@ export interface Topic {
   testRunner?: TestRunnerConfig;
   /** clarify 阶段的澄清记录（progressive，create→plan 之间）。 */
   clarifyRecords: ClarifyRecord[];
+  /** clarify 阶段产出的结构化 spec 章节（progressive，与 clarifyRecords 独立）。 */
+  specSections: SpecSection[];
   /** clarify 阶段产生的 ADR 记录（与 docs/adr/ md 文件双写）。 */
   adrs: AdrRecord[];
   /** review 阶段声明的问题列表（闭环追踪，CW 不验证内容只追踪 fixed）。 */
