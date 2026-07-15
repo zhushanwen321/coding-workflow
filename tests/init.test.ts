@@ -303,6 +303,37 @@ describe("runInit — 骨架内容", () => {
     // 骨架应含 {项目名} 或类似占位符
     expect(agents?.skeleton).toMatch(/\{[^}]+\}/);
   });
+
+  it("TEST-STRATEGY 骨架含测试目的论 + 三层×mock 矩阵 + 禁mock边界", () => {
+    const result = runInit(testDir);
+
+    const ts = result.docs.find((d) => d.path === "TEST-STRATEGY.md");
+    const skeleton = ts?.skeleton as string;
+    // 测试目的论——核心理念不用占位符，确定性文字写死
+    expect(skeleton).toContain("## 测试目的");
+    expect(skeleton).toContain("发现 bug");
+    expect(skeleton).toContain("不是覆盖率填充");
+    // 三层 × mock 矩阵（表头写死，内容占位符让 agent 填）
+    expect(skeleton).toContain("## 测试金字塔与边界");
+    expect(skeleton).toContain("单元（纯函数）");
+    expect(skeleton).toContain("集成（dispatch）");
+    expect(skeleton).toContain("E2E（子进程）");
+    expect(skeleton).toContain("mock 策略");
+    // 禁 mock 边界——核心规则写死
+    expect(skeleton).toContain("禁 mock 边界");
+    expect(skeleton).toContain("mock 掉这些 = 失去测试意义");
+    // 不可回退基线——比覆盖率更直接的定位
+    expect(skeleton).toContain("比覆盖率更直接");
+  });
+
+  it("AGENTS.md 骨架含测试约定段", () => {
+    const result = runInit(testDir);
+
+    const agents = result.docs.find((d) => d.path === "AGENTS.md");
+    expect(agents?.skeleton).toContain("## 测试约定");
+    expect(agents?.skeleton).toContain("发现 bug");
+    expect(agents?.skeleton).toContain("TEST-STRATEGY.md");
+  });
 });
 
 // ── docRoot 定位 ─────────────────────────────────────────────
