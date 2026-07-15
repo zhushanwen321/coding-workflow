@@ -24,6 +24,7 @@ import {
   parseStdout,
   runCli,
   setupToReviewed,
+  setupToTested,
 } from "./helpers/e2e.js";
 
 let e: E2eEnv;
@@ -171,5 +172,115 @@ describe("E7e: test 传不存在的 caseId → exit≠0", () => {
     );
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("case not found");
+  });
+});
+
+// ── [BUG-HUNT] test_fix 校验缺口 + test progressive merge ─────
+//
+// bug-hunt 测试：发现真 bug（红色失败暴露代码缺陷），非覆盖率填充。
+// 对照组：验证已知正确的实现（绿色通过）。
+
+// [BUG-HUNT] test_fix 缺 status=failed 守门——对称性破坏
+//
+// review_fix 校验 issue 必须 status=open（已 fixed 的不能再 fix），
+// 但 test_fix 只校验 caseId 存在，不校验 status 是否 failed。
+// 后果：对已 passed 的 case 提交 fix 会污染 testFixLog + 虚增 testTurn，
+// 累积到 TEST_TURN_LIMIT 后可误触熔断，把一个全 pass 的 topic 强制推进 retrospect。
+describe("[BUG-HUNT] test_fix 对已 passed case 提交——应被拒绝", () => {
+  it("test 全 pass 后，对已 passed case 调 test_fix → 应拒绝（而非污染审计）", () => {
+    const { topicId } = setupToTested(e, "bh-passed-fix");
+
+    // 对已 passed 的 E1 提交 test_fix
+    const result = runCli(["test_fix", "--topicId", topicId], e, {
+      input: JSON.stringify([
+        { caseId: "E1", commitHash: "fake", resolution: "不该被接受的 fix" },
+      ]),
+    });
+
+    // 期望：被拒绝（exit≠0），与 review_fix 的 status=open 守门对称
+    expect(
+      result.exitCode,
+      "test_fix 对已 passed case 提交应被拒绝（对称 review_fix 的 status=open 守门）。" +
+        `实际 exitCode=${result.exitCode}，说明 test_fix 缺 status=failed 守门——这是确认的 bug。`,
+    ).not.toBe(0);
+  });
+
+  it("若未被拒绝 → testCase.status 不应被污染", () => {
+    const { topicId } = setupToTested(e, "bh-status-check");
+
+    runCli(["test_fix", "--topicId", topicId], e, {
+      input: JSON.stringify([
+        { caseId: "E1", commitHash: "fake", resolution: "虚增 turn" },
+      ]),
+    });
+
+    const status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    const testCases = status.testCases as Array<{ id: string; status: string }>;
+    const e1 = testCases.find((c) => c.id === "E1");
+    expect(e1!.status).toBe("passed");
+  });
+});
+
+// test progressive merge——对照组（验证正确的 merge 语义，非 bug）
+describe("test 分批提交——已 pass case 不丢失（对照组）", () => {
+  it("先提交 E1(pass)，再单独提交 E2(pass) → 两个都 passed", () => {
+    const { topicId } = setupToReviewed(e, "bh-progressive");
+
+    // 第一次：只提交 E1
+    runCli(
+      ["test", "--topicId", topicId, "--cases", JSON.stringify([
+        { caseId: "E1", actual: { text: "expected-output" } },
+      ])],
+      e,
+    );
+
+    // 中间状态：E1 passed, E2 pending, gate=false
+    let status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    let cases = status.testCases as Array<{ id: string; status: string }>;
+    expect(cases.find((c) => c.id === "E1")!.status).toBe("passed");
+    expect(cases.find((c) => c.id === "E2")!.status).toBe("pending");
+
+    // 第二次：只提交 E2
+    const result = parseStdout(
+      runCli(
+        ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E2", actual: { text: "real-output" } },
+        ])],
+        e,
+      ),
+    );
+
+    expect(result.gatePassed).toMatchObject({ test: true });
+    status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    cases = status.testCases as Array<{ id: string; status: string }>;
+    expect(cases.find((c) => c.id === "E1")!.status).toBe("passed");
+    expect(cases.find((c) => c.id === "E2")!.status).toBe("passed");
+  });
+
+  it("E1(pass)+E2(fail) 后，只重提交 E2(pass) → E1 的 passed 不丢失", () => {
+    const { topicId } = setupToReviewed(e, "bh-retry");
+
+    runCli(
+      ["test", "--topicId", topicId, "--cases", JSON.stringify([
+        { caseId: "E1", actual: { text: "expected-output" } },
+        { caseId: "E2", actual: { text: "wrong" } },
+      ])],
+      e,
+    );
+
+    const result = parseStdout(
+      runCli(
+        ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E2", actual: { text: "real-output" } },
+        ])],
+        e,
+      ),
+    );
+
+    expect(result.gatePassed).toMatchObject({ test: true });
+    const status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    const cases = status.testCases as Array<{ id: string; status: string }>;
+    expect(cases.find((c) => c.id === "E1")!.status).toBe("passed");
+    expect(cases.find((c) => c.id === "E2")!.status).toBe("passed");
   });
 });

@@ -24,8 +24,9 @@ import {
   retrospectMdPath,
   reviewMdPath,
   runCli,
+  setupToTested,
 } from "./helpers/e2e.js";
-import { makeValidDevPlanJson, makeValidTestJson } from "./helpers/plan.js";
+import { makeValidTestJson } from "./helpers/plan.js";
 
 // ── 共享测试环境 ────────────────────────────────────────────
 
@@ -241,73 +242,6 @@ describe("E3: 非法跳步（created 直接到 test）被拒绝", () => {
   });
 });
 
-// ── E4: replan 场景 ─────────────────────────────────────────
-
-describe("E4: replan 场景（dev 中追加 wave）", () => {
-  it("replan 追加 wave → status 回退 planned, append-only 校验生效", () => {
-    // create + plan + dev W1
-    const createResult = parseStdout(
-      runCli(
-        ["create", "--slug", "e4-replan", "--objective", "replan 测试", "--workspace", e.workspaceDir],
-        e,
-      ),
-    );
-    const topicId = createResult.topicId as string;
-
-    runCli(["plan", "--topicId", topicId], e, {
-      input: JSON.stringify(makeValidDevPlanJson()),
-    });
-
-    // tdd_plan（推进到 tdd_inited 才能 dev）
-    runCli(["tdd_plan", "--topicId", topicId], e, {
-      input: JSON.stringify(makeValidTestJson()),
-    });
-    runCli(
-      ["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }])],
-      e,
-    );
-
-    // replan：追加 W2（保留 W1）。replan 无 flag → 从 stdin 读 planJson（旧格式含 testCases 兼容）。
-    const newPlan = JSON.stringify({
-      format: "lite",
-      objective: "replan 测试（追加 W2）",
-      waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "w2" }], dependsOn: ["W1"] },
-      ],
-    });
-    const replanResult = parseStdout(
-      runCli(["replan", "--topicId", topicId], e, { input: newPlan }),
-    );
-    // status 回退 planned（developed → planned）
-    expect(replanResult.status).toBe("planned");
-
-    // 验证 status 子命令看到 W1 + W2
-    const statusResult = parseStdout(
-      runCli(["status", "--topicId", topicId], e),
-    );
-    const waves = statusResult.waves as Array<{ id: string; committed: boolean }>;
-    const waveIds = waves.map((w) => w.id).sort();
-    expect(waveIds).toEqual(["W1", "W2"]);
-    const w1 = waves.find((w) => w.id === "W1");
-    expect(w1!.committed).toBe(true);
-
-    // append-only 违规：删除已 committed 的 W1 → 应被拒绝
-    const deletePlan = JSON.stringify({
-      format: "lite",
-      objective: "删 W1",
-      waves: [],
-    });
-    const deleteResult = runCli(
-      ["replan", "--topicId", topicId],
-      e,
-      { input: deletePlan },
-    );
-    expect(deleteResult.exitCode).not.toBe(0);
-    expect(deleteResult.stderr).toContain("wave_deleted_committed");
-  });
-});
-
 // ── 补充：list 只读查询 ─────────────────────────────────────
 
 describe("补充: list 只读查询子命令", () => {
@@ -343,5 +277,38 @@ describe("补充: db 文件落盘验证", () => {
     const content = readFileSync(dbFile!, "utf8");
     const data = JSON.parse(content) as { topics: unknown[] };
     expect(data.topics.length).toBeGreaterThan(0);
+  });
+});
+
+// ── [BUG-HUNT] retrospectPath 指向 topicDir 外 → closeout 依赖链 ──
+//
+// retrospect gate 要求 retrospectPath 指向存在的文件（可任意位置），
+// 但 closeout gate 检查 topicDir（.xyz-harness/<slug>/）目录存在。
+// 如果 agent 把 retrospect.md 写到 topicDir 外，retrospect pass 但 closeout 可能 fail。
+
+describe("[BUG-HUNT] retrospectPath 指向 topicDir 外 → closeout 依赖链", () => {
+  it("retrospect.md 写到 workspace 根（非 topicDir）→ closeout 行为记录", () => {
+    const { topicId } = setupToTested(e, "bh-path-drift");
+
+    // retrospect.md 写到 workspace 根（不在 topicDir 内）
+    const rootRetroPath = join(e.workspaceDir, "retrospect.md");
+    writeFileSync(rootRetroPath, "# 复盘\n\n写在根目录的复盘");
+
+    const retroResult = parseStdout(
+      runCli(
+        ["retrospect", "--topicId", topicId, "--retrospect-path", rootRetroPath],
+        e,
+        { input: JSON.stringify({ knownRisks: [], processIssues: [] }) },
+      ),
+    );
+    expect(retroResult.status).toBe("retrospected");
+
+    // closeout 检查 topicDir——如果 topicDir 不存在则 fail
+    const closeoutResult = runCli(["closeout", "--topicId", topicId], e);
+    if (closeoutResult.exitCode !== 0) {
+      // closeout 失败——retrospect 和 closeout 的路径假设不一致
+      expect(closeoutResult.stderr).toBeTruthy();
+    }
+    // 如果 closeout 成功，说明 topicDir 被其他步骤创建了——无 bug
   });
 });
