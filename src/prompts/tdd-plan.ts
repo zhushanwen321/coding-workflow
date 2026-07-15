@@ -116,7 +116,7 @@ gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_p
 ### 自动红灯校验（配置 testRunner 时）
 
 test.json 配置了 testRunner 时，CW 在 tdd_plan gate 通过后自动跑红灯校验：
-- 对 redCheck=true 的 testCase 执行 testRunner.command，确认 exit code ≠ 0（红灯）
+- 执行 testRunner.command 一次（整体跑），确认 exit code ≠ 0（红灯——实现尚未写，测试应全 fail）
 - 结果记录到 gateHistory（gate 名 tdd-red-light），供事后复盘 TDD 纪律执行情况
 - 红灯校验**不阻断** status 流转（仍进入 tdd_inited），但失败时 mustFix 带 warning
 

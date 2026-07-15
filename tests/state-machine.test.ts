@@ -354,16 +354,18 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.testCases).toBeDefined();
   });
 
-  it("test gate fail → dev 从 tested 状态合法（不 illegal_transition）", () => {
-    // 回归测试：dev.expectedStatuses 必须含 tested，否则 test fail 后回 dev 死锁
+  it("dev 从 tested 状态非法（test 失败走 test_fix，不回 dev）", () => {
+    // 回归测试：dev.expectedStatuses 不含 tested。
+    // 新设计：test 失败 → test_fix loop（所有 Wave 已 committed，dev 没有新任务）。
     const verdict = checkLinear("dev", "tested");
-    expect(verdict.ok).toBe(true);
+    expect(verdict.ok).toBe(false);
   });
 
-  it("test gate fail → dev 从 reviewed 状态合法（不 illegal_transition）", () => {
-    // 回归测试：dev.expectedStatuses 必须含 reviewed
+  it("dev 从 reviewed 状态非法（review 失败走 review_fix，不回 dev）", () => {
+    // 回归测试：dev.expectedStatuses 不含 reviewed。
+    // 新设计：review 失败 → review_fix loop。
     const verdict = checkLinear("dev", "reviewed");
-    expect(verdict.ok).toBe(true);
+    expect(verdict.ok).toBe(false);
   });
 
   it("replan 后 nextAction 指向 tdd_plan（不是 dev）", () => {
@@ -809,10 +811,11 @@ describe("review_fix / test_fix 状态机", () => {
       expect(na.guidance).toContain("test_fix");
     });
 
-    it("buildNextAction(\"test_fix\", topic) 达上限 → guidance 含上限告警", () => {
+    it("buildNextAction(\"test_fix\", topic) 达上限 → action 仍为 test（overLimit 判定在 test 分支）", () => {
       const topic = makeTopic({ status: "tested", testTurn: 5 });
       const na = buildNextAction("test_fix", topic);
-      expect(na.guidance).toMatch(/上限|replan|ask_user/);
+      // test_fix 总是指向 test（重跑），达上限的强制前推在 test 分支判定（→ retrospect）
+      expect(na.action).toBe("test");
     });
   });
 });
@@ -921,7 +924,7 @@ describe("buildNextAction review/test loop（W5）", () => {
     expect(na.action).toBe("test");
   });
 
-  it("W5-8: test 达上限（testTurn>=5）+ failed → guidance 含熔断提示", () => {
+  it("W5-8: test 达上限（testTurn>=5）+ failed → 强制进 retrospect（打破死循环）", () => {
     const topic = makeTopic({
       status: "tested",
       testTurn: 5,
@@ -940,8 +943,8 @@ describe("buildNextAction review/test loop（W5）", () => {
       ],
     });
     const na = buildNextAction("test", topic);
-    // action 仍为 test_fix（不阻断），但 guidance 含熔断
-    expect(na.action).toBe("test_fix");
-    expect(na.guidance).toMatch(/上限|ask_user|replan/);
+    // overLimit 时强制 action=retrospect（不再 test_fix），打破 test↔test_fix 死循环
+    expect(na.action).toBe("retrospect");
+    expect(na.guidance).toMatch(/上限|强制/);
   });
 });

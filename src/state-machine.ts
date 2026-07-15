@@ -12,7 +12,8 @@
  * 关键语义：
  * - progressive 原地停留：dev 在 developed 状态下再次调用，status 仍为 developed（不回退）。
  *   test 同理。靠 computeNextStatus 判定。
- * - gate 熔断不阻断只告警：连续 fail 达阈值后 nextAction guidance 换熔断文案。
+ * - 熔断两种语义：GATE_RETRY_LIMIT（连续 gate fail 5 次）只告警不阻断，guidance 换文案；
+ *   REVIEW/TEST_TURN_LIMIT（loop 轮数上限）达上限后强制前推到下一阶段（review→test, test→retrospect）。
  */
 
 import { CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
@@ -80,11 +81,11 @@ function buildCircuitBreakerGuidance(phase: Action, fails: number): string {
 const REPLAN_GUIDANCE =
   `如需修改计划，调 cw replan（支持 --plan 和 --test 两种模式）：\n` +
   `    echo '<newDevPlanJson>' | cw replan --topicId <topicId> --plan   # 修订 dev-plan（追加 wave）\n` +
-  `    echo '<newTestJson>' | cw replan --topicId <topicId> --test      # 修订 test.json（调整 expected / 追加 case）\n` +
+  `    cw replan --topicId <topicId> --test --testJsonFile <path>       # 修订 test.json（调整 expected / 追加 case）\n` +
   `约束（append-only）：已 committed 的 wave 和已 passed 的 testCase 不可删改。` +
   `replan 后 status 回退到 planned，需重走 tdd_plan → dev → review → test。`;
 
-/** 构造 replan alternative 项（status∈{planned, developed, reviewed, tested} 的 nextAction 用）。 */
+/** 构造 replan alternative 项（status∈{planned, tdd_inited, developed, reviewed, tested} 的 nextAction 用）。 */
 function replanAlternative(): NextActionAlternative {
   return { action: "replan", guidance: REPLAN_GUIDANCE };
 }
@@ -123,8 +124,9 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   plan: { expectedStatuses: ["created"], nextStatus: "planned" },
   tdd_plan: { expectedStatuses: ["planned"], nextStatus: "tdd_inited" },
   dev: {
-    // dev 允许从 reviewed/tested 回退（test 失败后统一回 dev 修代码）
-    expectedStatuses: ["tdd_inited", "developed", "reviewed", "tested"],
+    // dev 只从 tdd_inited/developed 进入。
+    // test/review 失败走 test_fix/review_fix loop（不回 dev——所有 Wave 已 committed，dev 没有新任务）。
+    expectedStatuses: ["tdd_inited", "developed"],
     nextStatus: "developed",
     progressive: true,
   },
@@ -225,10 +227,10 @@ export function guard(action: Action, topic: Topic | null): GuardVerdict {
  * 例：dev 是 progressive，nextStatus=developed。当 current 已是 developed 时
  * 再次调 dev（渐进式提交第二个 wave），status 仍为 developed。
  *
- * 注意：replan 虽标 progressive，但 nextStatus=planned，
- * 调用 replan 时 current∈{planned, developed}，不会 === nextStatus(=planned)
- * 当 current=developed 时（developed !== planned），所以 replan 总会回退到 planned——
- * 这正是 replan 的语义（追加 wave 后重新走 dev）。progressive 标记对 replan 无实际效果，
+ * 注意：replan 标 progressive，nextStatus=planned，expectedStatuses 含 planned 自身。
+ * 当 current=planned（如 plan 刚过、tdd_plan 之前调 replan）时 current===nextStatus，
+ * progressive 命中原地停留（仍 planned）；其余 4 个 status（tdd_inited/developed/reviewed/tested）
+ * 调用时回退到 planned。两种情况结果一致——progressive 标记对 replan 无实际效果，
  * 保留标记仅为表的一致性（replan 可多次调用）。
  */
 export function computeNextStatus(action: Action, current: Status): Status {
@@ -487,33 +489,43 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           alternatives: [replanAlternative()],
         };
       }
-      // test 有 case 未通过 → 进 test_fix loop（不再回 dev）。
-      // testTurn >= LIMIT → guidance 含熔断提示（action 仍为 test_fix）。
+      // test 有 case 未通过。
       const failedCount = topic.testCases.filter(
         (c) => c.status !== "passed",
       ).length;
       const overLimit = topic.testTurn >= TEST_TURN_LIMIT;
+      if (overLimit) {
+        // 达上限：强制进 retrospect（与 review overLimit 强制进 test 对称）。
+        // 打破 test↔test_fix 死循环：blind .action follower 不会永久振荡。
+        // retrospect gate 只验文件存在性，不查 testCases 全 pass，所以带失败 case 进复盘合法。
+        // retrospect 正是"复盘为什么没过 + 记录 knownRisks"的场所。
+        return {
+          action: "retrospect",
+          guidance:
+            `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${topic.testTurn}），` +
+            `${failedCount} 个 case 仍未通过。强制进复盘阶段——在 retrospect 中记录未通过原因和 knownRisks，` +
+            `由用户决定是否接受或调 cw(replan) 调整计划。\n\n${RETROSPECT_PROMPT}`,
+          testCases: testCaseProgress(topic),
+          alternatives: [replanAlternative()],
+        };
+      }
+      // 未达上限 → 进 test_fix loop。
       return {
         action: "test_fix",
-        guidance: overLimit
-          ? `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${topic.testTurn}），` +
-            `${failedCount} 个 case 仍未通过。建议 ask_user 人工介入或调 cw(replan) 调整计划。\n\n${EXECUTE_PROMPT}`
-          : `test 有 ${failedCount} 个 case 未通过。下一步：修代码 + commit，调 cw(test_fix) 提交 fixes（caseId + commitHash + resolution），再重跑 test。\n\n${EXECUTE_PROMPT}`,
+        guidance: `test 有 ${failedCount} 个 case 未通过。下一步：修代码 + commit，调 cw(test_fix) 提交 fixes（caseId + commitHash + resolution），再重跑 test。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };
     }
     case "test_fix": {
       // test_fix：test loop 内的修复动作（status 留在 tested），审计日志由 store.appendTestFix 追加。
-      // 修完代码后应重新跑 test，若已达 test 轮数上限则告警。
+      // 修完代码后应重新跑 test。
+      // testTurn 在 handleTestFix 里已 inc，达上限时 test 分支会强制进 retrospect。
       const turn = topic.testTurn;
-      const overLimit = turn >= TEST_TURN_LIMIT;
       return {
         action: "test",
-        guidance: overLimit
-          ? `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${turn}）。建议 ask_user 人工介入审查，或调 cw(replan) 调整计划。`
-          : `test_fix 完成（第 ${turn} 轮）。下一步：重新跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
-        alternatives: overLimit ? [replanAlternative()] : undefined,
+        guidance: `test_fix 完成（第 ${turn} 轮）。下一步：重新跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
+        alternatives: [replanAlternative()],
       };
     }
     case "retrospect": {
@@ -530,7 +542,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       return {
         action: "closeout",
         guidance:
-          "retrospect gate 通过。下一步：调 cw(closeout) 归档 topic。\n\ncloseout gate 检查项：topic 目录（.xyz-harness/<slug>/）存在且非空。retrospect.md 已在里面所以会自动通过。",
+          "retrospect gate 通过。下一步：调 cw(closeout) 归档 topic。\n\ncloseout gate 检查项：topic 目录（.xyz-harness/<slug>/）存在。retrospect.md 已在里面所以会自动通过。",
       };
     }
     case "closeout": {

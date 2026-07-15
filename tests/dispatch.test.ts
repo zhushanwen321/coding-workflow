@@ -1713,7 +1713,7 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
     return { topicId, deps, store };
   }
 
-  it("W4-1: test fail → nextAction=test_fix, testTurn=1（首次 fail inc）", () => {
+  it("W4-1: test fail → nextAction=test_fix, testTurn 仍为 0（inc 在 test_fix）", () => {
     const { topicId, deps, store } = setupReviewedTopic();
 
     const result = dispatch(
@@ -1727,10 +1727,11 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
 
     expect(result.nextAction.action).toBe("test_fix");
     const topic = store.loadTopic(topicId);
-    expect(topic!.testTurn).toBe(1);
+    // testTurn 在 test_fix 时 inc（不在 test 时），首次 fail 仍为 0
+    expect(topic!.testTurn).toBe(0);
   });
 
-  it("W4-2: test_fix 记录审计 → nextAction=test，testFixLog 有 1 条", () => {
+  it("W4-2: test_fix 记录审计 → nextAction=test，testFixLog 有 1 条, testTurn 从 0→1", () => {
     const { topicId, deps, store } = setupReviewedTopic();
     // 先 test 让 E1 fail + 进入 tested 状态
     dispatch(
@@ -1764,10 +1765,12 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
     expect(topic!.testFixLog).toHaveLength(1);
     expect(topic!.testFixLog[0]!.caseId).toBe("E1");
     expect(topic!.testFixLog[0]!.commitHash).toBe("fix123");
-    expect(topic!.testFixLog[0]!.turn).toBe(1);
+    // turn 记录用的是 inc 前的值（0），inc 后 testTurn=1
+    expect(topic!.testFixLog[0]!.turn).toBe(0);
+    expect(topic!.testTurn).toBe(1);
   });
 
-  it("W4-3: test 达上限（testTurn=5）+ failed → guidance 含熔断提示", () => {
+  it("W4-3: test 达上限（testTurn=5）+ failed → 强制进 retrospect（打破死循环）", () => {
     const { topicId, deps, store } = setupReviewedTopic();
     // 先 test 让 E1 fail
     dispatch(
@@ -1778,14 +1781,15 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       },
       deps,
     );
-    // 手动把 testTurn 拉到 LIMIT（5）：当前已 1，再 inc 4 次
+    // 手动把 testTurn 拉到 LIMIT（5）
+    store.incTestTurn(topicId);
     store.incTestTurn(topicId);
     store.incTestTurn(topicId);
     store.incTestTurn(topicId);
     store.incTestTurn(topicId);
     expect(store.loadTopic(topicId)!.testTurn).toBe(5);
 
-    // 再 test（progressive）E1 仍 fail → buildNextAction 判 overLimit → guidance 含熔断
+    // 再 test（progressive）E1 仍 fail → buildNextAction 判 overLimit → 强制进 retrospect
     const result = dispatch(
       {
         action: "test",
@@ -1795,8 +1799,9 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       deps,
     );
 
-    expect(result.nextAction.action).toBe("test_fix");
-    expect(result.nextAction.guidance).toMatch(/上限|ask_user|replan/);
+    // overLimit 时 action=retrospect（不再 test_fix），打破 test↔test_fix 死循环
+    expect(result.nextAction.action).toBe("retrospect");
+    expect(result.nextAction.guidance).toMatch(/上限|强制/);
   });
 
   it("W4-4: test_fix 从 reviewed 调 → illegal_transition（GuardError）", () => {

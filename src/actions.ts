@@ -863,14 +863,10 @@ export function handleTest(
     }
 
     const failedCount = caseResults.filter((c) => c.status !== "passed").length;
-    const hasFailures = failedCount > 0;
 
-    // 有 case failed 且是第一次 fail（testTurn=0）→ incTestTurn 开启 test-fix loop 计数。
-    // 首次 fail 标记后不再重复 inc（避免同 loop 内多次 test 提交重复计数）。
-    // 熔断由 buildNextAction 基于 testTurn >= TEST_TURN_LIMIT 判定（外部可手动设置 turn 触发）。
-    if (hasFailures && topic.testTurn === 0) {
-      deps.store.incTestTurn(params.topicId);
-    }
+    // testTurn 的 inc 不在这里做——改在 handleTestFix 里 inc（每轮修复 = turn+1）。
+    // 熔断由 buildNextAction 基于 testTurn >= TEST_TURN_LIMIT 判定。
+    // 这里不碰 testTurn，避免 progressive 多次 test 提交重复计数。
 
     // 事务内 reload 拿最新数据算 gatePassed + status。
     const reloaded = deps.store.loadTopic(params.topicId);
@@ -942,7 +938,10 @@ export function handleTestFix(
     }
   }
 
-  // turn = 当前 testTurn（修复发生在哪一轮 test 之后）。
+  // turn = 当前 testTurn（修复发生在哪一轮 test 之后，记录用）。
+  // inc 在事务内做：记录审计用 turn（inc 前的值），inc 后 testTurn = turn+1。
+  // 这样每轮 test_fix 推进计数：首次 fail 时 testTurn=0 → test_fix 记 turn=0 + inc→1，
+  // 再 fail → test_fix 记 turn=1 + inc→2，…… 达 TEST_TURN_LIMIT 后 buildNextAction 熔断。
   const turn = topic.testTurn;
 
   deps.store.transaction(() => {
@@ -954,6 +953,8 @@ export function handleTestFix(
         turn,
       });
     }
+    // 每轮 test_fix 推进 testTurn 计数（与 review 在 handleReview 里 inc 对称）。
+    deps.store.incTestTurn(params.topicId);
     deps.store.appendGateHistory(params.topicId, {
       phase: "test_fix",
       action: "test_fix",
@@ -1490,10 +1491,17 @@ export function handleReplan(
   const violations: AppendOnlyViolation[] = [];
   if (parsedPlan) {
     const newWaves = parsedPlan.waves;
-    // planJson 里的 legacyTestCases（旧格式兼容）也要校验
+    // planJson 里的 legacyTestCases（旧格式兼容）也要校验。
+    // 新格式 dev-plan.json 不含 testCases → legacyCases=[]，此时不碰 testCase 校验
+    // （oldTestCases 传 []，避免把 topic 已有的 passed testCase 误判为"被删除"）。
     const legacyCases = parsedPlan.legacyTestCases ?? [];
     violations.push(
-      ...validateAppendOnly(newWaves, legacyCases, topic.waves, topic.testCases),
+      ...validateAppendOnly(
+        newWaves,
+        legacyCases,
+        topic.waves,
+        legacyCases.length > 0 ? topic.testCases : [],
+      ),
     );
   }
   if (parsedTest) {
