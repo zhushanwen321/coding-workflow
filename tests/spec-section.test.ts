@@ -18,22 +18,23 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { checkAcMapping, checkFrCoverage } from "../src/gate.js";
+import { dispatch } from "../src/dispatch.js";
+import { checkAcMapping, checkFrCoverage, GitValidator } from "../src/gate.js";
 import { parseSpecSections } from "../src/plan-parser.js";
 import { CwStore } from "../src/store.js";
-import type { SpecSection } from "../src/types.js";
+import type { ActionDeps, SpecSection } from "../src/types.js";
 
-/** 创建临时 store + topic，返回 { store, topicId, cleanup }。 */
+/** 创建临时 store + topic（通过 dispatch create），返回 { store, topicId }。 */
 function createTmpStore(label: string) {
   const dir = mkdtempSync(join(tmpdir(), `cw-spec-${label}-`));
   const store = new CwStore(join(dir, "_cw.json"));
-  const topicId = store.insertTopic({
-    slug: `test-${label}`,
-    objective: "test",
-    workspacePath: dir,
-    topicDir: dir,
-  });
-  return { store, topicId, dir };
+  const git = new GitValidator(dir);
+  const deps: ActionDeps = { store, git, workspacePath: dir };
+  const result = dispatch(
+    { action: "create", slug: `test-${label}`, objective: "test", workspacePath: dir },
+    deps,
+  );
+  return { store, topicId: result.topicId, dir };
 }
 
 // ── U1: SpecSection 类型 discriminator ──────────────────────
@@ -154,5 +155,123 @@ describe("U6: appendReviewIssues category fix", () => {
     ]);
     const topic = store.loadTopic(topicId)!;
     expect(topic.reviewIssues[0].category).toBe("type-safety");
+  });
+});
+
+// ── E1: dispatch 完整路径 clarify+spec 写入 ─────────────────
+
+describe("E1: dispatch clarify 带 specSections", () => {
+  it("create→clarify(带 spec)→topic.specSections 含 functionalRequirements", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-spec-e1-"));
+    const dbPath = join(dir, "_cw.json");
+    const store = new CwStore(dbPath);
+    const git = new GitValidator(dir);
+    const deps: ActionDeps = { store, git, workspacePath: dir };
+
+    const createResult = dispatch(
+      { action: "create", slug: "e1-spec-test", objective: "test spec", workspacePath: dir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // clarify 带 specSections
+    dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: {
+          kind: "requirement",
+          topic: "测试 spec",
+          assessment: "探索后的背景",
+          question: "需要 spec 吗？",
+          answer: "需要",
+          specSections: [
+            {
+              type: "functionalRequirements",
+              items: [
+                { id: "FR-1", title: "功能A", detail: "详细" },
+              ],
+            },
+          ],
+        },
+      },
+      deps,
+    );
+
+    // specSections 写入了
+    const topic = store.loadTopic(topicId)!;
+    expect(topic.specSections.length).toBe(1);
+    expect(topic.specSections[0].type).toBe("functionalRequirements");
+  });
+});
+
+// ── E2: dispatch plan FR warning 透传 ───────────────────────
+
+describe("E2: dispatch plan FR 覆盖 warning", () => {
+  it("clarify(含 FR-1 FR-2)→plan(wave 只覆盖 FR-1)→result.mustFix 含 FR-2", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-spec-e2-"));
+    const dbPath = join(dir, "_cw.json");
+    const store = new CwStore(dbPath);
+    const git = new GitValidator(dir);
+    const deps: ActionDeps = { store, git, workspacePath: dir };
+
+    const createResult = dispatch(
+      { action: "create", slug: "e2-fr-warning", objective: "test fr warning", workspacePath: dir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // 先 clarify 带 spec FR-1 + FR-2
+    dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: {
+          kind: "requirement",
+          topic: "spec",
+          assessment: "背景",
+          question: "spec?",
+          answer: "yes",
+          specSections: [
+            {
+              type: "functionalRequirements",
+              items: [
+                { id: "FR-1", title: "功能A", detail: "a" },
+                { id: "FR-2", title: "功能B", detail: "b" },
+              ],
+            },
+          ],
+        },
+      },
+      deps,
+    );
+
+    // plan 只覆盖 FR-1
+    const result = dispatch(
+      {
+        action: "plan",
+        topicId,
+        planJson: {
+          format: "lite",
+          objective: "test",
+          waves: [
+            {
+              id: "W1",
+              changes: [{ file: "src/a.ts", description: "实现 FR-1 功能A" }],
+              dependsOn: [],
+            },
+          ],
+        },
+      },
+      deps,
+    );
+
+    // plan gate pass（status 流转）
+    expect(result.gatePassed.plan).toBe(true);
+
+    // mustFix 含 FR-2 warning（warning 不阻断但透传）
+    const mustFix = (result as Record<string, unknown>).mustFix as string | undefined;
+    expect(mustFix).toBeDefined();
+    expect(mustFix).toContain("FR-2");
   });
 });
