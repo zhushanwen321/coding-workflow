@@ -207,6 +207,7 @@ cw init
 | `cw list` | 列出当前 cwd 下所有 topic |
 | `cw stats --topicId <id>` | 评估指标（复杂度分桶/过程效率/杠杆健康度） |
 | `cw stats --all` | 跨 topic 聚合（按 RuntimeEnv 分组），用于跨 agent/llm 对比 |
+| `cw report --topicId <id>` | 生成可视化 HTML 报告（暗色主题），写到临时文件，返回 `{ reportPath }`。closeout 后调，展示 wave 变更 / 测试矩阵 / gate 轨迹 / 复盘结论 |
 
 ## 失败模式
 

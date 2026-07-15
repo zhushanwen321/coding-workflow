@@ -24,8 +24,8 @@
  *   - resolveDbPath 从 protocol.ts 搬到本文件（protocol.ts 整个烫掉）。
  */
 
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,6 +51,7 @@ import { dispatch } from "./dispatch.js";
 import { GitValidator, reviewIssueCheck } from "./gate.js";
 import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
+import { generateReport } from "./report.js";
 import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
 import {
@@ -100,7 +101,7 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
   "assess",
 ];
 
-const READONLY_QUERIES = new Set(["status", "list", "stats"]);
+const READONLY_QUERIES = new Set(["status", "list", "stats", "report"]);
 
 // ── RuntimeEnv 默认值 + env.json ────────────────────────────
 
@@ -745,6 +746,30 @@ async function main(argv: string[]): Promise<void> {
       }
       const output = computeStats(topic);
       process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
+      return;
+    }
+
+    if (action === "report") {
+      const topicId =
+        typeof parsed.topicId === "string" ? parsed.topicId : undefined;
+      if (!topicId) {
+        process.stderr.write("错误：report 需要 --topicId\n");
+        process.exit(EXIT_CW_ERROR);
+      }
+      const topic = store.loadTopic(topicId);
+      if (!topic) {
+        process.stderr.write(`错误：topic not found: ${topicId}\n`);
+        process.exit(EXIT_CW_ERROR);
+      }
+      const stats = computeStats(topic);
+      const html = generateReport(topic, stats);
+      // 写临时文件，文件名含 topic slug 便于识别。
+      const safeSlug = topic.slug.replace(/[^a-zA-Z0-9-]/g, "-");
+      const reportPath = join(tmpdir(), `cw-report-${safeSlug}.html`);
+      writeFileSync(reportPath, html, "utf-8");
+      process.stdout.write(
+        JSON.stringify({ topicId, reportPath }, null, JSON_INDENT) + "\n",
+      );
       return;
     }
 

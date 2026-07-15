@@ -582,6 +582,9 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       return {
         guidance:
           "topic 已关闭。本次编码流程结束。\n\n" +
+          "可调 cw report --topicId <topicId> 生成可视化执行报告（HTML），展示 wave 变更、" +
+          "测试矩阵、gate 轨迹、复盘结论等。建议向用户提问是否需要查看报告——如需，" +
+          "调 cw report 拿到 reportPath 后用 open 命令在浏览器打开。\n\n" +
           "交付后如发现质量问题，可调 cw assess 记录评估数据（quality/test/stability/defect），" +
           "用于校准 review 召回率和交付质量趋势。详见 SKILL.md「post-closeout 评估（assess）」。",
       };
