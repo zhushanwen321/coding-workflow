@@ -175,7 +175,7 @@ function renderTestCases(topic: Topic): string {
           : tc.actual && typeof tc.actual === "object" && "url" in tc.actual
             ? String((tc.actual as Record<string, unknown>).url ?? "—")
             : "—";
-      return `        <tr><td><code>${esc(tc.id)}</code></td><td>${esc(tc.layer)}</td><td>${badge}</td><td><code>${esc(String(expected))}</code></td><td><code>${esc(actual)}</code></td>${tc.failureReason ? "" : ""}</tr>`;
+      return `        <tr><td><code>${esc(tc.id)}</code></td><td>${esc(tc.layer)}</td><td>${badge}</td><td>${esc(tc.scenario || "—")}</td><td><code>${esc(String(expected))}</code></td><td><code>${esc(actual)}</code></td></tr>`;
     })
     .join("\n");
 
@@ -183,7 +183,7 @@ function renderTestCases(topic: Topic): string {
   <section>
     <h2>Test Cases</h2>
     <table>
-      <thead><tr><th style="width:60px">ID</th><th style="width:55px">Layer</th><th style="width:65px">Status</th><th>Expected</th><th>Actual</th></tr></thead>
+      <thead><tr><th style="width:50px">ID</th><th style="width:50px">Layer</th><th style="width:60px">Status</th><th>Scenario</th><th>Expected</th><th>Actual</th></tr></thead>
       <tbody>
 ${rows}
       </tbody>
