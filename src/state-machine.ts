@@ -299,6 +299,14 @@ function clarifyProgress(topic: Topic): NextAction["clarifyProgress"] {
   }));
 }
 
+/** specSections 进度摘要（nextAction.specProgress 字段用）。 */
+function specProgress(topic: Topic): NextAction["specProgress"] {
+  return topic.specSections.map((s) => {
+    if ("items" in s) return { type: s.type, itemCount: s.items.length };
+    return { type: s.type };
+  });
+}
+
 /**
  * buildNextAction — 按 action + gatePassed 推 nextAction（无 tier 分支）。
  *
@@ -339,6 +347,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
             action: "clarify",
             guidance: `仍有 pending 澄清记录未解决。继续提问或带 answer 提交 cw(clarify)。\n\n${CLARIFY_PROMPT}`,
             clarifyProgress: clarifyProgress(topic),
+            specProgress: specProgress(topic),
           };
         }
       }
@@ -347,6 +356,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         action: "plan",
         guidance: `clarify 阶段完成（所有记录已 resolved/skipped，或无需澄清）。下一步：写 dev-plan.json 并提交。\n\n${DEV_PLAN_PROMPT}`,
         clarifyProgress: clarifyProgress(topic),
+        specProgress: specProgress(topic),
         alternatives: [
           {
             action: "clarify",
@@ -367,9 +377,18 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         };
       }
       // plan gate 通过 → 进入 tdd_plan 阶段（写 test.json + 测试代码，红灯确认）。
+      const frSection = topic.specSections.find(
+        (s) => s.type === "functionalRequirements",
+      );
+      const specNote =
+        frSection && "items" in frSection
+          ? `\n\n注意：spec 定义了 ${frSection.items.length} 个功能需求（FR）。plan 的 waves 必须覆盖这些 FR。`
+          : "";
       return {
         action: "tdd_plan",
-        guidance: `plan gate 通过（status=planned）。下一步：写测试代码（红灯）+ test.json（定义 testCases + expected + 可选 testRunner），调 cw(tdd_plan) 提交。\n\n${TDD_PLAN_PROMPT}`,
+        guidance:
+          `plan gate 通过（status=planned）。下一步：写测试代码（红灯）+ test.json（定义 testCases + expected + 可选 testRunner），调 cw(tdd_plan) 提交。\n\n${TDD_PLAN_PROMPT}` +
+          specNote,
         waves: waveProgress(topic),
         alternatives: [replanAlternative()],
       };
@@ -474,10 +493,15 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       }
 
       // 有 open issue 且未达上限 → review_fix。
+      const reviewSpecNote =
+        topic.specSections.length > 0
+          ? `\n\n注意：核对 spec 的 FR/AC 是否被正确实现（category=design-consistency）。`
+          : "";
       return {
         action: "review_fix",
         guidance: `review 发现 ${openIssues.length} 个 open issue（${mustFixCount} 个 must-fix）。` +
-          `下一步：逐条修 issue 并 commit，调 cw(review_fix) 提交 fixes（issueId + commitHash + resolution）。\n\n${REVIEW_PROMPT}`,
+          `下一步：逐条修 issue 并 commit，调 cw(review_fix) 提交 fixes（issueId + commitHash + resolution）。\n\n${REVIEW_PROMPT}` +
+          reviewSpecNote,
       };
     }
     case "review_fix": {

@@ -36,6 +36,7 @@ export const REVIEW_PROMPT = `
 | 边界条件 | 空数组/缺字段/非法 JSON/文件不存在 |
 | 测试质量 | 测试能否发现真 bug（见下方「测试质量审查」专节，不只是覆盖率数字） |
 | plan 完成度 | dev-plan.json 的 changes 是否全部落地 |
+| 设计一致性 | spec 的 FR/AC 是否被正确实现（category=design-consistency） |
 
 ### 测试质量审查（review 阶段是测试跑之前的最后校验窗口）
 
@@ -86,7 +87,7 @@ issues 通过 stdin 传入，是 JSON 数组，每个元素是一个 issue：
 
 ### category 字段
 
-可选，取以下 5 个值之一（对应审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
+可选，取以下 6 个值之一（对应审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
 
 | category | 对应维度 |
 |----------|----------|
@@ -95,6 +96,7 @@ issues 通过 stdin 传入，是 JSON 数组，每个元素是一个 issue：
 | \`edge-case\` | 边界条件 |
 | \`test-coverage\` | 测试覆盖 |
 | \`plan-completeness\` | plan 完成度 |
+| \`design-consistency\` | 设计一致性（核对 spec FR/AC） |
 
 ## review fix loop
 

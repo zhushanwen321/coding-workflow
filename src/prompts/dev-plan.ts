@@ -40,6 +40,7 @@ dev-plan gate 通过后状态从 created 流转到 planned。
 - 依赖明确：dependsOn 列出前置 Wave。无环依赖。
 - 粒度适中：一个 Wave 改 1-3 个文件为宜。
 - changes 必须结构化：每个元素是 \`{ file, description }\`——file 是文件路径，description 是该文件的改动说明。不写裸字符串。
+- **spec FR 覆盖**：如果 clarify 阶段提交了 spec 的 functionalRequirements，plan 的 waves 必须覆盖所有 FR。每个 FR 的 id 或 title 应出现在某个 wave change 的 description 里。无法覆盖的 FR 必须明确告知用户，禁止静默缩范围。
 
 ## priority 字段（可选）
 

@@ -721,6 +721,8 @@ export interface NextAction {
     status: ClarifyRecord["status"];
     adrId?: string;
   }>;
+  /** clarify 阶段产出的 spec 章节进度摘要。 */
+  specProgress?: Array<{ type: string; itemCount?: number }>;
   /** 当前状态下同样合法的可选 action（主推荐在 action 字段）。 */
   alternatives?: NextActionAlternative[];
 }
