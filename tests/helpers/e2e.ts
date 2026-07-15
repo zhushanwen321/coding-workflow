@@ -187,6 +187,19 @@ export function setupToClosed(e: E2eEnv, slug: string): { topicId: string; slug:
 
 // ── 阶段 helper 内部工具 ────────────────────────────────────
 
+/**
+ * 从 created 推进到 clarify_confirmed（FR-1: plan 前必须 confirm_clarify）。
+ *
+ * 流程：clarify 提交一条带 answer 的最简记录（status=resolved）→ confirm_clarify。
+ * 供 e2e-*.test.ts 里那些不关心 clarify 流程、只想走到 plan 阶段的测试复用。
+ */
+export function setupToClarifyConfirmed(e: E2eEnv, slug: string, topicId: string): void {
+  runCli(["clarify", "--topicId", topicId], e, {
+    input: JSON.stringify(makeValidClarifyJson({ answer: `${slug} 已澄清` })),
+  });
+  runCli(["confirm_clarify", "--topicId", topicId], e);
+}
+
 /** create + plan（dev-plan.json 含 waves）→ planned。 */
 function createAndPlan(e: E2eEnv, slug: string): string {
   const createResult = parseStdout(
@@ -196,6 +209,8 @@ function createAndPlan(e: E2eEnv, slug: string): string {
     ),
   );
   const topicId = createResult.topicId as string;
+  // FR-1: plan 前必须先 clarify → confirm_clarify（否则 illegal_transition）。
+  setupToClarifyConfirmed(e, slug, topicId);
   runCli(["plan", "--topicId", topicId], e, {
     input: JSON.stringify(makeValidDevPlanJson()),
   });

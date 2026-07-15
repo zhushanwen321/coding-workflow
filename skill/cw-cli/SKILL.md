@@ -87,12 +87,15 @@ cwVersion 始终从 package.json 自动读取，不可手动指定。
 ### 9 阶段流程
 
 ```
-create → clarify → plan → tdd_plan → dev → review → test → retrospect → closeout
+create → clarify → confirm_clarify → plan → tdd_plan → dev → review → test → retrospect → closeout
 ```
+
+clarify → plan 之间必经 confirm_clarify（gen-spec → open → confirm_clarify），是 plan 前的机器 gate。
 
 | nextAction.action | 你要做的 | cw 命令 |
 |-------------------|---------|---------|
-| `clarify` | 探索技术系统 + 澄清需求/技术 spec + 记录 ADR + 可选提交结构化 spec 章节（FR/AC/UC 等）（advisory，可跳过） | `echo '<clarifyJson>' \| cw clarify --topicId <id>` |
+| `clarify` | 探索技术系统 + 澄清需求/技术 spec + 记录 ADR + 可选提交结构化 spec 章节（FR/AC/UC 等） | `echo '<clarifyJson>' \| cw clarify --topicId <id>` |
+| `confirm_clarify` | 用户确认需求 gate：先 `cw gen-spec` 生成确认 md → open 给用户看 → 用户确认后调 `cw confirm_clarify`（plan 前的机器 gate，跳过会被状态机拒绝） | `cw gen-spec --topicId <id>` → `cw confirm_clarify --topicId <id>` |
 | `plan` | 明确范围后产出 **dev-plan.json**（只含 waves），提交 | `echo '<devPlanJson>' \| cw plan --topicId <id>` |
 | `tdd_plan` | 写测试代码（红灯）+ **test.json**（testCases + expected），提交 | `echo '<testJson>' \| cw tdd_plan --topicId <id>` |
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
@@ -208,6 +211,7 @@ cw init
 | `cw stats --topicId <id>` | 评估指标（复杂度分桶/过程效率/杠杆健康度） |
 | `cw stats --all` | 跨 topic 聚合（按 RuntimeEnv 分组），用于跨 agent/llm 对比 |
 | `cw report --topicId <id>` | 生成可视化 HTML 报告（暗色主题），写到临时文件，返回 `{ reportPath }`。closeout 后调，展示 wave 变更 / 测试矩阵 / gate 轨迹 / 复盘结论 |
+| `cw gen-spec --topicId <id>` | 生成 spec 确认 md（汇总 clarifyRecords + specSections），写到临时文件，返回 `{ specPath }`。clarify 阶段确认前调，open 给用户看 |
 
 ## 失败模式
 
@@ -230,6 +234,21 @@ cwd 不对（跨 worktree/子目录/session/符号链接）。
 ✅ 正例：回到创建 topic 时的目录，或用 `cw list` 在当前 cwd 重新定位
 
 修复：`cw list` 看当前 cwd 下有哪些 topic，`node -p "process.cwd()"` 确认实际路径。
+
+### 任务不适合走 CW（abort）
+
+发现任务走偏、不适用、或用户决定放弃时，**不要静默丢下 topic**（废弃 topic 污染 stats 聚合）。和用户确认后调 `cw abort` 终止 topic：
+
+```bash
+cw abort --topicId <id>
+```
+
+- 无 gate（abort 无条件执行），status 流转到 `aborted` 终态
+- aborted topic **不计入 stats 聚合**（区别于 closeout 的 closed 终态）
+- 不可恢复（终态）
+
+✅ 正例：clarify 中发现是纯调研任务 → 和用户确认 → `cw abort` → topic 标记 aborted，不污染 stats
+❌ 反例：create 后发现走偏，直接放着不管 → 留下 created 状态的废弃 topic
 
 ## Self-Check
 

@@ -9,7 +9,7 @@
  * 文档（review.md / retrospect.md）用 <details> 默认折叠，可展开。
  */
 
-import type { AdrRecord, ClarifyRecord, SpecSection, Topic } from "./types.js";
+import type { AdrRecord, ClarifyRecord, SpecSection, SpecVersion, Topic } from "./types.js";
 import type { StatsOutput } from "./stats.js";
 
 // ── gen-spec（FR-1: 生成确认 md） ────────────────────────────
@@ -368,7 +368,8 @@ ${adrItems}` : ""}
 
 function renderSpec(topic: Topic): string {
   const sections = topic.specSections ?? [];
-  if (sections.length === 0) return "";
+  const history = topic.specHistory ?? [];
+  if (sections.length === 0 && history.length === 0) return "";
 
   // 按固定顺序分组（不管提交顺序）
   const getByType = <T extends SpecSection["type"]>(type: T) =>
@@ -486,11 +487,42 @@ ${items}
     </details>`);
   }
 
+  // 11. specHistory 变更日志（spec 替换归档记录）
+  if (history.length > 0) {
+    parts.push(renderSpecHistory(history));
+  }
+
   return `
   <section>
     <h2>Spec</h2>
     ${parts.join("\n")}
   </section>`;
+}
+
+/**
+ * renderSpecHistory — 渲染 spec 变更历史日志。
+ *
+ * 每次 replaceSpecSections 时，旧 specSections 整体快照推入 specHistory，
+ * version 自增。这里渲染为时间线：版本号 + 归档时间 + 替换原因 + 章节数。
+ */
+function renderSpecHistory(history: SpecVersion[]): string {
+  const items = history
+    .map((v) => {
+      const sectionCount = v.sections.length;
+      return `      <div class="spec-history-item">
+        <div class="spec-history-head">
+          <span class="badge b-muted">v${esc(String(v.version))}</span>
+          <span class="spec-history-time">${esc(formatTime(v.archivedAt))}</span>
+          <span class="spec-history-count">${sectionCount} section${sectionCount !== 1 ? "s" : ""}</span>
+        </div>
+        ${v.reason ? `<p class="spec-history-reason">${esc(v.reason)}</p>` : ""}
+      </div>`;
+    })
+    .join("\n");
+
+  return `<h3 class="sub-h">Spec 变更历史</h3><div class="spec-history-list">
+${items}
+    </div>`;
 }
 
 // ── Gate trail ──────────────────────────────────────────────
@@ -875,6 +907,25 @@ export function generateReport(topic: Topic, stats: StatsOutput, docs?: ReportDo
   .spec-section-item > summary::before { content: "\\25B8"; color: var(--faint); font-size: 0.7rem; margin-right: 0.4rem; }
   .spec-section-item[open] > summary::before { content: "\\25BE"; }
   .spec-section-item .spec-md { padding: 0.5rem 0.8rem 0.65rem; border-top: 1px solid var(--border-soft); }
+
+  /* ── Spec history（变更日志） ──────────────────────── */
+  .spec-history-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .spec-history-item {
+    padding: 0.55rem 0.75rem; border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-left: 3px solid var(--border);
+  }
+  .spec-history-head {
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    font-size: 0.82rem;
+  }
+  .spec-history-time {
+    font-family: var(--mono); font-size: 0.76rem; color: var(--muted);
+  }
+  .spec-history-count { font-size: 0.76rem; color: var(--faint); }
+  .spec-history-reason {
+    font-size: 0.82rem; color: var(--muted); margin-top: 0.3rem; margin-bottom: 0;
+  }
 
   /* ── Doc artifact（折叠文档） ───────────────────────── */
   .doc-artifact {

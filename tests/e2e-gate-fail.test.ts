@@ -20,6 +20,7 @@ import {
   type E2eEnv,
   parseStdout,
   runCli,
+  setupToClarifyConfirmed,
 } from "./helpers/e2e.js";
 import { makeValidDevPlanJson } from "./helpers/plan.js";
 
@@ -49,14 +50,16 @@ function createTopic(slug: string): string {
 describe("E11a: plan gate fail（format 非 lite）→ status 仍 created, retry", () => {
   it("format=mid-clarify → status=created, nextAction=plan", () => {
     const topicId = createTopic("e11a-fail");
+    // FR-1: plan 前必须先 clarify → confirm_clarify，否则 illegal_transition 抢在 format gate 前。
+    setupToClarifyConfirmed(e, "e11a-fail", topicId);
     const result = parseStdout(
       runCli(["plan", "--topicId", topicId], e, {
         input: JSON.stringify({ ...makeValidDevPlanJson(), format: "mid-clarify" }),
       }),
     );
 
-    // status 不变（仍 created）
-    expect(result.status).toBe("created");
+    // status 不变（仍 clarify_confirmed，format gate fail 不流转）
+    expect(result.status).toBe("clarify_confirmed");
     // nextAction 指回 plan（retry）
     expect((result.nextAction as Record<string, unknown>).action).toBe("plan");
     // guidance 提示 FAIL
@@ -70,6 +73,8 @@ describe("E11a: plan gate fail（format 非 lite）→ status 仍 created, retry
 describe("E11b: 连续 5 次 plan gate fail → guidance 含熔断", () => {
   it("第 5 次 fail 后 guidance 触发熔断文案", () => {
     const topicId = createTopic("e11b-circuit");
+    // FR-1: plan 前必须先 clarify → confirm_clarify。
+    setupToClarifyConfirmed(e, "e11b-circuit", topicId);
 
     const badPlan = JSON.stringify({
       ...makeValidDevPlanJson(),
@@ -95,6 +100,8 @@ describe("E11b: 连续 5 次 plan gate fail → guidance 含熔断", () => {
 describe("E11c: fail 1 次后重试成功 → status=planned", () => {
   it("先 fail（format 错）再 pass（format=lite）→ planned", () => {
     const topicId = createTopic("e11c-retry");
+    // FR-1: plan 前必须先 clarify → confirm_clarify。
+    setupToClarifyConfirmed(e, "e11c-retry", topicId);
 
     // 第 1 次：fail
     const failResult = parseStdout(
@@ -102,7 +109,7 @@ describe("E11c: fail 1 次后重试成功 → status=planned", () => {
         input: JSON.stringify({ ...makeValidDevPlanJson(), format: "bad" }),
       }),
     );
-    expect(failResult.status).toBe("created");
+    expect(failResult.status).toBe("clarify_confirmed");
 
     // 第 2 次：修 format=lite → pass
     const passResult = parseStdout(

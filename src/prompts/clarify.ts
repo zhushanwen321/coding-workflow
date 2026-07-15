@@ -14,29 +14,31 @@ export const CLARIFY_PROMPT = `
 [clarify 阶段] 澄清需求 + 记录 ADR
 
 create 之后、plan 之前。把"做什么"弄清楚。本阶段不产出 dev-plan.json，
-但决定 plan 质量——跳过直接写 plan = plan 写偏。
+但决定 plan 质量。
+
+## [MANDATORY] 纪律（机器 gate，不可绕过）
+
+- **plan 前必须调 \`cw confirm_clarify\`**。这是机器 gate，跳过会被状态机拒绝（illegal_transition，created → plan 不合法，必须先过 clarify_confirmed）。
+- **confirm 前，先调 \`cw gen-spec\` 生成确认文档**（CW 自动汇总 clarifyRecords + specSections 为 md），**open 给用户看**。不给用户看确认文档就 confirm = 违反纪律。
+- **用户确认后才能 \`cw confirm_clarify\`**。用户要修改 → 回 \`cw clarify\` 追加/修改记录 → 重新 \`cw gen-spec\` → 重新确认。
 
 ## 流程
 
-1. 判断清晰度：需求是否已足够清晰？
-   - 读 objective + 相关代码。如果歧义点 ≤1 个且都是细节性的，可以直接 plan。
-   - 如果有阻塞性歧义（影响"做什么"），必须先 clarify。
-
-2. 探索技术系统（提问前必做）：
+1. 探索技术系统（提问前必做）：
    - 读相关代码，理解当前架构和能力地图。
    - grep/read 找现有实现、类似功能、可复用代码。
    - 不读代码就提问 = 把探索成本转嫁给用户。
 
-3. 对每个歧义点，形成 assessment + 预判：
+2. 对每个歧义点，形成 assessment + 预判：
    - assessment = 探索后的技术背景 + 你的预判和推荐。
    - 禁止空问。空问 = "这个怎么做？"没有背景没有推荐。
    - 正确形态 = "我看了 X，发现 Y，预判 Z，推荐 W，对吗？"
 
-4. 分两类记录：
+3. 分两类记录：
    - requirement（需求 spec）：阻塞业务用例的逻辑澄清。
    - technical（技术 spec）：技术选型、架构设计、关键 ADR。
 
-5. 每次提问拿到答案后，立刻 cw clarify 记录（渐进式）。
+4. 每次提问拿到答案后，立刻 cw clarify 记录（渐进式）。
 
 ## 提问呈现
 
@@ -166,5 +168,6 @@ specSections 分三类：
 ## 完成标志
 
 所有 clarifyRecord 的 status ∈ {resolved, skipped}（无 pending），
-或判断需求已清晰无需 clarify → 写 dev-plan.json，调 cw plan。
+调 \`cw gen-spec\` 生成确认文档 open 给用户看，
+用户确认后调 \`cw confirm_clarify\`。
 `.trim();

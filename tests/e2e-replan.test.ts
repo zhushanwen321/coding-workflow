@@ -22,6 +22,7 @@ import {
   type E2eEnv,
   parseStdout,
   runCli,
+  setupToClarifyConfirmed,
   setupToTested,
 } from "./helpers/e2e.js";
 
@@ -73,6 +74,8 @@ function setupToDevelopedLocal(slug: string): string {
     runCli(["create", "--slug", slug, "--objective", `replan ${slug}`, "--workspace", e.workspaceDir], e),
   );
   const topicId = create.topicId as string;
+  // FR-1: plan 前必须先 clarify → confirm_clarify（否则 illegal_transition）。
+  setupToClarifyConfirmed(e, slug, topicId);
   runCli(["plan", "--topicId", topicId], e, { input: planWithWaves(["W1"]) });
   runCli(["tdd_plan", "--topicId", topicId], e, { input: localTestJson });
   runCli(["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }])], e);

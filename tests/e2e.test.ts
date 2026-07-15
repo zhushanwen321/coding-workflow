@@ -24,6 +24,7 @@ import {
   retrospectMdPath,
   reviewMdPath,
   runCli,
+  setupToClarifyConfirmed,
   setupToTested,
 } from "./helpers/e2e.js";
 import { makeValidTestJson } from "./helpers/plan.js";
@@ -55,8 +56,11 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     expect(createResult.topicId).toMatch(/^cw-\d{4}-\d{2}-\d{2}-e1-full$/);
     const topicId = createResult.topicId as string;
     const nextAction = createResult.nextAction as Record<string, unknown>;
-    // create 后推荐 clarify（advisory），但可直接跳 plan（alternative）
+    // create 后推荐 clarify
     expect(nextAction.action).toBe("clarify");
+
+    // FR-1: plan 前必须 confirm_clarify（状态机 gate）
+    setupToClarifyConfirmed(e, "e1-full", topicId);
 
     // 2. plan（stdin 传 dev-plan.json，只含 waves）
     const planJson = JSON.stringify({
@@ -180,6 +184,9 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
       ),
     );
     const topicId = createResult.topicId as string;
+
+    // FR-1: plan 前必须 confirm_clarify
+    setupToClarifyConfirmed(e, "e2-progressive", topicId);
 
     const planJson = JSON.stringify({
       format: "lite",
