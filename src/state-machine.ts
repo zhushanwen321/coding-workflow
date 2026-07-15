@@ -115,8 +115,14 @@ export interface TransitionRule {
 export const TRANSITIONS: Record<Action, TransitionRule> = {
   create: { expectedStatuses: [], nextStatus: "created" },
   clarify: {
-    // clarify 是 progressive action：created/clarify_confirmed 状态下可多次调。
+    // clarify 是 progressive append-only action：created/clarify_confirmed 状态下可多次调。
     // FR-1: 含 clarify_confirmed 让用户看确认文档后能回头追加/修改再重新 confirm。
+    //
+    // 注意：handleClarify 不调 updateStatus（只追加 clarifyRecord/specSections），
+    // 所以 nextStatus 的值不影响实际行为——status 保持不变。
+    // nextStatus="created" + progressive=true 的组合是历史遗留（progressive 标记
+    // 在 current===nextStatus 时触发原地停留，created→created 成立但
+    // clarify_confirmed→created 不成立）。依赖 handler 不流转 status 的约定保证正确性。
     expectedStatuses: ["created", "clarify_confirmed"],
     nextStatus: "created",
     progressive: true,
@@ -288,9 +294,10 @@ export function computeGatePassed(phase: Action, topic: Topic): boolean {
   }
   if (phase === "clarify") {
     // clarify gatePassed：全 clarifyRecords 的 status ∈ {resolved, skipped}（无 pending）。
-    // 空数组（没走过 clarify）也算 pass——清晰需求直接 plan 合法。
-    // 注意：clarify gatePassed 不阻断 plan（plan 的 expectedStatuses 仍含 created），
-    // 只用于 buildNextAction 推荐导航（全 resolved → 推荐 plan）。
+    // 空数组（没走过 clarify）也算 pass。
+    // 注意：FR-1 后 plan 的 expectedStatuses 是 [clarify_confirmed, planned]，
+    // clarify gatePassed 不阻断 plan——它只用于 buildNextAction 推荐导航
+    //（全 resolved → 推荐 confirm_clarify）。
     return topic.clarifyRecords.every((c) => c.status !== "pending");
   }
   if (phase === "create" || phase === "replan") {

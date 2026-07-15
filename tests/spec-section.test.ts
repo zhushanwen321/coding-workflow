@@ -326,6 +326,71 @@ describe("FR-2 AC-4: replaceSpecSections + specHistory", () => {
     expect(topic.specHistory![0]!.version).toBe(1);
     expect(topic.specHistory![1]!.version).toBe(2);
   });
+
+  it("AC-7: dispatch clarify --replaceSpec 走 replaceSpecSections（非 append）", () => {
+    const { store, topicId, dir } = createTmpStore("spec-dispatch-replace");
+    // 先 append 初始 spec（模拟第一次 clarify）
+    store.appendSpecSections(topicId, [
+      { type: "functionalRequirements", items: [{ id: "FR-1", title: "旧", detail: "旧" }] },
+    ]);
+    // 通过 dispatch clarify 带 replaceSpec 替换
+    dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: {
+          kind: "requirement",
+          topic: "spec 变更",
+          assessment: "需求理解修正",
+          question: "FR-1 要改吗？",
+          answer: "改",
+          specSections: [
+            { type: "functionalRequirements", items: [{ id: "FR-1", title: "新", detail: "新" }] },
+          ],
+        },
+        replaceSpec: "需求变更：FR-1 修正",
+      },
+      { store, git: new GitValidator(dir), workspacePath: dir },
+    );
+    const topic = store.loadTopic(topicId)!;
+    // specSections 被替换（不是追加）——只有 1 个 section，title=新
+    expect(topic.specSections.length).toBe(1);
+    const fr = topic.specSections[0];
+    if (fr && fr.type === "functionalRequirements") {
+      expect(fr.items[0]!.title).toBe("新");
+    }
+    // specHistory 含旧版
+    expect(topic.specHistory.length).toBe(1);
+    expect(topic.specHistory[0]!.version).toBe(1);
+  });
+
+  it("dispatch clarify 不带 replaceSpec 走 append（向后兼容）", () => {
+    const { store, topicId, dir } = createTmpStore("spec-dispatch-append");
+    store.appendSpecSections(topicId, [
+      { type: "background", content: "初始" },
+    ]);
+    dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: {
+          kind: "requirement",
+          topic: "追加 spec",
+          assessment: "补充",
+          question: "加 AC？",
+          answer: "加",
+          specSections: [
+            { type: "acceptanceCriteria", items: [{ id: "AC-1", condition: "条件" }] },
+          ],
+        },
+      },
+      { store, git: new GitValidator(dir), workspacePath: dir },
+    );
+    const topic = store.loadTopic(topicId)!;
+    // append 模式：2 个 section（background + acceptanceCriteria），specHistory 空
+    expect(topic.specSections.length).toBe(2);
+    expect(topic.specHistory.length).toBe(0);
+  });
 });
 
 // ── FR-3: abort + stats 排除（AC-5） ─────────────────────────

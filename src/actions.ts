@@ -88,6 +88,12 @@ export interface ClarifyParams {
   topicId: string;
   /** clarifyJson 内容（CLI 从 stdin 读为对象，支持单条或批量数组）。 */
   clarifyJson: unknown;
+  /**
+   * FR-2: spec 替换模式。提供时，CW 调 replaceSpecSections（旧 spec 归档到 specHistory + 替换为新内容），
+   * 而非默认的 appendSpecSections。值是替换原因（agent 提供）。
+   * 替换内容从 clarifyJson 的 specSections 字段取。
+   */
+  replaceSpec?: string;
 }
 
 export interface PlanParams {
@@ -395,11 +401,23 @@ export function handleClarify(
       result: "pass",
       progressive: true,
     });
-    // 聚合所有条目的 specSections（挂在 ParsedClarify 上，不在 ClarifySeed 上），一次性 append。
-    // specSections 是 progressive append-only，与 clarifyRecord/adr 同语义。
+    // 聚合所有条目的 specSections（挂在 ParsedClarify 上，不在 ClarifySeed 上）。
     const allSpecSections = parsed.flatMap((item) => item.specSections ?? []);
-    if (allSpecSections.length > 0) {
-      deps.store.appendSpecSections(params.topicId, allSpecSections);
+    if (params.replaceSpec !== undefined) {
+      // FR-2: spec 替换模式——旧 spec 整体快照归档到 specHistory，替换为新内容。
+      // replaceSpec 值是替换原因（agent 提供）。
+      if (allSpecSections.length > 0) {
+        deps.store.replaceSpecSections(
+          params.topicId,
+          allSpecSections,
+          params.replaceSpec,
+        );
+      }
+    } else {
+      // 默认 append 模式——progressive append-only，与 clarifyRecord/adr 同语义。
+      if (allSpecSections.length > 0) {
+        deps.store.appendSpecSections(params.topicId, allSpecSections);
+      }
     }
     passed = true;
   });

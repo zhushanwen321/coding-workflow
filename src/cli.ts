@@ -86,7 +86,7 @@ const EXIT_CW_ERROR = 1;
 /** 进程退出码：内部异常（未预期的错误）。 */
 const EXIT_INTERNAL_ERROR = 2;
 
-/** 合法 action 白名单（14 个 dispatch action + 4 个只读查询命令）。 */
+/** 合法 action 白名单（15 个 dispatch action + 5 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
   "clarify",
@@ -380,6 +380,11 @@ export function buildParams(
         isStdinTTY,
       );
       const params: ClarifyParams = { action: "clarify", topicId, clarifyJson };
+      // FR-2: --replaceSpec flag 触发 spec 替换模式（旧 spec 归档 + 替换为新内容）。
+      const replaceReason = flag(parsed, "replaceSpec");
+      if (replaceReason !== undefined) {
+        params.replaceSpec = replaceReason;
+      }
       return params;
     }
 
