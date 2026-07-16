@@ -49,6 +49,7 @@ import type {
   GateHistoryEntry,
   Priority,
   RetrospectData,
+  ReviewDimension,
   ReviewIssue,
   ReviewIssueSubmission,
   RuntimeEnv,
@@ -136,6 +137,12 @@ interface TopicRecord {
   /** review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
   reviewIssues?: ReviewIssue[];
   reviewTurn?: number;
+  /** FR-4: spec_review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
+  specReviewIssues?: ReviewIssue[];
+  specReviewTurn?: number;
+  /** FR-5: plan_review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
+  planReviewIssues?: ReviewIssue[];
+  planReviewTurn?: number;
   /** test 修复审计日志（可选，向后兼容旧 _cw.json 数据）。 */
   testFixLog?: TestFixEntry[];
   testTurn?: number;
@@ -491,6 +498,10 @@ export class CwStore {
         testRunner: topic.testRunner,
         reviewIssues: topic.reviewIssues,
         reviewTurn: topic.reviewTurn,
+        specReviewIssues: topic.specReviewIssues,
+        specReviewTurn: topic.specReviewTurn,
+        planReviewIssues: topic.planReviewIssues,
+        planReviewTurn: topic.planReviewTurn,
         testFixLog: topic.testFixLog,
         testTurn: topic.testTurn,
         assessments: topic.assessments,
@@ -505,7 +516,27 @@ export class CwStore {
     const data = this.getActiveData();
     const record = data.topics.find((t) => t.topicId === topicId);
     if (!record) return null;
-    return this.assembleTopicFromData(record, topicId, data);
+    const topic = this.assembleTopicFromData(record, topicId, data);
+    // [HISTORICAL] FR-1: Artifacts 旧格式迁移（平铺 → 嵌套）。
+    if (topic.artifacts) {
+      topic.artifacts = this.migrateArtifacts(
+        topic.artifacts as unknown as Record<string, unknown>,
+      );
+    }
+    // [HISTORICAL] FR-3: ReviewIssue 旧数据迁移 category→dimension, file→ref。
+    if (topic.reviewIssues) {
+      for (const issue of topic.reviewIssues) {
+        const raw = issue as unknown as Record<string, unknown>;
+        if ("category" in raw && !("dimension" in raw)) {
+          (issue as { dimension: ReviewDimension }).dimension =
+            raw.category as ReviewDimension;
+        }
+        if ("file" in raw && !("ref" in raw)) {
+          (issue as { ref: string }).ref = raw.file as string;
+        }
+      }
+    }
+    return topic;
   }
 
   /**
@@ -547,6 +578,46 @@ export class CwStore {
     );
   }
 
+  /**
+   * [HISTORICAL] Artifacts 旧格式迁移：平铺 → 嵌套。
+   *
+   * FR-1 重构后 Artifacts 从 { reviewPath, reviewAt, retrospectPath, retrospectAt }
+   * 改为 { review: {path, at}, retrospect: {path, at} }。
+   * 旧 _cw.json 加载时检测平铺字段并迁移。一次性迁移，迁移后写回时已是新格式。
+   *
+   * 检测逻辑：artifacts 对象上有 reviewPath/reviewAt/retrospectPath/retrospectAt 任一字段
+   * → 旧格式。迁移为嵌套后删除平铺字段。
+   */
+  private migrateArtifacts(
+    artifacts: Record<string, unknown> | undefined,
+  ): Artifacts | undefined {
+    if (!artifacts) return undefined;
+    // 已经是新格式（有 review/retrospect/confirmSpec 对象字段）→ 不迁移
+    if (
+      "review" in artifacts ||
+      "retrospect" in artifacts ||
+      "confirmSpec" in artifacts
+    ) {
+      return artifacts as Artifacts;
+    }
+    // 旧格式：检测平铺字段
+    const migrated: Artifacts = {};
+    const a = artifacts as Record<string, unknown>;
+    if (a.reviewPath || a.reviewAt) {
+      migrated.review = {
+        path: String(a.reviewPath ?? ""),
+        at: String(a.reviewAt ?? ""),
+      };
+    }
+    if (a.retrospectPath || a.retrospectAt) {
+      migrated.retrospect = {
+        path: String(a.retrospectPath ?? ""),
+        at: String(a.retrospectAt ?? ""),
+      };
+    }
+    return Object.keys(migrated).length > 0 ? migrated : undefined;
+  }
+
   private assembleTopic(
     topic: TopicRecord,
     waves: WaveRecord[],
@@ -576,6 +647,10 @@ export class CwStore {
       adrs: adrs.map((a) => this.mapAdrRecord(a)),
       reviewIssues: topic.reviewIssues ?? [],
       reviewTurn: topic.reviewTurn ?? 0,
+      specReviewIssues: topic.specReviewIssues ?? [],
+      specReviewTurn: topic.specReviewTurn ?? 0,
+      planReviewIssues: topic.planReviewIssues ?? [],
+      planReviewTurn: topic.planReviewTurn ?? 0,
       testFixLog: topic.testFixLog ?? [],
       testTurn: topic.testTurn ?? 0,
       assessments: topic.assessments ?? [],
@@ -783,12 +858,12 @@ export class CwStore {
       for (const issue of issues) {
         const record: ReviewIssue = {
           id: `R${nextN}`,
+          dimension: issue.dimension,
           severity: issue.severity,
           description: issue.description,
-          file: issue.file,
           status: "open",
           foundAtTurn: turn,
-          ...(issue.category ? { category: issue.category } : {}),
+          ...(issue.ref ? { ref: issue.ref } : {}),
         };
         existing.push(record);
         nextN++;
@@ -804,7 +879,7 @@ export class CwStore {
   fixReviewIssue(
     topicId: string,
     issueId: string,
-    fix: { commitHash: string; resolution: string; fixedAtTurn: number },
+    fix: { commitHash?: string; resolution: string; fixedAtTurn: number },
   ): void {
     this.executeWrite(() => {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
@@ -813,9 +888,9 @@ export class CwStore {
       if (!issue) return;
       issue.status = "fixed";
       issue.fix = {
-        commitHash: fix.commitHash,
         resolution: fix.resolution,
         fixedAtTurn: fix.fixedAtTurn,
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
       };
     });
   }
@@ -840,6 +915,138 @@ export class CwStore {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
       if (!topic) return;
       topic.reviewTurn = (topic.reviewTurn ?? 0) + 1;
+    });
+  }
+
+  // ── spec_review issue DAO（FR-4，与 review issue DAO 1:1 同构，SR 前缀） ──
+
+  /**
+   * 追加 spec_review issue 列表（FR-4 spec_review 阶段 progressive）。
+   * id（SR1, SR2...）在 topic 内按现有 specReviewIssues 数量自增分配。
+   * foundAtTurn 由调用方传入（对应当前 specReviewTurn）。
+   */
+  appendSpecReviewIssues(
+    topicId: string,
+    turn: number,
+    issues: ReviewIssueSubmission[],
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.specReviewIssues ?? [];
+      let nextN = existing.length + 1;
+      for (const issue of issues) {
+        const record: ReviewIssue = {
+          id: `SR${nextN}`,
+          dimension: issue.dimension,
+          severity: issue.severity,
+          description: issue.description,
+          status: "open",
+          foundAtTurn: turn,
+          ...(issue.ref ? { ref: issue.ref } : {}),
+        };
+        existing.push(record);
+        nextN++;
+      }
+      topic.specReviewIssues = existing;
+    });
+  }
+
+  /**
+   * 标记 spec_review issue 为 fixed（FR-4 spec_review_fix）。
+   * issue 不存在时静默忽略。commitHash 可选（spec 修复可能走 cw 内部无独立 commit）。
+   */
+  fixSpecReviewIssue(
+    topicId: string,
+    issueId: string,
+    fix: { commitHash?: string; resolution: string; fixedAtTurn: number },
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic || !topic.specReviewIssues) return;
+      const issue = topic.specReviewIssues.find((i) => i.id === issueId);
+      if (!issue) return;
+      issue.status = "fixed";
+      issue.fix = {
+        resolution: fix.resolution,
+        fixedAtTurn: fix.fixedAtTurn,
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+      };
+    });
+  }
+
+  /** spec_review turn 计数器 +1（每次开启新一轮 spec_review 时调用）。 */
+  incSpecReviewTurn(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.specReviewTurn = (topic.specReviewTurn ?? 0) + 1;
+    });
+  }
+
+  // ── plan_review issue DAO（FR-5，与 review issue DAO 1:1 同构，PR 前缀） ──
+
+  /**
+   * 追加 plan_review issue 列表（FR-5 plan_review 阶段 progressive）。
+   * id（PR1, PR2...）在 topic 内按现有 planReviewIssues 数量自增分配。
+   * foundAtTurn 由调用方传入（对应当前 planReviewTurn）。
+   */
+  appendPlanReviewIssues(
+    topicId: string,
+    turn: number,
+    issues: ReviewIssueSubmission[],
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.planReviewIssues ?? [];
+      let nextN = existing.length + 1;
+      for (const issue of issues) {
+        const record: ReviewIssue = {
+          id: `PR${nextN}`,
+          dimension: issue.dimension,
+          severity: issue.severity,
+          description: issue.description,
+          status: "open",
+          foundAtTurn: turn,
+          ...(issue.ref ? { ref: issue.ref } : {}),
+        };
+        existing.push(record);
+        nextN++;
+      }
+      topic.planReviewIssues = existing;
+    });
+  }
+
+  /**
+   * 标记 plan_review issue 为 fixed（FR-5 plan_review_fix）。
+   * issue 不存在时静默忽略。commitHash 可选（plan 修复可能走 cw 内部无独立 commit）。
+   */
+  fixPlanReviewIssue(
+    topicId: string,
+    issueId: string,
+    fix: { commitHash?: string; resolution: string; fixedAtTurn: number },
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic || !topic.planReviewIssues) return;
+      const issue = topic.planReviewIssues.find((i) => i.id === issueId);
+      if (!issue) return;
+      issue.status = "fixed";
+      issue.fix = {
+        resolution: fix.resolution,
+        fixedAtTurn: fix.fixedAtTurn,
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+      };
+    });
+  }
+
+  /** plan_review turn 计数器 +1（每次开启新一轮 plan_review 时调用）。 */
+  incPlanReviewTurn(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.planReviewTurn = (topic.planReviewTurn ?? 0) + 1;
     });
   }
 
