@@ -20,6 +20,8 @@ import {
   makeValidClarifyJson,
   parseStdout,
   runCli,
+  specReviewMdPath,
+  writeSpecReviewMd,
 } from "./helpers/e2e.js";
 import { makeValidDevPlanJson } from "./helpers/plan.js";
 
@@ -146,7 +148,17 @@ describe("E5d: 全 resolved + confirm_clarify 后调 plan → 合法进 planned"
     );
     expect(confirmResult.status).toBe("clarify_confirmed");
 
-    // confirm 后调 plan 合法
+    // FR-4: plan 前必须 spec_review（否则 clarify_confirmed → plan 非法）
+    writeSpecReviewMd(e.workspaceDir, "e5d-then-plan");
+    const specReviewResult = parseStdout(
+      runCli(
+        ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, "e5d-then-plan")],
+        e,
+      ),
+    );
+    expect(specReviewResult.status).toBe("spec_reviewed");
+
+    // spec_review 后调 plan 合法
     const planResult = parseStdout(
       runCli(["plan", "--topicId", topicId], e, {
         input: JSON.stringify(makeValidDevPlanJson()),
@@ -162,11 +174,16 @@ describe("E5e: 非法状态——planned 后调 clarify → illegal_transition",
   it("planned 状态下调 clarify → exit≠0, stderr 含 illegal_transition", () => {
     const topicId = createTopic("e5e-illegal");
 
-    // 先走到 planned（FR-1: plan 前必须 confirm_clarify）
+    // 先走到 planned（FR-1: plan 前必须 confirm_clarify → spec_review）
     runCli(["clarify", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidClarifyJson({ answer: "已澄清" })),
     });
     runCli(["confirm_clarify", "--topicId", topicId], e);
+    writeSpecReviewMd(e.workspaceDir, "e5e-illegal");
+    runCli(
+      ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, "e5e-illegal")],
+      e,
+    );
     runCli(["plan", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidDevPlanJson()),
     });

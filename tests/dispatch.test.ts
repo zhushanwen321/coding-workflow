@@ -135,6 +135,37 @@ function confirmClarify(store: CwStore, topicId: string): void {
   store.updateGatePassed(topicId, "confirm_clarify", true);
 }
 
+/**
+ * FR-4: 在 confirm_clarify 之后、plan 之前手动注入 spec_review gate pass。
+ *
+ * 状态机新增 spec_review action（插在 confirm_clarify 和 plan 之间）：plan 的
+ * expectedStatuses 从 ["clarify_confirmed", "planned"] 改为 ["spec_reviewed", "planned"]。
+ * 所以测试里调 plan 前必须先把 status 推进到 spec_reviewed + 标记 spec_review gate pass。
+ *
+ * 直接操作 store 而非调 dispatch spec_review（这些测试不是测 spec_review 流程的，
+ * 避免每个测试都先构造 spec-review.md 文件 + 空 issues）。
+ */
+function passSpecReview(store: CwStore, topicId: string): void {
+  store.updateStatus(topicId, "spec_reviewed");
+  store.updateGatePassed(topicId, "spec_review", true);
+}
+
+/**
+ * FR-5: 在 plan 之后、tdd_plan 之前手动注入 plan_review gate pass。
+ *
+ * 状态机新增 plan_review action（插在 plan 和 tdd_plan 之间）：tdd_plan 的
+ * expectedStatuses 从 ["planned", "tdd_inited"] 改为 ["plan_reviewed", "tdd_inited"]。
+ * 所以测试里调 tdd_plan（或 passTddPlanGate）前必须先把 status 推进到 plan_reviewed
+ * + 标记 plan_review gate pass。
+ *
+ * 直接操作 store 而非调 dispatch plan_review（这些测试不是测 plan_review 流程的，
+ * 避免每个测试都先构造 plan-review.md 文件 + 空 issues）。
+ */
+function passPlanReview(store: CwStore, topicId: string): void {
+  store.updateStatus(topicId, "plan_reviewed");
+  store.updateGatePassed(topicId, "plan_review", true);
+}
+
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "cw-dispatch-test-"));
   dbPath = join(tmpDir, "cw.json");
@@ -156,6 +187,7 @@ describe("dispatch plan（U19）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
 
     const result = dispatch(
       { action: "plan", topicId, planJson: makeValidPlanJson() },
@@ -163,8 +195,8 @@ describe("dispatch plan（U19）", () => {
     );
 
     expect(result.status).toBe("planned");
-    // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
-    expect(result.nextAction.action).toBe("tdd_plan");
+    // plan gate 通过 → 进入 plan_review 阶段（FR-5: 审查 plan 是否覆盖 spec）
+    expect(result.nextAction.action).toBe("plan_review");
 
     const topic = store.loadTopic(topicId);
     expect(topic!.waves).toHaveLength(1);
@@ -182,6 +214,7 @@ describe("dispatch plan（U19）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
 
     const result = dispatch(
       { action: "plan", topicId, planJson: makeValidDevPlanJson() },
@@ -189,7 +222,7 @@ describe("dispatch plan（U19）", () => {
     );
 
     expect(result.status).toBe("planned");
-    expect(result.nextAction.action).toBe("tdd_plan");
+    expect(result.nextAction.action).toBe("plan_review");
 
     const topic = store.loadTopic(topicId);
     expect(topic!.waves).toHaveLength(1);
@@ -210,6 +243,7 @@ describe("dispatch plan gate fail（U19b）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
 
     const result = dispatch(
       {
@@ -220,7 +254,7 @@ describe("dispatch plan gate fail（U19b）", () => {
       deps,
     );
 
-    expect(result.status).toBe("clarify_confirmed");
+    expect(result.status).toBe("spec_reviewed");
     expect(result.nextAction.action).toBe("plan");
     const topic = store.loadTopic(topicId);
     const planFails = topic!.gateHistory.filter(
@@ -242,8 +276,10 @@ describe("dispatch dev（U20-U21）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
 
     const result = dispatch(
@@ -266,8 +302,10 @@ describe("dispatch dev（U20-U21）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
 
     dispatch(
@@ -289,6 +327,7 @@ describe("dispatch dev（U20-U21）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     // plan 含 W1 + W2（无依赖）
     const twoWavePlan = makeValidPlanJson({
       waves: [
@@ -297,7 +336,8 @@ describe("dispatch dev（U20-U21）", () => {
       ],
     });
     dispatch({ action: "plan", topicId, planJson: twoWavePlan }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
 
     // W1 和 W2 传同一个 commitHash
@@ -342,9 +382,11 @@ describe("dispatch test（U22-U24c）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     // 新格式 dev-plan.json（不含 testCases），testCases 由 passTddPlanGate 注入。
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate（同时写 testCases）。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate（同时写 testCases）。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -420,6 +462,7 @@ describe("dispatch test（U22-U24c）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     const planJson = {
       format: "lite",
       objective: "obj",
@@ -446,8 +489,9 @@ describe("dispatch test（U22-U24c）", () => {
       ],
     };
     dispatch({ action: "plan", topicId, planJson }, deps);
-    // 新状态机：dev 要求 status=tdd_inited。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review。
     // 这里 testCases 已通过 legacy 路径写入，只需推进 status + gate（不重复 insert）。
+    passPlanReview(store, topicId);
     passTddPlanGateStatus(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -480,6 +524,7 @@ describe("dispatch test（U22-U24c）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     const planJson = {
       format: "lite",
       objective: "obj",
@@ -506,7 +551,8 @@ describe("dispatch test（U22-U24c）", () => {
       ],
     };
     dispatch({ action: "plan", topicId, planJson }, deps);
-    // 新状态机：dev 要求 status=tdd_inited（testCases 已 via legacy 写入，只推进 status）。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review（testCases 已 via legacy 写入，只推进 status）。
+    passPlanReview(store, topicId);
     passTddPlanGateStatus(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -576,8 +622,10 @@ describe("dispatch review", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -601,10 +649,10 @@ describe("dispatch review", () => {
     expect(result.gatePassed.review).toBe(true);
     expect(result.nextAction.action).toBe("test");
 
-    // artifacts 记录了 review.md 路径 + 时间戳
+    // artifacts 记录了 review.md 路径 + 时间戳（FR-1 重构后为嵌套结构 review.path/review.at）
     const topic = store.loadTopic(topicId);
-    expect(topic!.artifacts?.reviewPath).toBe(reviewPath);
-    expect(topic!.artifacts?.reviewAt).toBeDefined();
+    expect(topic!.artifacts?.review?.path).toBe(reviewPath);
+    expect(topic!.artifacts?.review?.at).toBeDefined();
   });
 
   it("review gate fail：传不存在的路径 → status=developed, nextAction=review retry", () => {
@@ -633,8 +681,10 @@ describe("dispatch replan（U25-U29）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     return { topicId, deps, store };
   }
@@ -825,8 +875,10 @@ describe("dispatch closeout（U30）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
-    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 tdd_plan gate。
+    // 新状态机：dev 要求 status=tdd_inited，plan 后先过 plan_review → tdd_plan gate。
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -874,8 +926,8 @@ describe("dispatch closeout（U30）", () => {
     expect(phases).toContain("review");
     expect(phases).toContain("test");
     // retrospect artifact 记录了路径 + 时间戳
-    expect(topic!.artifacts?.retrospectPath).toBe(retrospectPath);
-    expect(topic!.artifacts?.retrospectAt).toBeDefined();
+    expect(topic!.artifacts?.retrospect?.path).toBe(retrospectPath);
+    expect(topic!.artifacts?.retrospect?.at).toBeDefined();
     expect(phases).toContain("retrospect");
     expect(phases).toContain("closeout");
   });
@@ -888,8 +940,10 @@ describe("dispatch closeout（U30）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     // 用 makeValidDevPlanJson（不含 testCases），避免 legacy testCases 与 passTddPlanGate 重复写入
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -974,7 +1028,10 @@ describe("dispatch tdd_plan", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    // 新状态机：tdd_plan 要求 status=plan_reviewed，plan 后先过 plan_review gate。
+    passPlanReview(store, topicId);
     return { topicId, deps, store };
   }
 
@@ -995,20 +1052,20 @@ describe("dispatch tdd_plan", () => {
     expect(topic!.gatePassed.tdd_plan).toBe(true);
   });
 
-  it("gate fail：空 testCases → status 不变(仍 planned), mustFix 返回, nextAction 指回 tdd_plan", () => {
+  it("gate fail：空 testCases → status 不变(仍 plan_reviewed), mustFix 返回, nextAction 指回 tdd_plan", () => {
     const { topicId, deps, store } = setupPlannedTopic();
     const result = dispatch(
       { action: "tdd_plan", topicId, testJson: { testCases: [] } },
       deps,
     );
 
-    expect(result.status).toBe("planned");
+    expect(result.status).toBe("plan_reviewed");
     expect(result.nextAction.action).toBe("tdd_plan");
     expect(result.gatePassed.tdd_plan).toBeFalsy();
     expect((result as Record<string, unknown>).mustFix).toBeDefined();
 
     const topic = store.loadTopic(topicId);
-    expect(topic!.status).toBe("planned");
+    expect(topic!.status).toBe("plan_reviewed");
     // gate fail → testCases 不写入
     expect(topic!.testCases).toHaveLength(0);
     const tddFails = topic!.gateHistory.filter(
@@ -1041,7 +1098,7 @@ describe("dispatch tdd_plan", () => {
       deps,
     );
 
-    expect(result.status).toBe("planned");
+    expect(result.status).toBe("plan_reviewed");
     expect((result as Record<string, unknown>).mustFix).toMatch(/real/);
   });
 });
@@ -1057,7 +1114,10 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    // 新状态机：tdd_plan 要求 status=plan_reviewed，plan 后先过 plan_review gate。
+    passPlanReview(store, topicId);
     return { topicId, deps, store };
   }
 
@@ -1225,8 +1285,8 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
       deps,
     );
 
-    // 缺 testRunner → schema 校验失败 → gate fail，status 不变（仍 planned）
-    expect(result.status).toBe("planned");
+    // 缺 testRunner → schema 校验失败 → gate fail，status 不变（仍 plan_reviewed）
+    expect(result.status).toBe("plan_reviewed");
     expect(result.gatePassed.tdd_plan).toBeFalsy();
     const mustFix = (result as Record<string, unknown>).mustFix;
     expect(mustFix).toBeDefined();
@@ -1245,7 +1305,9 @@ describe("dispatch replan --test（testCases 更新）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     // 此时 status=tdd_inited，testCases=[E1,E2]
 
@@ -1288,8 +1350,8 @@ describe("dispatch replan --test（testCases 更新）", () => {
       deps,
     );
 
-    // status 回退 planned（replan 语义）
-    expect(result.status).toBe("planned");
+    // status 回退 plan_reviewed（replan --test 语义：plan 未改，plan_review 仍有效）
+    expect(result.status).toBe("plan_reviewed");
 
     const topic = store.loadTopic(topicId);
     // waves 不变（replan --test 不碰 waves）
@@ -1308,7 +1370,9 @@ describe("dispatch replan --test（testCases 更新）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     // 模拟 wave 已 committed + testCase 已 passed 的场景
     store.transaction(() => {
@@ -1337,7 +1401,8 @@ describe("dispatch replan --test（testCases 更新）", () => {
       { action: "replan", topicId, testJson: newTestJson },
       deps,
     );
-    expect(result.status).toBe("planned");
+    // replan --test（plan 未改）→ 回退 plan_reviewed（plan_review 仍有效）
+    expect(result.status).toBe("plan_reviewed");
     const topic = store.loadTopic(topicId);
     expect(topic!.waves).toHaveLength(1); // waves 不变
     expect(topic!.testCases.map((c) => c.id).sort()).toEqual(["E1", "E2", "E3"]);
@@ -1351,7 +1416,9 @@ describe("dispatch replan --test（testCases 更新）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
 
     expect(() =>
@@ -1544,6 +1611,7 @@ describe("dispatch clarify", () => {
     const topicId = createResult.topicId;
     // confirm_clarify gate（直接操作 store 跳过 confirm gate 检查）
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
 
     // confirm 后直接 plan
     const result = dispatch(
@@ -1553,7 +1621,7 @@ describe("dispatch clarify", () => {
 
     // plan gate 通过，status=planned
     expect(result.status).toBe("planned");
-    expect(result.nextAction.action).toBe("tdd_plan");
+    expect(result.nextAction.action).toBe("plan_review");
     expect(result.gatePassed.plan).toBe(true);
   });
 
@@ -1606,7 +1674,9 @@ describe("dispatch review loop（W3：review + review_fix）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -1769,7 +1839,9 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -1895,7 +1967,9 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
@@ -1959,7 +2033,9 @@ describe("dispatch assess（W5：post-closeout 评估）", () => {
     );
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
     dispatch({ action: "plan", topicId, planJson: makeValidPlanJson() }, deps);
+    passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
     dispatch(
       { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },

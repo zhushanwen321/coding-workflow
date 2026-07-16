@@ -145,16 +145,16 @@ describe("U5: checkAcMapping", () => {
   });
 });
 
-// ── U6: appendReviewIssues category 持久化 ──────────────────
+// ── U6: appendReviewIssues dimension 持久化 ──────────────────
 
-describe("U6: appendReviewIssues category fix", () => {
-  it("提交带 category 的 issue——loadTopic 返回值含 category", () => {
-    const { store, topicId } = createTmpStore("review-cat");
+describe("U6: appendReviewIssues dimension fix", () => {
+  it("提交带 dimension 的 issue——loadTopic 返回值含 dimension", () => {
+    const { store, topicId } = createTmpStore("review-dim");
     store.appendReviewIssues(topicId, 1, [
-      { severity: "must-fix", description: "类型不安全", category: "type-safety" },
+      { dimension: "type-safety", severity: "must-fix", description: "类型不安全" },
     ]);
     const topic = store.loadTopic(topicId)!;
-    expect(topic.reviewIssues[0].category).toBe("type-safety");
+    expect(topic.reviewIssues[0].dimension).toBe("type-safety");
   });
 });
 
@@ -246,9 +246,11 @@ describe("E2: dispatch plan FR 覆盖 warning", () => {
       deps,
     );
 
-    // plan 只覆盖 FR-1（FR-1 状态机改动：plan 前需 confirm_clarify）
+    // plan 只覆盖 FR-1（状态机改动：plan 前需 confirm_clarify → spec_review）
     store.updateStatus(topicId, "clarify_confirmed");
     store.updateGatePassed(topicId, "confirm_clarify", true);
+    store.updateStatus(topicId, "spec_reviewed");
+    store.updateGatePassed(topicId, "spec_review", true);
     const result = dispatch(
       {
         action: "plan",

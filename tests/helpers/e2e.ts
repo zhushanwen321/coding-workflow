@@ -200,7 +200,47 @@ export function setupToClarifyConfirmed(e: E2eEnv, slug: string, topicId: string
   runCli(["confirm_clarify", "--topicId", topicId], e);
 }
 
-/** create + plan（dev-plan.json 含 waves）→ planned。 */
+/**
+ * 从 clarify_confirmed 推进到 spec_reviewed（FR-4: plan 前必须 spec_review）。
+ *
+ * 流程：创建 spec-review.md（fileExistsCheck 要求文件存在 + 非空）→ spec_review
+ * 提交空 issues（无问题直接过）。供 e2e-*.test.ts 里那些不关心 spec_review 流程、
+ * 只想走到 plan 阶段的测试复用。
+ */
+export function setupToSpecReviewed(e: E2eEnv, slug: string, topicId: string): void {
+  setupToClarifyConfirmed(e, slug, topicId);
+  writeSpecReviewMd(e.workspaceDir, slug);
+  runCli(
+    ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, slug)],
+    e,
+  );
+}
+
+/**
+ * 从 spec_reviewed 推进到 plan_reviewed（FR-5: tdd_plan 前必须 plan_review）。
+ *
+ * 流程：plan（提交 dev-plan.json）→ 创建 plan-review.md → plan_review 提交空 issues。
+ * 供 e2e-*.test.ts 里那些不关心 plan_review 流程、只想走到 tdd_plan 阶段的测试复用。
+ */
+export function setupToPlanReviewed(e: E2eEnv, slug: string, topicId: string): void {
+  setupToSpecReviewed(e, slug, topicId);
+  runCli(["plan", "--topicId", topicId], e, {
+    input: JSON.stringify(makeValidDevPlanJson()),
+  });
+  writePlanReviewMd(e.workspaceDir, slug);
+  runCli(
+    ["plan_review", "--topicId", topicId, "--planReviewPath", planReviewMdPath(e.workspaceDir, slug)],
+    e,
+  );
+}
+
+/**
+ * create + 全链 setup（clarify → confirm → spec_review → plan → plan_review）→ plan_reviewed。
+ *
+ * 名字保留 createAndPlan（语义=「到 plan 完成可进 tdd_plan」），但内部走全链：
+ * FR-4/FR-5 后 plan 的前置是 spec_reviewed，tdd_plan 的前置是 plan_reviewed。
+ * 下游 helper（setupToDeveloped）调 tdd_plan 时前置已满足。
+ */
 function createAndPlan(e: E2eEnv, slug: string): string {
   const createResult = parseStdout(
     runCli(
@@ -209,11 +249,8 @@ function createAndPlan(e: E2eEnv, slug: string): string {
     ),
   );
   const topicId = createResult.topicId as string;
-  // FR-1: plan 前必须先 clarify → confirm_clarify（否则 illegal_transition）。
-  setupToClarifyConfirmed(e, slug, topicId);
-  runCli(["plan", "--topicId", topicId], e, {
-    input: JSON.stringify(makeValidDevPlanJson()),
-  });
+  // FR-4/FR-5: plan 前必须 spec_review，tdd_plan 前必须 plan_review。
+  setupToPlanReviewed(e, slug, topicId);
   return topicId;
 }
 
@@ -225,10 +262,32 @@ export function retrospectMdPath(workspaceDir: string, slug: string): string {
   return join(workspaceDir, ".xyz-harness", slug, "retrospect.md");
 }
 
+/** spec_review 阶段的审查报告路径（FR-4）。 */
+export function specReviewMdPath(workspaceDir: string, slug: string): string {
+  return join(workspaceDir, ".xyz-harness", slug, "spec-review.md");
+}
+
+/** plan_review 阶段的审查报告路径（FR-5）。 */
+export function planReviewMdPath(workspaceDir: string, slug: string): string {
+  return join(workspaceDir, ".xyz-harness", slug, "plan-review.md");
+}
+
 function writeReviewMd(workspaceDir: string, slug: string): void {
   const reviewPath = reviewMdPath(workspaceDir, slug);
   mkdirSync(dirname(reviewPath), { recursive: true });
   writeFileSync(reviewPath, "# Code Review\n\n审查通过");
+}
+
+export function writeSpecReviewMd(workspaceDir: string, slug: string): void {
+  const specReviewPath = specReviewMdPath(workspaceDir, slug);
+  mkdirSync(dirname(specReviewPath), { recursive: true });
+  writeFileSync(specReviewPath, "# Spec Review\n\nspec 审查通过");
+}
+
+export function writePlanReviewMd(workspaceDir: string, slug: string): void {
+  const planReviewPath = planReviewMdPath(workspaceDir, slug);
+  mkdirSync(dirname(planReviewPath), { recursive: true });
+  writeFileSync(planReviewPath, "# Plan Review\n\nplan 审查通过");
 }
 
 function writeRetrospectMd(workspaceDir: string, slug: string): void {
