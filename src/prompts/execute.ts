@@ -64,9 +64,21 @@ commit 是 Wave 级验证锚点——CW 用 commit 存在性 + diff 非空校验
 当 Wave 之间无依赖（dependsOn 为空）且 ≥2 个 Wave 时，推荐用 subagent 并行执行：
 
 - 每个 Wave 派一个独立 subagent，各自上下文隔离
-- subagent 职责：读 dev-plan.json 该 Wave 的 changes → 写实现让测试转绿 → git commit → 返回 commitHash
+- subagent 职责：读 dev-plan.json 该 Wave 的 changes → 写实现让测试转绿 → 跑【该 Wave 涉及包】的单包验证 → git commit → 返回 commitHash
 - 主 agent 收集所有 commitHash 后，统一调一次 cw(dev) 提交
 - 依赖链上的 Wave 必须串行（前一个 committed 后才能开始下一个）
+
+[强制] **subagent 只跑涉及包的单包验证**（FR-7），禁止跑全量：
+
+    # subagent 在自己 Wave 范围内跑（只跑该 Wave 改动的包）
+    pnpm --filter <pkg> typecheck
+    pnpm --filter <pkg> test
+
+    # [禁止] subagent 跑全量——会拖慢并行、且越界验证别的 Wave 的包
+    # pnpm -r test   ← 禁止
+
+全量验证（pnpm -r typecheck / pnpm -r test）由**主 agent**在提交 cw(dev) 前统一跑一次。
+subagent 越界跑全量 = 浪费并行度 + 可能因别的 Wave 未完成而误报失败。
 
     cw dev --topicId <topicId> --tasks '[{"waveId":"W1","commitHash":"<sha1>"},{"waveId":"W2","commitHash":"<sha2>"}]'
 

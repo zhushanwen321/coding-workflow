@@ -41,10 +41,14 @@ import {
   type CwParams,
   type DevParams,
   type PlanParams,
+  type PlanReviewParams,
+  type PlanReviewFixParams,
   type ReplanParams,
   type RetrospectParams,
   type ReviewFixParams,
   type ReviewParams,
+  type SpecReviewParams,
+  type SpecReviewFixParams,
   type TddPlanParams,
   type TestFixParams,
   type TestParams,
@@ -61,6 +65,7 @@ import {
   type ActionDeps,
   type ActionResult,
   CwError,
+  type ReviewIssueSubmission,
   type RuntimeEnv,
   type Status,
   type Topic,
@@ -86,12 +91,16 @@ const EXIT_CW_ERROR = 1;
 /** 进程退出码：内部异常（未预期的错误）。 */
 const EXIT_INTERNAL_ERROR = 2;
 
-/** 合法 action 白名单（15 个 dispatch action + 5 个只读查询命令）。 */
+/** 合法 action 白名单（19 个 dispatch action + 5 个只读查询命令）。 */
 const VALID_DISPATCH_ACTIONS: Action[] = [
   "create",
   "clarify",
   "confirm_clarify",
+  "spec_review",
+  "spec_review_fix",
   "plan",
+  "plan_review",
+  "plan_review_fix",
   "tdd_plan",
   "dev",
   "review",
@@ -105,7 +114,9 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
   "assess",
 ];
 
-const READONLY_QUERIES = new Set(["status", "list", "stats", "report", "gen-spec"]);
+// FR-8: gen-spec 不再是只读查询（有写副作用——记 artifacts.confirmSpec），
+// 故从 READONLY_QUERIES 移出，改为与 init 同级的直接处理块（不经 dispatch 状态机）。
+const READONLY_QUERIES = new Set(["status", "list", "stats", "report"]);
 
 // ── RuntimeEnv 默认值 + env.json ────────────────────────────
 
@@ -393,6 +404,50 @@ export function buildParams(
       return { action: "confirm_clarify", topicId } as ConfirmClarifyParams;
     }
 
+    case "spec_review": {
+      if (!topicId) throw new CwError("spec_review 需要 --topicId");
+      const specReviewPath = flag(parsed, "specReviewPath");
+      if (!specReviewPath) throw new CwError("spec_review 需要 --specReviewPath");
+      const params: SpecReviewParams = {
+        action: "spec_review",
+        topicId,
+        specReviewPath,
+      };
+      // issues 从 stdin 读（可选，无 stdin 时为空数组 = 无问题）。
+      // stdin 有内容时解析为 JSON 数组；非 JSON → throw；逐元素 schema 校验。
+      if (!isStdinTTY && stdinData.trim().length > 0) {
+        let issuesRaw: unknown;
+        try {
+          issuesRaw = JSON.parse(stdinData);
+        } catch (e) {
+          throw new CwError(
+            `spec_review issues JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        const check = reviewIssueCheck(issuesRaw);
+        if (check.result === "fail") {
+          throw new CwError(check.report);
+        }
+        params.issues = check.parsed! as ReviewIssueSubmission[];
+      }
+      return params;
+    }
+
+    case "spec_review_fix": {
+      if (!topicId) throw new CwError("spec_review_fix 需要 --topicId");
+      // fixes 从 stdin 读（必须提供，每条含 issueId + commitHash? + resolution）。
+      const fixesRaw = readJsonPayload(
+        flag(parsed, "fixesJsonFile"),
+        stdinData,
+        isStdinTTY,
+      );
+      return {
+        action: "spec_review_fix",
+        topicId,
+        fixes: (Array.isArray(fixesRaw) ? fixesRaw : []) as SpecReviewFixParams["fixes"],
+      } as SpecReviewFixParams;
+    }
+
     case "abort": {
       if (!topicId) throw new CwError("abort 需要 --topicId");
       return { action: "abort", topicId } as AbortParams;
@@ -552,6 +607,50 @@ export function buildParams(
       return params;
     }
 
+    case "plan_review": {
+      if (!topicId) throw new CwError("plan_review 需要 --topicId");
+      const planReviewPath = flag(parsed, "planReviewPath");
+      if (!planReviewPath) throw new CwError("plan_review 需要 --planReviewPath");
+      const params: PlanReviewParams = {
+        action: "plan_review",
+        topicId,
+        planReviewPath,
+      };
+      // issues 从 stdin 读（可选，无 stdin 时为空数组 = 无问题）。
+      // stdin 有内容时解析为 JSON 数组；非 JSON → throw；逐元素 schema 校验。
+      if (!isStdinTTY && stdinData.trim().length > 0) {
+        let issuesRaw: unknown;
+        try {
+          issuesRaw = JSON.parse(stdinData);
+        } catch (e) {
+          throw new CwError(
+            `plan_review issues JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        const check = reviewIssueCheck(issuesRaw);
+        if (check.result === "fail") {
+          throw new CwError(check.report);
+        }
+        params.issues = check.parsed! as ReviewIssueSubmission[];
+      }
+      return params;
+    }
+
+    case "plan_review_fix": {
+      if (!topicId) throw new CwError("plan_review_fix 需要 --topicId");
+      // fixes 从 stdin 读（必须提供，每条含 issueId + commitHash? + resolution）。
+      const fixesRaw = readJsonPayload(
+        flag(parsed, "fixesJsonFile"),
+        stdinData,
+        isStdinTTY,
+      );
+      return {
+        action: "plan_review_fix",
+        topicId,
+        fixes: (Array.isArray(fixesRaw) ? fixesRaw : []) as PlanReviewFixParams["fixes"],
+      } as PlanReviewFixParams;
+    }
+
     case "test_fix": {
       if (!topicId) throw new CwError("test_fix 需要 --topicId");
       // fixes 从 stdin 读（必须提供，每条含 caseId + commitHash + resolution）。
@@ -650,6 +749,10 @@ export interface ListEntry {
   retrospectAt?: string;
   reviewPath?: string;
   reviewAt?: string;
+  specReviewPath?: string;
+  specReviewAt?: string;
+  planReviewPath?: string;
+  planReviewAt?: string;
 }
 
 /**
@@ -689,10 +792,14 @@ export function handleList(store: CwStore): ListEntry[] {
     status: t.status,
     createdAt: t.createdAt,
     gatePassed: t.gatePassed,
-    retrospectPath: t.artifacts?.retrospectPath,
-    retrospectAt: t.artifacts?.retrospectAt,
-    reviewPath: t.artifacts?.reviewPath,
-    reviewAt: t.artifacts?.reviewAt,
+    retrospectPath: t.artifacts?.retrospect?.path,
+    retrospectAt: t.artifacts?.retrospect?.at,
+    reviewPath: t.artifacts?.review?.path,
+    reviewAt: t.artifacts?.review?.at,
+    specReviewPath: t.artifacts?.specReview?.path,
+    specReviewAt: t.artifacts?.specReview?.at,
+    planReviewPath: t.artifacts?.planReview?.path,
+    planReviewAt: t.artifacts?.planReview?.at,
   }));
 }
 
@@ -796,8 +903,8 @@ async function main(argv: string[]): Promise<void> {
         }
       };
       const docs: ReportDocs = {
-        reviewDoc: readDocSafe(resolveArtifact(topic.artifacts?.reviewPath)),
-        retrospectDoc: readDocSafe(resolveArtifact(topic.artifacts?.retrospectPath)),
+        reviewDoc: readDocSafe(resolveArtifact(topic.artifacts?.review?.path)),
+        retrospectDoc: readDocSafe(resolveArtifact(topic.artifacts?.retrospect?.path)),
         clarifyDocs: Object.fromEntries(
           (topic.clarifyRecords ?? [])
             .filter((cr) => cr.presentationPath)
@@ -822,32 +929,38 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
 
-    if (action === "gen-spec") {
-      // FR-1: gen-spec 是只读命令，从 clarifyRecords + specSections 生成确认 md。
-      const topicId =
-        typeof parsed.topicId === "string" ? parsed.topicId : undefined;
-      if (!topicId) {
-        process.stderr.write("错误：gen-spec 需要 --topicId\n");
-        process.exit(EXIT_CW_ERROR);
-      }
-      const topic = store.loadTopic(topicId);
-      if (!topic) {
-        process.stderr.write(`错误：topic not found: ${topicId}\n`);
-        process.exit(EXIT_CW_ERROR);
-      }
-      const md = genSpecMd(topic);
-      const safeSlug = topic.slug.replace(/[^a-zA-Z0-9-]/g, "-");
-      const specPath = join(tmpdir(), `cw-spec-${safeSlug}.md`);
-      writeFileSync(specPath, md, "utf-8");
-      process.stdout.write(
-        JSON.stringify({ topicId, specPath }, null, JSON_INDENT) + "\n",
-      );
-      return;
-    }
-
     // action === "list"
     const output = handleList(store);
     process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
+    return;
+  }
+
+  // FR-8: gen-spec 不再是只读查询（有写副作用），但也不经 dispatch 状态机
+  // （不是 Action 联合成员）。与 init 同级，直接处理。
+  if (action === "gen-spec") {
+    const topicId =
+      typeof parsed.topicId === "string" ? parsed.topicId : undefined;
+    if (!topicId) {
+      process.stderr.write("错误：gen-spec 需要 --topicId\n");
+      process.exit(EXIT_CW_ERROR);
+    }
+    const store = new CwStore(dbPath);
+    const topic = store.loadTopic(topicId);
+    if (!topic) {
+      process.stderr.write(`错误：topic not found: ${topicId}\n`);
+      process.exit(EXIT_CW_ERROR);
+    }
+    const md = genSpecMd(topic);
+    const safeSlug = topic.slug.replace(/[^a-zA-Z0-9-]/g, "-");
+    const specPath = join(tmpdir(), `cw-spec-${safeSlug}.md`);
+    writeFileSync(specPath, md, "utf-8");
+    // FR-8: gen-spec 改为有写副作用——记 artifacts.confirmSpec（confirm gate 校验存在性）。
+    store.setArtifacts(topicId, {
+      confirmSpec: { path: specPath, at: new Date().toISOString() },
+    });
+    process.stdout.write(
+      JSON.stringify({ topicId, specPath }, null, JSON_INDENT) + "\n",
+    );
     return;
   }
 
