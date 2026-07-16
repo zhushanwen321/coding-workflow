@@ -43,9 +43,12 @@ import {
   buildNextAction,
   computeGatePassed,
   computeNextStatus,
+  REVIEW_TURN_LIMIT,
+  TEST_TURN_LIMIT,
 } from "./state-machine.js";
 import { computeRetrospectDerived } from "./stats.js";
 import {
+  type Action,
   type ActionDeps,
   type ActionResult,
   type Actual,
@@ -54,6 +57,7 @@ import {
   type AssessmentType,
   type ClarifyRecord,
   CwError,
+  GuardError,
   type DefectSeverity,
   type Evidence,
   type RetrospectData,
@@ -71,7 +75,94 @@ import {
   type WaveSeed,
 } from "./types.js";
 
-// ── 参数类型（7 个 action）──────────────────────────────────
+// ── 纵向 gate 链：前序阶段完成度前置检查 ──────────────────────
+
+/**
+ * checkPhasePrerequisite — 在 handler 开头检查前序阶段完成度。
+ *
+ * 与 checkLinear（guard 层，防 status 跳步）正交：checkLinear 只看 status 是否合法，
+ * 本函数看前序阶段的 gate 是否真过。blind follower agent 可能 status 合法但前序未完成
+ * （如 dev progressive 调一次后 status=developed，但 W2 仍未 committed）。
+ *
+ * 四个关卡（守全部阶段）：
+ *   - review  → dev gate（全 wave committed）
+ *   - test    → review 完成度（issues 全 closed OR reviewTurn>=REVIEW_TURN_LIMIT 逃生阀）
+ *   - retrospect → test 完成度（cases 全 passed OR testTurn>=TEST_TURN_LIMIT 逃生阀）
+ *   - closeout → retrospect gate（gateHistory 有 pass 记录）
+ *
+ * 逃生阀（FR-3）：test/review 达 turn 上限时放行，防 test↔test_fix / review↔review_fix 死循环。
+ * dev/retrospect 无逃生阀（dev 是入口无前序；retrospect 是 single-shot gate 无 turn 概念）。
+ *
+ * 未通过时 throw GuardError(code=phase_prerequisite_failed)，status 不流转、不进 gateHistory
+ * （走 guard 拒绝路径，非 gate fail 路径——不留 retry 的 nextAction，agent 需回去补前置阶段）。
+ */
+function assertPhasePrerequisite(action: Action, topic: Topic): void {
+  switch (action) {
+    case "review": {
+      // dev gate = 全 wave committed（≥1 且全 committed !== null）
+      if (!computeGatePassed("dev", topic)) {
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `review 前置失败：dev 阶段未完成（有 wave 未 committed）。需先调 cw(dev) 提交所有 wave 的 commit。`,
+          "dev",
+          topic.status,
+        );
+      }
+      return;
+    }
+    case "test": {
+      // review 完成度 = reviewIssues 全 closed（无 open）
+      // 空数组陷阱防护：从未 review 过时 reviewIssues=[] 且 every() 返回 true，
+      // 必须额外要求 computeGatePassed("review")（gateHistory 有 review pass 记录）。
+      const reviewGatePassed = computeGatePassed("review", topic);
+      const hasOpenIssues = topic.reviewIssues.some((i) => i.status === "open");
+      const escapeByTurn = topic.reviewTurn >= REVIEW_TURN_LIMIT;
+      if ((!reviewGatePassed || hasOpenIssues) && !escapeByTurn) {
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `test 前置失败：review 阶段未完成（有 open issue 未闭环或 review 未过 gate）。需先调 cw(review_fix) 修复 issue 或 cw(review) 闭环。`,
+          "review",
+          topic.status,
+        );
+      }
+      return;
+    }
+    case "retrospect": {
+      // test 完成度 = 全 testCase passed
+      const testGatePassed = computeGatePassed("test", topic);
+      const escapeByTurn = topic.testTurn >= TEST_TURN_LIMIT;
+      if (!testGatePassed && !escapeByTurn) {
+        const pending = topic.testCases
+          .filter((c) => c.status !== "passed")
+          .map((c) => c.id);
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `retrospect 前置失败：test 阶段未完成（testCase ${pending.join(", ")} 未 passed）。需先调 cw(test_fix) 修复或 cw(test) 重跑。`,
+          "test",
+          topic.status,
+        );
+      }
+      return;
+    }
+    case "closeout": {
+      // retrospect gate = gateHistory 有 retrospect pass 记录
+      if (!computeGatePassed("retrospect", topic)) {
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `closeout 前置失败：retrospect 阶段未完成（retrospect gate 未过）。需先调 cw(retrospect) 提交复盘。`,
+          "retrospect",
+          topic.status,
+        );
+      }
+      return;
+    }
+    default:
+      // dev / create / clarify / plan / tdd_plan / *_fix / replan / abort / assess 无前置检查
+      return;
+  }
+}
+
+
 
 export interface CreateParams {
   action: "create";
@@ -978,6 +1069,26 @@ export function handleTest(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：test 前置检查（review 完成度 + 逃生阀）
+  assertPhasePrerequisite("test", topic);
+
+  // FR-4: handleTest 全覆盖校验——params.cases 的 caseId 集合必须 == topic.testCases 的 id 集合。
+  // 防止 agent 选择性提交（如只跑单测跳过 e2e），导致部分 testCase 永远 pending。
+  // 不跑的 case 必须在 tdd_plan/replan 阶段就移除，不能在 test 时静默跳过。
+  // 校验在事务外做——throw 前不修改任何 testCase。
+  const submittedIds = new Set(params.cases.map((c) => c.caseId));
+  const expectedIds = new Set(topic.testCases.map((c) => c.id));
+  const missing = [...expectedIds].filter((id) => !submittedIds.has(id));
+  const extra = [...submittedIds].filter((id) => !expectedIds.has(id));
+  if (missing.length > 0 || extra.length > 0) {
+    const parts: string[] = [];
+    if (missing.length > 0) parts.push(`缺失 [${missing.join(", ")}]`);
+    if (extra.length > 0) parts.push(`多余 [${extra.join(", ")}]`);
+    throw new CwError(
+      `handleTest 的 cases 与 topic.testCases 的 id 集合不一致：${parts.join("，")}。每个 testCase 都必须提交结果（不能选择性跳过）。`,
+    );
+  }
+
   const caseResults: TestCaseResult[] = [];
 
   deps.store.transaction(() => {
@@ -1155,6 +1266,9 @@ export function handleReview(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：review 前置检查（dev gate 必须通过）
+  assertPhasePrerequisite("review", topic);
+
   const path = params.reviewPath ?? "";
   const issues = params.issues ?? [];
   const hasIssues = issues.length > 0;
@@ -1744,6 +1858,9 @@ export function handleRetrospect(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：retrospect 前置检查（test 完成度 + 逃生阀）
+  assertPhasePrerequisite("retrospect", topic);
+
   const path = params.retrospectPath ?? "";
 
   // retrospectData 必选校验（gate 前置）。
@@ -1844,6 +1961,9 @@ export function handleCloseout(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：closeout 前置检查（retrospect gate 必须通过）
+  assertPhasePrerequisite("closeout", topic);
+
   // FR-2: 先校验 artifacts 记录的 review/retrospect 文件存在（如果有记录）。
   const missingPaths: string[] = [];
   if (topic.artifacts?.review?.path && !existsSync(topic.artifacts.review.path)) {
