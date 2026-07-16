@@ -27,6 +27,7 @@
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
@@ -117,6 +118,50 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
 // FR-8: gen-spec 不再是只读查询（有写副作用——记 artifacts.confirmSpec），
 // 故从 READONLY_QUERIES 移出，改为与 init 同级的直接处理块（不经 dispatch 状态机）。
 const READONLY_QUERIES = new Set(["status", "list", "stats", "report"]);
+
+// ── 跨平台「用系统默认应用打开文件」 ──────────────────────────
+
+/**
+ * shouldAutoOpen — 是否自动 open 产出的文件。
+ *
+ * 优先级：`--no-open` flag > `CW_NO_OPEN` env > 默认 open。
+ * 测试与 CI 经 env 关闭，避免弹窗；agent 日常默认 open，需要时用 flag 单次跳过。
+ */
+function shouldAutoOpen(noOpenFlag: boolean): boolean {
+  if (noOpenFlag) return false;
+  if (process.env.CW_NO_OPEN === "1") return false;
+  return true;
+}
+
+/**
+ * openInDefaultApp — 用系统默认应用打开文件路径（gen-spec 的 md / report 的 html）。
+ *
+ * 跨平台命令分派：
+ *   - darwin → `open`
+ *   - win32  → `cmd /c start "" <path>`（start 是 cmd 内置命令，必须经 shell；
+ *              首个空字符串参数是窗口标题占位，避免含空格的路径被当标题吞掉）
+ *   - 其他（linux 等）→ `xdg-open`
+ *
+ * detached + stdio:"ignore" + unref()：子进程与主进程解耦，cw 退出不等待 GUI。
+ * 失败静默：open 不了不影响主流程——路径已在 stdout JSON 返回，调用方可手动打开。
+ */
+function openInDefaultApp(filePath: string): void {
+  try {
+    if (process.platform === "darwin") {
+      spawn("open", [filePath], { detached: true, stdio: "ignore" }).unref();
+    } else if (process.platform === "win32") {
+      spawn("cmd", ["/c", "start", "", filePath], {
+        detached: true,
+        shell: true,
+        stdio: "ignore",
+      }).unref();
+    } else {
+      spawn("xdg-open", [filePath], { detached: true, stdio: "ignore" }).unref();
+    }
+  } catch {
+    // open 失败不阻断——路径已返回，调用方可手动 open。
+  }
+}
 
 // ── RuntimeEnv 默认值 + env.json ────────────────────────────
 
@@ -929,6 +974,8 @@ async function main(argv: string[]): Promise<void> {
       const safeSlug = topic.slug.replace(/[^a-zA-Z0-9-]/g, "-");
       const reportPath = join(tmpdir(), `cw-report-${safeSlug}.html`);
       writeFileSync(reportPath, html, "utf-8");
+      // 默认用系统默认浏览器打开 HTML 报告；--no-open 或 CW_NO_OPEN=1 跳过。
+      if (shouldAutoOpen(parsed.noOpen === true)) openInDefaultApp(reportPath);
       process.stdout.write(
         JSON.stringify({ topicId, reportPath }, null, JSON_INDENT) + "\n",
       );
@@ -964,6 +1011,8 @@ async function main(argv: string[]): Promise<void> {
     store.setArtifacts(topicId, {
       confirmSpec: { path: specPath, at: new Date().toISOString() },
     });
+    // 默认用系统默认应用打开 md 给用户确认；--no-open 或 CW_NO_OPEN=1 跳过。
+    if (shouldAutoOpen(parsed.noOpen === true)) openInDefaultApp(specPath);
     process.stdout.write(
       JSON.stringify({ topicId, specPath }, null, JSON_INDENT) + "\n",
     );
