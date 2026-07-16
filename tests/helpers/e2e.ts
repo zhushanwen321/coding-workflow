@@ -68,6 +68,9 @@ export function runCli(
   const mergedEnv = {
     ...process.env,
     ...env.env,
+    // CW_NO_OPEN=1：测试环境全局禁用自动 open（gen-spec/report 默认会弹窗）。
+    // 个别测试需验证 open 行为时，在该测试内显式覆盖 env.env.CW_NO_OPEN="0"。
+    CW_NO_OPEN: "1",
     PATH: process.env.PATH ?? "",
   };
   const result = spawnSync("node", [CLI_PATH, ...args], {
@@ -198,7 +201,8 @@ export function setupToClarifyConfirmed(e: E2eEnv, slug: string, topicId: string
     input: JSON.stringify(makeValidClarifyJson({ answer: `${slug} 已澄清` })),
   });
   // FR-8: confirm 前必须调 gen-spec（confirm gate 校验 artifacts.confirmSpec 存在）
-  runCli(["gen-spec", "--topicId", topicId], e);
+  // --no-open：setup helper 不弹窗（gen-spec 默认会 open）
+  runCli(["gen-spec", "--topicId", topicId, "--no-open"], e);
   runCli(["confirm_clarify", "--topicId", topicId], e);
 }
 

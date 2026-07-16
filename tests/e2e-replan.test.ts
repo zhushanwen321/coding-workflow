@@ -83,7 +83,7 @@ function setupToDevelopedLocal(slug: string): string {
   runCli(["clarify", "--topicId", topicId], e, {
     input: JSON.stringify(makeValidClarifyJson({ answer: `${slug} 已澄清` })),
   });
-  runCli(["gen-spec", "--topicId", topicId], e);
+  runCli(["gen-spec", "--topicId", topicId, "--no-open"], e);
   runCli(["confirm_clarify", "--topicId", topicId], e);
   writeSpecReviewMd(e.workspaceDir, slug);
   runCli(

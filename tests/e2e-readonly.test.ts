@@ -119,7 +119,8 @@ describe("E9d: list 空库 → []；非空 → ListEntry 结构", () => {
 describe("E9e: report 生成可视化 HTML", () => {
   it("report --topicId → 返回 reportPath，HTML 文件存在且含关键内容", () => {
     const result = parseStdout(
-      runCli(["report", "--topicId", closedTopicId], e),
+      // --no-open：测试环境不弹窗（report 默认会 open）
+      runCli(["report", "--topicId", closedTopicId, "--no-open"], e),
     );
     expect(result.topicId).toBe(closedTopicId);
     expect(result.reportPath).toBeDefined();
@@ -149,5 +150,24 @@ describe("E9e: report 生成可视化 HTML", () => {
   it("report 缺 --topicId → exit≠0", () => {
     const result = runCli(["report"], e);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  // FR-9: report 默认自动 open HTML；测试 helper runCli 全局注入 CW_NO_OPEN=1 禁用弹窗。
+  // 这里验证：无论 --no-open flag 还是 CW_NO_OPEN env，都不阻断主流程，stdout 正常返回 reportPath。
+  it("report --no-open → 不弹窗，stdout 正常返回 reportPath", () => {
+    const result = parseStdout(
+      runCli(["report", "--topicId", closedTopicId, "--no-open"], e),
+    );
+    expect(result.reportPath).toBeDefined();
+    expect(existsSync(result.reportPath as string)).toBe(true);
+  });
+
+  // runCli 默认注入 CW_NO_OPEN=1，等价于「默认不弹窗」场景，验证不挂起 + 路径返回。
+  it("report 默认（CW_NO_OPEN=1 via helper）→ 不挂起，stdout 正常返回 reportPath", () => {
+    const result = parseStdout(
+      runCli(["report", "--topicId", closedTopicId], e),
+    );
+    expect(result.reportPath).toBeDefined();
+    expect(existsSync(result.reportPath as string)).toBe(true);
   });
 });
