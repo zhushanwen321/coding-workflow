@@ -197,6 +197,8 @@ export function setupToClarifyConfirmed(e: E2eEnv, slug: string, topicId: string
   runCli(["clarify", "--topicId", topicId], e, {
     input: JSON.stringify(makeValidClarifyJson({ answer: `${slug} 已澄清` })),
   });
+  // FR-8: confirm 前必须调 gen-spec（confirm gate 校验 artifacts.confirmSpec 存在）
+  runCli(["gen-spec", "--topicId", topicId], e);
   runCli(["confirm_clarify", "--topicId", topicId], e);
 }
 

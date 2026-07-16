@@ -1002,8 +1002,9 @@ describe("FR-1: confirmClarifyCheck", () => {
       testFixLog: [],
       testTurn: 0,
       assessments: [],
+      artifacts: { confirmSpec: { path: "/tmp/spec.md", at: "2026-01-01T00:00:00.000Z" } },
     };
-    // FR-1: confirm gate 至少 1 条 resolved/skipped
+    // FR-1: confirm gate 至少 1 条 resolved/skipped + FR-8: confirmSpec 存在
     const result = confirmClarifyCheck(topic);
     expect(result.result).toBe("pass");
   });
@@ -1102,9 +1103,48 @@ describe("FR-1: confirmClarifyCheck", () => {
       testFixLog: [],
       testTurn: 0,
       assessments: [],
+      artifacts: { confirmSpec: { path: "/tmp/spec.md", at: "2026-01-01T00:00:00.000Z" } },
     };
     const result = confirmClarifyCheck(topic);
     expect(result.result).toBe("pass");
+  });
+
+  it("AC-8: 有 resolved record 但无 confirmSpec（未调 gen-spec）→ fail", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "a",
+          question: "q",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+      // 无 artifacts.confirmSpec → FR-8 应 gate fail
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("gen-spec");
   });
 });
 

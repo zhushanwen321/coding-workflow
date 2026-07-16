@@ -929,6 +929,18 @@ export function confirmClarifyCheck(topic: Topic): ConfirmClarifyCheckResult {
         "如果确认无需澄清，先提交一条 skipped 记录（cw clarify 带 status=skipped），再 confirm。",
     };
   }
+  // FR-8: 必须先调过 gen-spec（artifacts.confirmSpec 存在）。
+  // gen-spec 改为有写副作用——记 confirmSpec 到 artifacts。confirm gate 校验其存在性，
+  // 堵住 agent 跳过 gen-spec 直接 confirm 的漏洞。
+  const confirmSpec = topic.artifacts?.confirmSpec;
+  if (!confirmSpec) {
+    return {
+      result: "fail",
+      report:
+        "confirm_clarify 前必须先调 cw(gen-spec) 生成确认文档并 open 给用户看。" +
+        "当前 artifacts.confirmSpec 缺失（未调 gen-spec）。",
+    };
+  }
   return { result: "pass", report: "" };
 }
 

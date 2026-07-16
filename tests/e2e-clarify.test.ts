@@ -143,6 +143,8 @@ describe("E5d: 全 resolved + confirm_clarify 后调 plan → 合法进 planned"
     );
 
     // FR-1: plan 前必须 confirm_clarify（否则 created → plan 非法）
+    // FR-8: confirm 前必须 gen-spec（confirm gate 校验 confirmSpec 存在）
+    runCli(["gen-spec", "--topicId", topicId], e);
     const confirmResult = parseStdout(
       runCli(["confirm_clarify", "--topicId", topicId], e),
     );
@@ -178,6 +180,7 @@ describe("E5e: 非法状态——planned 后调 clarify → illegal_transition",
     runCli(["clarify", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidClarifyJson({ answer: "已澄清" })),
     });
+    runCli(["gen-spec", "--topicId", topicId], e);
     runCli(["confirm_clarify", "--topicId", topicId], e);
     writeSpecReviewMd(e.workspaceDir, "e5e-illegal");
     runCli(

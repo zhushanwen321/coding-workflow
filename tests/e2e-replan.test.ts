@@ -79,10 +79,11 @@ function setupToDevelopedLocal(slug: string): string {
   );
   const topicId = create.topicId as string;
   // FR-1/FR-4/FR-5: plan 前必须 clarify → confirm → spec_review，tdd_plan 前必须 plan_review。
-  // 直接用 store 推进等效的 CLI 链：clarify(ans) → confirm → spec_review → plan → plan_review。
+  // 直接用 store 推进等效的 CLI 链：clarify(ans) → gen-spec → confirm → spec_review → plan → plan_review。
   runCli(["clarify", "--topicId", topicId], e, {
     input: JSON.stringify(makeValidClarifyJson({ answer: `${slug} 已澄清` })),
   });
+  runCli(["gen-spec", "--topicId", topicId], e);
   runCli(["confirm_clarify", "--topicId", topicId], e);
   writeSpecReviewMd(e.workspaceDir, slug);
   runCli(
