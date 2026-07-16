@@ -1167,3 +1167,188 @@ describe("旧数据向后兼容（issue tracking 字段缺失）", () => {
     expect(topic!.testTurn).toBe(0);
   });
 });
+
+// ── FR-1 / AC-4: Artifacts 旧格式迁移 ──────────────────────────
+
+describe("FR-1: Artifacts 旧格式迁移（AC-4）", () => {
+  it("平铺格式（reviewPath/reviewAt/retrospectPath/retrospectAt）加载后迁移为嵌套", () => {
+    // 直接操作 _cw.json 写入旧格式 artifacts，再 loadTopic 验证迁移。
+    // 参照 store.test.ts 现有 store 构造模式（makeStore + makeTopic）。
+    const store = makeStore();
+    store.transaction(() =>
+      store.insertTopic(makeTopic({ topicId: "cw-test-migrate" })),
+    );
+
+    // 手动写入旧格式 artifacts 到 _cw.json（绕过 store API，模拟旧数据）。
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      topics: Array<Record<string, unknown>>;
+    };
+    const t = raw.topics.find((x) => x.topicId === "cw-test-migrate");
+    t!.artifacts = {
+      reviewPath: "/tmp/old-review.md",
+      reviewAt: "2026-01-01T00:00:00.000Z",
+      retrospectPath: "/tmp/old-retrospect.md",
+      retrospectAt: "2026-01-02T00:00:00.000Z",
+    };
+    writeFileSync(dbPath, JSON.stringify(raw));
+
+    // CwStore 的 fileData 是内存缓存的，手动改 _cw.json 后需新实例重新加载。
+    const reloaded = new CwStore(dbPath);
+    const loaded = reloaded.loadTopic("cw-test-migrate");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.artifacts?.review?.path).toBe("/tmp/old-review.md");
+    expect(loaded!.artifacts?.review?.at).toBe("2026-01-01T00:00:00.000Z");
+    expect(loaded!.artifacts?.retrospect?.path).toBe("/tmp/old-retrospect.md");
+    expect(loaded!.artifacts?.retrospect?.at).toBe("2026-01-02T00:00:00.000Z");
+  });
+
+  it("旧 reviewIssues category/file 迁移为 dimension/ref（FR-3）", () => {
+    // 同理，手动写入旧格式 reviewIssues，loadTopic 验证迁移。
+    const store = makeStore();
+    store.transaction(() =>
+      store.insertTopic(makeTopic({ topicId: "cw-test-migrate-issue" })),
+    );
+
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      topics: Array<Record<string, unknown>>;
+    };
+    const t = raw.topics.find((x) => x.topicId === "cw-test-migrate-issue");
+    t!.reviewIssues = [
+      {
+        id: "R1",
+        category: "type-safety",
+        severity: "must-fix",
+        description: "test",
+        file: "src/x.ts:42",
+        status: "open",
+        foundAtTurn: 1,
+      },
+    ];
+    writeFileSync(dbPath, JSON.stringify(raw));
+
+    const reloaded = new CwStore(dbPath);
+    const loaded = reloaded.loadTopic("cw-test-migrate-issue");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.reviewIssues[0]!.dimension).toBe("type-safety");
+    expect(loaded!.reviewIssues[0]!.ref).toBe("src/x.ts:42");
+  });
+});
+
+// ── FR-4/5: spec_review / plan_review issue DAO ────────────────
+
+describe("FR-4/5: spec_review/plan_review issue DAO", () => {
+  it("appendSpecReviewIssues 分配 SR 前缀 id + foundAtTurn", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const issues: ReviewIssueSubmission[] = [
+      { severity: "must-fix", description: "spec 缺 FR", dimension: "completeness", ref: "FR-3" },
+      { severity: "should-fix", description: "口径不一致", dimension: "consistency" },
+    ];
+    store.transaction(() => store.appendSpecReviewIssues("cw-test-topic", 1, issues));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.specReviewIssues).toHaveLength(2);
+    expect(topic!.specReviewIssues[0]!.id).toBe("SR1");
+    expect(topic!.specReviewIssues[0]!.status).toBe("open");
+    expect(topic!.specReviewIssues[0]!.foundAtTurn).toBe(1);
+    expect(topic!.specReviewIssues[0]!.dimension).toBe("completeness");
+    expect(topic!.specReviewIssues[0]!.ref).toBe("FR-3");
+    expect(topic!.specReviewIssues[1]!.id).toBe("SR2");
+    expect(topic!.specReviewIssues[1]!.foundAtTurn).toBe(1);
+  });
+
+  it("fixSpecReviewIssue 标记 fixed + 记 resolution", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendSpecReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "spec 缺 FR", dimension: "completeness" },
+      ]),
+    );
+
+    store.transaction(() =>
+      store.fixSpecReviewIssue("cw-test-topic", "SR1", {
+        resolution: "补了 FR-3 章节",
+        fixedAtTurn: 2,
+      }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    const issue = topic!.specReviewIssues[0]!;
+    expect(issue.status).toBe("fixed");
+    expect(issue.fix).toBeDefined();
+    expect(issue.fix!.resolution).toBe("补了 FR-3 章节");
+    expect(issue.fix!.fixedAtTurn).toBe(2);
+    // commitHash 可选，spec 修复未传 → undefined
+    expect(issue.fix!.commitHash).toBeUndefined();
+  });
+
+  it("incSpecReviewTurn 递增", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    expect(store.loadTopic("cw-test-topic")!.specReviewTurn).toBe(0);
+    store.transaction(() => store.incSpecReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.specReviewTurn).toBe(1);
+    store.transaction(() => store.incSpecReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.specReviewTurn).toBe(2);
+  });
+
+  it("appendPlanReviewIssues 分配 PR 前缀 id + foundAtTurn", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const issues: ReviewIssueSubmission[] = [
+      { severity: "must-fix", description: "wave 未覆盖 FR", dimension: "coverage", ref: "W2" },
+      { severity: "nit", description: "架构分层不清", dimension: "architecture" },
+    ];
+    store.transaction(() => store.appendPlanReviewIssues("cw-test-topic", 1, issues));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.planReviewIssues).toHaveLength(2);
+    expect(topic!.planReviewIssues[0]!.id).toBe("PR1");
+    expect(topic!.planReviewIssues[0]!.status).toBe("open");
+    expect(topic!.planReviewIssues[0]!.foundAtTurn).toBe(1);
+    expect(topic!.planReviewIssues[0]!.dimension).toBe("coverage");
+    expect(topic!.planReviewIssues[0]!.ref).toBe("W2");
+    expect(topic!.planReviewIssues[1]!.id).toBe("PR2");
+    expect(topic!.planReviewIssues[1]!.foundAtTurn).toBe(1);
+  });
+
+  it("fixPlanReviewIssue 标记 fixed", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendPlanReviewIssues("cw-test-topic", 1, [
+        { severity: "should-fix", description: "wave 缺依赖", dimension: "feasibility" },
+      ]),
+    );
+
+    store.transaction(() =>
+      store.fixPlanReviewIssue("cw-test-topic", "PR1", {
+        commitHash: "abc123",
+        resolution: "补了 dependsOn",
+        fixedAtTurn: 1,
+      }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    const issue = topic!.planReviewIssues[0]!;
+    expect(issue.status).toBe("fixed");
+    expect(issue.fix!.commitHash).toBe("abc123");
+    expect(issue.fix!.resolution).toBe("补了 dependsOn");
+    expect(issue.fix!.fixedAtTurn).toBe(1);
+  });
+
+  it("incPlanReviewTurn 递增", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    expect(store.loadTopic("cw-test-topic")!.planReviewTurn).toBe(0);
+    store.transaction(() => store.incPlanReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.planReviewTurn).toBe(1);
+    store.transaction(() => store.incPlanReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.planReviewTurn).toBe(2);
+  });
+});

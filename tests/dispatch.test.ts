@@ -978,6 +978,76 @@ describe("dispatch closeout（U30）", () => {
     expect(topic!.evidence!.coverage).toBeDefined();
     expect(topic!.evidence!.coverage).toBe(1);
   });
+
+  it("AC-5: artifacts 记录了 review.path 但文件不存在 → closeout gate fail（artifacts-exist）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "u30-artifacts-fail", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
+    passTddPlanGate(store, topicId);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    passReviewGate(store, topicId);
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
+      },
+      deps,
+    );
+    // 推进到 retrospected（retrospect gate pass，topicDir 存在）
+    const retrospectDir = join(tmpDir, ".xyz-harness", "u30-artifacts-fail");
+    mkdirSync(retrospectDir, { recursive: true });
+    const retrospectPath = join(retrospectDir, "retrospect.md");
+    writeFileSync(retrospectPath, "# Retrospect\n\n复盘内容");
+    dispatch(
+      {
+        action: "retrospect",
+        topicId,
+        retrospectPath,
+        retrospectData: { knownRisks: [], processIssues: [] },
+      },
+      deps,
+    );
+    expect(store.loadTopic(topicId)!.status).toBe("retrospected");
+
+    // 在 store 里设 artifacts.review.path 指向不存在的文件（模拟 review.md 被删除）
+    store.transaction(() => {
+      store.setArtifacts(topicId, {
+        review: { path: "/nonexistent/review.md", at: "2026-01-01T00:00:00.000Z" },
+      });
+    });
+
+    // closeout 应 gate fail（artifacts-exist），status 不变（仍 retrospected）
+    const result = dispatch({ action: "closeout", topicId }, deps);
+    expect(result.status).toBe("retrospected");
+    expect(result.gatePassed.closeout).toBeFalsy();
+    const mustFix = (result as Record<string, unknown>).mustFix;
+    expect(mustFix).toBeDefined();
+    expect(String(mustFix)).toContain("review");
+    expect(String(mustFix)).toContain("nonexistent");
+    // nextAction 指回 closeout retry
+    expect(result.nextAction.action).toBe("closeout");
+
+    // gateHistory 有 closeout phase 的 fail 记录（gate=artifacts-exist）
+    const topic = store.loadTopic(topicId);
+    const failEntries = topic!.gateHistory.filter(
+      (g) => g.phase === "closeout" && g.gate === "artifacts-exist" && g.result === "fail",
+    );
+    expect(failEntries.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // ── 补充：guard 拒绝路径（GuardError） ──────────────────────
@@ -1427,6 +1497,58 @@ describe("dispatch replan --test（testCases 更新）", () => {
   });
 });
 
+// ── SF-1: replan --plan 重置 plan_review loop ─────────────────
+
+describe("dispatch replan --plan 重置 planReviewLoop（SF-1）", () => {
+  it("SF-1: replan --plan 重置 planReviewIssues/planReviewTurn（清空 + 归零）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "replan-plan-reset", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
+    passTddPlanGate(store, topicId);
+
+    // 注入 planReviewIssues + planReviewTurn（模拟走过 plan_review loop）
+    store.transaction(() => {
+      store.appendPlanReviewIssues(topicId, 1, [
+        { severity: "must-fix", description: "wave 缺依赖", dimension: "coverage", ref: "W1" },
+        { severity: "nit", description: "命名问题", dimension: "architecture" },
+      ]);
+      store.incPlanReviewTurn(topicId);
+    });
+    expect(store.loadTopic(topicId)!.planReviewIssues).toHaveLength(2);
+    expect(store.loadTopic(topicId)!.planReviewTurn).toBe(1);
+
+    // replan --plan：追加一个未 committed 的 wave（保留 W1）+ 重置 plan_review loop
+    const newPlan = {
+      format: "lite",
+      objective: "obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
+      ],
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+      ],
+    };
+    dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
+
+    // replan --plan 后 planReviewIssues 清空、planReviewTurn 归零
+    const topic = store.loadTopic(topicId);
+    expect(topic!.planReviewIssues).toEqual([]);
+    expect(topic!.planReviewTurn).toBe(0);
+    // 同时 review loop 也被重置（plan 改了，代码会变）
+    expect(topic!.reviewIssues).toEqual([]);
+    expect(topic!.reviewTurn).toBe(0);
+  });
+});
+
 // ── dispatch clarify ───────────────────────────────────────
 
 describe("dispatch clarify", () => {
@@ -1659,6 +1781,35 @@ describe("dispatch clarify", () => {
     expect(topic!.clarifyRecords[1]!.id).toBe("CL2");
     // status 仍 created（progressive 不流转）
     expect(topic!.status).toBe("created");
+  });
+
+  it("AC-9: --replaceSpec flag 提供但 clarifyJson 无 specSections → result 含 warning（不阻断）", () => {
+    const { deps } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "clarify-replacespec-warn", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+
+    // 提交一条带 replaceSpec 但 clarifyJson 无 specSections 的 clarify
+    const result = dispatch(
+      {
+        action: "clarify",
+        topicId,
+        clarifyJson: makeValidClarifyJson({ answer: "迁移 SQLite" }),
+        replaceSpec: "想替换但没带内容",
+      },
+      deps,
+    );
+
+    // FR-9: warning 不阻断 gate（status 仍推进，clarifyRecord 正常写入）
+    expect(result.status).toBe("created");
+    expect((result as Record<string, unknown>).warning).toBeDefined();
+    expect(
+      String((result as Record<string, unknown>).warning),
+    ).toContain("replaceSpec 已设但未提供 specSections");
+    // mustFix 不应触发（gate pass，只是 warning）
+    expect((result as Record<string, unknown>).mustFix).toBeUndefined();
   });
 });
 
