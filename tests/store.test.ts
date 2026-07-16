@@ -256,26 +256,31 @@ describe("store 补充覆盖", () => {
 // ── DAO: setArtifacts merge 语义 ────────────────────────────
 
 describe("setArtifacts merge 语义", () => {
-  it("先 set reviewPath 再 set retrospectPath → 两者共存（merge 而非覆盖）", () => {
+  it("先 set review 再 set retrospect → 两者共存（merge 而非覆盖，FR-1 嵌套 Artifacts）", () => {
     const store = makeStore();
     store.transaction(() => store.insertTopic(makeTopic()));
 
     store.transaction(() => {
       store.setArtifacts("cw-test-topic", {
-        reviewPath: "/tmp/review.md",
-        reviewAt: "2026-01-01T00:00:00.000Z",
+        review: {
+          path: "/tmp/review.md",
+          at: "2026-01-01T00:00:00.000Z",
+        },
       });
     });
     store.transaction(() => {
       store.setArtifacts("cw-test-topic", {
-        retrospectPath: "/tmp/retrospect.md",
-        retrospectAt: "2026-01-02T00:00:00.000Z",
+        retrospect: {
+          path: "/tmp/retrospect.md",
+          at: "2026-01-02T00:00:00.000Z",
+        },
       });
     });
 
     const topic = store.loadTopic("cw-test-topic");
-    expect(topic!.artifacts?.reviewPath).toBe("/tmp/review.md");
-    expect(topic!.artifacts?.retrospectPath).toBe("/tmp/retrospect.md");
+    // FR-1: Artifacts 改为嵌套结构 { review: {path, at}, retrospect: {path, at} }
+    expect(topic!.artifacts?.review?.path).toBe("/tmp/review.md");
+    expect(topic!.artifacts?.retrospect?.path).toBe("/tmp/retrospect.md");
   });
 });
 
@@ -849,8 +854,8 @@ describe("appendReviewIssues", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
 
     const issues: ReviewIssueSubmission[] = [
-      { severity: "must-fix", description: "缺少错误处理", file: "src/app.ts:10" },
-      { severity: "nit", description: "命名拼写" },
+      { severity: "must-fix", description: "缺少错误处理", dimension: "error-handling", ref: "src/app.ts:10" },
+      { severity: "nit", description: "命名拼写", dimension: "design-consistency" },
     ];
     store.transaction(() => store.appendReviewIssues("cw-test-topic", 1, issues));
 
@@ -860,11 +865,14 @@ describe("appendReviewIssues", () => {
     expect(topic!.reviewIssues[0]!.status).toBe("open");
     expect(topic!.reviewIssues[0]!.foundAtTurn).toBe(1);
     expect(topic!.reviewIssues[0]!.severity).toBe("must-fix");
-    expect(topic!.reviewIssues[0]!.file).toBe("src/app.ts:10");
+    // FR-3: ReviewIssue 升级 — dimension 必填，file→ref
+    expect(topic!.reviewIssues[0]!.dimension).toBe("error-handling");
+    expect(topic!.reviewIssues[0]!.ref).toBe("src/app.ts:10");
     expect(topic!.reviewIssues[1]!.id).toBe("R2");
     expect(topic!.reviewIssues[1]!.foundAtTurn).toBe(1);
     expect(topic!.reviewIssues[1]!.severity).toBe("nit");
-    expect(topic!.reviewIssues[1]!.file).toBeUndefined();
+    expect(topic!.reviewIssues[1]!.dimension).toBe("design-consistency");
+    expect(topic!.reviewIssues[1]!.ref).toBeUndefined();
   });
 
   it("多轮追加：第 2 轮追加 1 个 → id 自增到 R3, foundAtTurn=2", () => {

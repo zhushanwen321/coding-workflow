@@ -61,9 +61,9 @@ describe("checkLinear / guard（U1-U5）", () => {
     expect(TRANSITIONS.create.nextStatus).toBe("created");
   });
 
-  it("U2: plan action, status=clarify_confirmed → guard 通过（FR-1 新增前置 gate）", () => {
-    // FR-1: plan 的 expectedStatuses 从 [created] 改为 [clarify_confirmed]
-    const verdict = checkLinear("plan", "clarify_confirmed");
+  it("U2: plan action, status=spec_reviewed → guard 通过（FR-4 spec_review 前置）", () => {
+    // FR-4: plan 的前置从 clarify_confirmed 改为 spec_reviewed
+    const verdict = checkLinear("plan", "spec_reviewed");
     expect(verdict.ok).toBe(true);
   });
 
@@ -256,7 +256,7 @@ describe("buildNextAction（U9-U11）", () => {
     // 必须先 clarify → confirm_clarify → plan
   });
 
-  it("U10: plan gate pass 后 → nextAction.action=tdd_plan, waves 列表返回", () => {
+  it("U10: plan gate pass 后 → nextAction.action=plan_review（FR-5 新增 plan_review 前置）, waves 列表返回", () => {
     const topic = makeTopic({
       status: "planned",
       waves: [
@@ -276,8 +276,8 @@ describe("buildNextAction（U9-U11）", () => {
       ],
     });
     const na = buildNextAction("plan", topic);
-    // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
-    expect(na.action).toBe("tdd_plan");
+    // FR-5: plan gate 通过 → 进入 plan_review 阶段（不再直接到 tdd_plan）
+    expect(na.action).toBe("plan_review");
     expect(na.waves).toBeDefined();
     expect(na.waves).toHaveLength(2);
     expect(na.waves![0]).toEqual({ id: "W1", committed: false });
@@ -380,12 +380,12 @@ describe("buildNextAction（U9-U11）", () => {
     expect(verdict.ok).toBe(false);
   });
 
-  it("replan 后 nextAction 指向 tdd_plan（不是 dev）", () => {
-    // 回归测试：replan 后 status=planned，nextAction 必须指向 tdd_plan
-    // 否则 agent 调 cw dev 会 illegal_transition（dev 不接受 planned）
+  it("replan 后 nextAction 指向 plan_review（status=planned 时, D7 改造）", () => {
+    // D7: replan 后 status=planned → nextAction 指向 plan_review（FR-5 新增 plan_review 前置）
+    // 不再直接指向 tdd_plan（tdd_plan 前置改为 plan_reviewed）
     const topic = makeTopic({ status: "planned" });
     const na = buildNextAction("replan", topic);
-    expect(na.action).toBe("tdd_plan");
+    expect(na.action).toBe("plan_review");
   });
 
   it("U10 补充: plan gate fail → nextAction 指回 plan retry", () => {
@@ -495,10 +495,16 @@ describe("状态机线性转换完整性", () => {
 // ── tdd_plan 转换 + guard ───────────────────────────────────
 
 describe("tdd_plan 转换与 guard", () => {
-  it("tdd_plan 从 planned 调 → guard 通过, nextStatus=tdd_inited", () => {
-    expect(checkLinear("tdd_plan", "planned").ok).toBe(true);
+  it("tdd_plan 从 plan_reviewed 调 → guard 通过, nextStatus=tdd_inited（FR-5 plan_review 前置）", () => {
+    // FR-5: tdd_plan 的前置从 planned 改为 plan_reviewed
+    expect(checkLinear("tdd_plan", "plan_reviewed").ok).toBe(true);
     expect(TRANSITIONS.tdd_plan.nextStatus).toBe("tdd_inited");
-    expect(computeNextStatus("tdd_plan", "planned")).toBe("tdd_inited");
+    expect(computeNextStatus("tdd_plan", "plan_reviewed")).toBe("tdd_inited");
+  });
+
+  it("tdd_plan 从 planned 调 → guard 拒绝（FR-5 后必须先过 plan_review）", () => {
+    // FR-5 改变了 tdd_plan 的前置：planned 不再合法，需先 plan_review
+    expect(checkLinear("tdd_plan", "planned").ok).toBe(false);
   });
 
   it("tdd_plan 从 created 调 → guard 拒绝(illegal_transition)", () => {
