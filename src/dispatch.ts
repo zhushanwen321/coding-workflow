@@ -8,8 +8,10 @@
  * - 砍掉 ClarifyParams / DetailParams 分支（mid 专属）
  * - guard 从三重（checkLinear → checkPhaseCascade → checkCacheConsistency）砍为单重（checkLinear）
  * - guard 签名从 (action, topic, store) 改为 (action, topic)——纵深防御 guard 不再需要 store
- * - GuardError.code 类型从 GuardErrorCode 联合（illegal_transition/phase_incomplete/cache_inconsistent）
- *   缩窄为只含 "illegal_transition"（types.ts 已定义）
+ * - GuardError.code 现含两值：illegal_transition（checkLinear 产生，status 跳步）+
+ *   phase_prerequisite_failed（handler 层 assertPhasePrerequisite 产生，前序阶段未完成）。
+ *   guard 层只产生 illegal_transition；phase_prerequisite_failed 在各 handler 开头检查前序完成度时抛出。
+ *   两者正交：guard 在 handler 前执行，status 非法则 handler 根本进不去。
  *
  * 数据流：params → loadTopic（非 create）→ guard → handler → ActionResult。
  * 失败路径：

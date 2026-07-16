@@ -707,13 +707,23 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         // 打破 test↔test_fix 死循环：blind .action follower 不会永久振荡。
         // retrospect gate 只验文件存在性，不查 testCases 全 pass，所以带失败 case 进复盘合法。
         // retrospect 正是"复盘为什么没过 + 记录 knownRisks"的场所。
+        const passedCount = topic.testCases.filter((c) => c.status === "passed").length;
+        const coveragePct = topic.testCases.length > 0
+          ? Math.round((passedCount / topic.testCases.length) * 100)
+          : 0;
+        // 逃生阀可被 test_fix 刷满 testTurn 但无 case 真正 passed（coverage=0%），此时补告警。
+        const lowCoverageWarning = coveragePct < 50
+          ? `\n⚠️ 当前 coverage=${coveragePct}%（${passedCount}/${topic.testCases.length}），建议 ask_user 人工审查或调 cw(replan) 重新评估，而非带极低覆盖率进 closeout。`
+          : "";
         return {
           action: "retrospect",
           guidance:
             `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${topic.testTurn}），` +
             `${failedCount} 个 case 仍未通过。强制进复盘阶段——在 retrospect 中记录未通过原因和 knownRisks，` +
             `由用户决定是否接受或调 cw(replan) 调整计划。\n` +
-            `注意：可带未全过的 test case 进入 closeout，closeout 的 coverage（通过率 = passed/total）会如实记录到 evidence，不强制 100% passed。\n\n${RETROSPECT_PROMPT}`,
+            `注意：可带未全过的 test case 进入 closeout，closeout 的 coverage（通过率 = passed/total）会如实记录到 evidence，不强制 100% passed。` +
+            lowCoverageWarning +
+            `\n\n${RETROSPECT_PROMPT}`,
           testCases: testCaseProgress(topic),
           alternatives: [replanAlternative()],
         };

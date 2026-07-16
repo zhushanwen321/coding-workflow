@@ -95,6 +95,10 @@ import {
  *
  * 未通过时 throw GuardError(code=phase_prerequisite_failed)，status 不流转、不进 gateHistory
  * （走 guard 拒绝路径，非 gate fail 路径——不留 retry 的 nextAction，agent 需回去补前置阶段）。
+ *
+ * 设计取舍（WARNING-3）：不记 gateHistory 意味着越权尝试在 closeout 的 evidence 快照里不可见。
+ * 这与 illegal_transition（guard 层）历史一致——guard 拒绝都不留痕，只有 gate fail 才记 gateHistory。
+ * 若需审计越权行为，应在 CLI 层写独立 audit log，而非破坏 guard 拒绝的一致性。
  */
 function assertPhasePrerequisite(action: Action, topic: Topic): void {
   switch (action) {
@@ -1076,16 +1080,24 @@ export function handleTest(
   // 防止 agent 选择性提交（如只跑单测跳过 e2e），导致部分 testCase 永远 pending。
   // 不跑的 case 必须在 tdd_plan/replan 阶段就移除，不能在 test 时静默跳过。
   // 校验在事务外做——throw 前不修改任何 testCase。
-  const submittedIds = new Set(params.cases.map((c) => c.caseId));
+  const rawIds = params.cases.map((c) => c.caseId);
+  const submittedIds = new Set(rawIds);
   const expectedIds = new Set(topic.testCases.map((c) => c.id));
+  // 重复 caseId 检查：Set 去重会掩盖重复提交（[{E1},{E1}] 的 Set 大小=1，与单 testCase topic 匹配，
+  // 但事务内循环两次 updateTestCase(E1) 产生脏数据）。用 rawIds.length vs Set.size 捕捉。
+  const duplicates = rawIds.filter(
+    (id, i) => rawIds.indexOf(id) !== i,
+  );
   const missing = [...expectedIds].filter((id) => !submittedIds.has(id));
   const extra = [...submittedIds].filter((id) => !expectedIds.has(id));
-  if (missing.length > 0 || extra.length > 0) {
+  if (duplicates.length > 0 || missing.length > 0 || extra.length > 0) {
     const parts: string[] = [];
+    if (duplicates.length > 0)
+      parts.push(`重复 [${[...new Set(duplicates)].join(", ")}]`);
     if (missing.length > 0) parts.push(`缺失 [${missing.join(", ")}]`);
     if (extra.length > 0) parts.push(`多余 [${extra.join(", ")}]`);
     throw new CwError(
-      `handleTest 的 cases 与 topic.testCases 的 id 集合不一致：${parts.join("，")}。每个 testCase 都必须提交结果（不能选择性跳过）。`,
+      `handleTest 的 cases 与 topic.testCases 的 id 集合不一致：${parts.join("，")}。每个 testCase 必须提交恰好一次结果（不跑的 case 在 tdd_plan/replan 阶段移除，不能在 test 时跳过）。`,
     );
   }
 

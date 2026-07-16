@@ -867,10 +867,10 @@ export class GuardError extends CwError {
   constructor(
     public readonly code: GuardErrorCode,
     public readonly reason: string,
-    /** phase_prerequisite_failed 专属：缺失的前序阶段（如 "dev"）。illegal_transition 时 undefined。 */
-    public readonly missingPhase?: string,
+    /** phase_prerequisite_failed 专属：缺失的前序阶段。illegal_transition 时 undefined。 */
+    public readonly missingPhase?: "dev" | "review" | "test" | "retrospect",
     /** phase_prerequisite_failed 专属：当前 status。 */
-    public readonly currentStatus?: string,
+    public readonly currentStatus?: Status,
   ) {
     super(`${code}: ${reason}`);
     this.name = "GuardError";

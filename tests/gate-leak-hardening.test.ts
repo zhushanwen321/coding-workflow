@@ -15,7 +15,7 @@
  * guidance 不含核心句，handleTest 不做集合校验）。
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -134,7 +134,8 @@ function setupTopic(
     | "developed-committed"
     | "developed-uncommitted"
     | "reviewed"
-    | "tested",
+    | "tested"
+    | "retrospected",
 ): { deps: ActionDeps; store: CwStore; topicId: string } {
   const { deps, store } = makeDeps();
   const createResult = dispatch(
@@ -181,6 +182,28 @@ function setupTopic(
     return { deps, store, topicId };
   }
 
+  // retrospected：test 全过 + retrospect gate 通过
+  if (stopAt === "retrospected") {
+    commitAllWavesAndReachDeveloped(store, topicId, realCommitHash);
+    passReviewGate(store, topicId);
+    store.updateTestCase(topicId, "E1", { status: "passed" });
+    store.updateTestCase(topicId, "E2", { status: "passed" });
+    store.updateStatus(topicId, "tested");
+    store.updateGatePassed(topicId, "test", true);
+    // 推进到 retrospected + retrospect gate pass。
+    // computeGatePassed("retrospect") 查 gateHistory 的 pass 记录（非 gatePassed 缓存），必须 append。
+    store.updateStatus(topicId, "retrospected");
+    store.updateGatePassed(topicId, "retrospect", true);
+    store.appendGateHistory(topicId, {
+      phase: "retrospect",
+      action: "retrospect",
+      gate: "file-exists+non-empty",
+      result: "pass",
+      progressive: false,
+    });
+    return { deps, store, topicId };
+  }
+
   return { deps, store, topicId };
 }
 
@@ -211,7 +234,7 @@ describe("A-纵向 gate 链：前序未完成时 throw phase_prerequisite_failed
           action: "review",
           topicId,
           reviewPath,
-          issues: "[]",
+          issues: [],
         },
         deps,
       ),
@@ -346,7 +369,7 @@ describe("A-逃生阀：turn-limit 达上限时放行越权", () => {
       deps,
     );
     // test 执行成功（不管 case pass/fail，关键是没被前置检查拦住）
-    expect(result.status).not.toBe("reviewed");
+    expect(result.status).toBe("tested");
   });
 });
 
@@ -368,10 +391,10 @@ describe("D-handleTest：params.cases 必须覆盖全部 testCase id", () => {
       ),
     ).toThrow(CwError);
 
-    // 确认 E1 未被更新（throw 前不修改）
+    // 确认 throw 前无副作用：所有 testCase 保持 pending + status 不变 + gateHistory 不变
     const topic = deps.store.loadTopic(topicId);
-    const e1 = topic!.testCases.find((c) => c.id === "E1");
-    expect(e1!.status).toBe("pending");
+    expect(topic!.testCases.every((c) => c.status === "pending")).toBe(true);
+    expect(topic!.status).toBe("reviewed");
   });
 
   it("AC-D1.3: 多余 caseId（params.cases 含未定义的 testCase id）时 throw CwError", () => {
@@ -391,7 +414,7 @@ describe("D-handleTest：params.cases 必须覆盖全部 testCase id", () => {
         },
         deps,
       ),
-    ).toThrow(CwError);
+    ).toThrow(/不一致|多余/);
   });
 });
 
@@ -415,5 +438,146 @@ describe("B-guidance：retrospect 显式说明可带未全过 test closeout", ()
     expect(result.guidance).toContain("closeout");
     // 红灯：当前 guidance 不含「coverage」或「未全过」相关说明
     expect(result.guidance.toLowerCase()).toMatch(/coverage|未全过|未通过.*closeout/);
+  });
+});
+
+// ── 补充：closeout 关卡 + happy path + 重复 caseId + gateHistory + 低 coverage ───
+
+describe("A-closeout 关卡：retrospect gate 未过时 throw", () => {
+  it("AC-closeout: status=retrospected 但 retrospect gate 未过 → cw(closeout) throw phase_prerequisite_failed", () => {
+    const { deps, store, topicId } = setupTopic("tested");
+
+    // 推进到 retrospected 但不写 retrospect gate pass 记录
+    store.updateStatus(topicId, "retrospected");
+    // gatePassed.retrospect 保持 false（无 pass 记录）
+
+    expect(() =>
+      dispatch({ action: "closeout", topicId }, deps),
+    ).toThrowError(
+      expect.objectContaining({ code: "phase_prerequisite_failed" }),
+    );
+  });
+});
+
+describe("A-happy path：前序阶段完成时各关卡正常放行（不 throw）", () => {
+  it("review 关卡 happy path: dev gate=true → cw(review) 正常执行不 throw", () => {
+    const { deps, topicId } = setupTopic("developed-committed");
+    const reviewPath = join(tmpDir, "review.md");
+    writeFileSync(reviewPath, "# review\nplaceholder");
+
+    expect(() =>
+      dispatch(
+        { action: "review", topicId, reviewPath, issues: [] },
+        deps,
+      ),
+    ).not.toThrow();
+  });
+
+  it("test 关卡 happy path: review gate=true 且无 open issue → cw(test) 正常执行", () => {
+    const { deps, topicId } = setupTopic("reviewed");
+
+    const result = dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
+      },
+      deps,
+    );
+    expect(result.status).toBe("tested");
+  });
+
+  it("retrospect 关卡 happy path: test gate=true → cw(retrospect) 正常执行", () => {
+    const { deps, topicId } = setupTopic("tested");
+    const retrospectPath = join(tmpDir, "retrospect.md");
+    writeFileSync(retrospectPath, "# retrospect\nplaceholder");
+
+    expect(() =>
+      dispatch(
+        {
+          action: "retrospect",
+          topicId,
+          retrospectPath,
+          retrospectData: { knownRisks: [], processIssues: [] },
+        },
+        deps,
+      ),
+    ).not.toThrow();
+  });
+
+  it("closeout 关卡 happy path: retrospect gate=true → cw(closeout) 正常执行", () => {
+    const { deps, topicId } = setupTopic("retrospected");
+    // closeout 的 topicDir-exists gate 要求 topicDir 存在
+    const topicDir = join(tmpDir, ".xyz-harness", "leak-test");
+    mkdirSync(topicDir, { recursive: true });
+
+    const result = dispatch({ action: "closeout", topicId }, deps);
+    expect(result.status).toBe("closed");
+  });
+});
+
+describe("D-重复 caseId + gateHistory 不变 + 低 coverage 告警", () => {
+  it("CRITICAL-fix: 重复 caseId（params.cases 含同一个 id 两次）→ throw CwError", () => {
+    const { deps, store, topicId } = setupTopic("reviewed");
+
+    // topic 有 E1+E2，提交 E1 两次 + E2 一次（E1 重复）
+    expect(() =>
+      dispatch(
+        {
+          action: "test",
+          topicId,
+          cases: [
+            { caseId: "E1", actual: { text: "expected-output" } },
+            { caseId: "E1", actual: { text: "expected-output" } },
+            { caseId: "E2", actual: { text: "real-output" } },
+          ],
+        },
+        deps,
+      ),
+    ).toThrow(/重复/);
+
+    // 确认无副作用
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testCases.every((c) => c.status === "pending")).toBe(true);
+  });
+
+  it("W5: phase_prerequisite_failed throw 后 gateHistory 不变（不记 guard 拒绝）", () => {
+    const { deps, store, topicId } = setupTopic("developed-uncommitted");
+    const historyBefore = store.loadTopic(topicId)!.gateHistory.length;
+
+    const reviewPath = join(tmpDir, "review.md");
+    writeFileSync(reviewPath, "# review\nplaceholder");
+
+    expect(() =>
+      dispatch(
+        { action: "review", topicId, reviewPath, issues: [] },
+        deps,
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "phase_prerequisite_failed" }),
+    );
+
+    // guard 拒绝不进 gateHistory（与 gate fail 路径区分）
+    const historyAfter = store.loadTopic(topicId)!.gateHistory.length;
+    expect(historyAfter).toBe(historyBefore);
+  });
+
+  it("W2-低coverage告警: test 全 pending + testTurn 达上限 → guidance 含低 coverage 告警", () => {
+    const { store, topicId } = setupTopic("reviewed");
+
+    // 所有 testCase 保持 pending（coverage=0%），testTurn 达上限
+    store.updateStatus(topicId, "tested");
+    for (let i = 0; i < TEST_TURN_LIMIT; i++) {
+      store.incTestTurn(topicId);
+    }
+
+    const topic = store.loadTopic(topicId) as Topic;
+    const result = buildNextAction("test", topic);
+
+    // 低 coverage（<50%）应触发告警文案
+    expect(result.guidance).toMatch(/coverage=0%|ask_user/);
   });
 });
