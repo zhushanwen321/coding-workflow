@@ -37,18 +37,26 @@ import {
   handleCreate,
   handleDev,
   handlePlan,
+  handlePlanReview,
+  handlePlanReviewFix,
   handleReplan,
   handleRetrospect,
   handleReview,
   handleReviewFix,
+  handleSpecReview,
+  handleSpecReviewFix,
   handleTddPlan,
   handleTest,
   handleTestFix,
   type PlanParams,
+  type PlanReviewParams,
+  type PlanReviewFixParams,
   type ReplanParams,
   type RetrospectParams,
   type ReviewFixParams,
   type ReviewParams,
+  type SpecReviewParams,
+  type SpecReviewFixParams,
   type TddPlanParams,
   type TestFixParams,
   type TestParams,
@@ -122,6 +130,10 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleClarify(params as ClarifyParams, topic, deps);
     case "plan":
       return handlePlan(params as PlanParams, topic, deps);
+    case "plan_review":
+      return handlePlanReview(params as PlanReviewParams, topic, deps);
+    case "plan_review_fix":
+      return handlePlanReviewFix(params as PlanReviewFixParams, topic, deps);
     case "tdd_plan":
       return handleTddPlan(params as TddPlanParams, topic, deps);
     case "dev":
@@ -140,6 +152,10 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleCloseout(params as CloseoutParams, topic, deps);
     case "confirm_clarify":
       return handleConfirmClarify(params as ConfirmClarifyParams, topic, deps);
+    case "spec_review":
+      return handleSpecReview(params as SpecReviewParams, topic, deps);
+    case "spec_review_fix":
+      return handleSpecReviewFix(params as SpecReviewFixParams, topic, deps);
     case "abort":
       return handleAbort(params as AbortParams, topic, deps);
     case "replan":

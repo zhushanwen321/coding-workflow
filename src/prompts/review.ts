@@ -18,25 +18,37 @@ export const REVIEW_PROMPT = `
 
 ## 审查流程
 
-1. 做代码审查（按下方维度）
+1. 做代码审查（按下方维度，推荐用禁读重建法查 design-consistency）
 2. 把发现的问题整理成结构化 issues
 3. 写 review.md（含审查结论）
 4. 提交：
 
     echo '<issuesJson>' | cw review --topicId <topicId> --reviewPath <path>
 
+## 审查方法：禁读重建（design-consistency 维度专用）
+
+design-consistency（设计一致性）维度最易漏——直接读实现容易「顺着代码思路走」，
+看不出实现偏离了 spec。强制用「禁读重建」对冲：
+
+1. 派一个 fresh subagent，**不读**实现代码
+2. 只给它 spec 的 functionalRequirements + acceptanceCriteria
+3. 让它从 spec 反查「实现完整性」——每个 FR/AC 对应的代码路径是否存在、行为是否正确
+4. 把反查结果与实际实现 **diff**——实现遗漏/偏离 spec 的点就是审查发现
+
+其余维度（类型安全/错误处理/边界条件/测试质量/plan 完成度）直接读代码审查即可。
+
 ## 审查维度
 
-按以下维度审查（可用 subagent 分工，也可主 agent 自审）：
+按以下维度审查（可用 subagent 分工，也可主 agent 自审）。dimension 字段必填，取 6 值之一：
 
-| 维度 | 审什么 |
-|------|--------|
-| 类型安全 | 禁 any、schema 同步、CwError vs Error 边界、type-only import |
-| 错误处理 | catch 不吞异常、exit code 映射、错误消息可读性 |
-| 边界条件 | 空数组/缺字段/非法 JSON/文件不存在 |
-| 测试质量 | 测试能否发现真 bug（见下方「测试质量审查」专节，不只是覆盖率数字） |
-| plan 完成度 | dev-plan.json 的 changes 是否全部落地 |
-| 设计一致性 | spec 的 FR/AC 是否被正确实现（category=design-consistency） |
+| dimension | 维度 | 审什么 |
+|-----------|------|--------|
+| \`type-safety\` | 类型安全 | 禁 any、schema 同步、CwError vs Error 边界、type-only import |
+| \`error-handling\` | 错误处理 | catch 不吞异常、exit code 映射、错误消息可读性 |
+| \`edge-case\` | 边界条件 | 空数组/缺字段/非法 JSON/文件不存在 |
+| \`test-coverage\` | 测试质量 | 测试能否发现真 bug（见下方「测试质量审查」专节，不只是覆盖率数字） |
+| \`plan-completeness\` | plan 完成度 | dev-plan.json 的 changes 是否全部落地 |
+| \`design-consistency\` | 设计一致性 | spec 的 FR/AC 是否被正确实现（用禁读重建法） |
 
 ### 测试质量审查（review 阶段是测试跑之前的最后校验窗口）
 
@@ -58,15 +70,15 @@ issues 通过 stdin 传入，是 JSON 数组，每个元素是一个 issue：
     echo '[
       {
         "severity": "must-fix",
-        "category": "edge-case",
+        "dimension": "edge-case",
         "description": "store.ts 的 appendReviewIssues 没有做 turn 校验",
-        "file": "src/store.ts:142"
+        "ref": "src/store.ts:142"
       },
       {
         "severity": "should-fix",
-        "category": "error-handling",
+        "dimension": "error-handling",
         "description": "错误消息缺用法示例",
-        "file": "src/cli.ts:268"
+        "ref": "src/cli.ts:268"
       }
     ]' | cw review --topicId <topicId> --reviewPath <path>
 
@@ -85,18 +97,26 @@ issues 通过 stdin 传入，是 JSON 数组，每个元素是一个 issue：
 
 **无问题时传空数组**：\`echo '[]' | cw review ...\`。空数组 = 审查通过，直接进 test。
 
-### category 字段
+### dimension 字段（必填）
 
-可选，取以下 6 个值之一（对应审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
+FR-6 升级：原可选的 \`category\` 字段改为必填的 \`dimension\`（命名也更准确——它就是审查维度本身）。
+取以下 6 个值之一（对应代码审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
 
-| category | 对应维度 |
-|----------|----------|
+| dimension | 对应维度 |
+|-----------|----------|
 | \`type-safety\` | 类型安全 |
 | \`error-handling\` | 错误处理 |
 | \`edge-case\` | 边界条件 |
 | \`test-coverage\` | 测试覆盖 |
 | \`plan-completeness\` | plan 完成度 |
-| \`design-consistency\` | 设计一致性（核对 spec FR/AC） |
+| \`design-consistency\` | 设计一致性（核对 spec FR/AC，推荐禁读重建法） |
+
+> dimension 必填——不填会被 gate 的 schema 校验拒绝（reviewIssueCheck 逐元素校验）。
+
+### ref 字段（可选）
+
+FR-3 泛化：原 \`file\` 字段（限代码路径）改为 \`ref\`（泛化引用）。代码审查填文件路径（如 \`"src/store.ts:142"\`）。
+spec/plan 审查（spec_review/plan_review）填条目 ID（如 \`"FR-3"\` / \`"W2"\`）。三阶段共用此字段。
 
 ## review fix loop
 
