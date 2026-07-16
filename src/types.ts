@@ -6,7 +6,7 @@
  *
  * 与旧版的差异（重构 = 推倒重建）：
  * - tier 字段彻底砍掉（lite-only 硬编码，不再分档）
- * - GuardErrorCode 只剩 illegal_transition（单重 guard，砍 phase_incomplete / cache_inconsistent）
+ * - GuardErrorCode 含 illegal_transition（跨阶段跳步）+ phase_prerequisite_failed（前序阶段未完成，handler 层前置检查）
  * - Action 砍 clarify / detail（mid 专属）
  * - Status 砍 clarified / detailed（mid 专属）
  * - TestCase.layer 砍 unit/integration/e2e/perf-chaos（mid 专属），只留 mock/real
@@ -769,10 +769,12 @@ export interface TestRunnerConfig {
 // ── guard 返回 ──────────────────────────────────────────────
 
 /**
- * 单重 guard 错误码。只留 illegal_transition（跨阶段跳步）。
- * 砍掉 phase_incomplete / cache_inconsistent（纵深防御 guard 本次不做）。
+ * guard 错误码。
+ * - illegal_transition：status 跳步（checkLinear 产生，状态序非法）
+ * - phase_prerequisite_failed：status 合法但前序阶段未完成（handler 层前置检查产生，
+ *   如 developed 但 dev gate=false 时调 review）。两者正交，互补。
  */
-export type GuardErrorCode = "illegal_transition";
+export type GuardErrorCode = "illegal_transition" | "phase_prerequisite_failed";
 
 export type GuardVerdict = { ok: true } | { ok: false; code: GuardErrorCode; reason: string };
 
@@ -848,5 +850,29 @@ export class CwError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CwError";
+  }
+}
+
+/**
+ * GuardError — guard / 前置检查拒绝时抛出，extends CwError 走 exit 1。
+ *
+ * code 两种：
+ * - illegal_transition：status 跳步（checkLinear 产生）
+ * - phase_prerequisite_failed：status 合法但前序阶段未完成（handler 前置检查产生）
+ *
+ * 定义在 types.ts（而非 dispatch.ts）以避免 actions↔dispatch 循环依赖：
+ * actions.ts 的 handler 需要抛 phase_prerequisite_failed，而 dispatch.ts import actions.ts。
+ */
+export class GuardError extends CwError {
+  constructor(
+    public readonly code: GuardErrorCode,
+    public readonly reason: string,
+    /** phase_prerequisite_failed 专属：缺失的前序阶段（如 "dev"）。illegal_transition 时 undefined。 */
+    public readonly missingPhase?: string,
+    /** phase_prerequisite_failed 专属：当前 status。 */
+    public readonly currentStatus?: string,
+  ) {
+    super(`${code}: ${reason}`);
+    this.name = "GuardError";
   }
 }

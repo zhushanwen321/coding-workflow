@@ -66,27 +66,18 @@ import {
   type ActionDeps,
   type ActionResult,
   CwError,
-  type GuardErrorCode,
+  GuardError,
   type Topic,
 } from "./types.js";
 
 // ── GuardError（guard 拒绝，extends CwError 走 exit 1）──────
 
 /**
- * GuardError — guard 拒绝时抛出。
- *
- * code 仅 "illegal_transition"（GuardErrorCode 单值，纵深防御 guard 砍掉后只剩这一种）。
- * extends CwError，CLI 层 mapExitCode 用 instanceof CwError 统一判定 exit code=1。
+ * GuardError 从 types.ts re-export（定义移至 types.ts 以打破 actions↔dispatch 循环依赖：
+ * actions.ts handler 需抛 phase_prerequisite_failed，而 dispatch.ts import actions.ts）。
+ * 外部 API 不变：`import { GuardError } from "./dispatch.js"` 仍可用。
  */
-export class GuardError extends CwError {
-  constructor(
-    public readonly code: GuardErrorCode,
-    public readonly reason: string,
-  ) {
-    super(`${code}: ${reason}`);
-    this.name = "GuardError";
-  }
-}
+export { GuardError } from "./types.js";
 
 // ── dispatch（统一入口）─────────────────────────────────────
 
