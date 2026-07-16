@@ -423,7 +423,10 @@ describe("dispatch test（U22-U24c）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "wrong-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -440,7 +443,7 @@ describe("dispatch test（U22-U24c）", () => {
     expect(caseResults[0]!.status).toBe("failed");
   });
 
-  it("U24: caseId 不存在于 topic → throw not found", () => {
+  it("U24: caseId 不存在于 topic → throw（D 全覆盖校验：多余 id）", () => {
     const { topicId, deps } = setupTestTopic();
     expect(() =>
       dispatch(
@@ -451,7 +454,7 @@ describe("dispatch test（U22-U24c）", () => {
         },
         deps,
       ),
-    ).toThrow(/case not found/);
+    ).toThrow(/不一致|多余/);
   });
 
   it("U24b: requiresScreenshot=true 但 screenshotPath 缺失 → status=failed", () => {
@@ -500,12 +503,15 @@ describe("dispatch test（U22-U24c）", () => {
     // 新状态机：test 要求 status=reviewed，dev 后先过 review gate。
     passReviewGate(store, topicId);
 
-    // 不提供 screenshotPath
+    // 不提供 screenshotPath（E1 requiresScreenshot=true）
     const result = dispatch(
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+        cases: [
+          { caseId: "U1", actual: { text: "mock-output" } },
+          { caseId: "E1", actual: { text: "expected-output" } },
+        ],
       },
       deps,
     );
@@ -592,7 +598,10 @@ describe("dispatch test（U22-U24c）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -603,7 +612,10 @@ describe("dispatch test（U22-U24c）", () => {
         {
           action: "test",
           topicId,
-          cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+          cases: [
+            { caseId: "E1", actual: { text: "expected-output" } },
+            { caseId: "E2", actual: { text: "real-output" } },
+          ],
         },
         deps,
       ),
@@ -778,7 +790,10 @@ describe("dispatch replan（U25-U29）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -812,7 +827,10 @@ describe("dispatch replan（U25-U29）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -890,7 +908,10 @@ describe("dispatch closeout（U30）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "expected-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "expected-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -2009,7 +2030,10 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "wrong-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -2027,7 +2051,10 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "wrong-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -2066,7 +2093,10 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "wrong-output" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "wrong-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );
@@ -2083,7 +2113,10 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
       {
         action: "test",
         topicId,
-        cases: [{ caseId: "E1", actual: { text: "still-wrong" } }],
+        cases: [
+          { caseId: "E1", actual: { text: "still-wrong" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
       },
       deps,
     );

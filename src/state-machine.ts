@@ -37,8 +37,8 @@ const GATE_RETRY_LIMIT = 5;
  * review_fix/test_fix 的 loop 超过此阈值后 nextAction 应告警（W3+ 在 buildNextAction 接入）。
  * 此处先定义常量供后续 Wave 使用。
  */
-const REVIEW_TURN_LIMIT = 3;
-const TEST_TURN_LIMIT = 5;
+export const REVIEW_TURN_LIMIT = 3;
+export const TEST_TURN_LIMIT = 5;
 const SPEC_REVIEW_TURN_LIMIT = 2;
 const PLAN_REVIEW_TURN_LIMIT = 2;
 
@@ -712,7 +712,8 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           guidance:
             `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${topic.testTurn}），` +
             `${failedCount} 个 case 仍未通过。强制进复盘阶段——在 retrospect 中记录未通过原因和 knownRisks，` +
-            `由用户决定是否接受或调 cw(replan) 调整计划。\n\n${RETROSPECT_PROMPT}`,
+            `由用户决定是否接受或调 cw(replan) 调整计划。\n` +
+            `注意：可带未全过的 test case 进入 closeout，closeout 的 coverage（通过率 = passed/total）会如实记录到 evidence，不强制 100% passed。\n\n${RETROSPECT_PROMPT}`,
           testCases: testCaseProgress(topic),
           alternatives: [replanAlternative()],
         };
