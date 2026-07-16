@@ -661,9 +661,12 @@ describe("stale-lock 清理", () => {
     const store = makeStore();
     store.transaction(() => store.insertTopic(makeTopic()));
 
-    // 手动写一个 stale lockfile：PID=本进程+1（几乎肯定不存在）+ 当前 ts
+    // 手动写一个 stale lockfile：PID 远超任何系统的 pid_max（linux 4194304 / mac 99999）
+    // → process.kill(pid, 0) 必抛 ESRCH → isProcessAlive 返回 false → 视为 stale。
+    // 旧实现用 process.pid + 1，在 PID 密集环境（CI runner / 本地多进程）可能是活进程，
+    // 导致 isStaleLock 误判为 false → retry 耗尽 → flaky fail。
     const lockPath = dbPath + ".lock";
-    const deadPid = process.pid + 1;
+    const deadPid = 99999999;
     writeFileSync(lockPath, `${deadPid}\n${Date.now()}\n`);
 
     // 新 CwStore 实例开 transaction → 应检测到死进程 PID → 清理 stale lock → 获取锁
