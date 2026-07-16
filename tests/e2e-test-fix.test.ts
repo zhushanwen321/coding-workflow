@@ -125,6 +125,8 @@ describe("E7c: 完整 loop——test(失败)→fix→test(pass)→nextAction=ret
 // ── E7d: turn 上限熔断（TEST_TURN_LIMIT=5）────────────────
 
 describe("E7d: 连续 5 次 test_fix → 强制转 retrospect", () => {
+  // CI 慢机上 spawn 多个子进程累计耗时：setup(~10 cli) + 1 test + 5×(test_fix + test) ≈ 21 次子进程，
+  // 本地 ~1.6s，CI 慢机可达 30s+。vitest 单测默认 5s 超时，此处放宽到 60s。
   it("testTurn 达 5 上限 → nextAction 强制转 retrospect", () => {
     const { topicId } = setupToReviewed(e, "e7d-limit");
 
@@ -155,7 +157,8 @@ describe("E7d: 连续 5 次 test_fix → 强制转 retrospect", () => {
         expect(guidance).toContain("上限");
       }
     }
-  });
+    // 60s：21 次子进程 spawn 在 CI 慢机上累计耗时远超 vitest 默认 5s
+  }, 60000);
 });
 
 // ── E7e: 非法——test 传不存在的 caseId ───────────────────────
