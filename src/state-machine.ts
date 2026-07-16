@@ -117,15 +117,15 @@ export interface TransitionRule {
 export const TRANSITIONS: Record<Action, TransitionRule> = {
   create: { expectedStatuses: [], nextStatus: "created" },
   clarify: {
-    // clarify 是 progressive append-only action：created/clarify_confirmed 状态下可多次调。
+    // clarify 是 progressive append-only action：created/clarify_confirmed/spec_reviewed 状态下可多次调。
     // FR-1: 含 clarify_confirmed 让用户看确认文档后能回头追加/修改再重新 confirm。
+    // MF-1 (review fix): 含 spec_reviewed 让 spec_review 发现问题后能回头改 spec（cw clarify 带
+    //   replaceSpec 更新 specSections），再重调 spec_review 复审。clarify 不流转 status（progressive），
+    //   改完 spec 直接重调 spec_review 即可，不需重新 confirm_clarify。
     //
     // 注意：handleClarify 不调 updateStatus（只追加 clarifyRecord/specSections），
     // 所以 nextStatus 的值不影响实际行为——status 保持不变。
-    // nextStatus="created" + progressive=true 的组合是历史遗留（progressive 标记
-    // 在 current===nextStatus 时触发原地停留，created→created 成立但
-    // clarify_confirmed→created 不成立）。依赖 handler 不流转 status 的约定保证正确性。
-    expectedStatuses: ["created", "clarify_confirmed"],
+    expectedStatuses: ["created", "clarify_confirmed", "spec_reviewed"],
     nextStatus: "created",
     progressive: true,
   },
@@ -666,7 +666,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // 有 open issue 且未达上限 → review_fix。
       const reviewSpecNote =
         topic.specSections.length > 0
-          ? `\n\n注意：核对 spec 的 FR/AC 是否被正确实现（category=design-consistency）。`
+          ? `\n\n注意：核对 spec 的 FR/AC 是否被正确实现（dimension=design-consistency）。`
           : "";
       return {
         action: "review_fix",

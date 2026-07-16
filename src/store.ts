@@ -1085,6 +1085,20 @@ export class CwStore {
     });
   }
 
+  /**
+   * replan --plan 时重置 plan_review loop：planReviewIssues=[], planReviewTurn=0。
+   * SF-1 (review fix): plan 被修改后旧 plan_review 闭环数据失效（引用旧 plan 的条目），
+   * 需清空重走 plan_review，否则 stale issue 干扰 buildNextAction 路由 + turn 计数不归零。
+   */
+  resetPlanReviewLoop(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.planReviewIssues = [];
+      topic.planReviewTurn = 0;
+    });
+  }
+
   // ── assessment DAO（post-closeout 评估，progressive） ─────
 
   /**

@@ -2279,6 +2279,7 @@ export function handleReplan(
     if (hasPlan) {
       deps.store.resetReviewLoop(params.topicId);
       deps.store.resetTestLoop(params.topicId);
+      deps.store.resetPlanReviewLoop(params.topicId);
     } else if (hasTest) {
       deps.store.resetTestLoop(params.topicId);
     }

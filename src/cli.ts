@@ -441,10 +441,13 @@ export function buildParams(
         stdinData,
         isStdinTTY,
       );
+      if (!Array.isArray(fixesRaw)) {
+        throw new CwError("spec_review_fix fixes 必须是 JSON 数组（通过 stdin 传入）");
+      }
       return {
         action: "spec_review_fix",
         topicId,
-        fixes: (Array.isArray(fixesRaw) ? fixesRaw : []) as SpecReviewFixParams["fixes"],
+        fixes: fixesRaw,
       } as SpecReviewFixParams;
     }
 
@@ -644,10 +647,13 @@ export function buildParams(
         stdinData,
         isStdinTTY,
       );
+      if (!Array.isArray(fixesRaw)) {
+        throw new CwError("plan_review_fix fixes 必须是 JSON 数组（通过 stdin 传入）");
+      }
       return {
         action: "plan_review_fix",
         topicId,
-        fixes: (Array.isArray(fixesRaw) ? fixesRaw : []) as PlanReviewFixParams["fixes"],
+        fixes: fixesRaw,
       } as PlanReviewFixParams;
     }
 
