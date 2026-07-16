@@ -19,7 +19,7 @@ create 之后、plan 之前。把"做什么"弄清楚。本阶段不产出 dev-p
 ## [MANDATORY] 纪律（机器 gate，不可绕过）
 
 - **plan 前必须调 \`cw confirm_clarify\`**。这是机器 gate，跳过会被状态机拒绝（illegal_transition，created → plan 不合法，必须先过 clarify_confirmed）。
-- **confirm 前，先调 \`cw gen-spec\` 生成确认文档**（CW 自动汇总 clarifyRecords + specSections 为 md），**open 给用户看**。不给用户看确认文档就 confirm = 违反纪律。
+- **confirm 前，先调 \`cw gen-spec\` 生成确认文档**（CW 自动汇总 clarifyRecords + specSections 为 md，**cw 自动打开给用户**）。不等用户审查确认就 confirm = 违反纪律。
 - **用户确认后才能 \`cw confirm_clarify\`**。用户要修改 → 回 \`cw clarify\` 追加/修改记录 → 重新 \`cw gen-spec\` → 重新确认。
 
 ## 流程
@@ -168,6 +168,5 @@ specSections 分三类：
 ## 完成标志
 
 所有 clarifyRecord 的 status ∈ {resolved, skipped}（无 pending），
-调 \`cw gen-spec\` 生成确认文档 open 给用户看，
-用户确认后调 \`cw confirm_clarify\`。
+调 \`cw gen-spec\` 生成确认文档（cw 自动打开），**等用户审查确认后**调 \`cw confirm_clarify\`。
 `.trim();
