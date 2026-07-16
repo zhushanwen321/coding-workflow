@@ -28,7 +28,7 @@ import {
   CwError,
   type Expected,
   judgeByExpected,
-  type ReviewIssueCategory,
+  type ReviewDimension,
   type ReviewIssueSubmission,
   type SpecSection,
   type TestCase,
@@ -804,24 +804,34 @@ export interface ReviewIssueCheckResult {
 /** severity 合法枚举值集合（reviewIssueCheck 逐元素校验用）。 */
 const REVIEW_SEVERITIES = new Set(["must-fix", "should-fix", "nit"]);
 
-/** category 合法枚举值集合（reviewIssueCheck 逐元素校验用）。 */
-const REVIEW_CATEGORIES = new Set<ReviewIssueCategory>([
+/** dimension 合法枚举值集合（reviewIssueCheck 逐元素校验用）。FR-3: 三阶段共用 12 个维度。 */
+const REVIEW_DIMENSIONS = new Set<ReviewDimension>([
   "type-safety",
   "error-handling",
   "edge-case",
   "test-coverage",
   "plan-completeness",
   "design-consistency",
+  "completeness",
+  "consistency",
+  "reasonableness",
+  "coverage",
+  "architecture",
+  "feasibility",
 ]);
 
 /**
- * reviewIssueCheck — review issues 的逐元素 schema 校验。
+ * reviewIssueCheck — review/spec_review/plan_review issues 的逐元素 schema 校验。
+ *
+ * FR-3 统一升级后三阶段共用此 check：
+ *   - dimension 必填（不再可选，原 category 可选）——强制 agent 按维度归类发现
+ *   - ref 泛化（原 file 限代码路径，现可为 spec 条目 ID 如 FR-3 / W2）
  *
  * 校验链：
  *   1. 必须是数组
- *   2. 每个元素必须有 severity（枚举值）+ description（非空字符串）
- *   3. file 可选但提供时必须是非空字符串
- *   4. category 可选但提供时必须是枚举值
+ *   2. 每个元素必须有 dimension（枚举值，必填）
+ *   3. severity（枚举值）+ description（非空字符串）
+ *   4. ref 可选但提供时必须是字符串
  *
  * 与 planCheck/tddPlanCheck 的区别：reviewIssueCheck 不用 typebox（issues 结构简单，
  * 手写校验更直白），直接逐字段 typeof + 枚举检查。
@@ -848,6 +858,14 @@ export function reviewIssueCheck(raw: unknown): ReviewIssueCheckResult {
     }
     const obj = item as Record<string, unknown>;
 
+    // dimension：必填，枚举校验（FR-3: 原 category 可选，现 dimension 必填）。
+    if (!REVIEW_DIMENSIONS.has(obj.dimension as ReviewDimension)) {
+      return {
+        result: "fail",
+        report: `issues[${i}].dimension 无效或缺失: ${JSON.stringify(obj.dimension)}`,
+      };
+    }
+
     // severity：枚举值校验（最关键字段，buildNextAction 用它判 must-fix）。
     if (!REVIEW_SEVERITIES.has(String(obj.severity))) {
       return {
@@ -867,35 +885,16 @@ export function reviewIssueCheck(raw: unknown): ReviewIssueCheckResult {
       };
     }
 
-    // file：可选，但提供时必须是字符串。
-    if (
-      obj.file !== undefined &&
-      typeof obj.file !== "string"
-    ) {
-      return {
-        result: "fail",
-        report: `issues[${i}].file 必须是字符串`,
-      };
-    }
-
-    // category：可选，但提供时必须是合法枚举值。
-    if (
-      obj.category !== undefined &&
-      !REVIEW_CATEGORIES.has(obj.category as ReviewIssueCategory)
-    ) {
-      return {
-        result: "fail",
-        report: `issues[${i}].category 无效: ${JSON.stringify(obj.category)}`,
-      };
+    // ref：可选，但提供时必须是字符串（原 file 逻辑改名，泛化为代码路径或 spec/plan 条目 ID）。
+    if (obj.ref !== undefined && typeof obj.ref !== "string") {
+      return { result: "fail", report: `issues[${i}].ref 必须是字符串` };
     }
 
     issues.push({
+      dimension: obj.dimension as ReviewDimension,
       severity: obj.severity as ReviewIssueSubmission["severity"],
       description: obj.description,
-      ...(obj.file !== undefined ? { file: obj.file } : {}),
-      ...(obj.category !== undefined
-        ? { category: obj.category as ReviewIssueCategory }
-        : {}),
+      ...(obj.ref !== undefined ? { ref: obj.ref } : {}),
     });
   }
 

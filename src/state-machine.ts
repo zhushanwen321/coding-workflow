@@ -16,7 +16,7 @@
  *   REVIEW/TEST_TURN_LIMIT（loop 轮数上限）达上限后强制前推到下一阶段（review→test, test→retrospect）。
  */
 
-import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, PLAN_REVIEW_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, SPEC_REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
 import type {
   Action,
   GateHistoryEntry,
@@ -39,6 +39,8 @@ const GATE_RETRY_LIMIT = 5;
  */
 const REVIEW_TURN_LIMIT = 3;
 const TEST_TURN_LIMIT = 5;
+const SPEC_REVIEW_TURN_LIMIT = 2;
+const PLAN_REVIEW_TURN_LIMIT = 2;
 
 /**
  * 从 gateHistory 尾部向前数给定 phase 的连续 fail 次数。
@@ -134,10 +136,34 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     nextStatus: "clarify_confirmed",
     progressive: true,
   },
+  // FR-4: spec_review 在 confirm_clarify 之后、plan 之前，审查 spec 完整性/合理性。
+  // progressive：spec_reviewed 状态下可多轮 spec_review（loop fix 后重审）。
+  spec_review: {
+    expectedStatuses: ["clarify_confirmed", "spec_reviewed"],
+    nextStatus: "spec_reviewed",
+    progressive: true,
+  },
+  spec_review_fix: {
+    expectedStatuses: ["spec_reviewed"],
+    nextStatus: "spec_reviewed",
+    progressive: true,
+  },
   // FR-1: plan 前必须经过 confirm_clarify。
-  // FR-6 向后兼容：含 planned（旧 topic 已 plan 过的重调不拒绝）。
-  plan: { expectedStatuses: ["clarify_confirmed", "planned"], nextStatus: "planned" },
-  tdd_plan: { expectedStatuses: ["planned"], nextStatus: "tdd_inited" },
+  // FR-4/6 向后兼容：含 planned（旧 topic 已 plan 过的重调不拒绝）。
+  plan: { expectedStatuses: ["spec_reviewed", "planned"], nextStatus: "planned" },
+  // FR-5: plan_review 在 plan 之后、tdd_plan 之前，审查 plan 是否覆盖 spec、架构是否合理。
+  // progressive：plan_reviewed 状态下可多轮 plan_review（loop fix 后重审）。
+  plan_review: {
+    expectedStatuses: ["planned", "plan_reviewed"],
+    nextStatus: "plan_reviewed",
+    progressive: true,
+  },
+  plan_review_fix: {
+    expectedStatuses: ["plan_reviewed"],
+    nextStatus: "plan_reviewed",
+    progressive: true,
+  },
+  tdd_plan: { expectedStatuses: ["plan_reviewed", "tdd_inited"], nextStatus: "tdd_inited" },
   dev: {
     // dev 只从 tdd_inited/developed 进入。
     // test/review 失败走 test_fix/review_fix loop（不回 dev——所有 Wave 已 committed，dev 没有新任务）。
@@ -171,7 +197,7 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   retrospect: { expectedStatuses: ["tested"], nextStatus: "retrospected" },
   closeout: { expectedStatuses: ["retrospected"], nextStatus: "closed" },
   replan: {
-    expectedStatuses: ["planned", "tdd_inited", "developed", "reviewed", "tested"],
+    expectedStatuses: ["planned", "plan_reviewed", "tdd_inited", "developed", "reviewed", "tested"],
     nextStatus: "planned",
   },
   // FR-3: abort 从所有非终态 status 合法，流转到 aborted 终态。
@@ -179,7 +205,9 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     expectedStatuses: [
       "created",
       "clarify_confirmed",
+      "spec_reviewed",
       "planned",
+      "plan_reviewed",
       "tdd_inited",
       "developed",
       "reviewed",
@@ -300,6 +328,14 @@ export function computeGatePassed(phase: Action, topic: Topic): boolean {
     //（全 resolved → 推荐 confirm_clarify）。
     return topic.clarifyRecords.every((c) => c.status !== "pending");
   }
+  if (phase === "spec_review") {
+    // spec_review gatePassed：specReviewIssues 无 open（空数组也算 pass）。
+    return topic.specReviewIssues.every((i) => i.status !== "open");
+  }
+  if (phase === "plan_review") {
+    // plan_review gatePassed：planReviewIssues 无 open。
+    return topic.planReviewIssues.every((i) => i.status !== "open");
+  }
   if (phase === "create" || phase === "replan") {
     return false;
   }
@@ -404,10 +440,10 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "confirm_clarify": {
-      // FR-1: confirm_clarify 通过 → 进 plan（写 dev-plan.json）。
+      // FR-4: confirm_clarify 通过 → 进 spec_review（审查 spec 完整性/合理性）。
       return {
-        action: "plan",
-        guidance: `需求已确认（clarify_confirmed）。下一步：写 dev-plan.json 并提交。\n\n${DEV_PLAN_PROMPT}`,
+        action: "spec_review",
+        guidance: `需求已确认（clarify_confirmed）。下一步：审查 spec 的完整性和合理性（spec_review），完成后调 cw(spec_review)。\n\n${SPEC_REVIEW_PROMPT}`,
         clarifyProgress: clarifyProgress(topic),
         specProgress: specProgress(topic),
         alternatives: [
@@ -416,6 +452,48 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
             guidance: `如需修改需求，提交 cw(clarify) 追加/修改记录，再重新 cw(confirm_clarify)。\n\n${CLARIFY_PROMPT}`,
           },
         ],
+      };
+    }
+    case "spec_review": {
+      // 与 review case 同构：无 open issue→plan；有 issue 未达上限→spec_review_fix；达上限→强制前推 plan。
+      const openIssues = topic.specReviewIssues.filter((i) => i.status === "open");
+      const mustFixCount = topic.specReviewIssues.filter(
+        (i) => i.severity === "must-fix" && i.status === "open",
+      ).length;
+      const hasOpenIssues = openIssues.length > 0;
+      const overLimit = topic.specReviewTurn >= SPEC_REVIEW_TURN_LIMIT;
+
+      if (!hasOpenIssues) {
+        return {
+          action: "plan",
+          guidance: `spec_review 通过（无 open issue）。下一步：写 dev-plan.json 并提交 cw(plan)。\n\n${DEV_PLAN_PROMPT}`,
+          clarifyProgress: clarifyProgress(topic),
+          specProgress: specProgress(topic),
+        };
+      }
+      if (overLimit) {
+        return {
+          action: "plan",
+          guidance: `spec_review 已达 ${SPEC_REVIEW_TURN_LIMIT} 轮上限（当前 turn=${topic.specReviewTurn}），强制进 plan。${mustFixCount} 个 must-fix 未修复。建议 ask_user 人工审查或调 cw(clarify) 重新澄清。\n\n${DEV_PLAN_PROMPT}`,
+          clarifyProgress: clarifyProgress(topic),
+          specProgress: specProgress(topic),
+        };
+      }
+      return {
+        action: "spec_review_fix",
+        guidance: `spec_review 发现 ${openIssues.length} 个 open issue（${mustFixCount} 个 must-fix）。下一步：逐条修 issue（改 spec → cw clarify 更新 specSections），调 cw(spec_review_fix) 提交修复。\n\n${SPEC_REVIEW_PROMPT}`,
+        clarifyProgress: clarifyProgress(topic),
+        specProgress: specProgress(topic),
+      };
+    }
+    case "spec_review_fix": {
+      const turn = topic.specReviewTurn;
+      const overLimit = turn >= SPEC_REVIEW_TURN_LIMIT;
+      return {
+        action: "spec_review",
+        guidance: overLimit
+          ? `spec_review 已达 ${SPEC_REVIEW_TURN_LIMIT} 轮上限（当前 turn=${turn}）。建议 ask_user 人工介入或调 cw(clarify) 重新澄清。`
+          : `spec_review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(spec_review) 开启下一轮审查，确认所有 issue 已闭环。\n\n${SPEC_REVIEW_PROMPT}`,
       };
     }
     case "plan": {
@@ -429,7 +507,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
               : `plan gate FAIL。status 仍为 created——修 mustFix 后重调 cw(plan)。\n\n${DEV_PLAN_PROMPT}`,
         };
       }
-      // plan gate 通过 → 进入 tdd_plan 阶段（写 test.json + 测试代码，红灯确认）。
+      // plan gate 通过 → 进入 plan_review 阶段（FR-5: 审查 plan 是否覆盖 spec、架构是否合理）。
       const frSection = topic.specSections.find(
         (s) => s.type === "functionalRequirements",
       );
@@ -438,12 +516,52 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           ? `\n\n注意：spec 定义了 ${frSection.items.length} 个功能需求（FR）。plan 的 waves 必须覆盖这些 FR。`
           : "";
       return {
-        action: "tdd_plan",
-        guidance:
-          `plan gate 通过（status=planned）。下一步：写测试代码（红灯）+ test.json（定义 testCases + expected + 可选 testRunner），调 cw(tdd_plan) 提交。\n\n${TDD_PLAN_PROMPT}` +
-          specNote,
+        action: "plan_review",
+        guidance: `plan gate 通过（status=planned）。下一步：审查 plan 是否完整覆盖 spec、架构是否合理（plan_review），完成后调 cw(plan_review)。\n\n${PLAN_REVIEW_PROMPT}` + specNote,
         waves: waveProgress(topic),
         alternatives: [replanAlternative()],
+      };
+    }
+    case "plan_review": {
+      // 同 spec_review 结构，但用 planReviewIssues/PLAN_REVIEW_TURN_LIMIT，pass→tdd_plan。
+      const openIssues = topic.planReviewIssues.filter((i) => i.status === "open");
+      const mustFixCount = topic.planReviewIssues.filter(
+        (i) => i.severity === "must-fix" && i.status === "open",
+      ).length;
+      const hasOpenIssues = openIssues.length > 0;
+      const overLimit = topic.planReviewTurn >= PLAN_REVIEW_TURN_LIMIT;
+
+      if (!hasOpenIssues) {
+        return {
+          action: "tdd_plan",
+          guidance: `plan_review 通过（无 open issue）。下一步：写测试代码（红灯）+ test.json，调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
+          waves: waveProgress(topic),
+          alternatives: [replanAlternative()],
+        };
+      }
+      if (overLimit) {
+        return {
+          action: "tdd_plan",
+          guidance: `plan_review 已达 ${PLAN_REVIEW_TURN_LIMIT} 轮上限（turn=${topic.planReviewTurn}），强制进 tdd_plan。${mustFixCount} 个 must-fix 未修复。\n\n${TDD_PLAN_PROMPT}`,
+          waves: waveProgress(topic),
+          alternatives: [replanAlternative()],
+        };
+      }
+      return {
+        action: "plan_review_fix",
+        guidance: `plan_review 发现 ${openIssues.length} 个 open issue（${mustFixCount} 个 must-fix）。下一步：修 plan → cw replan，再调 cw(plan_review_fix) 提交修复。\n\n${PLAN_REVIEW_PROMPT}`,
+        waves: waveProgress(topic),
+      };
+    }
+    case "plan_review_fix": {
+      const turn = topic.planReviewTurn;
+      const overLimit = turn >= PLAN_REVIEW_TURN_LIMIT;
+      return {
+        action: "plan_review",
+        guidance: overLimit
+          ? `plan_review 已达 ${PLAN_REVIEW_TURN_LIMIT} 轮上限（turn=${turn}）。建议 ask_user 人工介入或调 cw(replan)。`
+          : `plan_review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(plan_review) 复查。\n\n${PLAN_REVIEW_PROMPT}`,
+        alternatives: overLimit ? [replanAlternative()] : undefined,
       };
     }
     case "tdd_plan": {
@@ -667,11 +785,20 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "replan": {
-      // replan 后 status=planned，必须先重走 tdd_plan（testCases 可能已变，需重新校验 + 写入）。
-      // 即使 dev gate 之前已通过，replan 修改了 plan/testCases 后也要重走全流程。
+      // D7: replan 的下一步取决于 handler 设的 status。
+      // status=planned（hasPlan，plan 改了）→ plan_review（重审新 plan）
+      // status=plan_reviewed（hasTest only，plan 没变）→ tdd_plan（重走测试）
+      if (topic.status === "plan_reviewed") {
+        return {
+          action: "tdd_plan",
+          guidance: `replan 完成（仅修改 testCases）。plan 未变，直接重走 tdd_plan。\n\n${TDD_PLAN_PROMPT}`,
+          waves: waveProgress(topic),
+          testCases: testCaseProgress(topic),
+        };
+      }
       return {
-        action: "tdd_plan",
-        guidance: `replan 完成（status=planned）。下一步：重走 tdd_plan——提交 test.json（testCases 可能已变），调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
+        action: "plan_review",
+        guidance: `replan 完成（plan 已修改）。需重走 plan_review 审查新 plan。\n\n${PLAN_REVIEW_PROMPT}`,
         waves: waveProgress(topic),
         testCases: testCaseProgress(topic),
       };
