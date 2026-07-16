@@ -1202,10 +1202,10 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     expect(redGate[0]!.result).toBe("pass");
   });
 
-  it("testRunner + redCheck=true + 测试命令 exit 0（意外通过）→ 红灯校验阻断, status 回退 planned, gatePassed.tdd_plan=false", () => {
+  it("testRunner + redCheck=true + 测试命令 exit 0（意外通过）→ 红灯校验阻断, status 回退 plan_reviewed, gatePassed.tdd_plan=false", () => {
     const { topicId, deps, store } = setupPlannedTopic();
     // 测试命令 exit 0（模拟测试意外通过 = 绿灯 = 违反 TDD）→ redLightCheck redLight=false。
-    // 新行为：红灯校验阻断 status 流转——回退到 planned，gatePassed.tdd_plan=false。
+    // 新行为：红灯校验阻断 status 流转——回退到 plan_reviewed（FR-5 tdd_plan 前置），gatePassed.tdd_plan=false。
     const testJson = {
       testCases: [
         {
@@ -1232,8 +1232,8 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     };
     const result = dispatch({ action: "tdd_plan", topicId, testJson }, deps);
 
-    // 红灯校验失败 → status 回退到 planned（不再流转到 tdd_inited）
-    expect(result.status).toBe("planned");
+    // 红灯校验失败 → status 回退到 plan_reviewed（FR-5: tdd_plan 前置变更）
+    expect(result.status).toBe("plan_reviewed");
     expect(result.gatePassed.tdd_plan).toBe(false);
     // mustFix 含红灯校验失败信息（阻断提示）
     const mustFix = (result as Record<string, unknown>).mustFix;
@@ -1243,7 +1243,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
     expect(result.nextAction.action).toBe("tdd_plan");
 
     const topic = store.loadTopic(topicId);
-    expect(topic!.status).toBe("planned");
+    expect(topic!.status).toBe("plan_reviewed");
 
     // 红灯失败 → gateHistory 含 tdd-red-light fail 记录（含 report）
     const redGate = topic!.gateHistory.filter((g) => g.gate === "tdd-red-light");

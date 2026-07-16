@@ -756,13 +756,14 @@ export function handleTddPlan(
 
   // 红灯校验（事务外执行——调 execFileSync 跑测试命令，不能在事务内持锁）。
   // testRunner 已必选（tddPlanCheck 保证），红灯校验阻断 status 流转：
-  //   - 红灯 fail（绿灯 = 先写了实现）→ 回退 status 到 planned，nextAction 指回 tdd_plan retry
+  //   - 红灯 fail（绿灯 = 先写了实现）→ 回退 status 到 plan_reviewed，nextAction 指回 tdd_plan retry
   //   - 红灯 pass 或无 redCheck case → 正常流转到 tdd_inited
+  // FR-5: tdd_plan 前置从 planned 改为 plan_reviewed，红灯回退也改为 plan_reviewed。
   const redWarnings = runRedLightVerification(updated);
   if (redWarnings.length > 0) {
-    // 红灯校验失败——回退 status（tdd_inited → planned），gatePassed 置 false。
+    // 红灯校验失败——回退 status（tdd_inited → plan_reviewed），gatePassed 置 false。
     deps.store.transaction(() => {
-      deps.store.updateStatus(params.topicId, "planned");
+      deps.store.updateStatus(params.topicId, "plan_reviewed");
       deps.store.updateGatePassed(params.topicId, "tdd_plan", false);
       deps.store.appendGateHistory(params.topicId, {
         phase: "tdd_plan",
