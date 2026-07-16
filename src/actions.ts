@@ -19,6 +19,7 @@
  * - handleReplan 事务内必须同步 gatePassed（砍掉 cache_inconsistent guard 后的注释强依赖）。
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -28,6 +29,7 @@ import {
   fileExistsCheck,
   planCheck,
   redLightCheck,
+  reviewIssueCheck,
   tddPlanCheck,
   testCheck,
 } from "./gate.js";
@@ -60,6 +62,7 @@ import {
   type ReviewIssue,
   type ReviewIssueSubmission,
   type RuntimeEnv,
+  type Status,
   type TestCase,
   type TestCaseSeed,
   type TestFixSubmission,
@@ -180,6 +183,40 @@ export interface ConfirmClarifyParams {
   topicId: string;
 }
 
+/** FR-4: spec_review 参数——提交 spec 审查报告 + 结构化 issue。 */
+export interface SpecReviewParams {
+  action: "spec_review";
+  topicId: string;
+  /** spec-review.md 路径（必填，gate 校验存在+非空）。 */
+  specReviewPath: string;
+  /** 结构化 issue（stdin 传入，空数组=无问题）。 */
+  issues?: ReviewIssueSubmission[];
+}
+
+/** FR-4: spec_review_fix 参数——提交 issue 修复。 */
+export interface SpecReviewFixParams {
+  action: "spec_review_fix";
+  topicId: string;
+  fixes: ReviewFixSubmission[];
+}
+
+/** FR-5: plan_review 参数——提交 plan 审查报告 + 结构化 issue。 */
+export interface PlanReviewParams {
+  action: "plan_review";
+  topicId: string;
+  /** plan-review.md 路径（必填，gate 校验存在+非空）。 */
+  planReviewPath: string;
+  /** 结构化 issue（stdin 传入，空数组=无问题）。 */
+  issues?: ReviewIssueSubmission[];
+}
+
+/** FR-5: plan_review_fix 参数——提交 issue 修复。 */
+export interface PlanReviewFixParams {
+  action: "plan_review_fix";
+  topicId: string;
+  fixes: ReviewFixSubmission[];
+}
+
 /** FR-3: abort 参数——终止 topic，流转到 aborted 终态。 */
 export interface AbortParams {
   action: "abort";
@@ -215,7 +252,11 @@ export type CwParams =
   | CreateParams
   | ClarifyParams
   | ConfirmClarifyParams
+  | SpecReviewParams
+  | SpecReviewFixParams
   | PlanParams
+  | PlanReviewParams
+  | PlanReviewFixParams
   | TddPlanParams
   | DevParams
   | TestParams
@@ -273,6 +314,10 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],
@@ -357,6 +402,8 @@ export function handleClarify(
   void topic;
   const check = clarifyCheck(params.clarifyJson);
 
+  // FR-9: replaceSpec 提供但未带 specSections 时记录 warning（不阻断，事务后挂到 result）。
+  let replaceWarning: string | undefined;
   let passed: boolean;
   deps.store.transaction(() => {
     if (check.result === "fail") {
@@ -412,6 +459,10 @@ export function handleClarify(
           allSpecSections,
           params.replaceSpec,
         );
+      } else {
+        // FR-9: replaceSpec flag 提供但未带 specSections → warning 不阻断。
+        replaceWarning =
+          "replaceSpec 已设但未提供 specSections，本次未执行替换也未追加。若要替换 spec 需在同一条 clarifyJson 里带完整 specSections。";
       }
     } else {
       // 默认 append 模式——progressive append-only，与 clarifyRecord/adr 同语义。
@@ -444,6 +495,9 @@ export function handleClarify(
   );
   if (!passed!) {
     (result as Record<string, unknown>).mustFix = check.report;
+  }
+  if (replaceWarning) {
+    (result as Record<string, unknown>).warning = replaceWarning;
   }
   return result;
 }
@@ -1134,8 +1188,7 @@ export function handleReview(
     // 记录 review artifacts（reviewPath + 时间戳）。
     if (path.length > 0) {
       deps.store.setArtifacts(params.topicId, {
-        reviewPath: path,
-        reviewAt: new Date().toISOString(),
+        review: { path, at: new Date().toISOString() },
       });
     }
 
@@ -1223,8 +1276,15 @@ export function handleReviewFix(
 
   // commitHash 格式校验（只查格式，不做存在性校验——保持 audit-only 语义）。
   // git hash：7-40 字符的十六进制字符串（短/长 hash 均允许）。
+  // ReviewFixSubmission.commitHash 现在类型上可选（其它 review 阶段不强制），
+  // 但 review_fix（代码审查修复）要求必填 commitHash——这里保持必填校验。
   const GIT_HASH_RE = /^[0-9a-f]{7,40}$/;
   for (const fix of fixes) {
+    if (!fix.commitHash) {
+      throw new CwError(
+        `review_fix 需要 commitHash（代码审查修复必须提供 git commit hash）`,
+      );
+    }
     if (!GIT_HASH_RE.test(fix.commitHash)) {
       throw new CwError(
         `review_fix commitHash 格式无效: "${fix.commitHash}"（应为 7-40 字符十六进制 git hash）`,
@@ -1263,6 +1323,344 @@ export function handleReviewFix(
     status: updated.status,
     gatePassed: updated.gatePassed,
     nextAction: buildNextAction("review_fix", updated),
+  };
+}
+
+// ── handleSpecReview ─────────────────────────────────────────
+
+/**
+ * handleSpecReview — FR-4: spec 语义审查 handler（progressive，多轮 loop）。
+ *
+ * gate：fileExistsCheck(specReviewPath) + reviewIssueCheck(issues)。
+ * 有 issue 则 appendSpecReviewIssues + incSpecReviewTurn；无 issue → nextAction=plan；
+ * 有 issue 未达上限 → spec_review_fix；达上限 → 强制前推 plan。
+ *
+ * 与 handleReview 的区别：
+ *   - specReviewPath 必填（review.reviewPath 可选）
+ *   - 用 topic.specReviewIssues / appendSpecReviewIssues / incSpecReviewTurn
+ *   - phase="spec_review"，gate 名 "file-exists+issue-schema" / "review-found"
+ */
+export function handleSpecReview(
+  params: SpecReviewParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const path = params.specReviewPath ?? "";
+  const issues = params.issues ?? [];
+  const hasIssues = issues.length > 0;
+
+  // 先跑 reviewIssueCheck 校验 issue 结构合法性（dimension 必填等）。
+  const issueCheck = hasIssues
+    ? reviewIssueCheck(issues)
+    : {
+        result: "pass" as const,
+        report: "",
+        parsed: [] as ReviewIssueSubmission[],
+      };
+
+  const fileCheck =
+    path.length > 0
+      ? fileExistsCheck(path)
+      : { result: "fail" as const, report: "specReviewPath 必填" };
+  const passed = fileCheck.result === "pass" && issueCheck.result === "pass";
+
+  deps.store.transaction(() => {
+    if (!passed) {
+      const failReport =
+        fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "spec_review",
+        action: "spec_review",
+        gate: "file-exists+issue-schema",
+        result: "fail",
+        report: failReport,
+        progressive: true,
+      });
+      return;
+    }
+
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("spec_review", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "spec_review", true);
+
+    if (path.length > 0) {
+      deps.store.setArtifacts(params.topicId, {
+        specReview: { path, at: new Date().toISOString() },
+      });
+    }
+
+    if (hasIssues && issueCheck.parsed) {
+      const newTurn = topic.specReviewTurn + 1;
+      deps.store.appendSpecReviewIssues(params.topicId, newTurn, issueCheck.parsed);
+      deps.store.incSpecReviewTurn(params.topicId);
+    }
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "spec_review",
+      action: "spec_review",
+      gate: hasIssues ? "review-found" : "file-exists+issue-schema",
+      result: "pass",
+      report: hasIssues
+        ? `${issues.length} issue(s) found in turn ${topic.specReviewTurn + 1}`
+        : undefined,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after spec_review: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("spec_review", updated),
+  };
+  if (!passed) {
+    const failReport =
+      fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+    (result as Record<string, unknown>).mustFix = failReport;
+  }
+  return result;
+}
+
+// ── handleSpecReviewFix ──────────────────────────────────────
+
+/**
+ * handleSpecReviewFix — FR-4: spec_review loop 内的修复动作（progressive）。
+ *
+ * 与 handleReviewFix 同构，区别：
+ *   - 用 topic.specReviewIssues / fixSpecReviewIssue
+ *   - commitHash 不校验（spec_review 修复可能走 cw clarify 内部，无独立 commit）
+ *   - fixedAtTurn = topic.specReviewTurn；gate 名 "spec-review-fix"
+ */
+export function handleSpecReviewFix(
+  params: SpecReviewFixParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const fixes = params.fixes ?? [];
+
+  // 校验 issueId 存在且 status=open（事务外做，避免事务内 throw 触发回滚后又 throw）。
+  const issueMap = new Map<string, ReviewIssue>();
+  for (const issue of topic.specReviewIssues) {
+    issueMap.set(issue.id, issue);
+  }
+  for (const fix of fixes) {
+    const issue = issueMap.get(fix.issueId);
+    if (!issue) {
+      throw new CwError(
+        `spec_review_fix issueId 不存在: ${fix.issueId}（不存在于 topic.specReviewIssues）`,
+      );
+    }
+    if (issue.status !== "open") {
+      throw new CwError(
+        `spec_review_fix issueId ${fix.issueId} 状态为 ${issue.status}（只能修 open 的 issue）`,
+      );
+    }
+  }
+  // commitHash 不校验（spec_review 修复可选）。
+
+  const fixedAtTurn = topic.specReviewTurn;
+
+  deps.store.transaction(() => {
+    for (const fix of fixes) {
+      deps.store.fixSpecReviewIssue(params.topicId, fix.issueId, {
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+        resolution: fix.resolution,
+        fixedAtTurn,
+      });
+    }
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "spec_review_fix",
+      action: "spec_review_fix",
+      gate: "spec-review-fix",
+      result: "pass",
+      report: `${fixes.length} issue(s) fixed at turn ${fixedAtTurn}`,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after spec_review_fix: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("spec_review_fix", updated),
+  };
+}
+
+// ── handlePlanReview ─────────────────────────────────────────
+
+/**
+ * handlePlanReview — FR-5: plan 语义审查 handler（progressive，多轮 loop）。
+ *
+ * gate：fileExistsCheck(planReviewPath) + reviewIssueCheck(issues)。
+ * 有 issue 则 appendPlanReviewIssues + incPlanReviewTurn；无 issue → nextAction=tdd_plan；
+ * 有 issue 未达上限 → plan_review_fix；达上限 → 强制前推 tdd_plan。
+ *
+ * 与 handleSpecReview 同构（spec→plan, specReview→planReview, SR→PR）。
+ */
+export function handlePlanReview(
+  params: PlanReviewParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const path = params.planReviewPath ?? "";
+  const issues = params.issues ?? [];
+  const hasIssues = issues.length > 0;
+
+  // 先跑 reviewIssueCheck 校验 issue 结构合法性（dimension 必填等）。
+  const issueCheck = hasIssues
+    ? reviewIssueCheck(issues)
+    : {
+        result: "pass" as const,
+        report: "",
+        parsed: [] as ReviewIssueSubmission[],
+      };
+
+  const fileCheck =
+    path.length > 0
+      ? fileExistsCheck(path)
+      : { result: "fail" as const, report: "planReviewPath 必填" };
+  const passed = fileCheck.result === "pass" && issueCheck.result === "pass";
+
+  deps.store.transaction(() => {
+    if (!passed) {
+      const failReport =
+        fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "plan_review",
+        action: "plan_review",
+        gate: "file-exists+issue-schema",
+        result: "fail",
+        report: failReport,
+        progressive: true,
+      });
+      return;
+    }
+
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("plan_review", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "plan_review", true);
+
+    if (path.length > 0) {
+      deps.store.setArtifacts(params.topicId, {
+        planReview: { path, at: new Date().toISOString() },
+      });
+    }
+
+    if (hasIssues && issueCheck.parsed) {
+      const newTurn = topic.planReviewTurn + 1;
+      deps.store.appendPlanReviewIssues(params.topicId, newTurn, issueCheck.parsed);
+      deps.store.incPlanReviewTurn(params.topicId);
+    }
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "plan_review",
+      action: "plan_review",
+      gate: hasIssues ? "review-found" : "file-exists+issue-schema",
+      result: "pass",
+      report: hasIssues
+        ? `${issues.length} issue(s) found in turn ${topic.planReviewTurn + 1}`
+        : undefined,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after plan_review: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("plan_review", updated),
+  };
+  if (!passed) {
+    const failReport =
+      fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+    (result as Record<string, unknown>).mustFix = failReport;
+  }
+  return result;
+}
+
+// ── handlePlanReviewFix ──────────────────────────────────────
+
+/**
+ * handlePlanReviewFix — FR-5: plan_review loop 内的修复动作（progressive）。
+ *
+ * 与 handleSpecReviewFix 同构（spec→plan, specReview→planReview, SR→PR）。
+ */
+export function handlePlanReviewFix(
+  params: PlanReviewFixParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const fixes = params.fixes ?? [];
+
+  // 校验 issueId 存在且 status=open（事务外做）。
+  const issueMap = new Map<string, ReviewIssue>();
+  for (const issue of topic.planReviewIssues) {
+    issueMap.set(issue.id, issue);
+  }
+  for (const fix of fixes) {
+    const issue = issueMap.get(fix.issueId);
+    if (!issue) {
+      throw new CwError(
+        `plan_review_fix issueId 不存在: ${fix.issueId}（不存在于 topic.planReviewIssues）`,
+      );
+    }
+    if (issue.status !== "open") {
+      throw new CwError(
+        `plan_review_fix issueId ${fix.issueId} 状态为 ${issue.status}（只能修 open 的 issue）`,
+      );
+    }
+  }
+  // commitHash 不校验（plan_review 修复可选）。
+
+  const fixedAtTurn = topic.planReviewTurn;
+
+  deps.store.transaction(() => {
+    for (const fix of fixes) {
+      deps.store.fixPlanReviewIssue(params.topicId, fix.issueId, {
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+        resolution: fix.resolution,
+        fixedAtTurn,
+      });
+    }
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "plan_review_fix",
+      action: "plan_review_fix",
+      gate: "plan-review-fix",
+      result: "pass",
+      report: `${fixes.length} issue(s) fixed at turn ${fixedAtTurn}`,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after plan_review_fix: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("plan_review_fix", updated),
   };
 }
 
@@ -1412,8 +1810,7 @@ export function handleRetrospect(
     deps,
     () => {
       deps.store.setArtifacts(params.topicId, {
-        retrospectPath: path,
-        retrospectAt: new Date().toISOString(),
+        retrospect: { path, at: new Date().toISOString() },
       });
 
       const derived = computeRetrospectDerived(topic);
@@ -1434,15 +1831,52 @@ export function handleRetrospect(
 /**
  * handleCloseout — 终态归档 + evidence 填充，委托 gateAdvance。
  *
- * gate pass → status=closed + onPass 回调事务内 reload 取 gateHistory 快照写入 evidence。
- * gate 用 topicDir 存在性（归档目录就绪）。gateAdvance 返回的 result 已含 evidence
- * （事务后 reload 的 updated.evidence）。
+ * FR-2: closeout 前先校验 artifacts 记录的 review/retrospect 文件存在（如有记录）。
+ * 文件缺失 → gate fail（artifacts-exist），status 不变，mustFix 列出缺失路径。
+ * artifacts 无记录时不阻断（向后兼容：旧 topic 可能没走过 review/retrospect）。
+ *
+ * artifacts 校验通过后才走 gateAdvance（topicDir 存在性 gate），gate pass →
+ * status=closed + onPass 回调事务内 reload 取 gateHistory 快照写入 evidence。
  */
 export function handleCloseout(
   params: CloseoutParams,
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // FR-2: 先校验 artifacts 记录的 review/retrospect 文件存在（如果有记录）。
+  const missingPaths: string[] = [];
+  if (topic.artifacts?.review?.path && !existsSync(topic.artifacts.review.path)) {
+    missingPaths.push(`review: ${topic.artifacts.review.path}`);
+  }
+  if (
+    topic.artifacts?.retrospect?.path &&
+    !existsSync(topic.artifacts.retrospect.path)
+  ) {
+    missingPaths.push(`retrospect: ${topic.artifacts.retrospect.path}`);
+  }
+  if (missingPaths.length > 0) {
+    const report = `closeout artifacts 文件不存在: ${missingPaths.join(", ")}`;
+    deps.store.transaction(() => {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "closeout",
+        action: "closeout",
+        gate: "artifacts-exist",
+        result: "fail",
+        report,
+        progressive: false,
+      });
+    });
+    const updated = deps.store.loadTopic(params.topicId);
+    const failResult: ActionResult = {
+      topicId: params.topicId,
+      status: updated?.status ?? topic.status,
+      gatePassed: updated?.gatePassed ?? topic.gatePassed,
+      nextAction: buildNextAction("closeout", updated ?? topic),
+    };
+    (failResult as Record<string, unknown>).mustFix = report;
+    return failResult;
+  }
+
   return gateAdvance(
     "closeout",
     "topicDir-exists",
@@ -1721,9 +2155,9 @@ function validateAppendOnly(
  *     → gatePassed 重算（dev+test，事务内同步——砍掉 cache_inconsistent guard 后的强依赖）
  *     → gateHistory(pass) } → buildNextAction
  *
- * status 回退语义：replan 的 nextStatus=planned（TRANSITIONS 表）。
- *   - current=planned → computeNextStatus("replan", planned) = planned（不变）
- *   - current=developed/tdd_inited → computeNextStatus("replan", ...) = planned（回退，让 dev 重新走）
+ * status 回退语义（D7: 条件回退）：
+ *   - hasPlan（plan 改了）→ 回退到 planned（plan 变了需重走 plan_review → tdd_plan）
+ *   - hasTest only（plan 没变）→ 回退到 plan_reviewed（plan_review 仍有效，直接重走 tdd_plan）
  * replan 后必须重新走 dev（即使之前 developed），因为可能追加了新 wave。
  *
  * 事务内同步 gatePassed（关键约束）：砍掉 cache_inconsistent guard 后，gatePassed 缓存漂移
@@ -1821,10 +2255,12 @@ export function handleReplan(
       throw new Error(`topic not found after replan replace: ${params.topicId}`);
     }
 
-    // status：developed/tdd_inited → planned（回退，让 dev gate progressive 重新评估）。
-    const nextStatus = computeNextStatus("replan", reloaded.status);
-    if (nextStatus !== reloaded.status) {
-      deps.store.updateStatus(params.topicId, nextStatus);
+    // D7: replan 条件回退。
+    // hasPlan（plan 改了）→ 回退到 planned（需重走 plan_review → tdd_plan）
+    // hasTest only（plan 没变）→ 回退到 plan_reviewed（plan_review 仍有效，直接重走 tdd_plan）
+    const targetStatus: Status = hasPlan ? "planned" : "plan_reviewed";
+    if (targetStatus !== reloaded.status) {
+      deps.store.updateStatus(params.topicId, targetStatus);
     }
 
     // gatePassed 重算：必须在事务内同步。
@@ -1861,7 +2297,7 @@ export function handleReplan(
         addedCases: newCases
           .filter((c) => !topic.testCases.some((o) => o.id === c.id))
           .map((c) => c.id),
-        statusChanged: nextStatus !== statusBefore ? `${statusBefore}→${nextStatus}` : null,
+        statusChanged: targetStatus !== statusBefore ? `${statusBefore}→${targetStatus}` : null,
       }),
       progressive: true,
     });
