@@ -90,12 +90,14 @@ cwVersion 始终从 package.json 自动读取，不可手动指定。
 create → clarify → confirm_clarify → plan → tdd_plan → dev → review → test → retrospect → closeout
 ```
 
-clarify → plan 之间必经 confirm_clarify（gen-spec → open → confirm_clarify），是 plan 前的机器 gate。
+clarify → plan 之间必经 confirm_clarify（gen-spec → cw 自动打开 specPath 给用户确认 → confirm_clarify），是 plan 前的机器 gate。
+
+> **cw 自动打开临时文件**：`gen-spec` / `report` 产出 md/html 后，cw 默认用系统默认应用自动打开（跨平台：mac `open` / win `start` / linux `xdg-open`）。agent 无需手动调 open 命令。`--no-open` flag 或 `CW_NO_OPEN=1` env 跳过（CI / 测试 / 自动化场景）。
 
 | nextAction.action | 你要做的 | cw 命令 |
 |-------------------|---------|---------|
 | `clarify` | 探索技术系统 + 澄清需求/技术 spec + 记录 ADR + 可选提交结构化 spec 章节（FR/AC/UC 等） | `echo '<clarifyJson>' \| cw clarify --topicId <id>` |
-| `confirm_clarify` | 用户确认需求 gate：先 `cw gen-spec` 生成确认 md → open 给用户看 → 用户确认后调 `cw confirm_clarify`（plan 前的机器 gate，跳过会被状态机拒绝） | `cw gen-spec --topicId <id>` → `cw confirm_clarify --topicId <id>` |
+| `confirm_clarify` | 用户确认需求 gate：先 `cw gen-spec` 生成确认 md（cw 自动打开给用户过目）→ 用户确认后调 `cw confirm_clarify`（plan 前的机器 gate，跳过会被状态机拒绝） | `cw gen-spec --topicId <id>` → `cw confirm_clarify --topicId <id>` |
 | `plan` | 明确范围后产出 **dev-plan.json**（只含 waves），提交 | `echo '<devPlanJson>' \| cw plan --topicId <id>` |
 | `tdd_plan` | 写测试代码（红灯）+ **test.json**（testCases + expected），提交 | `echo '<testJson>' \| cw tdd_plan --topicId <id>` |
 | `dev` | 按 Wave 写实现让测试转绿，commit，提交 | `cw dev --topicId <id> --tasks '[{"waveId":"W1","commitHash":"<sha>"}]'` |
@@ -202,16 +204,16 @@ cw init
 
 **排查**：`topic not found` 时，先 `cw list` 看当前 cwd 下有没有 topic，再 `node -p "process.cwd()"` 确认实际路径。
 
-## 只读查询命令（不触发状态变更）
+## 辅助命令（不经状态机流转，不改 topic.status）
 
-| 命令 | 用途 |
-|------|------|
-| `cw status --topicId <id>` | 查看单个 topic 进度快照（status/gatePassed/waves/testCases） |
-| `cw list` | 列出当前 cwd 下所有 topic |
-| `cw stats --topicId <id>` | 评估指标（复杂度分桶/过程效率/杠杆健康度） |
-| `cw stats --all` | 跨 topic 聚合（按 RuntimeEnv 分组），用于跨 agent/llm 对比 |
-| `cw report --topicId <id>` | 生成可视化 HTML 报告（暗色主题），写到临时文件，返回 `{ reportPath }`。closeout 后调，展示 wave 变更 / 测试矩阵 / gate 轨迹 / 复盘结论 |
-| `cw gen-spec --topicId <id>` | 生成 spec 确认 md（汇总 clarifyRecords + specSections），写到临时文件，返回 `{ specPath }`。clarify 阶段确认前调，open 给用户看 |
+| 命令 | 用途 | 副作用 |
+|------|------|--------|
+| `cw status --topicId <id>` | 查看单个 topic 进度快照（status/gatePassed/waves/testCases） | 纯只读 |
+| `cw list` | 列出当前 cwd 下所有 topic | 纯只读 |
+| `cw stats --topicId <id>` | 评估指标（复杂度分桶/过程效率/杠杆健康度） | 纯只读 |
+| `cw stats --all` | 跨 topic 聚合（按 RuntimeEnv 分组），用于跨 agent/llm 对比 | 纯只读 |
+| `cw report --topicId <id>` | 生成可视化 HTML 报告（暗色主题），写到临时文件，返回 `{ reportPath }`。closeout 后调，展示 wave 变更 / 测试矩阵 / gate 轨迹 / 复盘结论。cw 自动用默认浏览器打开（`--no-open` 或 `CW_NO_OPEN=1` 跳过） | 写临时 HTML，**不碰 topic 数据** |
+| `cw gen-spec --topicId <id>` | 生成 spec 确认 md（汇总 clarifyRecords + specSections），写到临时文件，返回 `{ specPath }`。clarify 阶段确认前调。cw 自动用默认应用打开（`--no-open` 或 `CW_NO_OPEN=1` 跳过） | 写临时 md + **记 `artifacts.confirmSpec`**（confirm gate 校验存在性）。**不是只读命令** |
 
 ## 失败模式
 
