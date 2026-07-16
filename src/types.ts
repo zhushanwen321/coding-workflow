@@ -32,7 +32,11 @@ export type Action =
   | "create"
   | "clarify"
   | "confirm_clarify"
+  | "spec_review"
+  | "spec_review_fix"
   | "plan"
+  | "plan_review"
+  | "plan_review_fix"
   | "tdd_plan"
   | "dev"
   | "review"
@@ -54,7 +58,9 @@ export type Action =
 export type Status =
   | "created"
   | "clarify_confirmed"
+  | "spec_reviewed"
   | "planned"
+  | "plan_reviewed"
   | "tdd_inited"
   | "developed"
   | "reviewed"
@@ -192,14 +198,32 @@ export interface Evidence {
 }
 
 /**
- * 交付物文档记录——存储 review.md / retrospect.md 的路径 + 提交时间戳。
- * 用于后续检索复盘文档，分析 CW 流程的改进点。
+ * 单个审查阶段产物的文档记录（路径 + 时间戳）。
+ */
+export interface ArtifactDoc {
+  path: string;
+  at: string;
+}
+
+/**
+ * Artifacts — 所有阶段交付物文档的统一记录。
+ *
+ * FR-1 重构：从旧版平铺（reviewPath/reviewAt/retrospectPath/retrospectAt）改为
+ * 按 phase 分组的嵌套结构。每个 phase 含 path + at。
+ * confirmSpec（FR-8 gen-spec 产物）也纳入此处。
+ * 旧 _cw.json 平铺格式在 store 加载时迁移（store.ts migrateArtifacts）。
  */
 export interface Artifacts {
-  reviewPath?: string;
-  reviewAt?: string;
-  retrospectPath?: string;
-  retrospectAt?: string;
+  /** FR-8: gen-spec 产出的确认文档（confirm gate 校验存在性）。 */
+  confirmSpec?: ArtifactDoc;
+  /** FR-4: spec_review 阶段的审查报告。 */
+  specReview?: ArtifactDoc;
+  /** FR-5: plan_review 阶段的审查报告。 */
+  planReview?: ArtifactDoc;
+  /** dev 后 review 阶段的审查报告。 */
+  review?: ArtifactDoc;
+  /** retrospect 阶段的复盘报告。 */
+  retrospect?: ArtifactDoc;
 }
 
 // ── retrospect 结构化数据（test → closeout 之间的 retrospect 阶段） ──
@@ -462,41 +486,60 @@ export interface RuntimeEnv {
 // ── review / test issue tracking（闭环追踪） ───────────────
 
 /**
- * ReviewIssueCategory — review issue 的审查维度分类。
+ * ReviewDimension — 审查维度分类（FR-3 统一升级）。
  *
- * 用于事后统计 review 盲区分布（哪些维度的 issue 被遗漏）。agent 可选填，
- * 不提供时 CW 不报错（向后兼容旧数据）。
+ * 三阶段共用（review/spec_review/plan_review），共 12 个值：
+ *   - 代码审查 6 值（原 ReviewIssueCategory，review 阶段用）
+ *   - spec 审查 3 值（spec_review 阶段用）
+ *   - plan 审查 3 值（plan_review 阶段用）
+ *
+ * 用于事后统计审查盲区分布（哪些维度的 issue 被遗漏）。
+ * FR-3 升级后 dimension 必填（原 category 可选）——强制 agent 按维度归类发现。
  */
-export type ReviewIssueCategory =
+export type ReviewDimension =
+  // 代码审查维度（review 阶段）
   | "type-safety"
   | "error-handling"
   | "edge-case"
   | "test-coverage"
   | "plan-completeness"
-  | "design-consistency";
+  | "design-consistency"
+  // spec 审查维度（spec_review 阶段，FR-4）
+  | "completeness"
+  | "consistency"
+  | "reasonableness"
+  // plan 审查维度（plan_review 阶段，FR-5）
+  | "coverage"
+  | "architecture"
+  | "feasibility";
 
 /**
- * ReviewIssue — Review 阶段 agent 声明的问题（主观，CW 不验证内容，只追踪闭环）。
+ * ReviewIssue — 审查阶段 agent 声明的问题（主观，CW 不验证内容，只追踪闭环）。
  *
- * 设计：CW 不判定 issue 的内容是否合理（review 是主观的），只追踪「声明的 issue 是否
- * 有对应的修复 commit」。severity 由 agent 自填，CW 不介入。
- * status=open → 还没修；status=fixed → 带 fix 证据（commitHash + resolution）。
+ * FR-3 统一升级后，三阶段（review/spec_review/plan_review）共用此结构：
+ *   - dimension 必填（原 category 可选）——强制按维度归类
+ *   - ref 泛化（原 file 限代码路径，现可为 spec 条目 ID 如 FR-3 / W2）
+ *   - fix.commitHash 改可选（代码 review 必填，spec/plan review 可选因修复可能走 cw 内部）
+ *
+ * 各阶段用独立数组存储（topic.reviewIssues / specReviewIssues / planReviewIssues），
+ * id 前缀区分（R / SR / PR）。
  */
 export interface ReviewIssue {
-  /** R1, R2... cw 在 topic 内自增分配。 */
+  /** R1, R2...(review) / SR1, SR2...(spec_review) / PR1, PR2...(plan_review) cw 自增分配。 */
   id: string;
+  /** FR-3: 审查维度（必填），用于事后统计盲区分布。 */
+  dimension: ReviewDimension;
   severity: "must-fix" | "should-fix" | "nit";
   description: string;
-  /** 关联代码位置，如 "src/types.ts:42"。 */
-  file?: string;
-  /** 审查维度（可选），用于事后统计 review 盲区分布。 */
-  category?: ReviewIssueCategory;
+  /** 关联位置：代码审查填文件路径（如 "src/types.ts:42"），spec/plan 审查填条目 ID（如 "FR-3" / "W2"）。 */
+  ref?: string;
   status: "open" | "fixed";
-  /** 第几轮 review 发现的（1-based）。 */
+  /** 第几轮审查发现的（1-based）。 */
   foundAtTurn: number;
   /** 修复证据（status=fixed 时必填）。 */
   fix?: {
-    commitHash: string;
+    /** commitHash：代码 review 必填，spec/plan review 可选（修复可能走 cw 内部无独立 commit）。 */
+    commitHash?: string;
     resolution: string;
     fixedAtTurn: number;
   };
@@ -588,6 +631,14 @@ export interface Topic {
   reviewIssues: ReviewIssue[];
   /** 当前是第几轮 review（初始 0，第一次 review 后变 1）。 */
   reviewTurn: number;
+  /** FR-4: spec_review 阶段的审查 issue 列表（与 reviewIssues 平行，id 前缀 SR）。 */
+  specReviewIssues: ReviewIssue[];
+  /** FR-4: 当前是第几轮 spec_review（初始 0）。 */
+  specReviewTurn: number;
+  /** FR-5: plan_review 阶段的审查 issue 列表（与 reviewIssues 平行，id 前缀 PR）。 */
+  planReviewIssues: ReviewIssue[];
+  /** FR-5: 当前是第几轮 plan_review（初始 0）。 */
+  planReviewTurn: number;
   /** test 阶段的修复审计日志（每次 test_fix 追加一条）。 */
   testFixLog: TestFixEntry[];
   /** 当前是第几轮 test（初始 0，第一次 test 后变 1）。 */
@@ -654,24 +705,28 @@ export interface AdrSeed {
 // ── review / test 修复 submission（actions.ts 输入形态） ────
 
 /**
- * ReviewIssueSubmission — review action 提交的 issue 输入形态。
- * 不含 id/status/foundAtTurn/fix——由 cw 在 appendReviewIssues 时填充。
+ * ReviewIssueSubmission — review/spec_review/plan_review action 提交的 issue 输入形态。
+ * 不含 id/status/foundAtTurn/fix——由 cw 在 append 时填充。
+ * FR-3 统一升级：dimension 必填，ref 泛化。
  */
 export interface ReviewIssueSubmission {
+  /** FR-3: 审查维度（必填）。 */
+  dimension: ReviewDimension;
   severity: "must-fix" | "should-fix" | "nit";
   description: string;
-  file?: string;
-  /** 审查维度（可选），用于事后统计 review 盲区分布。 */
-  category?: ReviewIssueCategory;
+  /** 关联位置（可选）：代码路径或 spec/plan 条目 ID。 */
+  ref?: string;
 }
 
 /**
- * ReviewFixSubmission — review_fix action 提交的单条修复。
+ * ReviewFixSubmission — review_fix/spec_review_fix/plan_review_fix action 提交的单条修复。
  * issueId 指向已存在的 ReviewIssue.id。
+ * FR-3: commitHash 改可选（代码 review 必填，spec/plan review 可选）。
  */
 export interface ReviewFixSubmission {
   issueId: string;
-  commitHash: string;
+  /** commitHash：代码 review 必填（handler 校验格式），spec/plan review 可选。 */
+  commitHash?: string;
   resolution: string;
 }
 
