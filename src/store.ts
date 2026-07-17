@@ -49,6 +49,7 @@ import type {
   Expected,
   GateHistoryEntry,
   Priority,
+  ProcessIssue,
   RetrospectData,
   ReviewDimension,
   ReviewIssue,
@@ -537,6 +538,14 @@ export class CwStore {
         }
       }
     }
+    // [HISTORICAL] FR-4: processIssues 旧 string[] → ProcessIssue[] 迁移。
+    if (topic.retrospectData?.processIssues) {
+      topic.retrospectData.processIssues = this.migrateProcessIssues(
+        topic.retrospectData.processIssues as unknown as
+          | ProcessIssue[]
+          | string[],
+      );
+    }
     return topic;
   }
 
@@ -546,9 +555,24 @@ export class CwStore {
    */
   listTopics(): Topic[] {
     const data = this.getActiveData();
-    return data.topics.map((record) =>
-      this.assembleTopicFromData(record, record.topicId, data),
-    );
+    // [HISTORICAL] FR-4 / PR1: listTopics 不经 loadTopic（直接调
+    // assembleTopicFromData），必须在此独立接入 processIssues 迁移钩子。
+    // cw stats --all 走 listTopics → computeStatsAll，漏接会让旧 string[]
+    // 原样流出污染聚合（裸字符串无 type 字段，按 type 分桶会崩）。
+    // 长期改进：抽 applyLegacyMigrations(topic) 把 artifacts/reviewIssues/processIssues
+    // 三处迁移集中，loadTopic + listTopics 共调（当前为最小改动，artifacts/reviewIssues
+    // 在 listTopics 不崩所以未暴露问题，暂保持只在 loadTopic）。
+    return data.topics.map((record) => {
+      const topic = this.assembleTopicFromData(record, record.topicId, data);
+      if (topic.retrospectData?.processIssues) {
+        topic.retrospectData.processIssues = this.migrateProcessIssues(
+          topic.retrospectData.processIssues as unknown as
+            | ProcessIssue[]
+            | string[],
+        );
+      }
+      return topic;
+    });
   }
 
   /**
@@ -617,6 +641,35 @@ export class CwStore {
       };
     }
     return Object.keys(migrated).length > 0 ? migrated : undefined;
+  }
+
+  /**
+   * migrateProcessIssues — 旧格式 processIssues（string[]）迁移为 ProcessIssue[]。
+   *
+   * FR-4: RetrospectData.processIssues 从 string[] 破坏性升级为 ProcessIssue[]。
+   * 读取 _cw.json 时若发现旧 string[]，自动包装为
+   * [{ type: "uncategorized", description: 原串 }]。
+   * 新格式（对象数组）原样返回。一次性 in-memory 迁移，不写回磁盘
+   * （与 reviewIssues 迁移语义一致）。
+   *
+   * [HISTORICAL] PR1: 必须双入口接入 loadTopic + listTopics——listTopics 不经
+   * loadTopic，而 cw stats --all 走 listTopics → computeStatsAll，漏接会导致
+   * 旧 string[] 污染聚合（裸字符串无 type 字段，分桶统计崩）。
+   */
+  private migrateProcessIssues(
+    issues: ProcessIssue[] | string[] | undefined,
+  ): ProcessIssue[] {
+    if (!issues || !Array.isArray(issues)) return [];
+    if (issues.length === 0) return [];
+    // 首元素是 object（有 type 字段）→ 新格式原样返回（避免重复包装）。
+    if (typeof issues[0] === "object" && issues[0] !== null) {
+      return issues as ProcessIssue[];
+    }
+    // 首元素是 string → 旧格式，每条包装。
+    return (issues as string[]).map((s) => ({
+      type: "uncategorized" as const,
+      description: s,
+    }));
   }
 
   private assembleTopic(
