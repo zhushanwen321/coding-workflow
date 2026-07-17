@@ -19,8 +19,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve as pathResolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve as pathResolve, sep as pathSep } from "node:path";
 
 import { parseClarifyJson, type ParsedClarify, type ParsedDevPlan, parseDevPlan, type ParsedTestJson, parseTestJson } from "./plan-parser.js";
 import {
@@ -363,6 +363,50 @@ const FUZZY_EXPECTED_RE =
  * @param workspacePath workspace 绝对路径，用于 script.path 沙箱校验（AC-4a）。
  *   省略时默认 process.cwd()。handleTddPlan 应传 deps.workspacePath / topic.workspacePath。
  */
+
+/**
+ * 沙箱校验：判断 relPath resolve 在 workspacePath 后是否仍落在 workspace 内。
+ *
+ * R1（symlink 绕过修复）：先 path.resolve（lexical，挡 .. 和绝对路径），再 realpathSync
+ * 解析 symlink（workspace 内的 symlink 如 .cw/evil.sh -> /etc/passwd，resolve 后仍在前缀内通过
+ * lexical 检查，但真实目标越出 workspace）。
+ *
+ * ENOENT 处理：realpathSync 对不存在的路径抛 ENOENT。tdd_plan 阶段脚本可能还没写——此时
+ * 回退到 lexical resolve 检查（仍能挡 .. 和绝对路径越界），dev 阶段写完文件后 handleTest 会
+ * 再 realpath 校验一次（此时文件已存在，realpath 能解析 symlink）。
+ *
+ * workspace 自身也 realpath：workspace 可能是 symlink（如 macOS /tmp → /private/tmp），
+ * 不 realpath 会导致 workspace 前缀与真实路径前缀不匹配。
+ *
+ * 末尾分隔符：workspacePrefix 末尾补 path.sep，防止 "/foo" 误判 "/foobar" 为前缀。
+ *
+ * @returns true = 在 workspace 内（安全）；false = 越界（含 symlink 绕过）。
+ */
+export function isPathInsideWorkspace(relPath: string, workspacePath: string): boolean {
+  const lexicalResolved = pathResolve(workspacePath, relPath);
+  const lexicalWorkspace = pathResolve(workspacePath);
+  // 先做 lexical 检查（不依赖文件存在，必跑）：挡 .. 越界和绝对路径。
+  const lexicalOk = pathStartsWithWorkspace(lexicalResolved, lexicalWorkspace);
+  if (!lexicalOk) return false;
+
+  // 再做 realpath 检查（解析 symlink）。任一端不存在（ENOENT）则跳过 realpath，保留 lexical 结论。
+  try {
+    const realResolved = realpathSync(lexicalResolved);
+    const realWorkspace = realpathSync(lexicalWorkspace);
+    return pathStartsWithWorkspace(realResolved, realWorkspace);
+  } catch {
+    // 路径不存在（tdd_plan 阶段脚本未写）→ 无法解析 symlink，回退 lexical 检查结论。
+    return lexicalOk;
+  }
+}
+
+/** resolved === workspace 或 resolved 以 workspace + sep 为前缀（边界精确化，防 /foo 匹配 /foobar）。 */
+function pathStartsWithWorkspace(resolved: string, workspace: string): boolean {
+  if (resolved === workspace) return true;
+  const prefix = workspace.endsWith(pathSep) ? workspace : workspace + pathSep;
+  return resolved.startsWith(prefix);
+}
+
 export function tddPlanCheck(
   testJson: unknown,
   specSections?: SpecSection[],
@@ -444,12 +488,14 @@ export function tddPlanCheck(
       }
       // AC-4a: path 必须 resolve 在 workspacePath 内。用 path.resolve 而非字符串 startsWith，
       // 才能抓到 "foo/../../../etc/passwd" 这种非顶层 .. 绕过。
-      const resolved = pathResolve(workspacePath, tc.expected.path);
-      const workspaceResolved = pathResolve(workspacePath);
-      // 末尾加 sep 防止 "/foo" 误判 "/foobar" 为前缀（workspace 边界精确化）。
-      const workspacePrefix =
-        workspaceResolved.endsWith("/") ? workspaceResolved : workspaceResolved + "/";
-      if (resolved !== workspaceResolved && !resolved.startsWith(workspacePrefix)) {
+      // R1（symlink 绕过修复）：再 realpathSync 一次——workspace 内的 symlink（如
+      // .cw/evil.sh -> /etc/passwd）resolve 后仍落在 workspace 前缀内（lexical 通过），
+      // 但 execFileSync 会跟随 symlink 执行/读取真实目标。realpath 把 symlink 解析到真实路径后
+      // 真实路径越出 workspace → 拒绝。
+      //   - realpathSync 对不存在的路径抛 ENOENT：tdd_plan 阶段脚本可能还没写，回退到 lexical
+      //     resolve 检查（至少挡住 .. 和绝对路径越界，dev 阶段写文件后 handleTest 会再 realpath 一次）。
+      //   - workspace 自身也 realpath（workspace 本身可能是 symlink，如 macOS /tmp → /private/tmp）。
+      if (!isPathInsideWorkspace(tc.expected.path, workspacePath)) {
         sandboxLeakIds.push(tc.id);
       }
     }
@@ -459,7 +505,7 @@ export function tddPlanCheck(
     return {
       result: "fail",
       report:
-        `expected.path 越出 workspace 沙箱（script.path 必须 resolve 在 workspacePath 内，禁止 .. / 绝对路径越界）: ` +
+        `expected.path 越出 workspace 沙箱（script.path 必须 resolve 在 workspacePath 内，禁止 .. / 绝对路径 / symlink 越界）: ` +
         `${sandboxLeakIds.join(", ")}。`,
     };
   }

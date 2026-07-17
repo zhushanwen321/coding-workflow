@@ -19,7 +19,7 @@
  *   - gate 层（tddPlanCheck）：AC-4a / AC-5 / AC-7
  *   - dispatch 层（handleTest / replan）：AC-2 执行 / AC-3 执行 / AC-6 / AC-9 / AC-10
  */
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -337,6 +337,149 @@ describe("AC-4a: tddPlanCheck 对 script.path 沙箱校验", () => {
     };
     const result = tddPlanCheck(testJson);
     expect(result.result).toBe("pass");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// R1（review fix）: symlink 绕过沙箱 — realpathSync 校验
+// 核心：workspace 内的 symlink（如 .cw/evil.sh -> /tmp/xxx）resolve 后仍落在 workspace 前缀内
+// （lexical 通过），但 execFileSync 跟随 symlink 执行真实目标 → 绕过沙箱。
+// 必须先 realpathSync 解析 symlink 后再检查前缀。测试用真实 fs.symlinkSync，零 mock。
+// ════════════════════════════════════════════════════════════════
+
+describe("R1: symlink 绕过沙箱（realpathSync 校验）", () => {
+  const testRunner = { mode: "nodejs" as const, command: "npx vitest run" };
+
+  it("gate 层：script.path 是指向 workspace 外的 symlink（已存在）→ tddPlanCheck fail（symlink 绕过）", () => {
+    // 真实 fs 操作：workspace 外建 target 文件，workspace 内建 symlink 指向它。
+    // tddPlanCheck 必须用 realpathSync 解析 symlink，发现真实目标越出 workspace → 拒绝。
+    const outsideTarget = join(tmpdir(), `cw-r1-target-${Date.now()}.sh`);
+    writeFileSync(outsideTarget, "#!/usr/bin/env bash\nexit 0\n");
+    const symlinkRel = "scripts/evil.sh";
+    const symlinkAbs = join(tmpDir, symlinkRel);
+    mkdirSync(join(symlinkAbs, ".."), { recursive: true });
+    symlinkSync(outsideTarget, symlinkAbs);
+
+    try {
+      const testJson = {
+        testRunner,
+        testCases: [
+          {
+            id: "S1",
+            layer: "mock",
+            scenario: "s",
+            steps: "st",
+            expected: { type: "script", path: symlinkRel },
+            executor: "vitest",
+            requiresScreenshot: false,
+          },
+          {
+            id: "S2",
+            layer: "real",
+            scenario: "s",
+            steps: "st",
+            expected: { type: "exact", text: "real-out" },
+            executor: "vitest",
+            requiresScreenshot: false,
+          },
+        ],
+      };
+      // 显式传 workspacePath=tmpDir（默认 process.cwd() 是 repo 根，不匹配 tmpDir）。
+      const result = tddPlanCheck(testJson, undefined, tmpDir);
+      expect(result.result).toBe("fail");
+      expect(result.report).toContain("S1");
+      // 报告必须点出 path 沙箱问题（含 symlink 字样更佳）。
+      expect(result.report.toLowerCase()).toContain("path");
+    } finally {
+      rmSync(outsideTarget, { force: true });
+    }
+  });
+
+  it("gate 层：script.path 指向 workspace 内合法脚本（非 symlink）→ pass（realpath 不误伤）", () => {
+    // 反面回归：合法的 workspace 内真实脚本，realpath 后仍在 workspace 内，不应被误判。
+    makeRunnableScript("scripts/legit.sh", "#!/usr/bin/env bash\nexit 0\n");
+    const testJson = {
+      testRunner,
+      testCases: [
+        {
+          id: "S1",
+          layer: "mock",
+          scenario: "s",
+          steps: "st",
+          expected: { type: "script", path: "scripts/legit.sh" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+        {
+          id: "S2",
+          layer: "real",
+          scenario: "s",
+          steps: "st",
+          expected: { type: "exact", text: "real-out" },
+          executor: "vitest",
+          requiresScreenshot: false,
+        },
+      ],
+    };
+    const result = tddPlanCheck(testJson, undefined, tmpDir);
+    expect(result.result).toBe("pass");
+  });
+
+  it("执行层：handleTest 执行前 symlink 越界被拦（case failed，不执行真实目标）", () => {
+    // 场景：tdd_plan 时 script.path 文件还不存在（lexical 通过，realpath ENOENT 回退 lexical），
+    // dev 阶段写入一个指向 workspace 外的 symlink。test 阶段 handleTest 执行前再 realpath 校验，
+    // 此时 symlink 已存在 → realpath 解析到真实目标 → 越界 → case failed（不执行）。
+    const { deps, store } = makeDeps();
+    const outsideTarget = join(tmpdir(), `cw-r1-exec-${Date.now()}.sh`);
+    // target 故意 exit 0——若沙箱失效执行了它，case 会 passed。沙箱生效则 failed。
+    writeFileSync(outsideTarget, "#!/usr/bin/env bash\nexit 0\n");
+
+    const createResult = dispatch(
+      { action: "create", slug: "emm-r1-symlink", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    dispatch({ action: "plan", topicId, planJson: validPlanJson }, deps);
+    passPlanReview(store, topicId);
+    // tdd_plan gate：此时 scripts/evil.sh 还不存在，realpath ENOENT 回退 lexical（通过）。
+    passTddPlanGateWith(store, topicId, [
+      { id: "E1", expected: { type: "script", path: "scripts/evil.sh" } },
+      { id: "E2", expected: { type: "exact", text: "real-out" } },
+    ]);
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    passReviewGate(store, topicId);
+
+    // dev 阶段后建 symlink：workspace 内 scripts/evil.sh → workspace 外 target。
+    const symlinkAbs = join(tmpDir, "scripts/evil.sh");
+    mkdirSync(join(symlinkAbs, ".."), { recursive: true });
+    symlinkSync(outsideTarget, symlinkAbs);
+
+    try {
+      dispatch(
+        {
+          action: "test",
+          topicId,
+          cases: [
+            { caseId: "E1" }, // script 不接收 actual（AC-9）
+            { caseId: "E2", actual: { text: "real-out" } },
+          ],
+        },
+        deps,
+      );
+      const topic = store.loadTopic(topicId);
+      // 关键断言：E1 必须 failed（symlink 越界被拦），不能 passed（passed 说明执行了越界 target）。
+      const e1 = topic!.testCases.find((c) => c.id === "E1")!;
+      expect(e1.status).toBe("failed");
+      // failureReason 应点出沙箱/symlink 问题。
+      expect(e1.failureReason).toContain("沙箱");
+    } finally {
+      rmSync(outsideTarget, { force: true });
+    }
   });
 });
 
