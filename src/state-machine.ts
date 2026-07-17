@@ -17,6 +17,7 @@
  */
 
 import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, PLAN_REVIEW_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, SPEC_REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { computeRetrospectDerived } from "./stats.js";
 import type {
   Action,
   GateHistoryEntry,
@@ -374,6 +375,57 @@ function specProgress(topic: Topic): NextAction["specProgress"] {
 }
 
 /**
+ * buildDerivedSummary — 把 topic 的 derived 指标拼成人读的摘要，注入 retrospect guidance。
+ *
+ * FR-1: 提前算 derived（computeRetrospectDerived 是纯函数只读 topic，可在 retrospect gate pass 前调）。
+ * 让 agent 进 retrospect 前就看到本 topic 的客观数据，而非凭记忆自省。
+ *
+ * 异常归因：gateFailCount/devRetryCount/testRetryCount > 0 或 firstTryPassRate < 1 时加归因提示。
+ * 无异常（全 pass）时不含归因段——让 agent 知道这次执行指标干净。
+ *
+ * 注入点：buildNextAction 的 3 个进/重进 retrospect 的出口（test gate pass / test overLimit / retrospect retry）。
+ * 位置约定：derived 摘要在 RETROSPECT_PROMPT **之前**（先看数据再读反思指引）。
+ */
+export function buildDerivedSummary(topic: Topic): string {
+  const d = computeRetrospectDerived(topic);
+  const anomalies: string[] = [];
+  if (d.gateFailCount > 0) {
+    anomalies.push(
+      `gateFailCount=${d.gateFailCount}（gate 反复 fail，重点反思哪些 gate 设计太严/太松）`,
+    );
+  }
+  if (d.devRetryCount > 0) {
+    anomalies.push(
+      `devRetryCount=${d.devRetryCount}（dev 重试，反思 Wave 拆分或 commit 质量）`,
+    );
+  }
+  if (d.testRetryCount > 0) {
+    anomalies.push(
+      `testRetryCount=${d.testRetryCount}（test 重试，反思 tdd_plan 测试设计）`,
+    );
+  }
+  if (d.firstTryPassRate < 1) {
+    anomalies.push(
+      `firstTryPassRate=${d.firstTryPassRate.toFixed(2)}（首次通过率未满，反思哪个 phase 首次失败）`,
+    );
+  }
+  const anomalyNote =
+    anomalies.length > 0
+      ? `\n\n⚠️ 异常归因（以下指标偏离正常，retrospect 应重点回答为什么）：\n${anomalies.map((a) => `  - ${a}`).join("\n")}`
+      : "";
+  return (
+    `[derived 摘要（本 topic 客观执行数据，先看数据再写反思）]\n` +
+    `  totalWaves = ${d.totalWaves}\n` +
+    `  totalCases = ${d.totalCases}\n` +
+    `  gateFailCount = ${d.gateFailCount}\n` +
+    `  devRetryCount = ${d.devRetryCount}\n` +
+    `  testRetryCount = ${d.testRetryCount}\n` +
+    `  redLightConfirmed = ${d.redLightConfirmed}\n` +
+    `  firstTryPassRate = ${d.firstTryPassRate.toFixed(2)}${anomalyNote}`
+  );
+}
+
+/**
  * buildNextAction — 按 action + gatePassed 推 nextAction（无 tier 分支）。
  *
  * 每个分支返回 nextAction，guidance = 导航短句 + 阶段提示词（spec/plan/execute）。
@@ -693,7 +745,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         return {
           action: "retrospect",
           guidance:
-            `所有 testCase 已 passed。下一步：写复盘报告（retrospect.md）+ 结构化 retrospectData，完成后调 cw(retrospect) 提交。\n\n${RETROSPECT_PROMPT}`,
+            `所有 testCase 已 passed。下一步：写复盘报告（retrospect.md）+ 结构化 retrospectData，完成后调 cw(retrospect) 提交。\n\n${buildDerivedSummary(topic)}\n\n${RETROSPECT_PROMPT}`,
           alternatives: [replanAlternative()],
         };
       }
@@ -723,7 +775,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
             `由用户决定是否接受或调 cw(replan) 调整计划。\n` +
             `注意：可带未全过的 test case 进入 closeout，closeout 的 coverage（通过率 = passed/total）会如实记录到 evidence，不强制 100% passed。` +
             lowCoverageWarning +
-            `\n\n${RETROSPECT_PROMPT}`,
+            `\n\n${buildDerivedSummary(topic)}\n\n${RETROSPECT_PROMPT}`,
           testCases: testCaseProgress(topic),
           alternatives: [replanAlternative()],
         };
@@ -755,7 +807,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           guidance:
             fails >= GATE_RETRY_LIMIT
               ? buildCircuitBreakerGuidance("retrospect", fails)
-              : `retrospect gate FAIL。修 mustFix 后重调 cw(retrospect)。\n\n${RETROSPECT_PROMPT}`,
+              : `retrospect gate FAIL。修 mustFix 后重调 cw(retrospect)。\n\n${buildDerivedSummary(topic)}\n\n${RETROSPECT_PROMPT}`,
         };
       }
       // 检查未闭环的 should-fix/nit（status=open 的非 must-fix issue），提醒 retrospect 记录。
