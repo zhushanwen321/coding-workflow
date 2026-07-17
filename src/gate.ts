@@ -20,7 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 
 import { parseClarifyJson, type ParsedClarify, type ParsedDevPlan, parseDevPlan, type ParsedTestJson, parseTestJson } from "./plan-parser.js";
 import {
@@ -355,10 +355,27 @@ const FUZZY_EXPECTED_RE =
  *   2. testCases 非空
  *   3. mock + real 分层强制（至少各 1 个）—— mock 层验证逻辑正确性，real 层验证集成契约
  *   4. 模糊 expected.text 检测（不能是 passed/ok/success 等结论词）
+ *   5. expected 空/缺 type 判据检查（exact: url+text 都缺；缺 type 字段→友好报错 AC-7）
+ *   6. script.path 沙箱校验（path 必须 resolve 在 workspacePath 内，AC-4a）
  *
  * pass 时返回 parsed，供 handler 写入 store。fail 时 parsed 为 undefined。
+ *
+ * @param workspacePath workspace 绝对路径，用于 script.path 沙箱校验（AC-4a）。
+ *   省略时默认 process.cwd()。handleTddPlan 应传 deps.workspacePath / topic.workspacePath。
  */
-export function tddPlanCheck(testJson: unknown, specSections?: SpecSection[]): TddPlanCheckResult {
+export function tddPlanCheck(
+  testJson: unknown,
+  specSections?: SpecSection[],
+  workspacePath: string = process.cwd(),
+): TddPlanCheckResult {
+  // AC-7: 预扫描 expected 缺 type 字段——typebox Union 失败时的报错是「Expected union value」，
+  // 不含 "type" 字样也无法定位 testCase id。这里在 schema 校验前做一次友好的结构预检，
+  // 报告明确点出 type 必填 + 哪些 testCase 缺。存量 fixture 已统一带 type，不会误伤。
+  const missingTypeResult = checkMissingExpectedType(testJson);
+  if (missingTypeResult) {
+    return missingTypeResult;
+  }
+
   let parsed: ParsedTestJson;
   try {
     parsed = parseTestJson(testJson);
@@ -407,21 +424,50 @@ export function tddPlanCheck(testJson: unknown, specSections?: SpecSection[]): T
     };
   }
 
-  // P1: 检查 expected 空判据（仅 exact 模式：url 和 text 都缺 = 无法机器判定）。
-  // exit_zero / script 模式自带判据（type 本身即判据），不在此检查范围。
+  // P1: 检查 expected 空判据 + script.path 沙箱（按 type 分支）。
+  //   - exact：url 和 text 都缺 = 无法机器判定（空判据）
+  //   - exit_zero：自带判据（type 本身即判据），不检查
+  //   - script：path 缺/空 = 空判据；path 必须在 workspacePath 沙箱内（AC-4a）
   // 无判据的 testCase 到 test 阶段会被 judgeByExpected 判 failed「no judgeable field」，
   // 在 tdd_plan 前置拦截避免浪费整个 dev 周期。
   const noJudgeableIds: string[] = [];
+  const sandboxLeakIds: string[] = [];
   for (const tc of parsed.testCases) {
-    if (tc.expected.type === "exact" && tc.expected.url === undefined && tc.expected.text === undefined) {
-      noJudgeableIds.push(tc.id);
+    if (tc.expected.type === "exact") {
+      if (tc.expected.url === undefined && tc.expected.text === undefined) {
+        noJudgeableIds.push(tc.id);
+      }
+    } else if (tc.expected.type === "script") {
+      if (!tc.expected.path || tc.expected.path.length === 0) {
+        noJudgeableIds.push(tc.id);
+        continue;
+      }
+      // AC-4a: path 必须 resolve 在 workspacePath 内。用 path.resolve 而非字符串 startsWith，
+      // 才能抓到 "foo/../../../etc/passwd" 这种非顶层 .. 绕过。
+      const resolved = pathResolve(workspacePath, tc.expected.path);
+      const workspaceResolved = pathResolve(workspacePath);
+      // 末尾加 sep 防止 "/foo" 误判 "/foobar" 为前缀（workspace 边界精确化）。
+      const workspacePrefix =
+        workspaceResolved.endsWith("/") ? workspaceResolved : workspaceResolved + "/";
+      if (resolved !== workspaceResolved && !resolved.startsWith(workspacePrefix)) {
+        sandboxLeakIds.push(tc.id);
+      }
     }
+    // exit_zero 无需检查判据。
+  }
+  if (sandboxLeakIds.length > 0) {
+    return {
+      result: "fail",
+      report:
+        `expected.path 越出 workspace 沙箱（script.path 必须 resolve 在 workspacePath 内，禁止 .. / 绝对路径越界）: ` +
+        `${sandboxLeakIds.join(", ")}。`,
+    };
   }
   if (noJudgeableIds.length > 0) {
     return {
       result: "fail",
       report:
-        `expected 缺少判据字段（url 和 text 至少填一个）: ${noJudgeableIds.join(", ")}。` +
+        `expected 缺少判据字段（exact 需 url/text 至少一个，script 需 path）: ${noJudgeableIds.join(", ")}。` +
         `无判据的 testCase 无法被 CW 机器判定，到 test 阶段会被直接判 failed。`,
     };
   }
@@ -449,6 +495,45 @@ export function tddPlanCheck(testJson: unknown, specSections?: SpecSection[]): T
   const acWarning = checkAcMapping(parsed, specSections);
 
   return { result: "pass", report: "", parsed, ...(acWarning ? { warning: acWarning } : {}) };
+}
+
+/**
+ * checkMissingExpectedType — AC-7 友好预检：扫描 raw testJson 的 testCases，
+ * 找出 expected 缺 type 字段的条目。typebox Union 失败报错是「Expected union value」，
+ * 不含 "type" 字样且无法定位 testCase id，所以在这里前置成「expected 缺 type 字段（必填）」
+ * 的明确报错。
+ *
+ * 只做最小结构推断（不重复 schema 全量校验）：找到 testCases 数组 + 每条 expected 对象，
+ * 若 expected 不是对象或无 type 字段则视为缺 type。
+ *
+ * @returns 缺 type 时的 fail result；合法（无缺 type 或结构无法推断）时返回 undefined。
+ */
+function checkMissingExpectedType(testJson: unknown): TddPlanCheckResult | undefined {
+  if (typeof testJson !== "object" || testJson === null) return undefined;
+  const cases = (testJson as { testCases?: unknown }).testCases;
+  if (!Array.isArray(cases)) return undefined;
+
+  const missingIds: string[] = [];
+  for (const tc of cases) {
+    if (typeof tc !== "object" || tc === null) continue;
+    const id = (tc as { id?: unknown }).id;
+    const expected = (tc as { expected?: unknown }).expected;
+    if (expected === undefined || typeof expected !== "object" || expected === null) {
+      // expected 缺失或非对象：也算缺 type（schema 会拒绝，这里友好提示）。
+      if (typeof id === "string") missingIds.push(id);
+      continue;
+    }
+    if (!("type" in expected)) {
+      if (typeof id === "string") missingIds.push(id);
+    }
+  }
+  if (missingIds.length === 0) return undefined;
+  return {
+    result: "fail",
+    report:
+      `expected 缺 type 字段（type 必填，取值 exact | exit_zero | script）: ${missingIds.join(", ")}。` +
+      `旧格式 {url?,text?} 已废弃，请补 type 字段。`,
+  };
 }
 
 // ── redLightCheck（执行测试命令确认红灯） ─────────────────────

@@ -790,7 +790,7 @@ export function handleTddPlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = tddPlanCheck(params.testJson, topic.specSections);
+  const check = tddPlanCheck(params.testJson, topic.specSections, topic.workspacePath);
 
   let passed: boolean;
   deps.store.transaction(() => {

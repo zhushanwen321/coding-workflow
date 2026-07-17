@@ -58,6 +58,36 @@ export const DevPlanSchema = Type.Object({
   ),
 });
 
+// ── ExpectedSchema（expected 字段判别联合，与 types.ts Expected 同构） ──
+
+/**
+ * expected 字段的 typebox 判别联合 schema（与 types.ts 的 Expected 类型同构）。
+ *
+ * 三种 type 分支，靠 Type.Literal('exact' | 'exit_zero' | 'script') 判别：
+ *   - exact：url/text 可选（至少一个由 gate 层空判据检查兜底，与 schema 解耦）。
+ *   - exit_zero：无判据字段，type 本身即判据。
+ *   - script：path 必填（脚本路径，相对 workspacePath）。
+ *
+ * 缺 type 字段的旧格式（如 `{text:'x'}`）会被 Union 拒绝——AC-7 强制 type 必填。
+ * 存量 fixture 已在 W1 统一加 `type:"exact"`，所以向后兼容不 break。
+ *
+ * 用 Union（而非 Type.Object + Type.Union 的扁平判别）保持与 SpecSectionSchema 一致的写法。
+ */
+const ExpectedSchema = Type.Union([
+  Type.Object({
+    type: Type.Literal("exact"),
+    url: Type.Optional(Type.String()),
+    text: Type.Optional(Type.String()),
+  }),
+  Type.Object({
+    type: Type.Literal("exit_zero"),
+  }),
+  Type.Object({
+    type: Type.Literal("script"),
+    path: Type.String(),
+  }),
+]);
+
 // ── TestJsonSchema（test.json，含 testCases + testRunner） ───
 
 /**
@@ -73,10 +103,7 @@ export const TestJsonSchema = Type.Object({
       layer: Type.Union([Type.Literal("mock"), Type.Literal("real")]),
       scenario: Type.String(),
       steps: Type.String(),
-      expected: Type.Object({
-        url: Type.Optional(Type.String()),
-        text: Type.Optional(Type.String()),
-      }),
+      expected: ExpectedSchema,
       executor: Type.String(),
       requiresScreenshot: Type.Boolean(),
       dependsOn: Type.Optional(Type.Array(Type.String())),
@@ -134,10 +161,7 @@ export const LegacyPlanSchema = Type.Object({
         layer: Type.Union([Type.Literal("mock"), Type.Literal("real")]),
         scenario: Type.String(),
         steps: Type.String(),
-        expected: Type.Object({
-          url: Type.Optional(Type.String()),
-          text: Type.Optional(Type.String()),
-        }),
+        expected: ExpectedSchema,
         executor: Type.String(),
         requiresScreenshot: Type.Boolean(),
         dependsOn: Type.Optional(Type.Array(Type.String())),
