@@ -684,7 +684,7 @@ function renderRetrospect(topic: Topic): string {
       .join("\n");
 
     const issues = (rd.processIssues ?? [])
-      .map((issue) => `      <li><span class="badge b-warn">process</span><span>${esc(issue)}</span></li>`)
+      .map((issue) => `      <li><span class="badge b-warn">${esc(issue.type)}</span><span>${esc(issue.description)}</span></li>`)
       .join("\n");
 
     structuredPart = `

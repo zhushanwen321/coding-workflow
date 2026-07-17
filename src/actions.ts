@@ -66,6 +66,7 @@ import {
   type RetrospectKnownRisk,
   type ReviewFixSubmission,
   type ReviewIssue,
+  type ProcessIssue,
   type ReviewIssueSubmission,
   type RuntimeEnv,
   type Status,
@@ -2043,10 +2044,19 @@ export function handleRetrospect(
       });
 
       const derived = computeRetrospectDerived(topic);
+      // W1 适配：validated.processIssues 还是 string[]（W3 升级 validateRetrospectData 后改为 ProcessIssue[]）。
+      // W1 阶段做最小兼容——把旧 string[] 迁移为 ProcessIssue[]，避免编译错误。
+      // W3 会移除此适配（validateRetrospectData 升级后 validated.processIssues 直接是 ProcessIssue[]）。
+      const rawIssues = (validated.processIssues ?? []) as unknown as (ProcessIssue | string)[];
+      const processIssues: ProcessIssue[] = rawIssues.map((issue) =>
+        typeof issue === "string"
+          ? { type: "uncategorized", description: issue }
+          : issue,
+      );
       const data: RetrospectData = {
         derived,
         knownRisks: validated.knownRisks ?? [],
-        processIssues: validated.processIssues ?? [],
+        processIssues,
       };
       deps.store.setRetrospectData(params.topicId, data);
     },

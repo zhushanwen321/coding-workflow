@@ -317,6 +317,34 @@ export interface RetrospectKnownRisk {
 }
 
 /**
+ * ProcessIssueType — 结构化流程问题的分类维度（FR-3 / D5）。
+ *
+ * 四值语义：
+ *   - pattern：可泛化的流程模式（跨 topic 可复现，有迭代 quality-criteria 的价值）
+ *   - oneOff：一次性失误（偶发，无泛化价值，仅记录）
+ *   - observation：观察性陈述（非问题性陈述，记录现象供回溯）
+ *   - uncategorized：旧 string[] 迁移标记（W2 migrateProcessIssues 把历史裸字符串
+ *     包装成本对象时打上的兜底标签，新数据禁止用——agent 自省时必须显式选前三类）
+ *
+ * 用字面量联合类型（而非 enum）：供 W3 state-machine 校验 type 合法值时可直接
+ * `value in PROCESS_ISSUE_TYPES` 集合判定，且 ts 存档体积更小。
+ */
+export type ProcessIssueType = "pattern" | "oneOff" | "observation" | "uncategorized";
+
+/**
+ * ProcessIssue — 结构化流程问题（FR-3 升级后的 processIssues 元素类型）。
+ *
+ * 原 RetrospectData.processIssues 为 string[]，FR-3 破坏性升级为对象数组：
+ * 每条流程问题带上 type 分类，便于 W5 cw stats --all 按 type 分桶统计 + 提取
+ * pattern 类的高频词做流程改进挖掘。旧 string[] 由 W2 migrateProcessIssues
+ * 迁移为 `{ type: "uncategorized", description: <原字符串> }`。
+ */
+export interface ProcessIssue {
+  type: ProcessIssueType;
+  description: string;
+}
+
+/**
  * RetrospectData — retrospect 阶段的结构化产物（与 retrospect.md 双写）。
  *
  * 与 clarify 阶段的 clarifyJson + ADR 双写同模式：
@@ -324,14 +352,43 @@ export interface RetrospectKnownRisk {
  *   - retrospectData（结构化 JSON）给机器读
  *
  * agent 只填 knownRisks + processIssues，derived 由 cw 自动算并覆盖（不信任 agent 填的 derived）。
+ *
+ * FR-3 破坏性升级：processIssues 从 string[] 升级为 ProcessIssue[]（带 type 分类），
+ * 便于 W5 cw stats --all 按 type 分桶统计 + pattern 词频挖掘。
+ * 旧 _cw.json 中的 string[] 由 W2 migrateProcessIssues 在 store 加载时迁移为
+ * `{ type: "uncategorized", description: <原字符串> }` 数组，迁移后此字段恒为对象数组。
  */
 export interface RetrospectData {
   /** cw 自动算（agent 不填）。 */
   derived: RetrospectDerived;
   /** agent 自省——本次交付中已知但未完全解决的风险。 */
   knownRisks: RetrospectKnownRisk[];
-  /** 本次 topic 暴露的流程问题（供 quality-criteria 迭代参考）。 */
-  processIssues: string[];
+  /** 本次 topic 暴露的流程问题（FR-3 升级：对象数组，带 type 分类；旧 string[] 由 W2 迁移）。 */
+  processIssues: ProcessIssue[];
+}
+
+/**
+ * RetrospectInsights — cw stats --all 的 retrospectInsights 段（FR-6 / AC-6）。
+ *
+ * 跨 topic 聚合 RetrospectData.processIssues 产出的流程洞察，作为 StatsAllOutput
+ * 顶层字段（不按 RuntimeEnv 分组——流程问题是 agent 通用问题，跨 env 聚合更有意义）。
+ * 定义在此处供 W5 的 StatsAllOutput 引用；StatsAllOutput 本体扩展在 src/stats.ts（W5 改）。
+ *
+ * 聚合规则（W5 computeStatsAll 实现）：
+ *   - 排除 status=aborted 的废弃 topic
+ *   - 无 retrospectData 的 topic 贡献空桶（不崩）
+ *   - topPatterns 只统计 type=pattern 的 description，大小写归一 + 分词后按词频降序取 Top N
+ */
+export interface RetrospectInsights {
+  /** 按 ProcessIssueType 分桶统计（pattern/oneOff/observation/uncategorized 各多少条）。 */
+  typeBuckets: {
+    pattern: number;
+    oneOff: number;
+    observation: number;
+    uncategorized: number;
+  };
+  /** type=pattern 的 description 词频 Top N（单词降序，{ word, count } 数组）。 */
+  topPatterns: { word: string; count: number }[];
 }
 
 // ── 结构化 spec 章节（clarify 阶段产出，plan/review/test 追溯） ──
