@@ -18,6 +18,7 @@ import { Value } from "@sinclair/typebox/value";
 import type {
   AdrSeed,
   ClarifySeed,
+  Expected,
   SpecSection,
   TestCaseSeed,
   TestRunnerConfig,
@@ -305,7 +306,7 @@ function extractDevPlan(json: unknown): ParsedDevPlan {
       layer: "mock" | "real";
       scenario: string;
       steps: string;
-      expected: { url?: string; text?: string };
+      expected: Expected;
       executor: string;
       requiresScreenshot: boolean;
       dependsOn?: string[];
@@ -359,7 +360,7 @@ function extractTestJson(json: unknown): ParsedTestJson {
       layer: "mock" | "real";
       scenario: string;
       steps: string;
-      expected: { url?: string; text?: string };
+      expected: Expected;
       executor: string;
       requiresScreenshot: boolean;
       dependsOn?: string[];

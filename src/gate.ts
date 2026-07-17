@@ -391,10 +391,10 @@ export function tddPlanCheck(testJson: unknown, specSections?: SpecSection[]): T
     };
   }
 
-  // P0: 检查模糊 expected 值
+  // P0: 检查模糊 expected 值（仅 exact 模式有 text 字段；exit_zero/script 无 text）。
   const fuzzyIds: string[] = [];
   for (const tc of parsed.testCases) {
-    if (tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
+    if (tc.expected.type === "exact" && tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
       fuzzyIds.push(tc.id);
     }
   }
@@ -407,12 +407,13 @@ export function tddPlanCheck(testJson: unknown, specSections?: SpecSection[]): T
     };
   }
 
-  // P1: 检查 expected 空判据（url 和 text 都缺 = 无法机器判定）。
+  // P1: 检查 expected 空判据（仅 exact 模式：url 和 text 都缺 = 无法机器判定）。
+  // exit_zero / script 模式自带判据（type 本身即判据），不在此检查范围。
   // 无判据的 testCase 到 test 阶段会被 judgeByExpected 判 failed「no judgeable field」，
   // 在 tdd_plan 前置拦截避免浪费整个 dev 周期。
   const noJudgeableIds: string[] = [];
   for (const tc of parsed.testCases) {
-    if (tc.expected.url === undefined && tc.expected.text === undefined) {
+    if (tc.expected.type === "exact" && tc.expected.url === undefined && tc.expected.text === undefined) {
       noJudgeableIds.push(tc.id);
     }
   }

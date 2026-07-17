@@ -592,7 +592,14 @@ function renderTestCases(topic: Topic): string {
           : tc.status === "failed"
             ? '<span class="badge b-fail">failed</span>'
             : '<span class="badge b-muted">pending</span>';
-      const expected = tc.expected.text ?? tc.expected.url ?? "—";
+      // W1 最小处理：按 type 分支取展示文本。W4 完善按 type 的差异化渲染。
+      const exp = tc.expected;
+      const expected =
+        exp.type === "exact"
+          ? (exp.text ?? exp.url ?? "—")
+          : exp.type === "exit_zero"
+            ? "[exit_zero]"
+            : `[script] ${exp.path}`;
       const actual =
         tc.actual && typeof tc.actual === "object" && "text" in tc.actual
           ? String((tc.actual as Record<string, unknown>).text ?? "—")

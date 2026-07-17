@@ -60,12 +60,12 @@ const localTestJson = JSON.stringify({
   testCases: [
     {
       id: "E1", layer: "mock", scenario: "s", steps: "st",
-      expected: { text: "expected-output" },
+      expected: { type: "exact", text: "expected-output" },
       executor: "vitest", requiresScreenshot: false,
     },
     {
       id: "E2", layer: "real", scenario: "s", steps: "st",
-      expected: { text: "real-output" },
+      expected: { type: "exact", text: "real-output" },
       executor: "vitest", requiresScreenshot: false,
     },
   ],
@@ -267,12 +267,12 @@ describe("[BUG-HUNT] replan 篡改 failed case expected → 应被 append-only �
       testCases: [
         {
           id: "E1", layer: "mock", scenario: "s", steps: "st",
-          expected: { text: "wrong" }, // ← 篡改：原来是 "expected-output"
+          expected: { type: "exact", text: "wrong" }, // ← 篡改：原来是 "expected-output"
           executor: "vitest", requiresScreenshot: false,
         },
         {
           id: "E2", layer: "real", scenario: "s", steps: "st",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest", requiresScreenshot: false,
         },
       ],

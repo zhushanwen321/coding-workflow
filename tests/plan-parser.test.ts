@@ -30,7 +30,7 @@ function makeValidPlanJson(): Record<string, unknown> {
         layer: "mock",
         scenario: "测试场景",
         steps: "执行步骤",
-        expected: { text: "expected output" },
+        expected: { type: "exact", text: "expected output" },
         executor: "agent",
         requiresScreenshot: false,
       },
@@ -54,7 +54,9 @@ describe("parseLitePlan 合法结构（U16）", () => {
     expect(parsed.legacyTestCases).toHaveLength(1);
     expect(parsed.legacyTestCases![0]!.id).toBe("E1");
     expect(parsed.legacyTestCases![0]!.layer).toBe("mock");
-    expect(parsed.legacyTestCases![0]!.expected.text).toBe("expected output");
+    const exp1 = parsed.legacyTestCases![0]!.expected;
+    expect(exp1.type).toBe("exact");
+    expect(exp1.type === "exact" && exp1.text).toBe("expected output");
     expect(parsed.legacyTestCases![0]!.requiresScreenshot).toBe(false);
   });
 
@@ -69,7 +71,7 @@ describe("parseLitePlan 合法结构（U16）", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { url: "http://example.com" },
+          expected: { type: "exact", url: "http://example.com" },
           executor: "test-runner",
           requiresScreenshot: true,
           dependsOn: [],
@@ -79,7 +81,9 @@ describe("parseLitePlan 合法结构（U16）", () => {
     const parsed = parseLitePlan(json);
     expect(parsed.legacyTestCases![0]!.layer).toBe("real");
     expect(parsed.legacyTestCases![0]!.requiresScreenshot).toBe(true);
-    expect(parsed.legacyTestCases![0]!.expected.url).toBe("http://example.com");
+    const exp2 = parsed.legacyTestCases![0]!.expected;
+    expect(exp2.type).toBe("exact");
+    expect(exp2.type === "exact" && exp2.url).toBe("http://example.com");
   });
 });
 
@@ -166,7 +170,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -175,7 +179,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -194,7 +198,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -217,7 +221,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -226,7 +230,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -244,7 +248,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out1" },
+          expected: { type: "exact", text: "out1" },
           executor: "agent",
           requiresScreenshot: false,
           dependsOn: ["U2"],
@@ -254,7 +258,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
           dependsOn: ["U1"],
@@ -278,7 +282,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -287,7 +291,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -329,7 +333,7 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "result" },
+          expected: { type: "exact", text: "result" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -369,7 +373,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "mock",
           scenario: "单测场景",
           steps: "执行单测",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P0",
@@ -380,7 +384,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "real",
           scenario: "集成场景",
           steps: "执行集成测试",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P1",
@@ -441,7 +445,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "vitest",
           requiresScreenshot: false,
           dependsOn: ["U2"],
@@ -451,7 +455,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "vitest",
           requiresScreenshot: false,
           dependsOn: ["U1"],

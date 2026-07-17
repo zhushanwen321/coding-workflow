@@ -46,6 +46,7 @@ import type {
   ClarifyRecord,
   ClarifySeed,
   Evidence,
+  Expected,
   GateHistoryEntry,
   Priority,
   RetrospectData,
@@ -170,7 +171,7 @@ interface TestCaseRecord {
   layer: TestCase["layer"];
   scenario: string;
   steps: string;
-  expected: { url?: string; text?: string };
+  expected: Expected;
   executor: string;
   status: TestCase["status"];
   actual?: object;

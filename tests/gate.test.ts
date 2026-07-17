@@ -44,7 +44,7 @@ function makeValidTestJson(): unknown {
         layer: "mock",
         scenario: "单测场景",
         steps: "执行单测",
-        expected: { text: "expected-output" },
+        expected: { type: "exact", text: "expected-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -53,7 +53,7 @@ function makeValidTestJson(): unknown {
         layer: "real",
         scenario: "集成场景",
         steps: "执行集成测试",
-        expected: { text: "real-output" },
+        expected: { type: "exact", text: "real-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -128,7 +128,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "passed" },
+          expected: { type: "exact", text: "passed" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -137,7 +137,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "ok" },
+          expected: { type: "exact", text: "ok" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -155,7 +155,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "具体输出" },
+          expected: { type: "exact", text: "具体输出" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -244,7 +244,7 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "具体输出值" },
+          expected: { type: "exact", text: "具体输出值" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -264,7 +264,7 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "具体输出值" },
+          expected: { type: "exact", text: "具体输出值" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -285,8 +285,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "passed" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -299,8 +299,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "OK" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "OK" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -312,8 +312,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "success" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -324,8 +324,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "成功" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "成功" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -336,9 +336,9 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s1", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "mock", scenario: "s2", steps: "st", expected: { text: "返回 { status: 'ok', data: [1,2,3] }" }, executor: "agent", requiresScreenshot: false },
-        { id: "E3", layer: "real", scenario: "s3", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s1", steps: "st", expected: { type: "exact", text: "passed" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "mock", scenario: "s2", steps: "st", expected: { type: "exact", text: "返回 { status: 'ok', data: [1,2,3] }" }, executor: "agent", requiresScreenshot: false },
+        { id: "E3", layer: "real", scenario: "s3", steps: "st", expected: { type: "exact", text: "success" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -353,8 +353,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "status is ok, count=42" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "status is ok, count=42" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -365,8 +365,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { url: "http://localhost:3000" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", url: "http://localhost:3000" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -381,8 +381,8 @@ describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -397,8 +397,8 @@ describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);

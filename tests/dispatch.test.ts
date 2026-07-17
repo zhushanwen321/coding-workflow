@@ -77,7 +77,7 @@ function passTddPlanGate(store: CwStore, topicId: string): void {
       layer: "mock",
       scenario: "单测场景",
       steps: "执行单测",
-      expected: { text: "expected-output" },
+      expected: { type: "exact", text: "expected-output" },
       executor: "vitest",
       requiresScreenshot: false,
     },
@@ -86,7 +86,7 @@ function passTddPlanGate(store: CwStore, topicId: string): void {
       layer: "real",
       scenario: "集成场景",
       steps: "执行集成测试",
-      expected: { text: "real-output" },
+      expected: { type: "exact", text: "real-output" },
       executor: "vitest",
       requiresScreenshot: false,
     },
@@ -476,7 +476,7 @@ describe("dispatch test（U22-U24c）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "mock-output" },
+          expected: { type: "exact", text: "mock-output" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -485,7 +485,7 @@ describe("dispatch test（U22-U24c）", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "runner",
           requiresScreenshot: true,
         },
@@ -541,7 +541,7 @@ describe("dispatch test（U22-U24c）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "mock-output" },
+          expected: { type: "exact", text: "mock-output" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -550,7 +550,7 @@ describe("dispatch test（U22-U24c）", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "runner",
           requiresScreenshot: true,
         },
@@ -718,8 +718,8 @@ describe("dispatch replan（U25-U29）", () => {
         { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
@@ -746,8 +746,8 @@ describe("dispatch replan（U25-U29）", () => {
       objective: "obj",
       waves: [],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
@@ -769,8 +769,8 @@ describe("dispatch replan（U25-U29）", () => {
         { id: "W1", changes: [{ file: "src/app.ts", description: "modified-change" }], dependsOn: [] },
       ],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
@@ -806,8 +806,8 @@ describe("dispatch replan（U25-U29）", () => {
       objective: "obj",
       waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
-        { id: "E2", layer: "mock", scenario: "s", steps: "st", expected: { text: "mock-output" }, executor: "agent", requiresScreenshot: false },
-        { id: "E3", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "mock-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E3", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
@@ -842,8 +842,8 @@ describe("dispatch replan（U25-U29）", () => {
       objective: "obj",
       waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "modified-expected" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "modified-expected" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     expect(() => dispatch({ action: "replan", topicId, planJson: newPlan }, deps)).toThrow(
@@ -872,8 +872,8 @@ describe("dispatch replan（U25-U29）", () => {
       objective: "obj",
       waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "corrected-expected" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "corrected-real" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "corrected-expected" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "corrected-real" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
@@ -1178,7 +1178,7 @@ describe("dispatch tdd_plan", () => {
               layer: "mock",
               scenario: "s",
               steps: "st",
-              expected: { text: "expected-output" },
+              expected: { type: "exact", text: "expected-output" },
               executor: "vitest",
               requiresScreenshot: false,
             },
@@ -1221,7 +1221,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1230,7 +1230,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1258,7 +1258,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "vitest",
           requiresScreenshot: false,
           redCheck: true,
@@ -1268,7 +1268,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1304,7 +1304,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "vitest",
           requiresScreenshot: false,
           redCheck: true,
@@ -1314,7 +1314,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1354,7 +1354,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "vitest",
           requiresScreenshot: false,
           redCheck: true,
@@ -1364,7 +1364,7 @@ describe("dispatch tdd_plan testRunner 存储 + 红灯校验", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1411,7 +1411,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "new-output" },
+          expected: { type: "exact", text: "new-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1420,7 +1420,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "new-real" },
+          expected: { type: "exact", text: "new-real" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1429,7 +1429,7 @@ describe("dispatch replan --test（testCases 更新）", () => {
           layer: "mock",
           scenario: "s3",
           steps: "st",
-          expected: { text: "case3-output" },
+          expected: { type: "exact", text: "case3-output" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -1479,11 +1479,11 @@ describe("dispatch replan --test（testCases 更新）", () => {
     const newTestJson = {
       testCases: [
         { id: "E1", layer: "mock", scenario: "单测场景", steps: "执行单测",
-          expected: { text: "expected-output" }, executor: "vitest", requiresScreenshot: false },
+          expected: { type: "exact", text: "expected-output" }, executor: "vitest", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "集成场景", steps: "执行集成测试",
-          expected: { text: "real-output" }, executor: "vitest", requiresScreenshot: false },
+          expected: { type: "exact", text: "real-output" }, executor: "vitest", requiresScreenshot: false },
         { id: "E3", layer: "mock", scenario: "s3", steps: "st",
-          expected: { text: "new-case" }, executor: "vitest", requiresScreenshot: false },
+          expected: { type: "exact", text: "new-case" }, executor: "vitest", requiresScreenshot: false },
       ],
       testRunner: { mode: "nodejs", command: "npx vitest run" },
     };
@@ -1554,8 +1554,8 @@ describe("dispatch replan --plan 重置 planReviewLoop（SF-1）", () => {
         { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     dispatch({ action: "replan", topicId, planJson: newPlan }, deps);
@@ -2186,8 +2186,8 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
         { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "expected-output" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     dispatch({ action: "replan", topicId, planJson: newPlan }, deps);

@@ -71,10 +71,23 @@ export type Status =
 
 // ── judgeByExpected ─────────────────────────────────────────
 
-export interface Expected {
-  url?: string;
-  text?: string;
-}
+/**
+ * Expected — 测试用例的机器判定基准（判别联合，按 type 字段分支）。
+ *
+ * 三种模式：
+ *   - exact：精确字符串 === 比较（url 和/或 text）。与旧 {url?,text?} 行为完全一致。
+ *   - exit_zero：按 actual.exitCode 判定（0→passed，非0→failed）。命令执行在 W3 handleTest，
+ *     此处只做纯函数判定（actual 形状含 exitCode，由执行层回填）。
+ *   - script：执行 expected.path 指向的脚本，按 exitCode 判定（0→passed，非0→failed）。
+ *     执行在 W3 handleTest；此处纯函数判定读 actual.exitCode。
+ *
+ * 判别联合必须用 type alias（interface 无法表达 union），但 import 语义与 interface 兼容
+ * （`import { type Expected }` / `import type { Expected }` 均可用）。
+ */
+export type Expected =
+  | { type: "exact"; url?: string; text?: string }
+  | { type: "exit_zero" }
+  | { type: "script"; path: string };
 
 export interface Actual {
   url?: string;
@@ -85,43 +98,82 @@ export interface Actual {
 /**
  * judgeByExpected — 机器判定基准（lite plan.json 结构化字段）。
  *
- * 匹配严格度：精确字符串相等，不做 fuzzy/substring/trim 容差。
- * lite test 是机器重算门，意图是防 AI 谎报——容差一开就失去意义。
+ * 纯函数约束（AC-8）：本函数体内不得 import 或调用任何子进程执行 API（spawn/exec 系）。
+ * 命令/脚本执行在 W3 handleTest，此处只做判定归一化。
  *
- * 数据流：expected.url/text 存在则要求 actual 对应字段存在且 ===；任一不一致 → failed + 逐字段 reason。
- * 不变式：expected 无任何 judgeable 字段 → failed「no judgeable field」（plan-parser 应已拦，兜底）。
+ * 分支：
+ *   - exact：expected.url/text 存在则要求 actual 对应字段存在且 ===（精确，无 fuzzy/trim 容差）；
+ *     任一不一致 → failed + 逐字段 reason；无 judgeable 字段 → failed「no judgeable field」（兜底）。
+ *   - exit_zero：读 actual.exitCode（number）；0 → passed，非 0/缺失 → failed。
+ *     不报「no judgeable field」（exit_zero 本身是合法判据，未执行不与 exact 兜底混淆）。
+ *   - script：同 exit_zero，读 actual.exitCode（脚本执行由 handleTest 回填）。
+ *   - 未知 type → failed「unknown expected type」（防御，plan-parser schema 应已拦）。
+ *
+ * actual.exitCode 通过 Actual 的索引签名 [key: string]: unknown 访问；显式提取并校验为 number。
  */
 export function judgeByExpected(
   expected: Expected,
   actual: Actual,
 ): { status: "passed" | "failed"; reason: string } {
-  const mismatches: string[] = [];
+  switch (expected.type) {
+    case "exact": {
+      const mismatches: string[] = [];
 
-  if (expected.url !== undefined) {
-    if (actual.url === undefined) {
-      mismatches.push(`url missing (expected "${expected.url}")`);
-    } else if (actual.url !== expected.url) {
-      mismatches.push(`url: "${actual.url}" !== "${expected.url}"`);
+      if (expected.url !== undefined) {
+        if (actual.url === undefined) {
+          mismatches.push(`url missing (expected "${expected.url}")`);
+        } else if (actual.url !== expected.url) {
+          mismatches.push(`url: "${actual.url}" !== "${expected.url}"`);
+        }
+      }
+
+      if (expected.text !== undefined) {
+        if (actual.text === undefined) {
+          mismatches.push(`text missing (expected "${expected.text}")`);
+        } else if (actual.text !== expected.text) {
+          mismatches.push(`text: "${actual.text}" !== "${expected.text}"`);
+        }
+      }
+
+      // plan-parser 应已保证 exact 至少含一个 judgeable 字段；兜底防御。
+      if (expected.url === undefined && expected.text === undefined) {
+        return { status: "failed", reason: "no judgeable field in expected (url/text)" };
+      }
+
+      if (mismatches.length > 0) {
+        return { status: "failed", reason: mismatches.join("; ") };
+      }
+      return { status: "passed", reason: "" };
+    }
+
+    case "exit_zero":
+    case "script": {
+      // actual.exitCode 由 handleTest（W3）执行命令/脚本后回填。
+      // 未提供 / 非 number / 非 0 一律 failed（reason 含实际 exitCode 便于排查）。
+      const code = actual.exitCode;
+      if (typeof code !== "number" || !Number.isFinite(code)) {
+        return {
+          status: "failed",
+          reason: `${expected.type}: actual.exitCode missing or non-number (got ${String(code)})`,
+        };
+      }
+      if (code === 0) {
+        return { status: "passed", reason: "" };
+      }
+      return { status: "failed", reason: `${expected.type}: exitCode=${code} (expected 0)` };
+    }
+
+    default: {
+      // 未知 type 兜底（plan-parser schema 应已拦截；运行时防御）。
+      // switch 已覆盖 exact/exit_zero/script 三种 type，此分支理论上不可达（expected 此处为 never）；
+      // 仍保留兜底，读取 type 字段做诊断（断言为含必填 type 的形状，避免全可选断言绕过校验）。
+      const unknownExpected = expected as { type: unknown };
+      return {
+        status: "failed",
+        reason: `unknown expected type: ${String(unknownExpected.type)}`,
+      };
     }
   }
-
-  if (expected.text !== undefined) {
-    if (actual.text === undefined) {
-      mismatches.push(`text missing (expected "${expected.text}")`);
-    } else if (actual.text !== expected.text) {
-      mismatches.push(`text: "${actual.text}" !== "${expected.text}"`);
-    }
-  }
-
-  // plan-parser 应已保证 expected 至少含一个 judgeable 字段；兜底防御。
-  if (expected.url === undefined && expected.text === undefined) {
-    return { status: "failed", reason: "no judgeable field in expected (url/text)" };
-  }
-
-  if (mismatches.length > 0) {
-    return { status: "failed", reason: mismatches.join("; ") };
-  }
-  return { status: "passed", reason: "" };
 }
 
 // ── 领域模型 ────────────────────────────────────────────────
@@ -162,7 +214,7 @@ export interface TestCase {
   layer: "mock" | "real";
   scenario: string;
   steps: string;
-  expected: { url?: string; text?: string };
+  expected: Expected;
   executor: string;
   status: "pending" | "passed" | "failed";
   actual?: object;
@@ -661,7 +713,7 @@ export interface TestCaseSeed {
   layer: "mock" | "real";
   scenario: string;
   steps: string;
-  expected: { url?: string; text?: string };
+  expected: Expected;
   executor: string;
   requiresScreenshot: boolean;
   dependsOn?: string[];

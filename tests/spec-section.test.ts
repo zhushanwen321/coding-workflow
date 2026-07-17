@@ -136,7 +136,7 @@ describe("U5: checkAcMapping", () => {
     ];
     const parsed = {
       testCases: [
-        { id: "U1", layer: "mock" as const, scenario: "验证 AC-1", steps: "s", expected: { text: "x" }, executor: "vitest", requiresScreenshot: false, dependsOn: [] },
+        { id: "U1", layer: "mock" as const, scenario: "验证 AC-1", steps: "s", expected: { type: "exact" as const, text: "x" }, executor: "vitest", requiresScreenshot: false, dependsOn: [] },
       ],
       testRunner: { mode: "nodejs" as const, command: "npx vitest run" },
     };
