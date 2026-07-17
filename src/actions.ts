@@ -67,6 +67,7 @@ import {
   type ReviewFixSubmission,
   type ReviewIssue,
   type ProcessIssue,
+  type ProcessIssueType,
   type ReviewIssueSubmission,
   type RuntimeEnv,
   type Status,
@@ -1904,7 +1905,11 @@ export function handlePlanReviewFix(
  */
 function validateRetrospectData(
   raw: unknown,
-): { knownRisks?: RetrospectKnownRisk[]; processIssues?: string[]; error?: string } {
+): {
+  knownRisks?: RetrospectKnownRisk[];
+  processIssues?: ProcessIssue[];
+  error?: string;
+} {
   if (typeof raw !== "object" || raw === null) {
     return { error: "retrospectData 不是对象" };
   }
@@ -1939,18 +1944,45 @@ function validateRetrospectData(
     knownRisks = validated;
   }
 
-  // processIssues 校验
-  let processIssues: string[] | undefined;
+  // processIssues 校验（FR-3 升级：每条必须是对象 + type 合法 + description 非空）
+  const VALID_ISSUE_TYPES: ReadonlyArray<ProcessIssueType> = [
+    "pattern",
+    "oneOff",
+    "observation",
+    "uncategorized",
+  ];
+  let processIssues: ProcessIssue[] | undefined;
   if (obj.processIssues !== undefined) {
     if (!Array.isArray(obj.processIssues)) {
       return { error: "retrospectData.processIssues 不是数组" };
     }
+    const validatedIssues: ProcessIssue[] = [];
     for (let i = 0; i < obj.processIssues.length; i++) {
-      if (typeof obj.processIssues[i] !== "string") {
-        return { error: `processIssues[${i}] 不是字符串` };
+      const item = obj.processIssues[i];
+      if (!item || typeof item !== "object") {
+        return { error: `processIssues[${i}] 不是对象` };
       }
+      const rec = item as Record<string, unknown>;
+      if (
+        typeof rec.type !== "string" ||
+        !VALID_ISSUE_TYPES.includes(rec.type as ProcessIssueType)
+      ) {
+        return {
+          error: `processIssues[${i}].type 必须是 pattern/oneOff/observation/uncategorized`,
+        };
+      }
+      if (
+        typeof rec.description !== "string" ||
+        rec.description.trim().length === 0
+      ) {
+        return { error: `processIssues[${i}].description 必须是非空字符串` };
+      }
+      validatedIssues.push({
+        type: rec.type as ProcessIssueType,
+        description: rec.description,
+      });
     }
-    processIssues = obj.processIssues as string[];
+    processIssues = validatedIssues;
   }
 
   return { knownRisks, processIssues };
@@ -2044,21 +2076,30 @@ export function handleRetrospect(
       });
 
       const derived = computeRetrospectDerived(topic);
-      // W1 适配：validated.processIssues 还是 string[]（W3 升级 validateRetrospectData 后改为 ProcessIssue[]）。
-      // W1 阶段做最小兼容——把旧 string[] 迁移为 ProcessIssue[]，避免编译错误。
-      // W3 会移除此适配（validateRetrospectData 升级后 validated.processIssues 直接是 ProcessIssue[]）。
-      const rawIssues = (validated.processIssues ?? []) as unknown as (ProcessIssue | string)[];
-      const processIssues: ProcessIssue[] = rawIssues.map((issue) =>
-        typeof issue === "string"
-          ? { type: "uncategorized", description: issue }
-          : issue,
-      );
       const data: RetrospectData = {
         derived,
         knownRisks: validated.knownRisks ?? [],
-        processIssues,
+        processIssues: validated.processIssues ?? [],
       };
       deps.store.setRetrospectData(params.topicId, data);
+
+      // FR-5 / AC-5：无 pattern 类型的 processIssue 时追加 warning（不阻断 gate）。
+      // processIssues 全 oneOff/observation/uncategorized 时，提示 agent 自省未识别
+      // 可泛化流程模式——结果仍为 pass（不阻断流转），只在 gateHistory 留软引导痕迹。
+      const hasPattern = (validated.processIssues ?? []).some(
+        (issue) => issue.type === "pattern",
+      );
+      if (!hasPattern) {
+        deps.store.appendGateHistory(params.topicId, {
+          phase: "retrospect",
+          action: "retrospect",
+          gate: "process-pattern-check",
+          result: "pass",
+          report:
+            "warning: processIssues 无 type=pattern 条目——自省未识别可泛化流程模式，建议从一次性失误抽象出模式",
+          progressive: false,
+        });
+      }
     },
   );
 
