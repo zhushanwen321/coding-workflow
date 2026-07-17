@@ -19,8 +19,9 @@
  * - handleReplan 事务内必须同步 gatePassed（砍掉 cache_inconsistent guard 后的注释强依赖）。
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   clarifyCheck,
@@ -30,6 +31,7 @@ import {
   planCheck,
   redLightCheck,
   reviewIssueCheck,
+  runTestRunner,
   tddPlanCheck,
   testCheck,
 } from "./gate.js";
@@ -57,9 +59,9 @@ import {
   type AssessmentType,
   type ClarifyRecord,
   CwError,
-  GuardError,
   type DefectSeverity,
   type Evidence,
+  GuardError,
   type RetrospectData,
   type RetrospectKnownRisk,
   type ReviewFixSubmission,
@@ -1043,6 +1045,18 @@ export function handleDev(
 
 // ── handleTest ──────────────────────────────────────────────
 
+/** exit_zero / script 模式 CW 自动执行的结果（exact 模式不在此表，沿用 agent actual）。 */
+type AutoExecResult = { actual: Actual } | { error: string };
+
+/** 从 execFileSync 抛出的异常里取退出 status；无 status（spawn 失败/timeout）返回 null。 */
+function readExitStatus(e: unknown): number | null {
+  if (typeof e === "object" && e !== null && "status" in e) {
+    const status = (e as { status: unknown }).status;
+    if (typeof status === "number") return status;
+  }
+  return null;
+}
+
 export interface TestCaseResult {
   caseId: string;
   status: TestCase["status"];
@@ -1101,6 +1115,75 @@ export function handleTest(
     );
   }
 
+  // W3: exit_zero / script 模式——CW 自己执行命令/脚本拿 exitCode，不信 agent 提交的 actual。
+  // 纯函数 testCheck/judgeByExpected 保持只读 actual.exitCode 判定（AC-8）；执行放这里（AC-2/AC-3）。
+  // 返回 caseId → 回填后的 actual；exact 模式不在表里（沿用 agent 提交的 actual.text/url）。
+  // spawn 异常（脚本不存在/无执行权限）记为该 case 的 failed reason，不抛断整批。
+  const executedActualByCaseId = new Map<string, AutoExecResult>();
+  const workspacePath = topic.workspacePath;
+
+  // ── exit_zero：去重执行一次 testRunner，把同一 exitCode 归一化给每个 exit_zero case ──
+  // 设计（plan_review PR3）：去重/共享在 handleTest 这层，不在纯函数 testCheck——保护 AC-8。
+  const exitZeroCaseIds = params.cases
+    .filter((s) => {
+      const tc = topic.testCases.find((c) => c.id === s.caseId);
+      return tc?.expected.type === "exit_zero";
+    })
+    .map((s) => s.caseId);
+
+  if (exitZeroCaseIds.length > 0) {
+    let runOutcome: AutoExecResult;
+    if (!topic.testRunner) {
+      runOutcome = {
+        error: "exit_zero case 缺 testRunner 配置（tdd_plan 阶段必须写入 testRunner）",
+      };
+    } else {
+      try {
+        // runTestRunner（gate.ts）按 mode 执行 testRunner command，可能经 shell（command 串如 "npx vitest run"）。
+        // AC-10 只约束 handleTest 体内新增的 script 执行不经 shell；exit_zero 复用既有 runTestRunner。
+        const ran = runTestRunner(topic.testRunner, workspacePath);
+        runOutcome = { actual: { exitCode: ran.exitCode } };
+      } catch (e) {
+        // runTestRunner 把 spawn 异常/命令不存在包成 CwError 抛出——基础设施异常，非测试失败。
+        runOutcome = {
+          error: `testRunner 执行异常：${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+    for (const id of exitZeroCaseIds) executedActualByCaseId.set(id, runOutcome);
+  }
+
+  // ── script：各自执行 expected.path（execFileSync 直接执行，不经 shell） ──
+  // AC-9: 不传 argv、不注入 ACTUAL env（脚本自包含读系统状态）。stdio ignore 不回流 actual 数据。
+  // AC-10: execFileSync 直接执行带 shebang+可执行位的脚本，不经 shell 解析（shell 默认 false）。
+  // path 已在 tddPlanCheck 沙箱校验（resolve 后必须落在 workspacePath 内）；此处仅 resolve。
+  for (const submission of params.cases) {
+    const tc = topic.testCases.find((c) => c.id === submission.caseId);
+    if (tc?.expected.type !== "script") continue;
+    const relPath = tc.expected.path;
+    const absPath = resolve(workspacePath, relPath);
+    try {
+      execFileSync(absPath, {
+        cwd: workspacePath,
+        stdio: "ignore",
+        timeout: 30000,
+        encoding: "utf8",
+      });
+      executedActualByCaseId.set(submission.caseId, { actual: { exitCode: 0 } });
+    } catch (e) {
+      // execFileSync 非 0 退出抛异常，exit code 在 e.status（业务结果，非基础设施异常）。
+      const code = readExitStatus(e);
+      if (code !== null) {
+        executedActualByCaseId.set(submission.caseId, { actual: { exitCode: code } });
+      } else {
+        // spawn 异常（脚本不存在/无执行权限/timeout）→ 基础设施异常，记 error（该 case 走 failed）。
+        executedActualByCaseId.set(submission.caseId, {
+          error: `script 执行异常（${relPath}）：${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
+  }
+
   const caseResults: TestCaseResult[] = [];
 
   deps.store.transaction(() => {
@@ -1110,22 +1193,38 @@ export function handleTest(
         throw new CwError(`case not found: ${submission.caseId}`);
       }
 
-      const judged = testCheck(tc, submission.actual, submission.screenshotPath);
+      // exit_zero/script：用 CW 执行回填的 actual（含 exitCode），忽略 agent 提交的 actual。
+      // exact：用 agent 提交的 actual.text/url 做 === 比较。
+      const autoExec = executedActualByCaseId.get(submission.caseId);
+      let judgedStatus: "passed" | "failed";
+      let judgedReason: string;
+      let judgedActual: Actual | undefined;
+      if (autoExec && "error" in autoExec) {
+        // 执行基础设施异常（spawn 失败/testRunner 缺失）→ 直接 failed，不走 testCheck。
+        judgedStatus = "failed";
+        judgedReason = autoExec.error;
+        judgedActual = submission.actual;
+      } else {
+        judgedActual = autoExec ? autoExec.actual : submission.actual;
+        const judged = testCheck(tc, judgedActual, submission.screenshotPath);
+        judgedStatus = judged.status;
+        judgedReason = judged.reason;
+      }
       const patch: Partial<TestCase> = {
-        status: judged.status,
-        actual: submission.actual as object | undefined,
+        status: judgedStatus,
+        actual: judgedActual as object | undefined,
         screenshotPath: submission.screenshotPath,
-        ...(judged.status === "failed" ? { failureReason: judged.reason } : {}),
+        ...(judgedStatus === "failed" ? { failureReason: judgedReason } : {}),
       };
-      // judged.status === "passed" 时清理之前的 failureReason（retry 场景）。
-      if (judged.status === "passed") {
+      // judgedStatus === "passed" 时清理之前的 failureReason（retry 场景）。
+      if (judgedStatus === "passed") {
         patch.failureReason = undefined;
       }
       deps.store.updateTestCase(params.topicId, submission.caseId, patch);
       caseResults.push({
         caseId: submission.caseId,
-        status: judged.status,
-        failureReason: judged.status === "failed" ? judged.reason : undefined,
+        status: judgedStatus,
+        failureReason: judgedStatus === "failed" ? judgedReason : undefined,
       });
     }
 
