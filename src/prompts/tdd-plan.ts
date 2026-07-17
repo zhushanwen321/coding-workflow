@@ -5,7 +5,8 @@
  * 交付物：test.json（testCases + testRunner 必选），由 cw tdd_plan 消费。
  *
  * 本阶段核心：agent 已知要实现什么（dev-plan.json 的 waves），先写测试代码（红灯），
- * 再写 test.json 定义 testCases + expected。expected 来源于测试断言，不是猜的。
+ * 再写 test.json 定义 testCases + expected。expected 是判别联合（exact/exit_zero/script 三模式），
+ * 从测试断言决定模式与取值，不是猜的。
  */
 
 export const TDD_PLAN_PROMPT = `
@@ -34,7 +35,7 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
       "priority": "P0",
       "scenario": "<测什么场景>",
       "steps": "<怎么测>",
-      "expected": { "text": "<预期结果>" },
+      "expected": { "type": "exact", "text": "<预期结果>" },
       "executor": "<vitest|pytest|junit|shell|custom>",
       "redCheck": true,
       "requiresScreenshot": false,
@@ -44,9 +45,9 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
       "id": "E1",
       "layer": "real",
       "priority": "P1",
-      "scenario": "<集成场景>",
-      "steps": "<怎么测>",
-      "expected": { "text": "<预期结果>" },
+      "scenario": "<命令整体成功>",
+      "steps": "<跑集成命令>",
+      "expected": { "type": "exit_zero" },
       "executor": "shell",
       "redCheck": false,
       "requiresScreenshot": true
@@ -68,9 +69,11 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
 - **priority**: P0/P1/P2，全部必须完成
 - **scenario**: 测什么场景（AC 级可判定）
 - **steps**: 怎么测
-- **expected**: 机器判定基准。expected.text 会被 CW 做**精确字符串比较**（===），不是给人看的描述
-  - 正确："text": "2"、"text": '{"status":"ok"}'
-  - 错误："text": "返回正确结果"、"text": "passed"（gate 拒绝模糊值）
+- **expected**: 机器判定基准（判别联合，**type 字段必填**）。3 种模式见下方「expected 撰写规范」：
+  - \`{ "type": "exact", "text": "2" }\`：精确字符串 === 比较
+  - \`{ "type": "exit_zero" }\`：退出码判定（exit 0 → pass）
+  - \`{ "type": "script", "path": ".cw/judge-E1.sh" }\`：判定脚本（exit 0 → pass）
+  - exact 模式的 text 不可填结论词（passed/ok/success），gate 拒绝模糊值
 - **executor**: 谁跑这个测试（vitest / pytest / junit / shell / custom）
 - **redCheck**: tdd_plan 阶段是否对此 case 做红灯校验
   - mock 层通常 true（纯逻辑，可立即跑）
@@ -92,13 +95,54 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
 
 ## expected 撰写规范（重要）
 
-expected.text 会被 CW engine 做**精确字符串比较**（===），不是给人看的描述，是机器判定基准。
+expected 支持 **3 种判定模式**（type 字段必填）。从你写的测试断言决定用哪种模式——不要猜值。
 
-agent 先写了测试代码（如 \`expect(add(1,1)).toBe(2)\`），expected 直接从测试断言取值：
-- 测试断言 \`.toBe(2)\` → expected: \`{ "text": "2" }\`
-- 测试断言 \`.toBe("hello")\` → expected: \`{ "text": "hello" }\`
+### 1. exact（精确字符串，默认/现状语义）
 
-不要猜输出值——从你写的测试断言里取。这就是 tdd_plan 阶段的价值：expected 有据可依。
+\`\`\`
+expected: { "type": "exact", "text": "2" }
+\`\`\`
+
+CW 对 \`expected.text\` 与 \`actual.text\` 做**精确 === 比较**（无 trim/容差）。
+适用：单元测试断言值。从断言直接取值：
+- 测试断言 \`.toBe(2)\` → \`{ "type": "exact", "text": "2" }\`
+- 测试断言 \`.toBe("hello")\` → \`{ "type": "exact", "text": "hello" }\`
+
+text 仍受 FUZZY_EXPECTED_RE 约束——不可填 passed/ok/true 等结论词。
+
+### 2. exit_zero（退出码判定）
+
+\`\`\`
+expected: { "type": "exit_zero" }
+\`\`\`
+
+CW 跑 testRunner 命令一次，所有 exit_zero case 共享结果（exit 0 → pass，非 0 → failed）。
+actual 可省略（CW 自己跑命令）。适用：
+- 布尔/状态类断言（如 \`.toBe(true)\`——无合法字符串值可填）
+- 命令行测试（命令整体成功即 pass）
+
+exit_zero 解决了「布尔断言无合法字符串值可填」的死锁——exit code 是确定的，仍是机器重算。
+
+### 3. script（判定脚本）
+
+\`\`\`
+expected: { "type": "script", "path": ".cw/judge-E1.sh" }
+\`\`\`
+
+CW 跑 \`path\` 指向的脚本，exit 0 即 pass。约束：
+- 脚本**自包含**（不接收 agent actual，自己读系统状态/产出物）
+- 须有可执行权限 + shebang（\`#!/usr/bin/env bash\` 等）
+- path 相对 workspace，resolve 后必须在 workspace 内（沙箱校验，逃逸路径会被 gate 拒绝）
+
+适用：复杂判定（正则匹配、JSON 字段提取、多字段组合）。
+
+### 选型决策
+
+| 测试断言形态 | 用哪种模式 |
+|---|---|
+| \`.toBe(具体值)\` / \`.toEqual(对象)\` | exact（从断言取 text） |
+| \`.toBe(true)\` / \`.toBeTruthy()\` / 命令整体成功 | exit_zero |
+| 正则 / JSON 字段 / 多条件组合 | script |
 
 ## 测试设计思路（测出 bug，不是凑覆盖率）
 
@@ -137,7 +181,10 @@ agent 先写了测试代码（如 \`expect(add(1,1)).toBe(2)\`），expected 直
 - testCases 非空
 - testRunner 必选（mode 合法 + command 或 path 有值）
 - mock 层 + real 层各至少 1 个
-- expected.text 不可填 passed/ok/success 等结论词
+- **expected.type 必填**（exact / exit_zero / script 三选一）
+- exact 模式：text 不可填 passed/ok/success 等结论词（FUZZY_EXPECTED_RE 拦截）
+- exit_zero / script 模式：跳过 FUZZY 检查（无 text 字段）
+- script 模式：path 必填，resolve 后必须在 workspace 内（沙箱校验，逃逸路径拒绝）
 - 环形 dependsOn 检测
 
 gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_plan)。
