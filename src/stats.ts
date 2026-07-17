@@ -363,13 +363,33 @@ const STOP_WORDS = new Set([
  * 把 pattern 的 description 切成词频统计用的词数组。
  *
  * 按空格/标点（中英文）切分，小写归一，过滤停用词与过短词（长度 < 2）。
- * 中文短语按标点切分后整段保留（不细分词），保证可读性。
+ * 中文段额外做 bigram（两字一组）近似分词——不引分词库，重叠短语会让词频重复，
+ * 但作为粗粒度趋势分析够用：能让 topPatterns 提取到中文短语信息量，
+ * 而不是把整句压成一个 token。
  */
 function tokenizePatternDescription(description: string): string[] {
-  return description
+  const rawTokens = description
     .toLowerCase()
     .split(/[\s,.;:!?，。；：！？、\/\\()（）\[\]]+/)
     .filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
+  // 中文 token（连续中文字符段）额外做 bigram，提取两字短语
+  const tokens: string[] = [];
+  for (const token of rawTokens) {
+    tokens.push(token);
+    // 匹配连续中文字符（CJK Unified Ideographs）
+    const cjkMatch = token.match(/[\u4e00-\u9fff]+/g);
+    if (cjkMatch) {
+      for (const seg of cjkMatch) {
+        if (seg.length >= 2) {
+          for (let i = 0; i < seg.length - 1; i++) {
+            const bigram = seg.slice(i, i + 2);
+            if (!STOP_WORDS.has(bigram)) tokens.push(bigram);
+          }
+        }
+      }
+    }
+  }
+  return tokens;
 }
 
 /**

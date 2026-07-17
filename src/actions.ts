@@ -28,6 +28,7 @@ import {
   confirmClarifyCheck,
   devCheck,
   fileExistsCheck,
+  isPathInsideWorkspace,
   planCheck,
   redLightCheck,
   reviewIssueCheck,
@@ -1158,11 +1159,20 @@ export function handleTest(
   // ── script：各自执行 expected.path（execFileSync 直接执行，不经 shell） ──
   // AC-9: 不传 argv、不注入 ACTUAL env（脚本自包含读系统状态）。stdio ignore 不回流 actual 数据。
   // AC-10: execFileSync 直接执行带 shebang+可执行位的脚本，不经 shell 解析（shell 默认 false）。
-  // path 已在 tddPlanCheck 沙箱校验（resolve 后必须落在 workspacePath 内）；此处仅 resolve。
+  // R1（symlink 绕过修复）：path 虽在 tddPlanCheck 沙箱校验过，但 tdd_plan → dev → test 之间
+  // path 可能被换成指向 workspace 外的 symlink（tdd_plan 时文件不存在无法 realpath，lexical 通过；
+  // dev 阶段写入 symlink 后 real 目标越界）。执行前用 isPathInsideWorkspace 再 realpath 校验一次，
+  // 此时文件已存在，realpath 能解析 symlink，拦下运行时替换攻击。
   for (const submission of params.cases) {
     const tc = topic.testCases.find((c) => c.id === submission.caseId);
     if (tc?.expected.type !== "script") continue;
     const relPath = tc.expected.path;
+    if (!isPathInsideWorkspace(relPath, workspacePath)) {
+      executedActualByCaseId.set(submission.caseId, {
+        error: `script.path 越出 workspace 沙箱（含 symlink 绕过）：${relPath}`,
+      });
+      continue;
+    }
     const absPath = resolve(workspacePath, relPath);
     try {
       execFileSync(absPath, {
@@ -1945,12 +1955,14 @@ function validateRetrospectData(
   }
 
   // processIssues 校验（FR-3 升级：每条必须是对象 + type 合法 + description 非空）
-  const VALID_ISSUE_TYPES: ReadonlyArray<ProcessIssueType> = [
+  // as const satisfies 让本数组与 types.ts 的 ProcessIssueType 同源：
+  // 若 ProcessIssueType 加/删值，这里编译期报错，避免硬编码漂移。
+  const VALID_ISSUE_TYPES = [
     "pattern",
     "oneOff",
     "observation",
     "uncategorized",
-  ];
+  ] as const satisfies readonly ProcessIssueType[];
   let processIssues: ProcessIssue[] | undefined;
   if (obj.processIssues !== undefined) {
     if (!Array.isArray(obj.processIssues)) {
