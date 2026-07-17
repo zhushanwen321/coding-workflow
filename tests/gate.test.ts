@@ -408,6 +408,86 @@ describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
   });
 });
 
+// ── tddPlanCheck expected 多模式回归锚点（topic: cw-2026-07-17-expected-multi-mode） ──
+//
+// expected 判别联合 {type:'exact'} | {type:'exit_zero'} | {type:'script',path}
+// 的 gate 层回归契约。expected-multi-mode.test.ts 已按 AC 粒度详尽覆盖（含非顶层 ..
+// 越界、绝对路径、多 case 组合）；这里补的是**主 gate 测试文件的回归锚点**——
+// 用 gate.test.ts 的一贯风格（单场景、tddPlanCheck 返回值断言）锁住每个新能力的
+// gate 行为，确保未来重构 gate 时这些契约在主测试文件里也有抓手，不会随
+// expected-multi-mode.test.ts 整体删除而失锚。
+
+describe("tddPlanCheck expected 多模式回归锚点", () => {
+  const testRunner = { mode: "nodejs" as const, command: "npx vitest run" };
+
+  it("AC-5: exit_zero 模式无 text → 不触发模糊/空判据检测，pass", () => {
+    // 关键回归：exit_zero 是合法的「无 text」判据，不应被 FUZZY_EXPECTED_RE 或
+    // 「判据缺失」规则挡下。若 tddPlanCheck 的模糊/空判据检查误把 exit_zero 当 exact，
+    // 此测试会 fail（报「判据」或「模糊」）。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exit_zero" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("pass");
+    expect(result.report).not.toContain("模糊");
+    expect(result.report).not.toContain("判据");
+  });
+
+  it("AC-5: script 模式无 text → 不触发模糊/空判据检测，pass", () => {
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "script", path: "scripts/check.sh" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("pass");
+  });
+
+  it("AC-4a: script.path 顶层 .. 越界 → fail，报告点出 path", () => {
+    // 回归点：沙箱必须用 resolve 而非字符串 startsWith('..')，否则 "foo/../../etc"
+    // 形态会漏过。这里用最直接的 "../../etc/passwd" 锚定顶层越界拒绝行为。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "S1", layer: "mock", scenario: "s", steps: "st", expected: { type: "script", path: "../../etc/passwd" }, executor: "vitest", requiresScreenshot: false },
+        { id: "S2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("fail");
+    expect(result.report.toLowerCase()).toContain("path");
+  });
+
+  it("AC-4a: script.path 合法相对路径 → pass（沙箱不误伤）", () => {
+    // 反面回归：合法的 workspace 内相对路径不应被沙箱挡下。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "S1", layer: "mock", scenario: "s", steps: "st", expected: { type: "script", path: ".cw/check.sh" }, executor: "vitest", requiresScreenshot: false },
+        { id: "S2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("pass");
+  });
+
+  it("AC-7: expected 不含 type 字段 → fail，报告含 type", () => {
+    // 旧格式 expected:{text:'x'}（无 type）必须被 schema 拒绝。这是判别联合的
+    // 兜底契约：缺 type 不能静默退化为 exact（会让 exit_zero/script 的能力失去门禁）。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "real-out-1" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-out-2" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("type");
+  });
+});
+
 // ── redLightCheck（执行测试命令确认红灯） ───────────────────
 
 describe("redLightCheck", () => {

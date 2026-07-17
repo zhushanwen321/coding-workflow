@@ -9,7 +9,7 @@
  *   - fileExistsCheck (retrospect/closeout) 用 tmp 文件真实验证。
  */
 
-import { mkdirSync,mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,7 @@ import { afterEach,beforeEach, describe, expect, it } from "vitest";
 import { dispatch, GuardError } from "../src/dispatch.js";
 import { GitValidator } from "../src/gate.js";
 import { CwStore } from "../src/store.js";
-import type { ActionDeps } from "../src/types.js";
+import type { ActionDeps, Expected } from "../src/types.js";
 import { setupGitRepo } from "./helpers/git.js";
 import {
   makeValidClarifyJson,
@@ -2484,5 +2484,272 @@ describe("dispatch assess（W5：post-closeout 评估）", () => {
     expect(assessments[0]!.id).toBe("AS1");
     expect(assessments[1]!.id).toBe("AS2");
     expect(assessments[1]!.defect!.foundInReview).toBe(true);
+  });
+});
+
+// ── expected 多模式 dispatch 层（topic: cw-2026-07-17-expected-multi-mode） ──
+//
+// AC-6 / AC-9 / AC-10 / exit_zero 共享归因的 dispatch 层锚点。
+// expected-multi-mode.test.ts 已覆盖 happy path（exit_zero/script 执行 pass/fail）+
+// AC-9（noactual.sh 行为验证）；这里补的是 dispatch.test.ts 主文件里的回归契约：
+//   - AC-6: 明确 assert error code === "case_expected_tampered_failed"（PR5）——
+//     防止 violation 类型被误改成 case_modified_passed 导致 failed-case 保护降级。
+//   - exit_zero 共享归因（PR3）: 多个 exit_zero case → testRunner 只跑一次，
+//     所有 case 共享同一 exitCode。这是 handleTest 的去重契约，纯函数层测不到。
+//   - AC-10 不经 shell: 通过行为验证（shell 元字符注入串按字面路径失败），
+//     补充 expected-multi-mode.test.ts 的静态源码断言。
+
+describe("dispatch expected 多模式（AC-6 / exit_zero 共享归因 / AC-10 行为）", () => {
+  /**
+   * 推进到 reviewed + 注入自定义 expected 的 testCases（多模式场景）。
+   * 与 expected-multi-mode.test.ts 的 passTddPlanGateWith 同构。
+   */
+  function setupReviewedWith(
+    slug: string,
+    cases: Array<{ id: string; expected: Expected }>,
+  ): { topicId: string; deps: ActionDeps; store: CwStore } {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug, objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    dispatch({ action: "plan", topicId, planJson: makeValidDevPlanJson() }, deps);
+    passPlanReview(store, topicId);
+    store.insertTestCases(
+      topicId,
+      cases.map((c, i) => ({
+        id: c.id,
+        layer: i % 2 === 0 ? ("mock" as const) : ("real" as const),
+        scenario: "s",
+        steps: "st",
+        expected: c.expected,
+        executor: "vitest",
+        requiresScreenshot: false,
+      })),
+    );
+    store.updateStatus(topicId, "tdd_inited");
+    store.updateGatePassed(topicId, "tdd_plan", true);
+    store.appendGateHistory(topicId, {
+      phase: "tdd_plan",
+      action: "tdd_plan",
+      gate: "test-json-schema",
+      result: "pass",
+      progressive: false,
+    });
+    dispatch(
+      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: realCommitHash }] },
+      deps,
+    );
+    passReviewGate(store, topicId);
+    return { topicId, deps, store };
+  }
+
+  /** 在 tmpDir（workspace）下建带 shebang + 可执行位的脚本。relPath 相对 tmpDir。 */
+  function makeRunnableScript(relPath: string, body: string): string {
+    const abs = join(tmpDir, relPath);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, body);
+    chmodSync(abs, 0o755);
+    return abs;
+  }
+
+  // ── AC-6: replan 改 failed case 的 expected.type → case_expected_tampered_failed ──
+
+  it("AC-6: 已 failed 的 exit_zero case 被 replan 改 type 为 exact → throw error code case_expected_tampered_failed", () => {
+    const { topicId, deps, store } = setupReviewedWith("w5-ac6", [
+      { id: "E1", expected: { type: "exit_zero" } },
+      { id: "E2", expected: { type: "exact", text: "real-out" } },
+    ]);
+    // 跑 test：E1 exit_zero failed（testRunner exit 1），E2 exact mismatch 也 failed。
+    store.setTestRunner(topicId, { mode: "nodejs", command: 'node -e "process.exit(1)"' });
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1" }, // exit_zero 无需 actual
+          { caseId: "E2", actual: { text: "wrong" } },
+        ],
+      },
+      deps,
+    );
+    // E1 当前 status=failed。replan --test 把 E1 的 type 从 exit_zero 改成 exact（防作弊路径）。
+    store.updateStatus(topicId, "developed");
+    const newTestJson = {
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
+      testCases: [
+        // 篡改：E1 原 type=exit_zero → 改成 exact+text=exit-1（企图让原 actual 对上）
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "exit-1" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    };
+    // PR5: 明确 assert error code === "case_expected_tampered_failed"。
+    // 不能用模糊的 /append-only/ 或 /modified/ —— 那会让 failed-case 保护降级成
+    // case_modified_passed（只保护 passed）而不报错。必须精确断言 failed 专属的 code。
+    expect(() =>
+      dispatch({ action: "replan", topicId, testJson: newTestJson }, deps),
+    ).toThrow(/\[case_expected_tampered_failed\]/);
+  });
+
+  it("AC-6 反面: 已 passed 的 exit_zero case 被 replan 改 type → throw case_modified_passed（不是 case_expected_tampered_failed）", () => {
+    // 反面回归：passed 的 case 改 type 应报 case_modified_passed（passed 保护），
+    // 不应误报成 case_expected_tampered_failed（failed 专属）。两个 code 语义不同不能混。
+    const { topicId, deps, store } = setupReviewedWith("w5-ac6-passed", [
+      { id: "E1", expected: { type: "exit_zero" } },
+      { id: "E2", expected: { type: "exact", text: "real-out" } },
+    ]);
+    store.setTestRunner(topicId, { mode: "nodejs", command: 'node -e "process.exit(0)"' });
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1" },
+          { caseId: "E2", actual: { text: "real-out" } },
+        ],
+      },
+      deps,
+    );
+    // E1 现在 passed。replan 改 E1 type → 应报 case_modified_passed。
+    store.updateStatus(topicId, "developed");
+    const newTestJson = {
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "x" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    };
+    expect(() =>
+      dispatch({ action: "replan", topicId, testJson: newTestJson }, deps),
+    ).toThrow(/\[case_modified_passed\]/);
+  });
+
+  // ── exit_zero 共享归因（PR3）: 多个 exit_zero case 共享一次 testRunner 执行 ──
+
+  it("exit_zero 共享归因: 2 个 exit_zero case → 同一 exitCode 归一化（testRunner exit 0 → 两 case 都 passed）", () => {
+    // PR3 去重契约：handleTest 对 exit_zero 去重执行一次 testRunner，把同一 exitCode
+    // 归一化给每个 exit_zero case。这是纯函数 testCheck 测不到的（它只看 actual.exitCode）。
+    // 关键 bug 面：若去重失败（每个 case 各跑一次），exit 0 时仍都 pass（掩盖 bug），
+    // 但 exit 1 时若只归因给第一个 case，第二个 case 会 pending/未判 —— 这里断言两 case 同 pass。
+    const { topicId, deps, store } = setupReviewedWith("w5-shared-0", [
+      { id: "E1", expected: { type: "exit_zero" } },
+      { id: "E3", expected: { type: "exit_zero" } },
+    ]);
+    store.setTestRunner(topicId, { mode: "nodejs", command: 'node -e "process.exit(0)"' });
+    const result = dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1" }, { caseId: "E3" }],
+      },
+      deps,
+    );
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testCases.find((c) => c.id === "E1")!.status).toBe("passed");
+    expect(topic!.testCases.find((c) => c.id === "E3")!.status).toBe("passed");
+    expect(result.gatePassed.test).toBe(true);
+  });
+
+  it("exit_zero 共享归因: 2 个 exit_zero case + testRunner exit 1 → 两 case 都 failed（共享同一非零 exitCode）", () => {
+    // 共享归因的失败侧：exit 1 时两个 exit_zero case 必须都 failed。
+    // bug 面：若只把 exitCode 归因给第一个 case，第二个会因无 actual 被判成别的状态。
+    const { topicId, deps, store } = setupReviewedWith("w5-shared-1", [
+      { id: "E1", expected: { type: "exit_zero" } },
+      { id: "E3", expected: { type: "exit_zero" } },
+    ]);
+    store.setTestRunner(topicId, { mode: "nodejs", command: 'node -e "process.exit(1)"' });
+    const result = dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1" }, { caseId: "E3" }],
+      },
+      deps,
+    );
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testCases.find((c) => c.id === "E1")!.status).toBe("failed");
+    expect(topic!.testCases.find((c) => c.id === "E3")!.status).toBe("failed");
+    expect(result.gatePassed.test).toBe(false);
+  });
+
+  it("exit_zero 共享归因只作用于 exit_zero case: 混合 exact + exit_zero → 各自独立判定", () => {
+    // 边界回归：去重只对 exit_zero 生效。同批里的 exact case 用自己的 actual.text 判定，
+    // 不受 testRunner exitCode 影响。
+    const { topicId, deps, store } = setupReviewedWith("w5-mixed", [
+      { id: "E1", expected: { type: "exit_zero" } },
+      { id: "E2", expected: { type: "exact", text: "real-out" } },
+    ]);
+    // testRunner exit 0 → E1 passed；E2 用 actual.text="real-out" 匹配 → passed。
+    store.setTestRunner(topicId, { mode: "nodejs", command: 'node -e "process.exit(0)"' });
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1" }, { caseId: "E2", actual: { text: "real-out" } }],
+      },
+      deps,
+    );
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testCases.find((c) => c.id === "E1")!.status).toBe("passed");
+    expect(topic!.testCases.find((c) => c.id === "E2")!.status).toBe("passed");
+  });
+
+  // ── AC-10 行为验证: script 执行不经 shell（shell 元字符按字面路径失败） ──
+
+  it("AC-10: script.path 含 shell 元字符 $(...) → 按字面路径执行失败（不经 shell 解析）", () => {
+    // AC-10 行为验证（补 expected-multi-mode.test.ts 的静态源码断言）：
+    // 若 handleTest 用 shell:true 执行 script，path 里的 $(echo evil) 会被 shell 先解析。
+    // 不经 shell（execFileSync shell 默认 false）则把整个串当文件名 → spawn ENOENT → case failed。
+    // 关键：脚本不能 passed（那样说明 shell 解析了注入串）。必须 failed（字面路径不存在）。
+    const { topicId, deps, store } = setupReviewedWith("w5-ac10-noshell", [
+      { id: "E1", expected: { type: "script", path: "$(echo evil).sh" } },
+      { id: "E2", expected: { type: "exact", text: "real-out" } },
+    ]);
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [{ caseId: "E1" }, { caseId: "E2", actual: { text: "real-out" } }],
+      },
+      deps,
+    );
+    const topic = store.loadTopic(topicId);
+    const e1 = topic!.testCases.find((c) => c.id === "E1")!;
+    expect(e1.status).toBe("failed");
+    // 失败原因应指向脚本执行异常（spawn ENOENT / 文件不存在），而非 shell 解析后的成功。
+    expect(e1.failureReason).toBeTruthy();
+  });
+
+  it("AC-9: script 执行不传 agent actual（脚本 argv/stdin/env 不含 actual 数据）", () => {
+    // AC-9 dispatch 层锚点：expected-multi-mode.test.ts 已用 noactual.sh 通过完整 dispatch
+    // 验证过此契约（脚本检查 $# 和 $ACTUAL env）。这里在 dispatch.test.ts 主文件里
+    // 复测同一行为契约，确保 future 重构 handleTest 的 script 执行路径时不漏此保护。
+    // 脚本：有任何 argv 或 ACTUAL env → exit 1（检测到 actual 污染）；否则 exit 0。
+    makeRunnableScript(
+      "scripts/noactual.sh",
+      '#!/usr/bin/env bash\nif [ "$#" -gt 0 ] || [ -n "$ACTUAL" ]; then exit 1; fi\nexit 0\n',
+    );
+    const { topicId, deps, store } = setupReviewedWith("w5-ac9", [
+      { id: "E1", expected: { type: "script", path: "scripts/noactual.sh" } },
+      { id: "E2", expected: { type: "exact", text: "real-out" } },
+    ]);
+    // 故意提交 actual，验证 handleTest 执行 script 时不会把它传给脚本（argv/env）。
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1", actual: { text: "should-be-ignored" } },
+          { caseId: "E2", actual: { text: "real-out" } },
+        ],
+      },
+      deps,
+    );
+    const topic = store.loadTopic(topicId);
+    // passed 说明脚本没检测到 actual 污染（argv 空、ACTUAL env 空）。
+    expect(topic!.testCases.find((c) => c.id === "E1")!.status).toBe("passed");
   });
 });

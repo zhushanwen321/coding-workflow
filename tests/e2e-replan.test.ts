@@ -11,7 +11,7 @@
  * 真实子进程跑 dist/cli.js，独立隔离环境。
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -376,5 +376,160 @@ describe("--test only 不清空 reviewIssues（代码没变，审查结论有效
       ]),
     });
     expect(fixR2.exitCode).toBe(0);
+  });
+});
+
+// ── exit_zero / script 模式 e2e 集成（topic: cw-2026-07-17-expected-multi-mode） ──
+//
+// 通过 cw CLI 子进程走完整流程（create → ... → test），验证多模式在端到端的
+// 真实行为。expected-multi-mode.test.ts 走的是进程内 dispatch()（直调函数），
+// 这里补的是「真实 CLI 子进程 + 进程间状态读写（JSON 落盘）」这一层——确保
+// testRunner 配置、exit_zero 去重执行、script 路径解析在跨进程边界仍然成立。
+
+describe("exit_zero / script 模式 e2e（cw CLI 子进程全流程）", () => {
+  /** 自包含版「走到 reviewed」——本地 plan/test 构造，testCases 用 exit_zero/script 模式。 */
+  function setupToReviewedLocal(slug: string, testJson: string): string {
+    const create = parseStdout(
+      runCli(["create", "--slug", slug, "--objective", `e2e ${slug}`, "--workspace", e.workspaceDir], e),
+    );
+    const topicId = create.topicId as string;
+    runCli(["clarify", "--topicId", topicId], e, {
+      input: JSON.stringify(makeValidClarifyJson({ answer: `${slug} 已澄清` })),
+    });
+    runCli(["gen-spec", "--topicId", topicId, "--no-open"], e);
+    runCli(["confirm_clarify", "--topicId", topicId], e);
+    writeSpecReviewMd(e.workspaceDir, slug);
+    runCli(
+      ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, slug)],
+      e,
+    );
+    runCli(["plan", "--topicId", topicId], e, { input: planWithWaves(["W1"]) });
+    writePlanReviewMd(e.workspaceDir, slug);
+    runCli(
+      ["plan_review", "--topicId", topicId, "--planReviewPath", planReviewMdPath(e.workspaceDir, slug)],
+      e,
+    );
+    runCli(["tdd_plan", "--topicId", topicId], e, { input: testJson });
+    runCli(["dev", "--topicId", topicId, "--tasks", JSON.stringify([{ waveId: "W1", commitHash: e.commitHash }])], e);
+    const reviewPath = join(e.workspaceDir, ".xyz-harness", slug, "changes", "review.md");
+    mkdirSync(dirname(reviewPath), { recursive: true });
+    writeFileSync(reviewPath, "# Review\n\npass");
+    runCli(["review", "--topicId", topicId, "--reviewPath", reviewPath], e);
+    return topicId;
+  }
+
+  it("exit_zero e2e: cw test（actual 省略）→ CW 机器重算 testRunner exit 0 → 判定 passed", () => {
+    // exit_zero 模式 agent 不提交 actual；CW 子进程执行 testRunner.command（exit 0）→ passed。
+    const exitZeroTestJson = JSON.stringify({
+      testCases: [
+        {
+          id: "E1", layer: "mock", scenario: "s", steps: "st",
+          expected: { type: "exit_zero" },
+          executor: "vitest", requiresScreenshot: false,
+        },
+        {
+          id: "E2", layer: "real", scenario: "s", steps: "st",
+          expected: { type: "exact", text: "real-output" },
+          executor: "vitest", requiresScreenshot: false,
+        },
+      ],
+      // exit 0 的 testRunner → exit_zero case 判 passed。红灯校验跳过（无 redCheck case）。
+      testRunner: { mode: "nodejs", command: 'node -e "process.exit(0)"' },
+    });
+    const topicId = setupToReviewedLocal("e2e-exit-zero", exitZeroTestJson);
+
+    // cw test：exit_zero case (E1) 不传 actual；exact case (E2) 传匹配的 actual。
+    const testResult = parseStdout(
+      runCli(
+        ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E1" }, // exit_zero 省略 actual（FR-2a）
+          { caseId: "E2", actual: { text: "real-output" } },
+        ])],
+        e,
+      ),
+    );
+    expect(testResult.gatePassed).toBeDefined();
+    expect((testResult.gatePassed as Record<string, unknown>).test).toBe(true);
+
+    // status 确认两 case 都 passed。
+    const status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    const cases = status.testCases as Array<{ id: string; status: string }>;
+    expect(cases.find((c) => c.id === "E1")!.status).toBe("passed");
+    expect(cases.find((c) => c.id === "E2")!.status).toBe("passed");
+  });
+
+  it("exit_zero e2e: testRunner exit 1 → exit_zero case 判 failed", () => {
+    const exitZeroFailTestJson = JSON.stringify({
+      testCases: [
+        {
+          id: "E1", layer: "mock", scenario: "s", steps: "st",
+          expected: { type: "exit_zero" },
+          executor: "vitest", requiresScreenshot: false,
+        },
+        {
+          id: "E2", layer: "real", scenario: "s", steps: "st",
+          expected: { type: "exact", text: "real-output" },
+          executor: "vitest", requiresScreenshot: false,
+        },
+      ],
+      // exit 1 的 testRunner → exit_zero case 判 failed。
+      testRunner: { mode: "nodejs", command: 'node -e "process.exit(1)"' },
+    });
+    const topicId = setupToReviewedLocal("e2e-exit-zero-fail", exitZeroFailTestJson);
+
+    const testResult = parseStdout(
+      runCli(
+        ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E1" },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ])],
+        e,
+      ),
+    );
+    expect((testResult.gatePassed as Record<string, unknown>).test).toBe(false);
+    const status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    const cases = status.testCases as Array<{ id: string; status: string }>;
+    expect(cases.find((c) => c.id === "E1")!.status).toBe("failed");
+  });
+
+  it("script e2e: cw test（actual 省略）→ CW 执行 script.path exit 0 → passed", () => {
+    // 在 workspace 下建一个 exit 0 的可执行脚本（带 shebang + 执行位）。
+    const scriptRel = join(".cw", "check.sh");
+    const scriptAbs = join(e.workspaceDir, scriptRel);
+    mkdirSync(dirname(scriptAbs), { recursive: true });
+    writeFileSync(scriptAbs, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(scriptAbs, 0o755);
+
+    const scriptTestJson = JSON.stringify({
+      testCases: [
+        {
+          id: "E1", layer: "mock", scenario: "s", steps: "st",
+          expected: { type: "script", path: scriptRel },
+          executor: "vitest", requiresScreenshot: false,
+        },
+        {
+          id: "E2", layer: "real", scenario: "s", steps: "st",
+          expected: { type: "exact", text: "real-output" },
+          executor: "vitest", requiresScreenshot: false,
+        },
+      ],
+      testRunner: { mode: "nodejs", command: "npx vitest run" },
+    });
+    const topicId = setupToReviewedLocal("e2e-script", scriptTestJson);
+
+    // cw test：script case (E1) 不传 actual；CW 子进程 resolve workspace + 执行脚本。
+    const testResult = parseStdout(
+      runCli(
+        ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E1" }, // script 省略 actual（AC-9）
+          { caseId: "E2", actual: { text: "real-output" } },
+        ])],
+        e,
+      ),
+    );
+    expect((testResult.gatePassed as Record<string, unknown>).test).toBe(true);
+    const status = parseStdout(runCli(["status", "--topicId", topicId], e));
+    const cases = status.testCases as Array<{ id: string; status: string }>;
+    expect(cases.find((c) => c.id === "E1")!.status).toBe("passed");
   });
 });
