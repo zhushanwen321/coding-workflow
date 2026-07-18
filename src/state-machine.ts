@@ -1027,8 +1027,11 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
     }
     case "replan": {
       // D7: replan 的下一步取决于 handler 设的 status。
-      // status=planned（hasPlan，plan 改了）→ plan_review（重审新 plan）
       // status=plan_reviewed（hasTest only，plan 没变）→ tdd_plan（重走测试）
+      // status=planned（hasPlan，plan 改了）→ 需重审新 plan：
+      //   - full-tdd（stages 含 plan_review）→ plan_review（重审新 plan）
+      //   - delete-only/doc-only（stages 不含 plan_review）→ tdd_plan（跳过 plan_review，
+      //     与 plan case 的裁剪分支一致——M1：不能引导到裁剪声称跳过的阶段）
       if (topic.status === "plan_reviewed") {
         const dev = getPreDevGuidance(topic.taskShape);
         return {
@@ -1038,9 +1041,19 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           testCases: testCaseProgress(topic),
         };
       }
+      if (isStageEnabled(topic, "plan_review")) {
+        return {
+          action: "plan_review",
+          guidance: `replan 完成（plan 已修改）。需重走 plan_review 审查新 plan。\n\n${PLAN_REVIEW_PROMPT}`,
+          waves: waveProgress(topic),
+          testCases: testCaseProgress(topic),
+        };
+      }
+      // stages 不含 plan_review（delete-only/doc-only）→ replan 改了 plan 也跳过审查，直接 tdd_plan。
+      const dev = getPreDevGuidance(topic.taskShape);
       return {
-        action: "plan_review",
-        guidance: `replan 完成（plan 已修改）。需重走 plan_review 审查新 plan。\n\n${PLAN_REVIEW_PROMPT}`,
+        action: "tdd_plan",
+        guidance: `replan 完成（plan 已修改）。该 taskShape 跳过 plan_review（stages 不含）。下一步：${dev.prefix}，调 cw(tdd_plan)。\n\n${dev.prompt}`,
         waves: waveProgress(topic),
         testCases: testCaseProgress(topic),
       };

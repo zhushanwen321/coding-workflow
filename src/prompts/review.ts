@@ -68,16 +68,30 @@ function renderDimensionFieldTable(
 }
 
 /**
- * issues 参数章节的 JSON 示例——dimension 字段取自 dimensions 子集（步骤 4 去硬编码）。
+ * issues 参数章节的 JSON 示例——dimension 字段（步骤 4 去硬编码）。
  *
- * 原示例固定用 edge-case/error-handling 演示，但 AC-7/AC-9 要求子集模式下不能出现
- * 未声明维度。此处从 dimensions 选前两个作为示例值——既保留"两个 issue 演示不同 dimension"
- * 的教学意图，又不泄露子集外的维度名。dimensions 不足两个时退化为复用首个/通用占位。
+ * 原 REVIEW_PROMPT 固定用 edge-case（第一个 issue）/ error-handling（第二个 issue）演示，
+ * AC-8 等价性要求全 6 维输出必须逐字节复现这两个值。但 AC-7/AC-9 又要求子集模式下不能
+ * 出现未声明的维度名——所以示例维度必须从当前 dimensions 子集里取。
+ *
+ * 取值策略：对每个示例 slot，优先用历史固定值（edge-case → error-handling），仅当固定值
+ * 不在子集时才退化为子集首项。这样：
+ *   - 全 6 维：edge-case / error-handling（与原 REVIEW_PROMPT 逐字节一致）
+ *   - delete-only（design-consistency + edge-case）：edge-case / edge-case（固定值 edge-case 在子集）
+ *   - doc-only（design-consistency）：design-consistency / design-consistency（退化）
  */
+function pickExampleDimension(
+  dimensions: readonly ReviewDimension[],
+  preferred: ReviewDimension,
+): ReviewDimension {
+  return dimensions.includes(preferred)
+    ? preferred
+    : (dimensions[0] ?? "type-safety");
+}
+
 function renderIssuesJsonExample(dimensions: readonly ReviewDimension[]): string {
-  const distinct = dimensions.length > 0 ? dimensions : ["type-safety" as ReviewDimension];
-  const firstDim = distinct[0]!;
-  const secondDim = distinct[1] ?? firstDim;
+  const firstDim = pickExampleDimension(dimensions, "edge-case");
+  const secondDim = pickExampleDimension(dimensions, "error-handling");
   return `    echo '[
       {
         "severity": "must-fix",
@@ -117,8 +131,9 @@ function renderDesignConsistencySection(
     otherDims.length > 0
       ? `其余维度（${otherDims.join("/")}）直接读代码审查即可。`
       : "其余维度直接读代码审查即可。";
-  return `
-## 审查方法：禁读重建（design-consistency 维度专用）
+  // 返回值不含前导换行、以单个换行结尾——由 designBlock 拼接处统一补空行，
+  // 避免 \n\n\n 多空行（AC-8 逐字节等价性：原 REVIEW_PROMPT 此处只有 1 个空行）。
+  return `## 审查方法：禁读重建（design-consistency 维度专用）
 
 design-consistency（设计一致性）维度最易漏——直接读实现容易「顺着代码思路走」，
 看不出实现偏离了 spec。强制用「禁读重建」对冲：
@@ -148,9 +163,14 @@ export function buildReviewPrompt(
   const mainTable = renderMainDimensionTable(dimensions);
   const fieldTable = renderDimensionFieldTable(dimensions);
   const issuesJsonExample = renderIssuesJsonExample(dimensions);
+  // m1: 「取 N 值之一」/「取以下 N 个值之一」按子集真实维度数渲染，避免 delete-only（2 维）/doc-only
+  // （1 维）时文案说「6」自相矛盾。全 6 维时 N=6，与原 REVIEW_PROMPT 逐字节一致（AC-8）。
+  const dimensionsCount = dimensions.length;
 
   // AC-8 等价性：design-consistency 段在全 6 维时位于审查流程之后、维度表之前。
-  // 用条件拼接保证子集模式下不产生空行错位。
+  // 模板在此处前已提供 \n\n（<path> 后的空行），designBlock 需以「## 审查方法」开头、
+  // 以 \n\n 结尾（与原 REVIEW_PROMPT 「其余维度」后的单个空行对齐）。renderDesignConsistencySection
+  // 返回值以单个 \n 结尾，这里再补一个 \n 凑成段落后的空行。子集模式（无 design-consistency）→ 空串。
   const designBlock =
     designConsistencySection.length > 0
       ? `${designConsistencySection}\n`
@@ -178,7 +198,7 @@ export function buildReviewPrompt(
 
 ${designBlock}## 审查维度
 
-按以下维度审查（可用 subagent 分工，也可主 agent 自审）。dimension 字段必填，取 6 值之一：
+按以下维度审查（可用 subagent 分工，也可主 agent 自审）。dimension 字段必填，取 ${dimensionsCount} 值之一：
 
 ${mainTable}
 
@@ -219,7 +239,7 @@ ${issuesJsonExample}
 ### dimension 字段（必填）
 
 FR-6 升级：原可选的 \`category\` 字段改为必填的 \`dimension\`（命名也更准确——它就是审查维度本身）。
-取以下 6 个值之一（对应代码审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
+取以下 ${dimensionsCount} 个值之一（对应代码审查维度），用于事后统计 review 盲区分布——看哪些维度漏检最多，反过来校准审查重点。
 
 ${fieldTable}
 

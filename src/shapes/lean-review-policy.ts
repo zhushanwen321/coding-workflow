@@ -7,9 +7,10 @@
  * 配置文件是否破坏初始化路径）。
  *
  * stages 只含 "review"——与 full-review 的三段（spec_review + plan_review + review）
- * 区分。注意：stages 是策略声明的「启用」阶段，流程上 delete-only 仍走全链
- * （clarify → plan → ... → closeout），只是 spec_review/plan_review 的「review 维度」
- * 不适用于删除任务（dimensions 不含 spec/plan 审查维度）。
+ * 区分。步骤 4 阶段裁剪后，stages 不含的阶段不仅是「review 维度不适用」，而是被
+ * 状态机真正跳过：delete-only 的流程是 clarify → plan → tdd_plan → dev → review → test
+ * → retrospect → closeout，spec_review/plan_review 阶段完全不进入（buildNextAction
+ * 的 plan/replan case 用 isStageEnabled 判定后直接推到 tdd_plan）。
  */
 
 import type { ReviewDimension } from "../types.js";
