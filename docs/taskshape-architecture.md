@@ -290,3 +290,5 @@ existence 的 `replanGuard` 检查两类违规：
 - **spec/plan review 的 dimension 不做子集校验**：`dimensions` 字段只列 review 阶段（代码审查）的维度，spec/plan 审查的维度由 `stages` 启用隐含。维度由阶段固定，不在配置层做子集合法性校验。
 - **full-tdd 手动跳过被允许**：ADR-0004 扩展 expectedStatuses 后，full-tdd shape 理论上也能在 `clarify_confirmed` 状态手动调 `cw(plan)` 跳过 spec_review（status 合法了）。guidance 不引导，agent 若手动跳是自主行为——CW 不强制 full-tdd 走全链，这是 agent 纪律问题不是 guard 职责。
 - **tdd-strategy.replanGuard 是占位死代码**：tdd 路径走 `validateAppendOnly` 而非策略 replanGuard，保留实现作为"未来想统一"的备选路径，当前不调用。
+- **review-only isDevVerified 恒 true**：`ReviewOnlyVerificationStrategy.isDevVerified` 恒返回 true（review-only-strategy.ts:55-59）——doc-only 任务无机器验证产物，test gate 天然通过。质量保证完全依赖 review 阶段的人工审查。这不是逻辑漏洞而是设计意图（避免文档任务卡在"无 testCase = isDevVerified=false"的死锁），但意味着 doc-only 的 closeout coverage 恒 0 且 `coverageApplicable=false`（stats 聚合时过滤）。
+- **replanGuard 对空 payload 降级**：existence.replanGuard 收到不含 `artifacts` 字段的 payload（dev-plan.json/test.json 格式）时降级为 no-op，视为"replan 不触碰 existence 契约"。仅当 payload 显式携带 artifacts 清单时才做篡改检测。existenceArtifacts 的重建由 tdd_plan 重跑时的 setExistenceArtifacts 整体覆盖负责。

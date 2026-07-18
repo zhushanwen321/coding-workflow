@@ -156,6 +156,12 @@ export class ExistenceVerificationStrategy implements VerificationStrategy {
     if (verifiedArtifacts.length === 0) return [];
 
     const newArtifacts = extractArtifacts(newPayload);
+    // P0: replan payload（dev-plan.json/test.json 格式）不含 artifacts 字段时降级为 no-op。
+    // 真实 replan 调用的 planJson（{format,waves,...}）/ testJson（{testCases,...}）都没有 artifacts 键，
+    // extractArtifacts 返回空。此时视为"replan 不触碰 existence 契约"——existenceArtifacts 的重建
+    // 由 tdd_plan 重跑时的 setExistenceArtifacts 整体覆盖负责（与 m2 注释自洽）。
+    // 仅当 payload 显式携带 artifacts 清单（如测试直接传 existence.json 格式）时才做篡改检测。
+    if (newArtifacts.length === 0) return [];
     const byPath = new Map(newArtifacts.map((a) => [a.path, a.expectedState]));
 
     const violations: Violation[] = [];

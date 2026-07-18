@@ -38,7 +38,7 @@ import {
   parseDevPlan,
   parseTestJson,
 } from "./plan-parser.js";
-import { getShape } from "./shapes/registry.js";
+import { getShape, VALID_SHAPE_IDS } from "./shapes/registry.js";
 import type { TaskShapeId, Violation } from "./shapes/types.js";
 import {
   buildNextAction,
@@ -390,10 +390,10 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
   // W1: taskShape 白名单校验。CLI 层只透传字符串，这里把住合法性——
   // 防止磁盘/脚本手写非法值静默落到 topic（getShape 虽会降级 full-tdd，但 topic
   // 字段会存原始脏值，后续 report/stats 渲染混乱）。
-  const VALID_SHAPES: TaskShapeId[] = ["full-tdd", "delete-only", "doc-only"];
-  if (params.taskShape && !VALID_SHAPES.includes(params.taskShape)) {
+  // 白名单从 registry 派生（VALID_SHAPE_IDS），避免新增 shape 时漏改第二份列表。
+  if (params.taskShape && !VALID_SHAPE_IDS.includes(params.taskShape)) {
     throw new CwError(
-      `无效的 taskShape: ${params.taskShape}（合法值: ${VALID_SHAPES.join(", ")}）`,
+      `无效的 taskShape: ${params.taskShape}（合法值: ${VALID_SHAPE_IDS.join(", ")}）`,
     );
   }
 
@@ -2248,20 +2248,25 @@ export function handleRetrospect(
  * existence 分流与 computeGatePassed("test") 的 isDevVerified 语义对齐——
  * coverage 反映「产物存在性契约的满足比例」，而非测试通过率。
  */
-function computeCoverage(topic: Topic): number {
+function computeCoverage(topic: Topic): { value: number; applicable: boolean } {
   if (topic.testCases.length > 0) {
-    return (
-      topic.testCases.filter((c) => c.status === "passed").length /
-      topic.testCases.length
-    );
+    return {
+      value:
+        topic.testCases.filter((c) => c.status === "passed").length /
+        topic.testCases.length,
+      applicable: true,
+    };
   }
   const artifacts = topic.existenceArtifacts;
   if (artifacts && artifacts.length > 0) {
-    return (
-      artifacts.filter((a) => a.verified === true).length / artifacts.length
-    );
+    return {
+      value:
+        artifacts.filter((a) => a.verified === true).length / artifacts.length,
+      applicable: true,
+    };
   }
-  return 0;
+  // review-only（无 testCases 也无 existenceArtifacts）：coverage 不适用
+  return { value: 0, applicable: false };
 }
 
 /**
@@ -2329,6 +2334,7 @@ export function handleCloseout(
       if (!fresh) {
         throw new Error(`topic not found after closeout: ${params.topicId}`);
       }
+      const coverageResult = computeCoverage(fresh);
       const evidence: Evidence = {
         closedAt: new Date().toISOString(),
         // W6: coverage 按 taskShape 分流——
@@ -2338,7 +2344,8 @@ export function handleCloseout(
         // M4: existence 策略的 coverage 基于 test 阶段时点的 verified 缓存。
         // closeout 后文件状态可能 drift（如外部 git checkout 恢复已删文件），CW 不重新核对。
         // 这是 ADR-0003 接受的权衡（isDevVerified 信缓存不信文件系统）。
-        coverage: computeCoverage(fresh),
+        coverage: coverageResult.value,
+        coverageApplicable: coverageResult.applicable,
         gateHistory: fresh.gateHistory,
       };
       deps.store.setEvidence(params.topicId, evidence);
@@ -2753,7 +2760,9 @@ export function handleReplan(
     // testCases replace：testJson 或旧格式 planJson 的 legacyTestCases 提供时执行。
     const newCases =
       parsedTest?.testCases ?? parsedPlan?.legacyTestCases ?? [];
-    if (newCases.length > 0) {
+    // shape 守卫（同 handlePlan 的 m1 模式）：非 tdd shape 不写 testCases——
+    // review-only / existence shape 无 testCases 概念，写入会污染 topic 数据。
+    if (newCases.length > 0 && getShape(topic.taskShape).verification.id === "tdd") {
       const passedCaseIds = new Set(
         topic.testCases.filter((c) => c.status === "passed").map((c) => c.id),
       );

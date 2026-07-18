@@ -160,8 +160,12 @@ function computeEfficiency(topic: Topic): Efficiency {
   const planCompletionRate = totalWaves === 0 ? 0 : committedWaves / totalWaves;
 
   // 覆盖率门槛：closeout 后才有 evidence.coverage，无 evidence 视为未达标关注=false。
+  // review-only shape（coverageApplicable=false）不计入——它无机器验证产物，
+  // coverage=0 是「不适用」而非「不达标」，不应拉低跨 topic 均值/触发误报。
   const coverageFlag =
-    topic.evidence?.coverage !== undefined && topic.evidence.coverage < 0.5;
+    topic.evidence?.coverage !== undefined &&
+    topic.evidence.coverageApplicable !== false &&
+    topic.evidence.coverage < 0.5;
 
   return {
     firstTryPass,

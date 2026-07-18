@@ -369,3 +369,100 @@ describe("isDevVerified 纯缓存读取（不跑 existsSync）", () => {
     expect(shape.verification.isDevVerified(topic)).toBe(true);
   });
 });
+
+// ── replanGuard（P1 补测：5 场景） ────────────────────────
+
+describe("ExistenceStrategy.replanGuard（P1：契约篡改检测 + 空 payload 降级）", () => {
+  const shape = getShape("delete-only");
+  const verification = shape.verification;
+
+  /** 构造带 verified artifacts 的 topic。 */
+  function makeTopicWithVerified(
+    artifacts: Array<{ path: string; expectedState: "present" | "absent"; verified?: boolean }>,
+  ): Topic {
+    return {
+      ...makeTopic({ taskShape: "delete-only" as Topic["taskShape"] }),
+      existenceArtifacts: artifacts,
+    };
+  }
+
+  it("P0: payload 不含 artifacts（dev-plan.json 格式）→ 降级 no-op，无违规", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/old.ts", expectedState: "absent", verified: true },
+    ]);
+    // dev-plan.json 格式，无 artifacts 键
+    const payload = { format: "lite", objective: "x", waves: [] };
+    const violations = verification.replanGuard(topic, payload);
+    expect(violations).toEqual([]);
+  });
+
+  it("P0: payload 为空对象 → 降级 no-op", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/old.ts", expectedState: "absent", verified: true },
+    ]);
+    expect(verification.replanGuard(topic, {})).toEqual([]);
+  });
+
+  it("payload 含完整 artifacts 且无篡改 → 无违规", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/a.ts", expectedState: "absent", verified: true },
+      { path: "src/b.ts", expectedState: "present", verified: true },
+    ]);
+    // 新清单与旧清单完全一致
+    const payload = {
+      artifacts: [
+        { path: "src/a.ts", expectedState: "absent" },
+        { path: "src/b.ts", expectedState: "present" },
+      ],
+    };
+    expect(verification.replanGuard(topic, payload)).toEqual([]);
+  });
+
+  it("篡改 verified artifact 的 expectedState → existence_artifact_state_changed", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/legacy.ts", expectedState: "absent", verified: true },
+    ]);
+    // 把 absent 改成 present（篡改契约）
+    const payload = {
+      artifacts: [{ path: "src/legacy.ts", expectedState: "present" }],
+    };
+    const violations = verification.replanGuard(topic, payload);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.type).toBe("existence_artifact_state_changed");
+    expect(violations[0]!.caseId).toBe("src/legacy.ts");
+  });
+
+  it("移除 verified artifact（新清单不含）→ existence_artifact_removed", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/old-a.ts", expectedState: "absent", verified: true },
+      { path: "src/old-b.ts", expectedState: "absent", verified: true },
+    ]);
+    // 新清单只保留 old-b（移除 old-a）
+    const payload = {
+      artifacts: [{ path: "src/old-b.ts", expectedState: "absent" }],
+    };
+    const violations = verification.replanGuard(topic, payload);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.type).toBe("existence_artifact_removed");
+    expect(violations[0]!.caseId).toBe("src/old-a.ts");
+  });
+
+  it("无 verified artifact → 短路返回空（不检查 payload）", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/new.ts", expectedState: "absent" }, // verified 未设（undefined）
+    ]);
+    // 即使 payload 完全不匹配，无 verified artifact 也不报违规
+    expect(verification.replanGuard(topic, { artifacts: [] })).toEqual([]);
+  });
+
+  it("未 verified 的 artifact 被篡改 → 不报违规（只保护 verified）", () => {
+    const topic = makeTopicWithVerified([
+      { path: "src/unverified.ts", expectedState: "absent", verified: false },
+    ]);
+    const payload = {
+      artifacts: [{ path: "src/unverified.ts", expectedState: "present" }],
+    };
+    // verified=false 的 artifact 不受保护——可以自由修改
+    expect(verification.replanGuard(topic, payload)).toEqual([]);
+  });
+});

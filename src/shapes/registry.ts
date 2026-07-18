@@ -58,3 +58,9 @@ const REGISTRY: Partial<Record<TaskShapeId, TaskShape>> = {
 export function getShape(taskShapeId: TaskShapeId | undefined): TaskShape {
   return REGISTRY[taskShapeId ?? "full-tdd"] ?? FULL_TDD;
 }
+
+/**
+ * 已注册的合法 TaskShapeId 列表（从 REGISTRY 派生，单一数据源）。
+ * handleCreate 的值校验从这里取，避免 actions.ts 硬编码第二份列表导致新增 shape 时漏改。
+ */
+export const VALID_SHAPE_IDS: TaskShapeId[] = Object.keys(REGISTRY) as TaskShapeId[];

@@ -250,6 +250,9 @@ export interface Evidence {
   closedAt: string;
   /** 测试通过率 = passed testCases / total testCases（closeout 时计算）。 */
   coverage?: number;
+  /** coverage 是否适用于该 shape（review-only 无机器验证产物，coverage 不适用）。
+   *  stats 聚合时据此过滤，避免 review-only 的 coverage=0 拉低跨 topic 均值。 */
+  coverageApplicable?: boolean;
   /** gate 历史快照，closeout 后可回溯完整 gate 判定轨迹（reviewer 指出不能砍） */
   gateHistory: GateHistoryEntry[];
 }
