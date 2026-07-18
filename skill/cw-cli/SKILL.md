@@ -43,6 +43,8 @@ description: >-
 cw create --slug <kebab-case-slug> --objective "<一句话业务目标>"
 ```
 
+可选 `--taskShape <full-tdd|delete-only|doc-only>` 指定任务形态（默认 `full-tdd`），决定验证策略与审查阶段（详见下方 TaskShape 小节）。
+
 返回 JSON 含 `topicId` + `nextAction`。**记下 topicId**，后续所有调用都要传。
 
 ### 运行环境（评估分组维度，可选）
@@ -61,6 +63,20 @@ cw create --slug <slug> --objective "<obj>" --agent "Claude Code" --llm "Sonnet-
 ```
 
 cwVersion 始终从 package.json 自动读取，不可手动指定。
+
+### TaskShape（任务形态，可选）
+
+`cw create` 可选 `--taskShape` 指定任务形态，决定验证策略和审查阶段：
+
+| taskShape | 适用场景 | 验证方式 | review 阶段 |
+|-----------|---------|---------|------------|
+| full-tdd（默认）| 新功能开发 | test.json + 跑测试 | 全 3 段（spec_review + plan_review + review）|
+| delete-only | 纯删除/迁移任务 | existence.json + existsSync | 仅 review（跳 spec/plan review）|
+| doc-only | 文档任务 | 无机器验证（review-only）| 仅 review |
+
+```bash
+cw create --slug <slug> --objective "<obj>" --taskShape delete-only
+```
 
 ## 推进流程（按 nextAction 驱动）
 

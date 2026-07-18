@@ -576,9 +576,7 @@ export class CwStore {
     }
     // taskShape 迁移：旧 topic 无此字段 → 默认 full-tdd（in-memory，不写回磁盘）。
     // AC-3：存量 topic（无 taskShape）经 loadTopic 读出后 taskShape='full-tdd'。
-    if (!topic.taskShape) {
-      topic.taskShape = "full-tdd";
-    }
+    this.applyLegacyMigrations(topic);
     return topic;
   }
 
@@ -607,11 +605,28 @@ export class CwStore {
       // taskShape 迁移：旧 topic 无此字段 → 默认 full-tdd（in-memory，不写回磁盘）。
       // PR1 教训：listTopics 不经 loadTopic，必须独立接入迁移钩子，否则 cw stats --all
       // 走这里会让旧数据原样流出（taskShape=undefined）。
-      if (!topic.taskShape) {
-        topic.taskShape = "full-tdd";
-      }
+      this.applyLegacyMigrations(topic);
       return topic;
     });
+  }
+
+  /**
+   * 集中处理 in-memory 迁移（避免 loadTopic/listTopics 双入口漏接，PR1 教训）。
+   *
+   * mutate topic 就地补字段——assembleTopic 返回新对象，loadTopic/listTopics 持有的是
+   * 调用栈内的局部 topic，mutate 安全。迁移只在内存生效，不写回磁盘（保持存量数据兼容）。
+   *
+   * 当前迁移项：
+   *   - taskShape：旧 topic 无此字段 → 默认 full-tdd（AC-3 存量 topic 迁移）。
+   *
+   * 未来新增 in-memory 迁移（artifacts/reviewIssues/processIssues 等当前在 loadTopic 内联、
+   * listTopics 漏接的）应陆续收敛到这里，使两入口行为一致。
+   */
+  private applyLegacyMigrations(topic: Topic): void {
+    // taskShape 迁移：旧 topic 无 taskShape 字段 → 默认 full-tdd（in-memory，不写回磁盘）。
+    if (!topic.taskShape) {
+      topic.taskShape = "full-tdd";
+    }
   }
 
   /**

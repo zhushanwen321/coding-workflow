@@ -39,7 +39,7 @@ import {
   parseTestJson,
 } from "./plan-parser.js";
 import { getShape } from "./shapes/registry.js";
-import type { TaskShapeId } from "./shapes/types.js";
+import type { TaskShapeId, Violation } from "./shapes/types.js";
 import {
   buildNextAction,
   computeGatePassed,
@@ -387,6 +387,16 @@ export type CwParams =
  * 失败路径：slug 重复 → insertTopic 抛 UNIQUE 约束错误（propagate 给 CLI 映射 exit code）。
  */
 export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResult {
+  // W1: taskShape 白名单校验。CLI 层只透传字符串，这里把住合法性——
+  // 防止磁盘/脚本手写非法值静默落到 topic（getShape 虽会降级 full-tdd，但 topic
+  // 字段会存原始脏值，后续 report/stats 渲染混乱）。
+  const VALID_SHAPES: TaskShapeId[] = ["full-tdd", "delete-only", "doc-only"];
+  if (params.taskShape && !VALID_SHAPES.includes(params.taskShape)) {
+    throw new CwError(
+      `无效的 taskShape: ${params.taskShape}（合法值: ${VALID_SHAPES.join(", ")}）`,
+    );
+  }
+
   const topicId = buildTopicId(params.slug);
   const workspacePath = params.workspacePath ?? deps.workspacePath;
   const topicDir = join(workspacePath, ".xyz-harness", params.slug);
@@ -730,7 +740,14 @@ export function handlePlan(
     }
     // 向后兼容：旧格式 plan.json 同时含 testCases（extractDevPlan 提取到 legacyTestCases）。
     // 新格式 dev-plan.json 不含 testCases（test.json 在 tdd_plan 阶段提交），跳过 insertTestCases。
-    if (parsed.legacyTestCases && parsed.legacyTestCases.length > 0) {
+    // m1: legacy testCases 只对 tdd shape 有意义——非 tdd shape（delete-only/doc-only）
+    // 的 isDevVerified 不读 testCases（existence 读 existenceArtifacts，review-only 恒空），
+    // 写入多余的 testCases 会污染 topic 数据（如 closeout coverage 误算通过率）。加 shape 守卫。
+    if (
+      parsed.legacyTestCases &&
+      parsed.legacyTestCases.length > 0 &&
+      getShape(topic.taskShape).verification.id === "tdd"
+    ) {
       deps.store.insertTestCases(params.topicId, parsed.legacyTestCases);
     }
     deps.store.updateStatus(
@@ -1682,6 +1699,9 @@ export function handleSpecReview(
   const hasIssues = issues.length > 0;
 
   // 先跑 reviewIssueCheck 校验 issue 结构合法性（dimension 必填等）。
+  // M3: spec_review/plan_review 不做 dimension 子集校验。
+  // 这两个阶段的维度（completeness/consistency/reasonableness 和 coverage/architecture/feasibility）
+  // 由阶段固定，不随 taskShape 变化。只有 review 阶段（代码审查）的 dimensions 受 shape 声明子集影响。
   const issueCheck = hasIssues
     ? reviewIssueCheck(issues)
     : {
@@ -1851,6 +1871,9 @@ export function handlePlanReview(
   const hasIssues = issues.length > 0;
 
   // 先跑 reviewIssueCheck 校验 issue 结构合法性（dimension 必填等）。
+  // M3: spec_review/plan_review 不做 dimension 子集校验。
+  // 这两个阶段的维度（completeness/consistency/reasonableness 和 coverage/architecture/feasibility）
+  // 由阶段固定，不随 taskShape 变化。只有 review 阶段（代码审查）的 dimensions 受 shape 声明子集影响。
   const issueCheck = hasIssues
     ? reviewIssueCheck(issues)
     : {
@@ -2312,6 +2335,9 @@ export function handleCloseout(
         //   - full-tdd（有 testCases）：通过率 = passed / total
         //   - existence（无 testCases，有 existenceArtifacts）：verified 通过率 = verified / total
         //   - review-only（两者皆无）：0（无可机器验证产物，coverage 不适用）
+        // M4: existence 策略的 coverage 基于 test 阶段时点的 verified 缓存。
+        // closeout 后文件状态可能 drift（如外部 git checkout 恢复已删文件），CW 不重新核对。
+        // 这是 ADR-0003 接受的权衡（isDevVerified 信缓存不信文件系统）。
         coverage: computeCoverage(fresh),
         gateHistory: fresh.gateHistory,
       };
@@ -2595,9 +2621,14 @@ export function handleReplan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  // W4 决策：handleReplan 暂不通过策略路由 replanGuard。
-  // replanGuard 接口 (oldTopic, newPayload) 与本 handler 的 plan/test 双路径参数组装不匹配。
-  // 保留现有直接调 validateAppendOnly 的结构。replanGuard 接口重新设计留后续 topic。
+  // M1: replan 安全门按 taskShape 路由（ADR-0005）。
+  //   - tdd：保持原 validateAppendOnly 双路径调用（plan 路径 + test 路径），零行为变更。
+  //   - existence / review-only：走各自策略的 replanGuard。
+  //     existence 检查 artifact 篡改（已 verified 的 expectedState 不可改/不可删）；
+  //     review-only.replanGuard 恒返回空（无机器验证契约可保护，不误拦）。
+  // tdd 不复用 TddVerificationStrategy.replanGuard：那个内部从单 payload 提取 waves/cases，
+  // 与本 handler 的双路径（planJson + testJson 可同时提供）+ legacyTestCases 兼容组装不匹配。
+  // 保留原内联调用，既零回归又避免重复组装逻辑。
   const hasPlan = params.planJson !== undefined;
   const hasTest = params.testJson !== undefined;
   if (!hasPlan && !hasTest) {
@@ -2661,33 +2692,46 @@ export function handleReplan(
     }
   }
 
-  // append-only 校验（核心安全门，4 违规类型）。
-  // 只校验本次实际改动的部分：
-  //   - planJson 提供时 → 校验 waves（+ legacyTestCases 如有）
-  //   - testJson 提供时 → 校验 testCases
-  // --test-only 模式不校验 waves（waves 未提交，不参与变更）。
-  const violations: AppendOnlyViolation[] = [];
-  if (parsedPlan) {
-    const newWaves = parsedPlan.waves;
-    // planJson 里的 legacyTestCases（旧格式兼容）也要校验。
-    // 新格式 dev-plan.json 不含 testCases → legacyCases=[]，此时不碰 testCase 校验
-    // （oldTestCases 传 []，避免把 topic 已有的 passed testCase 误判为"被删除"）。
-    const legacyCases = parsedPlan.legacyTestCases ?? [];
-    violations.push(
-      ...validateAppendOnly(
-        newWaves,
-        legacyCases,
-        topic.waves,
-        legacyCases.length > 0 ? topic.testCases : [],
-      ),
-    );
-  }
-  if (parsedTest) {
-    // --test 模式只校验 testCases，waves 传空跳过（oldWaves=[] → 不产生 wave 违规）
-    const newCases = parsedTest.testCases;
-    violations.push(
-      ...validateAppendOnly([], newCases, [], topic.testCases),
-    );
+  // append-only / replanGuard 校验（核心安全门）。
+  // M1: 按 taskShape 路由——tdd 走 validateAppendOnly（双路径零回归），
+  // 其他 shape 走策略的 replanGuard（existence 查 artifact 篡改，review-only 恒空）。
+  // 数组类型放宽为 AppendOnlyViolation | Violation 联合：两者共有 {type, reason}，
+  // mustFix 渲染只需这两字段。caseId/waveId 是可选定位字段，按各 type 各填其一。
+  const violations: Array<AppendOnlyViolation | Violation> = [];
+  const verification = getShape(topic.taskShape).verification;
+  if (verification.id === "tdd") {
+    // tdd 路径：保持原双路径 validateAppendOnly 调用不变（零回归硬指标）。
+    //   - planJson 提供时 → 校验 waves（+ legacyTestCases 如有）
+    //   - testJson 提供时 → 校验 testCases
+    // --test-only 模式不校验 waves（waves 未提交，不参与变更）。
+    if (parsedPlan) {
+      const newWaves = parsedPlan.waves;
+      // planJson 里的 legacyTestCases（旧格式兼容）也要校验。
+      // 新格式 dev-plan.json 不含 testCases → legacyCases=[]，此时不碰 testCase 校验
+      // （oldTestCases 传 []，避免把 topic 已有的 passed testCase 误判为"被删除"）。
+      const legacyCases = parsedPlan.legacyTestCases ?? [];
+      violations.push(
+        ...validateAppendOnly(
+          newWaves,
+          legacyCases,
+          topic.waves,
+          legacyCases.length > 0 ? topic.testCases : [],
+        ),
+      );
+    }
+    if (parsedTest) {
+      // --test 模式只校验 testCases，waves 传空跳过（oldWaves=[] → 不产生 wave 违规）
+      const newCases = parsedTest.testCases;
+      violations.push(
+        ...validateAppendOnly([], newCases, [], topic.testCases),
+      );
+    }
+  } else {
+    // 非 tdd 路径：走策略 replanGuard（existence 检查 artifact 篡改，review-only 恒空）。
+    // 用 planJson ?? testJson ?? {} 作为 payload——existence.replanGuard 从中提取
+    // artifacts 清单（结构不符时安全降级返回空，不误拦）。
+    const replanPayload = params.planJson ?? params.testJson ?? {};
+    violations.push(...verification.replanGuard(topic, replanPayload));
   }
   if (violations.length > 0) {
     const mustFix = violations.map((v) => `[${v.type}] ${v.reason}`).join("\n");
@@ -2743,6 +2787,8 @@ export function handleReplan(
     //   - hasTest && !hasPlan（只改 testCases，代码没变）→ review 数据仍有效，不 reset
     //     只有 testCases 变了 → resetTestLoop
     // 核心区分：--test only 时代码不变，review 结论（reviewIssues）仍然成立。
+    // m2: existenceArtifacts 不在此 reset——tdd_plan 重跑时 setExistenceArtifacts 会整体覆盖，
+    // replan 阶段不触碰 existenceArtifacts（它的契约由 existence.replanGuard 守护，不是 reset 语义）。
     if (hasPlan) {
       deps.store.resetReviewLoop(params.topicId);
       deps.store.resetTestLoop(params.topicId);

@@ -58,6 +58,7 @@ import { dispatch } from "./dispatch.js";
 import { GitValidator, reviewIssueCheck } from "./gate.js";
 import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
+import type { TaskShapeId } from "./shapes/types.js";
 import { generateReport, genSpecMd, type ReportDocs } from "./report.js";
 import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
@@ -420,6 +421,11 @@ export function buildParams(
       if (!objective) throw new CwError("create 需要 --objective");
       const params: CreateParams = { action, slug, objective };
       if (workspacePath) params.workspacePath = workspacePath;
+      // W1: --taskShape 可选 flag，决定验证策略与审查阶段（默认 full-tdd）。
+      // 值校验在 handleCreate（VALID_SHAPES 白名单），CLI 层只做透传。
+      const taskShape =
+        typeof parsed.taskShape === "string" ? parsed.taskShape : undefined;
+      if (taskShape) params.taskShape = taskShape as TaskShapeId;
       if (runtimeEnv) {
         params.agent = runtimeEnv.agent;
         params.llm = runtimeEnv.llm;
