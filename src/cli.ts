@@ -24,32 +24,32 @@
  *   - resolveDbPath 从 protocol.ts 搬到本文件（protocol.ts 整个烫掉）。
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
 
 import {
+  type AbortParams,
   type AssessParams,
   type ClarifyParams,
   type CloseoutParams,
   type ConfirmClarifyParams,
-  type AbortParams,
   type CreateParams,
   type CwParams,
   type DevParams,
   type PlanParams,
-  type PlanReviewParams,
   type PlanReviewFixParams,
+  type PlanReviewParams,
   type ReplanParams,
   type RetrospectParams,
   type ReviewFixParams,
   type ReviewParams,
-  type SpecReviewParams,
   type SpecReviewFixParams,
+  type SpecReviewParams,
   type TddPlanParams,
   type TestFixParams,
   type TestParams,
@@ -572,9 +572,18 @@ export function buildParams(
 
     case "test": {
       if (!topicId) throw new CwError("test 需要 --topicId");
-      const cases = parseJsonArg("cases", parsed.cases);
-      if (!Array.isArray(cases)) {
-        throw new CwError("test 的 --cases 需要是 JSON 数组");
+      // --cases 可选：full-tdd 仍由 handleTest 的全覆盖校验强制提交；
+      // existence / review-only 等无 testCases 的策略 test 阶段不依赖 agent 提交
+      // （postDevVerify 自查产物状态），允许省略 --cases。
+      let cases: unknown[];
+      if (parsed.cases === undefined) {
+        cases = [];
+      } else {
+        const parsed_cases = parseJsonArg("cases", parsed.cases);
+        if (!Array.isArray(parsed_cases)) {
+          throw new CwError("test 的 --cases 需要是 JSON 数组");
+        }
+        cases = parsed_cases;
       }
       const params: TestParams = {
         action: "test",

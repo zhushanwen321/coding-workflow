@@ -10,15 +10,62 @@
  * types 只 type-only import ../types）。
  */
 
-import type { Topic, ReviewDimension } from "../types.js";
+import type {
+  Topic,
+  ReviewDimension,
+  TestCaseSeed,
+  TestRunnerConfig,
+} from "../types.js";
 
 /**
  * TaskShape id 联合类型。
  *
- * 当前只有 "full-tdd"（全量 TDD + 全阶段 review）。后续 topic 扩展新 shape 时
- * 往这里加字面量——registry 也要同步加映射，否则 getShape 会拿到 undefined。
+ * 当前含：
+ *   - "full-tdd"：全量 TDD + 全阶段 review
+ *   - "delete-only"：纯删除/存在性验证（existence 策略，W4 注册）
+ *   - "doc-only"：纯文档任务（review-only 策略，W4 注册）
+ *
+ * 后续 topic 扩展新 shape 时往这里加字面量——registry 也要同步加映射，
+ * 否则 getShape 会拿到 undefined（回退 full-tdd 降级）。
  */
-export type TaskShapeId = "full-tdd";
+export type TaskShapeId = "full-tdd" | "delete-only" | "doc-only";
+
+/**
+ * ExistenceArtifact — existence 策略声明的产物存在性清单条目。
+ *
+ * delete-only shape 在 tdd_plan 阶段从 existence.json 写入 topic.existenceArtifacts。
+ * postDevVerify 跑 existsSync 验证 path 的实际状态是否符合 expectedState（present/absent），
+ * 验证结果缓存到 verified 字段（isDevVerified 读缓存，不跑 IO）。
+ *
+ * 与 TestCase 平行——existence 策略用 artifact.path 作 caseId 语义（一个 artifact = 一条验证）。
+ */
+export interface ExistenceArtifact {
+  /** 相对 workspacePath 的产物路径。 */
+  path: string;
+  /** 期望的产物状态：present（应存在）/ absent（应已删除）。 */
+  expectedState: "present" | "absent";
+  /** postDevVerify 验证后缓存的结果（未跑 postDevVerify 时 undefined）。 */
+  verified?: boolean;
+}
+
+/**
+ * applyPreDevResult 的 store 参数结构化类型（duck typing）。
+ *
+ * preDevCheck pass 后，applyPreDevResult 把 parsed payload 应用到 store——
+ * 替代 handleTddPlan 里硬编码的 insertTestCases/setTestRunner/setExistenceArtifacts。
+ * 用结构化类型而非 import CwStore，避免 shapes/types → store 的循环依赖
+ * （store → types → shapes/types 已经存在；若 types 再 import store 会成环）。
+ *
+ * 各 shape 的 applyPreDevResult 按需调自己关心的 setter：
+ *   - tdd：insertTestCases + setTestRunner
+ *   - existence：setExistenceArtifacts
+ *   - review-only：no-op（不调任何 setter）
+ */
+export interface ApplyPreDevResultStore {
+  insertTestCases: (id: string, cases: TestCaseSeed[]) => void;
+  setTestRunner: (id: string, r: TestRunnerConfig) => void;
+  setExistenceArtifacts: (id: string, a: ExistenceArtifact[]) => void;
+}
 
 /**
  * dev 后验证（postDevVerify）返回数组的单条结果。
@@ -102,6 +149,19 @@ export interface VerificationStrategy {
   replanGuard(oldTopic: Topic, newPayload: unknown): Violation[];
   /** gate 判定：dev 验证是否完成（替代 computeGatePassed("test")）。 */
   isDevVerified(topic: Topic): boolean;
+  /**
+   * preDevCheck pass 后，把 parsed payload 应用到 store。
+   *
+   * 替代 handleTddPlan 里硬编码的 insertTestCases/setTestRunner（full-tdd）
+   * 和 tdd_plan→existence.json 的 setExistenceArtifacts（delete-only）。
+   * 各 shape 按自己关心的 parsed 结构调对应 setter——store 用结构化类型 duck typing，
+   * 避免 import 整个 CwStore 造成 shapes/types → store 循环依赖。
+   */
+  applyPreDevResult(
+    topicId: string,
+    store: ApplyPreDevResultStore,
+    parsed: unknown,
+  ): void;
 }
 
 /**

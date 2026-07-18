@@ -68,7 +68,7 @@ import type {
   WaveSeed,
 } from "./types.js";
 import { CwError } from "./types.js";
-import type { TaskShapeId } from "./shapes/types.js";
+import type { TaskShapeId, ExistenceArtifact } from "./shapes/types.js";
 
 const JSON_INDENT = 2;
 
@@ -160,6 +160,8 @@ interface TopicRecord {
   artifacts?: Artifacts;
   retrospectData?: RetrospectData;
   testRunner?: TestRunnerConfig;
+  /** existence 策略的产物清单（delete-only shape 用，tdd_plan 从 existence.json 写入）。 */
+  existenceArtifacts?: ExistenceArtifact[];
   /** review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
   reviewIssues?: ReviewIssue[];
   reviewTurn?: number;
@@ -523,6 +525,7 @@ export class CwStore {
         artifacts: topic.artifacts,
         retrospectData: topic.retrospectData,
         testRunner: topic.testRunner,
+        existenceArtifacts: topic.existenceArtifacts,
         reviewIssues: topic.reviewIssues,
         reviewTurn: topic.reviewTurn,
         specReviewIssues: topic.specReviewIssues,
@@ -734,6 +737,7 @@ export class CwStore {
       artifacts: topic.artifacts,
       retrospectData: topic.retrospectData,
       testRunner: topic.testRunner,
+      existenceArtifacts: topic.existenceArtifacts,
       clarifyRecords: clarifyRecords.map((c) => this.mapClarifyRecord(c)),
       adrs: adrs.map((a) => this.mapAdrRecord(a)),
       reviewIssues: topic.reviewIssues ?? [],
@@ -925,6 +929,41 @@ export class CwStore {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
       if (topic) {
         topic.testRunner = config;
+      }
+    });
+  }
+
+  // ── existenceArtifacts DAO（delete-only shape 用） ──────────
+
+  /**
+   * 写入 topic 的 existence 产物清单（整体覆盖语义，与 setTestRunner 一致）。
+   * delete-only shape 的 tdd_plan 阶段从 existence.json 解析后调用（经策略 applyPreDevResult）。
+   * postDevVerify 跑 existsSync 验证后通过 updateExistenceArtifactVerified 回填 verified 缓存。
+   */
+  setExistenceArtifacts(topicId: string, artifacts: ExistenceArtifact[]): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (topic) {
+        topic.existenceArtifacts = artifacts;
+      }
+    });
+  }
+
+  /**
+   * 回填单个 existenceArtifact 的 verified 缓存（postDevVerify 验证后写回）。
+   * 找不到 topic / artifact（path 不匹配）时静默忽略（与 updateClarifyRecord 的 find-or-skip 同模式）。
+   */
+  updateExistenceArtifactVerified(
+    topicId: string,
+    path: string,
+    verified: boolean,
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic?.existenceArtifacts) return;
+      const artifact = topic.existenceArtifacts.find((a) => a.path === path);
+      if (artifact) {
+        artifact.verified = verified;
       }
     });
   }

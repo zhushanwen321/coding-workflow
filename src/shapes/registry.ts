@@ -8,9 +8,13 @@
  * 新增 shape：在 REGISTRY 加映射，types.ts 的 TaskShapeId 联合同步加字面量。
  */
 
-import type { TaskShape, TaskShapeId } from "./types.js";
-import { TddVerificationStrategy } from "./tdd-strategy.js";
+import { DocReviewPolicy } from "./doc-review-policy.js";
+import { ExistenceVerificationStrategy } from "./existence-strategy.js";
 import { FullReviewPolicy } from "./full-review-policy.js";
+import { LeanReviewPolicy } from "./lean-review-policy.js";
+import { ReviewOnlyVerificationStrategy } from "./review-only-strategy.js";
+import { TddVerificationStrategy } from "./tdd-strategy.js";
+import type { TaskShape, TaskShapeId } from "./types.js";
 
 /** full-tdd：全量 TDD 验证 + 全量三阶段 review。 */
 const FULL_TDD: TaskShape = {
@@ -19,8 +23,29 @@ const FULL_TDD: TaskShape = {
   review: new FullReviewPolicy(),
 };
 
-const REGISTRY: Record<TaskShapeId, TaskShape> = {
+/** delete-only：existence 验证（文件存在性）+ lean review（单阶段 review）。 */
+const DELETE_ONLY: TaskShape = {
+  id: "delete-only",
+  verification: new ExistenceVerificationStrategy(),
+  review: new LeanReviewPolicy(),
+};
+
+/** doc-only：review-only 验证（恒 pass，无机器校验）+ doc review（单维度）。 */
+const DOC_ONLY: TaskShape = {
+  id: "doc-only",
+  verification: new ReviewOnlyVerificationStrategy(),
+  review: new DocReviewPolicy(),
+};
+
+/**
+ * shape 注册表。三个内置 shape 全部注册——getShape 拿到 id 即返回对应策略组合。
+ * 仍保留 Partial + 回退到 FULL_TDD：防御磁盘手写非法 taskShape 值 / 未来扩展时
+ * 临时漏注册的场景（降级到 full-tdd 而非崩 Cannot read properties of undefined）。
+ */
+const REGISTRY: Partial<Record<TaskShapeId, TaskShape>> = {
   "full-tdd": FULL_TDD,
+  "delete-only": DELETE_ONLY,
+  "doc-only": DOC_ONLY,
 };
 
 /**

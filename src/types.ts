@@ -18,7 +18,7 @@
 
 import type { GitValidator } from "./gate.js";
 import type { CwStore } from "./store.js";
-import type { TaskShapeId } from "./shapes/types.js";
+import type { TaskShapeId, ExistenceArtifact } from "./shapes/types.js";
 
 // ── 状态机值对象 ────────────────────────────────────────────
 
@@ -731,6 +731,11 @@ export interface Topic {
   retrospectData?: RetrospectData;
   /** tdd_plan 阶段从 test.json 写入的项目级测试执行配置。 */
   testRunner?: TestRunnerConfig;
+  /**
+   * existence 策略的产物清单（tdd_plan 阶段从 existence.json 写入）。
+   * 仅 delete-only shape 用；postDevVerify 跑 existsSync 验证后缓存 verified。
+   */
+  existenceArtifacts?: ExistenceArtifact[];
   /** clarify 阶段的澄清记录（progressive，create→plan 之间）。 */
   clarifyRecords: ClarifyRecord[];
   /** clarify 阶段产出的结构化 spec 章节（progressive，与 clarifyRecords 独立）。 */

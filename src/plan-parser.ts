@@ -420,6 +420,51 @@ function extractTestJson(json: unknown): ParsedTestJson {
   };
 }
 
+// ── ExistenceSchema（existence.json，delete-only shape 的 tdd_plan payload） ─
+
+/**
+ * existence.json 的 typebox schema（delete-only shape 专用）。
+ *
+ * artifacts：产物存在性清单。每个 artifact 声明 path（相对 workspacePath）
+ * + expectedState（present 应存在 / absent 应已删除）。
+ *
+ * 与 TestJsonSchema 平行——tdd_plan 按 topic.taskShape 路由到对应 preDevCheck：
+ *   - full-tdd → tddPlanCheck（test.json schema）
+ *   - delete-only → existence 策略 preDevCheck（existence.json schema，W4 接入）
+ *
+ * 校验层（schema）只验结构；「至少 1 个 artifact」「path 非空」等业务约束
+ * 由 existence 策略的 preDevCheck 在 schema 通过后补判（W4 实现）。
+ */
+export const ExistenceSchema = Type.Object({
+  artifacts: Type.Array(
+    Type.Object({
+      path: Type.String(),
+      expectedState: Type.Union([
+        Type.Literal("present"),
+        Type.Literal("absent"),
+      ]),
+    }),
+  ),
+});
+
+export interface ParsedExistenceJson {
+  artifacts: Array<{ path: string; expectedState: "present" | "absent" }>;
+}
+
+/**
+ * parseExistenceJson — 解析 existence.json（artifacts 清单）。
+ *
+ * 校验链：assertSafeSize → assertSchema(ExistenceSchema)。
+ * 不校验 format（existence.json 不含 format 字段）。
+ * 不校验 artifacts 非空 / path 非空——那些是业务约束，由 existence 策略的
+ * preDevCheck 在 schema 通过后补判（返回 fail + report）。
+ */
+export function parseExistenceJson(json: unknown): ParsedExistenceJson {
+  assertSafeSize(json, "existence.json");
+  assertSchema(ExistenceSchema, json, "existence.json");
+  return json as ParsedExistenceJson;
+}
+
 // ── SpecSectionSchema（clarify 阶段产出的结构化 spec 章节） ─
 
 /**

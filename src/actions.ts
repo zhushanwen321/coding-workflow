@@ -19,20 +19,17 @@
  * - handleReplan 事务内必须同步 gatePassed（砍掉 cache_inconsistent guard 后的注释强依赖）。
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import {
   clarifyCheck,
   confirmClarifyCheck,
   devCheck,
   fileExistsCheck,
-  isPathInsideWorkspace,
   planCheck,
   redLightCheck,
   reviewIssueCheck,
-  runTestRunner,
   testCheck,
 } from "./gate.js";
 import { runInit } from "./init.js";
@@ -41,6 +38,8 @@ import {
   parseDevPlan,
   parseTestJson,
 } from "./plan-parser.js";
+import { getShape } from "./shapes/registry.js";
+import type { TaskShapeId } from "./shapes/types.js";
 import {
   buildNextAction,
   computeGatePassed,
@@ -48,8 +47,6 @@ import {
   REVIEW_TURN_LIMIT,
   TEST_TURN_LIMIT,
 } from "./state-machine.js";
-import type { TaskShapeId } from "./shapes/types.js";
-import { getShape } from "./shapes/registry.js";
 import { computeRetrospectDerived } from "./stats.js";
 import {
   type Action,
@@ -64,19 +61,18 @@ import {
   type DefectSeverity,
   type Evidence,
   GuardError,
+  type ProcessIssue,
+  type ProcessIssueType,
   type RetrospectData,
   type RetrospectKnownRisk,
   type ReviewFixSubmission,
   type ReviewIssue,
-  type ProcessIssue,
-  type ProcessIssueType,
   type ReviewIssueSubmission,
   type RuntimeEnv,
   type Status,
   type TestCase,
   type TestCaseSeed,
   type TestFixSubmission,
-  type TestRunnerConfig,
   type Topic,
   type Wave,
   type WaveChange,
@@ -811,13 +807,14 @@ export function handleTddPlan(
   );
 
   let passed: boolean;
+  const preDevGateName = getShape(topic.taskShape).verification.preDevGateName;
   deps.store.transaction(() => {
     if (check.result === "fail") {
       // gate fail：status 不变，只 append gateHistory(fail)。
       deps.store.appendGateHistory(params.topicId, {
         phase: "tdd_plan",
         action: "tdd_plan",
-        gate: "test-json-schema",
+        gate: preDevGateName,
         result: "fail",
         report: check.report,
         progressive: false,
@@ -826,17 +823,15 @@ export function handleTddPlan(
       return;
     }
     // gate pass：testCases 写入 + 状态流转到 tdd_inited。
-    // GateResult.parsed 是 unknown（策略无关），这里收窄到 test.json 解析后的 payload 结构
-    //（testCases + 可选 testRunner）——preDevCheck 透传 tddPlanCheck，parsed 形态与之一致。
-    const parsed = check.parsed as {
-      testCases: TestCaseSeed[];
-      testRunner?: TestRunnerConfig;
-    };
-    deps.store.insertTestCases(params.topicId, parsed.testCases);
-    // 存储项目级 testRunner 配置（若 test.json 提供），供 test 阶段 runTestRunner 和红灯校验复用。
-    if (parsed.testRunner) {
-      deps.store.setTestRunner(params.topicId, parsed.testRunner);
-    }
+    // 通过 TaskShape 策略的 applyPreDevResult 把 parsed payload 应用到 store——
+    // 替代原硬编码的 insertTestCases + setTestRunner（FR-6：策略封装写入语义）。
+    // tdd 策略的 applyPreDevResult 等价于原逻辑（insertTestCases + 可选 setTestRunner），
+    // delete-only/existence 策略则写 existenceArtifacts（W4 接入）。parsed 形态由 preDevCheck 保证。
+    getShape(topic.taskShape).verification.applyPreDevResult(
+      params.topicId,
+      deps.store,
+      check.parsed,
+    );
     deps.store.updateStatus(
       params.topicId,
       computeNextStatus("tdd_plan", topic.status),
@@ -845,7 +840,7 @@ export function handleTddPlan(
     deps.store.appendGateHistory(params.topicId, {
       phase: "tdd_plan",
       action: "tdd_plan",
-      gate: "test-json-schema",
+      gate: preDevGateName,
       result: "pass",
       progressive: false,
     });
@@ -1115,11 +1110,18 @@ export function handleTest(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  // W4 决策：handleTest 暂不通过策略路由 postDevVerify（事务边界交织，抽取风险高）。
-  // 保留现有 exit_zero/script 执行 + testCheck 判定结构。完整路由留后续 topic。
-  // 当前 full-tdd 的验证逻辑就是这里的内联逻辑，等价。
   // 纵向 gate 链：test 前置检查（review 完成度 + 逃生阀）
   assertPhasePrerequisite("test", topic);
+
+  // W6: 非 TDD 策略分流——existence（无 testCases，用 existenceArtifacts）和 review-only
+  // （无 testCases，恒 verified）的 test 阶段不依赖 agent 提交的 cases。postDevVerify 自查
+  // 产物状态，verified 缓存由事务内写回 existenceArtifacts（无 updateTestCase）。
+  // 触发条件：非 tdd 策略（existence / review-only）——用 verification.id 显式判断而非
+  // testCases.length === 0，防未来混合 shape（同时有 testCases + existenceArtifacts）误判。
+  // full-tdd 的 verification.id === "tdd"，走原路径（全覆盖校验 + updateTestCase）。
+  if (getShape(topic.taskShape).verification.id !== "tdd") {
+    return handleTestForStrategyVerify(params, topic, deps);
+  }
 
   // FR-4: handleTest 全覆盖校验——params.cases 的 caseId 集合必须 == topic.testCases 的 id 集合。
   // 防止 agent 选择性提交（如只跑单测跳过 e2e），导致部分 testCase 永远 pending。
@@ -1146,81 +1148,35 @@ export function handleTest(
     );
   }
 
-  // W3: exit_zero / script 模式——CW 自己执行命令/脚本拿 exitCode，不信 agent 提交的 actual。
-  // 纯函数 testCheck/judgeByExpected 保持只读 actual.exitCode 判定（AC-8）；执行放这里（AC-2/AC-3）。
-  // 返回 caseId → 回填后的 actual；exact 模式不在表里（沿用 agent 提交的 actual.text/url）。
-  // spawn 异常（脚本不存在/无执行权限）记为该 case 的 failed reason，不抛断整批。
+  // 事务外：策略执行验证——把 exit_zero/script 的命令/脚本执行抽取到 postDevVerify（FR-6）。
+  // postDevVerify 是纯函数：只读 topic，返回每个 case 的 VerifyResult（含 CW 重算的 actual）。
+  // 等价性约束（postdev-extract-equivalence.test.ts AC-3/AC-5）：
+  //   - exit_zero 去重执行一次 testRunner（同 command 跑一次），归一化 exitCode 给每个 exit_zero case
+  //   - script 各自执行 expected.path（execFileSync 直接执行，不经 shell）
+  //   - exact 模式不执行（postDevVerify 无 agent 提交的 actual）——judgeByExpected 判 failed，
+  //     但下面 executedActualByCaseId 只收 exit_zero/script 的执行结果，exact 走 agent 提交的 actual
+  // 注：postDevVerify 内调 testCheck 时 screenshotPath=undefined，requiresScreenshot case 会判 failed；
+  // 但 handleTest 下面用自己的 testCheck（带 submission.screenshotPath）覆盖判定，等价性不破。
+  const verifyResults = getShape(topic.taskShape).verification.postDevVerify(topic);
+  const verifyByCaseId = new Map(verifyResults.map((r) => [r.caseId, r]));
+
+  // 从 postDevVerify 的 VerifyResult 重构 caseId → 执行结果映射（仅 exit_zero/script case）。
+  // 等价于原 handleTest 内联的 executedActualByCaseId：
+  //   - result.actual defined（含 exitCode）→ 执行成功，actual 回填
+  //   - exit_zero/script case 但 actual undefined → 执行基础设施异常，failureReason 即 error
+  //   - exact case 不进此表（沿用 agent 提交的 actual.text/url）
   const executedActualByCaseId = new Map<string, AutoExecResult>();
-  const workspacePath = topic.workspacePath;
-
-  // ── exit_zero：去重执行一次 testRunner，把同一 exitCode 归一化给每个 exit_zero case ──
-  // 设计（plan_review PR3）：去重/共享在 handleTest 这层，不在纯函数 testCheck——保护 AC-8。
-  const exitZeroCaseIds = params.cases
-    .filter((s) => {
-      const tc = topic.testCases.find((c) => c.id === s.caseId);
-      return tc?.expected.type === "exit_zero";
-    })
-    .map((s) => s.caseId);
-
-  if (exitZeroCaseIds.length > 0) {
-    let runOutcome: AutoExecResult;
-    if (!topic.testRunner) {
-      runOutcome = {
-        error: "exit_zero case 缺 testRunner 配置（tdd_plan 阶段必须写入 testRunner）",
-      };
-    } else {
-      try {
-        // runTestRunner（gate.ts）按 mode 执行 testRunner command，可能经 shell（command 串如 "npx vitest run"）。
-        // AC-10 只约束 handleTest 体内新增的 script 执行不经 shell；exit_zero 复用既有 runTestRunner。
-        const ran = runTestRunner(topic.testRunner, workspacePath);
-        runOutcome = { actual: { exitCode: ran.exitCode } };
-      } catch (e) {
-        // runTestRunner 把 spawn 异常/命令不存在包成 CwError 抛出——基础设施异常，非测试失败。
-        runOutcome = {
-          error: `testRunner 执行异常：${e instanceof Error ? e.message : String(e)}`,
-        };
-      }
-    }
-    for (const id of exitZeroCaseIds) executedActualByCaseId.set(id, runOutcome);
-  }
-
-  // ── script：各自执行 expected.path（execFileSync 直接执行，不经 shell） ──
-  // AC-9: 不传 argv、不注入 ACTUAL env（脚本自包含读系统状态）。stdio ignore 不回流 actual 数据。
-  // AC-10: execFileSync 直接执行带 shebang+可执行位的脚本，不经 shell 解析（shell 默认 false）。
-  // R1（symlink 绕过修复）：path 虽在 tddPlanCheck 沙箱校验过，但 tdd_plan → dev → test 之间
-  // path 可能被换成指向 workspace 外的 symlink（tdd_plan 时文件不存在无法 realpath，lexical 通过；
-  // dev 阶段写入 symlink 后 real 目标越界）。执行前用 isPathInsideWorkspace 再 realpath 校验一次，
-  // 此时文件已存在，realpath 能解析 symlink，拦下运行时替换攻击。
-  for (const submission of params.cases) {
-    const tc = topic.testCases.find((c) => c.id === submission.caseId);
-    if (tc?.expected.type !== "script") continue;
-    const relPath = tc.expected.path;
-    if (!isPathInsideWorkspace(relPath, workspacePath)) {
-      executedActualByCaseId.set(submission.caseId, {
-        error: `script.path 越出 workspace 沙箱（含 symlink 绕过）：${relPath}`,
-      });
+  for (const tc of topic.testCases) {
+    if (tc.expected.type !== "exit_zero" && tc.expected.type !== "script") {
       continue;
     }
-    const absPath = resolve(workspacePath, relPath);
-    try {
-      execFileSync(absPath, {
-        cwd: workspacePath,
-        stdio: "ignore",
-        timeout: 30000,
-        encoding: "utf8",
-      });
-      executedActualByCaseId.set(submission.caseId, { actual: { exitCode: 0 } });
-    } catch (e) {
-      // execFileSync 非 0 退出抛异常，exit code 在 e.status（业务结果，非基础设施异常）。
-      const code = readExitStatus(e);
-      if (code !== null) {
-        executedActualByCaseId.set(submission.caseId, { actual: { exitCode: code } });
-      } else {
-        // spawn 异常（脚本不存在/无执行权限/timeout）→ 基础设施异常，记 error（该 case 走 failed）。
-        executedActualByCaseId.set(submission.caseId, {
-          error: `script 执行异常（${relPath}）：${e instanceof Error ? e.message : String(e)}`,
-        });
-      }
+    const result = verifyByCaseId.get(tc.id);
+    if (!result) continue;
+    if (result.actual !== undefined) {
+      executedActualByCaseId.set(tc.id, { actual: result.actual as Actual });
+    } else if (result.failureReason !== undefined) {
+      // 执行异常（testRunner 缺失/spawn 失败/symlink 越界）——failureReason 即原 error 文本。
+      executedActualByCaseId.set(tc.id, { error: result.failureReason });
     }
   }
 
@@ -1291,6 +1247,90 @@ export function handleTest(
       action: "test",
       gate: "judgeByExpected",
       result: failedCount === 0 ? "pass" : "fail",
+      report: JSON.stringify(caseResults),
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after test: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("test", updated),
+    testProgress: updated.testCases.map((c) => ({ id: c.id, status: c.status })),
+    caseResults,
+  };
+}
+
+// ── handleTestForStrategyVerify（W6: 无 testCases 策略的 test 阶段） ─────
+
+/**
+ * handleTestForStrategyVerify — existence / review-only 策略的 test 阶段处理。
+ *
+ * 与 TDD 的 handleTest 区别：无 testCases（existence 用 existenceArtifacts，review-only
+ * 无任何产物）。test 阶段完全靠策略的 postDevVerify 自查 + isDevVerified 缓存判定：
+ *   - existence：postDevVerify 跑 existsSync 返回 VerifyResult[]（caseId=artifact.path），
+ *     事务内把 actual.verified 写回 existenceArtifacts[i].verified。写回后 isDevVerified
+ *     读缓存判定全 verified → test gate pass。
+ *   - review-only：postDevVerify 返回 []，isDevVerified 恒 true → test gate pass。
+ *
+ * 不校验 params.cases（agent 可省略 --cases；提供了也忽略——策略自查不依赖 agent actual）。
+ * 不调 updateTestCase（无 testCase 记录）。caseResults 从 VerifyResult 派生（供 report）。
+ *
+ * @param params 同 handleTest（cases 字段对非 TDD 策略无意义，保留签名对称）
+ */
+function handleTestForStrategyVerify(
+  params: TestParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  // 事务外：策略执行验证（纯函数，只读 topic + existsSync）。
+  // existence 返回每个 artifact 的 VerifyResult；review-only 返回 []。
+  const verifyResults = getShape(topic.taskShape).verification.postDevVerify(topic);
+
+  const caseResults: TestCaseResult[] = verifyResults.map((r) => ({
+    caseId: r.caseId,
+    status: (r.passed ? "passed" : "failed") as TestCase["status"],
+    failureReason: r.failureReason,
+  }));
+
+  deps.store.transaction(() => {
+    // existence 策略：把 postDevVerify 的 actual.verified 写回 existenceArtifacts。
+    // actual 形态由 ExistenceVerificationStrategy.postDevVerify 保证：{ exists, verified }。
+    // review-only 返回 []，此循环空跑（无写回），isDevVerified 恒 true 不依赖缓存。
+    for (const r of verifyResults) {
+      const actual = r.actual as { verified?: boolean } | undefined;
+      if (actual && typeof actual.verified === "boolean") {
+        deps.store.updateExistenceArtifactVerified(
+          params.topicId,
+          r.caseId,
+          actual.verified,
+        );
+      }
+    }
+
+    // 事务内 reload 拿最新数据（verified 已写回）算 gatePassed + status。
+    const reloaded = deps.store.loadTopic(params.topicId);
+    if (!reloaded) {
+      throw new Error(`topic not found after test: ${params.topicId}`);
+    }
+    const gatePassed = computeGatePassed("test", reloaded);
+    const nextStatus = computeNextStatus("test", reloaded.status);
+    if (nextStatus !== reloaded.status) {
+      deps.store.updateStatus(params.topicId, nextStatus);
+    }
+    deps.store.updateGatePassed(params.topicId, "test", gatePassed);
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "test",
+      action: "test",
+      gate: getShape(topic.taskShape).verification.postDevGateName,
+      result: caseResults.every((c) => c.status === "passed") ? "pass" : "fail",
       report: JSON.stringify(caseResults),
       progressive: true,
     });
@@ -2149,6 +2189,33 @@ export function handleRetrospect(
 // ── handleCloseout ──────────────────────────────────────────
 
 /**
+ * 按 taskShape 计算 closeout evidence 的 coverage（0-1）。
+ *
+ *   - full-tdd（有 testCases）：通过率 = passed / total
+ *   - existence（无 testCases，有 existenceArtifacts）：verified 率 = verified / total
+ *   - review-only（两者皆无）：0（无机器验证产物）
+ *   - 兜底（无任何产物）：0
+ *
+ * existence 分流与 computeGatePassed("test") 的 isDevVerified 语义对齐——
+ * coverage 反映「产物存在性契约的满足比例」，而非测试通过率。
+ */
+function computeCoverage(topic: Topic): number {
+  if (topic.testCases.length > 0) {
+    return (
+      topic.testCases.filter((c) => c.status === "passed").length /
+      topic.testCases.length
+    );
+  }
+  const artifacts = topic.existenceArtifacts;
+  if (artifacts && artifacts.length > 0) {
+    return (
+      artifacts.filter((a) => a.verified === true).length / artifacts.length
+    );
+  }
+  return 0;
+}
+
+/**
  * handleCloseout — 终态归档 + evidence 填充，委托 gateAdvance。
  *
  * FR-2: closeout 前先校验 artifacts 记录的 review/retrospect 文件存在（如有记录）。
@@ -2215,10 +2282,11 @@ export function handleCloseout(
       }
       const evidence: Evidence = {
         closedAt: new Date().toISOString(),
-        coverage: fresh.testCases.length > 0
-          ? fresh.testCases.filter((c) => c.status === "passed").length /
-            fresh.testCases.length
-          : 0,
+        // W6: coverage 按 taskShape 分流——
+        //   - full-tdd（有 testCases）：通过率 = passed / total
+        //   - existence（无 testCases，有 existenceArtifacts）：verified 通过率 = verified / total
+        //   - review-only（两者皆无）：0（无可机器验证产物，coverage 不适用）
+        coverage: computeCoverage(fresh),
         gateHistory: fresh.gateHistory,
       };
       deps.store.setEvidence(params.topicId, evidence);

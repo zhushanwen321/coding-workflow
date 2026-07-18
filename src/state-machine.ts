@@ -16,7 +16,13 @@
  *   REVIEW/TEST_TURN_LIMIT（loop 轮数上限）达上限后强制前推到下一阶段（review→test, test→retrospect）。
  */
 
-import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, PLAN_REVIEW_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, SPEC_REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, EXISTENCE_PLAN_PROMPT, NO_VERIFY_PROMPT, PLAN_REVIEW_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, SPEC_REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+// W4: TaskShape 策略路由——computeGatePassed("test") 通过 topic.taskShape 路由到
+// verification.isDevVerified（FR-6 解耦）。registry → tdd-strategy → actions → state-machine
+// 构成循环依赖：ESM live binding 在函数调用时延迟解析（tdd-strategy 只在函数内调 actions，
+// registry 顶层 new TddVerificationStrategy() 构造函数不触达 actions），运行时安全。
+import { getShape } from "./shapes/registry.js";
+import type { TaskShapeId } from "./shapes/types.js";
 import { computeRetrospectDerived } from "./stats.js";
 import type {
   Action,
@@ -27,11 +33,6 @@ import type {
   Status,
   Topic,
 } from "./types.js";
-// W4: TaskShape 策略路由——computeGatePassed("test") 通过 topic.taskShape 路由到
-// verification.isDevVerified（FR-6 解耦）。registry → tdd-strategy → actions → state-machine
-// 构成循环依赖：ESM live binding 在函数调用时延迟解析（tdd-strategy 只在函数内调 actions，
-// registry 顶层 new TddVerificationStrategy() 构造函数不触达 actions），运行时安全。
-import { getShape } from "./shapes/registry.js";
 
 // ── gate 熔断 ──────────────────────────────────────────────
 
@@ -96,6 +97,31 @@ const REPLAN_GUIDANCE =
 /** 构造 replan alternative 项（status∈{planned, tdd_inited, developed, reviewed, tested} 的 nextAction 用）。 */
 function replanAlternative(): NextActionAlternative {
   return { action: "replan", guidance: REPLAN_GUIDANCE };
+}
+
+/**
+ * 按 taskShape 返回 tdd_plan 阶段的引导文案前缀 + prompt（W5: guidance 分流）。
+ *
+ *   - full-tdd：写测试代码（红灯）+ test.json，TDD_PLAN_PROMPT
+ *   - delete-only：写 existence.json（产物存在性清单），EXISTENCE_PLAN_PROMPT
+ *   - doc-only：无需 dev 前验证（review-only 策略），NO_VERIFY_PROMPT
+ *
+ * topic.taskShape 为 undefined（旧 topic）时回退 full-tdd（与 getShape 回退一致）。
+ */
+function getPreDevGuidance(taskShape: TaskShapeId | undefined): {
+  prefix: string;
+  prompt: string;
+} {
+  if (taskShape === "delete-only") {
+    return {
+      prefix: "写 existence.json（产物存在性清单）",
+      prompt: EXISTENCE_PLAN_PROMPT,
+    };
+  }
+  if (taskShape === "doc-only") {
+    return { prefix: "无需 dev 前验证（review-only 策略）", prompt: NO_VERIFY_PROMPT };
+  }
+  return { prefix: "写测试代码（红灯）+ test.json", prompt: TDD_PLAN_PROMPT };
 }
 
 // ── 声明式转换表 ────────────────────────────────────────────
@@ -588,17 +614,19 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       const overLimit = topic.planReviewTurn >= PLAN_REVIEW_TURN_LIMIT;
 
       if (!hasOpenIssues) {
+        const dev = getPreDevGuidance(topic.taskShape);
         return {
           action: "tdd_plan",
-          guidance: `plan_review 通过（无 open issue）。下一步：写测试代码（红灯）+ test.json，调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
+          guidance: `plan_review 通过（无 open issue）。下一步：${dev.prefix}，调 cw(tdd_plan)。\n\n${dev.prompt}`,
           waves: waveProgress(topic),
           alternatives: [replanAlternative()],
         };
       }
       if (overLimit) {
+        const dev = getPreDevGuidance(topic.taskShape);
         return {
           action: "tdd_plan",
-          guidance: `plan_review 已达 ${PLAN_REVIEW_TURN_LIMIT} 轮上限（turn=${topic.planReviewTurn}），强制进 tdd_plan。${mustFixCount} 个 must-fix 未修复。\n\n${TDD_PLAN_PROMPT}`,
+          guidance: `plan_review 已达 ${PLAN_REVIEW_TURN_LIMIT} 轮上限（turn=${topic.planReviewTurn}），强制进 tdd_plan。${mustFixCount} 个 must-fix 未修复。\n\n${dev.prompt}`,
           waves: waveProgress(topic),
           alternatives: [replanAlternative()],
         };
@@ -631,12 +659,13 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         lastRedLight !== undefined && lastRedLight.result === "fail";
       if (!computeGatePassed("tdd_plan", topic) || redLightBlocked) {
         const fails = countConsecutiveGateFails(topic.gateHistory, "tdd_plan");
+        const dev = getPreDevGuidance(topic.taskShape);
         return {
           action: "tdd_plan",
           guidance:
             fails >= GATE_RETRY_LIMIT
               ? buildCircuitBreakerGuidance("tdd_plan", fails)
-              : `tdd_plan gate FAIL。status 仍为 planned——修 mustFix 后重调 cw(tdd_plan)。\n\n${TDD_PLAN_PROMPT}`,
+              : `tdd_plan gate FAIL。status 仍为 planned——修 mustFix 后重调 cw(tdd_plan)。\n\n${dev.prompt}`,
         };
       }
       // tdd_plan gate 通过 → 进入 dev 阶段（写实现，让测试转绿）。
@@ -856,9 +885,10 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // status=planned（hasPlan，plan 改了）→ plan_review（重审新 plan）
       // status=plan_reviewed（hasTest only，plan 没变）→ tdd_plan（重走测试）
       if (topic.status === "plan_reviewed") {
+        const dev = getPreDevGuidance(topic.taskShape);
         return {
           action: "tdd_plan",
-          guidance: `replan 完成（仅修改 testCases）。plan 未变，直接重走 tdd_plan。\n\n${TDD_PLAN_PROMPT}`,
+          guidance: `replan 完成（仅修改 testCases）。plan 未变，直接重走 tdd_plan。\n\n${dev.prompt}`,
           waves: waveProgress(topic),
           testCases: testCaseProgress(topic),
         };
