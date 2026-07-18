@@ -18,6 +18,7 @@
 
 import type { GitValidator } from "./gate.js";
 import type { CwStore } from "./store.js";
+import type { TaskShapeId } from "./shapes/types.js";
 
 // ── 状态机值对象 ────────────────────────────────────────────
 
@@ -718,6 +719,8 @@ export interface Topic {
   status: Status;
   /** create 时注入的运行环境元数据（评估指标分组维度）。旧 topic 可能为 undefined。 */
   runtimeEnv?: RuntimeEnv;
+  /** TaskShape id（create 时注入）。旧 topic undefined → 默认 full-tdd（store migration 补）。 */
+  taskShape?: TaskShapeId;
   waves: Wave[];
   testCases: TestCase[];
   gateHistory: GateHistoryEntry[];

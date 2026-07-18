@@ -68,6 +68,7 @@ import type {
   WaveSeed,
 } from "./types.js";
 import { CwError } from "./types.js";
+import type { TaskShapeId } from "./shapes/types.js";
 
 const JSON_INDENT = 2;
 
@@ -152,6 +153,8 @@ interface TopicRecord {
   createdAt: string;
   status: Status;
   runtimeEnv?: RuntimeEnv;
+  /** TaskShape id（create 时注入）。旧 record 可能缺（in-memory migration 补默认 full-tdd）。 */
+  taskShape?: TaskShapeId;
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
   artifacts?: Artifacts;
@@ -514,6 +517,7 @@ export class CwStore {
         createdAt: topic.createdAt,
         status: topic.status,
         runtimeEnv: topic.runtimeEnv,
+        taskShape: topic.taskShape,
         gatePassed: topic.gatePassed,
         evidence: topic.evidence,
         artifacts: topic.artifacts,
@@ -567,6 +571,11 @@ export class CwStore {
           | string[],
       );
     }
+    // taskShape 迁移：旧 topic 无此字段 → 默认 full-tdd（in-memory，不写回磁盘）。
+    // AC-3：存量 topic（无 taskShape）经 loadTopic 读出后 taskShape='full-tdd'。
+    if (!topic.taskShape) {
+      topic.taskShape = "full-tdd";
+    }
     return topic;
   }
 
@@ -591,6 +600,12 @@ export class CwStore {
             | ProcessIssue[]
             | string[],
         );
+      }
+      // taskShape 迁移：旧 topic 无此字段 → 默认 full-tdd（in-memory，不写回磁盘）。
+      // PR1 教训：listTopics 不经 loadTopic，必须独立接入迁移钩子，否则 cw stats --all
+      // 走这里会让旧数据原样流出（taskShape=undefined）。
+      if (!topic.taskShape) {
+        topic.taskShape = "full-tdd";
       }
       return topic;
     });
@@ -710,6 +725,7 @@ export class CwStore {
       createdAt: topic.createdAt,
       status: topic.status,
       runtimeEnv: topic.runtimeEnv,
+      taskShape: topic.taskShape,
       waves: waves.map((w) => this.mapWaveRecord(w)),
       testCases: testCases.map((tc) => this.mapTestCaseRecord(tc)),
       gateHistory: gateHistory.map((g) => this.mapGateHistoryRecord(g)),

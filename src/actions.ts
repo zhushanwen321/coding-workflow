@@ -33,7 +33,6 @@ import {
   redLightCheck,
   reviewIssueCheck,
   runTestRunner,
-  tddPlanCheck,
   testCheck,
 } from "./gate.js";
 import { runInit } from "./init.js";
@@ -49,6 +48,8 @@ import {
   REVIEW_TURN_LIMIT,
   TEST_TURN_LIMIT,
 } from "./state-machine.js";
+import type { TaskShapeId } from "./shapes/types.js";
+import { getShape } from "./shapes/registry.js";
 import { computeRetrospectDerived } from "./stats.js";
 import {
   type Action,
@@ -75,6 +76,7 @@ import {
   type TestCase,
   type TestCaseSeed,
   type TestFixSubmission,
+  type TestRunnerConfig,
   type Topic,
   type Wave,
   type WaveChange,
@@ -185,6 +187,8 @@ export interface CreateParams {
   llm?: string;
   /** cw-cli 版本号，cli 层从 package.json 自动读取后传入。 */
   cwVersion?: string;
+  /** TaskShape id。不传时默认 "full-tdd"。 */
+  taskShape?: TaskShapeId;
 }
 
 export interface ClarifyParams {
@@ -407,6 +411,7 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     createdAt: new Date().toISOString(),
     status: "created",
     runtimeEnv,
+    taskShape: params.taskShape ?? "full-tdd",
     waves: [],
     testCases: [],
     gateHistory: [],
@@ -796,7 +801,14 @@ export function handleTddPlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = tddPlanCheck(params.testJson, topic.specSections, topic.workspacePath);
+  // W4: 通过 TaskShape 策略路由调 preDevCheck（解耦硬编码的 tddPlanCheck 调用，FR-6）。
+  // preDevCheck 内部等价 tddPlanCheck(payload, topic.specSections, topic.workspacePath)，
+  // 等价性由 shapes-tdd-strategy.test.ts AC-5 锁定。返回 GateResult（含 result/report/parsed?/warning?），
+  // 结构与 tddPlanCheck 的 TddPlanCheckResult 对齐，后续 check.result/check.report/check.parsed 不变。
+  const check = getShape(topic.taskShape).verification.preDevCheck(
+    topic,
+    params.testJson,
+  );
 
   let passed: boolean;
   deps.store.transaction(() => {
@@ -814,7 +826,12 @@ export function handleTddPlan(
       return;
     }
     // gate pass：testCases 写入 + 状态流转到 tdd_inited。
-    const parsed = check.parsed!;
+    // GateResult.parsed 是 unknown（策略无关），这里收窄到 test.json 解析后的 payload 结构
+    //（testCases + 可选 testRunner）——preDevCheck 透传 tddPlanCheck，parsed 形态与之一致。
+    const parsed = check.parsed as {
+      testCases: TestCaseSeed[];
+      testRunner?: TestRunnerConfig;
+    };
     deps.store.insertTestCases(params.topicId, parsed.testCases);
     // 存储项目级 testRunner 配置（若 test.json 提供），供 test 阶段 runTestRunner 和红灯校验复用。
     if (parsed.testRunner) {
@@ -1098,6 +1115,9 @@ export function handleTest(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // W4 决策：handleTest 暂不通过策略路由 postDevVerify（事务边界交织，抽取风险高）。
+  // 保留现有 exit_zero/script 执行 + testCheck 判定结构。完整路由留后续 topic。
+  // 当前 full-tdd 的验证逻辑就是这里的内联逻辑，等价。
   // 纵向 gate 链：test 前置检查（review 完成度 + 逃生阀）
   assertPhasePrerequisite("test", topic);
 
@@ -2318,7 +2338,7 @@ export function handleAbort(
 /**
  * replan 的 append-only 违规类型（4 种，plan.md 约束全保留）。
  */
-type AppendOnlyViolation =
+export type AppendOnlyViolation =
   | { type: "wave_deleted_committed"; waveId: string; reason: string }
   | { type: "wave_modified_committed"; waveId: string; reason: string }
   | { type: "case_deleted_passed"; caseId: string; reason: string }
@@ -2345,7 +2365,7 @@ export interface ReplanSummary {
  * wave 只比 changes + dependsOn；testCase 比 expected + layer + scenario + steps + executor +
  * requiresScreenshot + dependsOn（expected 是 judgeByExpected 基准，改了会让已 passed 的 case 失效）。
  */
-function validateAppendOnly(
+export function validateAppendOnly(
   newWaves: WaveSeed[],
   newCases: TestCaseSeed[],
   oldWaves: Wave[],
@@ -2481,6 +2501,9 @@ export function handleReplan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // W4 决策：handleReplan 暂不通过策略路由 replanGuard。
+  // replanGuard 接口 (oldTopic, newPayload) 与本 handler 的 plan/test 双路径参数组装不匹配。
+  // 保留现有直接调 validateAppendOnly 的结构。replanGuard 接口重新设计留后续 topic。
   const hasPlan = params.planJson !== undefined;
   const hasTest = params.testJson !== undefined;
   if (!hasPlan && !hasTest) {

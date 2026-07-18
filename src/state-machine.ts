@@ -27,6 +27,11 @@ import type {
   Status,
   Topic,
 } from "./types.js";
+// W4: TaskShape 策略路由——computeGatePassed("test") 通过 topic.taskShape 路由到
+// verification.isDevVerified（FR-6 解耦）。registry → tdd-strategy → actions → state-machine
+// 构成循环依赖：ESM live binding 在函数调用时延迟解析（tdd-strategy 只在函数内调 actions，
+// registry 顶层 new TddVerificationStrategy() 构造函数不触达 actions），运行时安全。
+import { getShape } from "./shapes/registry.js";
 
 // ── gate 熔断 ──────────────────────────────────────────────
 
@@ -316,10 +321,9 @@ export function computeGatePassed(phase: Action, topic: Topic): boolean {
     return topic.waves.length > 0 && topic.waves.every((w) => w.committed !== null);
   }
   if (phase === "test") {
-    return (
-      topic.testCases.length > 0 &&
-      topic.testCases.every((c) => c.status === "passed")
-    );
+    // W4: 通过 TaskShape 策略路由调 isDevVerified（FR-6 解耦硬编码 testCases 判定）。
+    // 等价于原内联逻辑（testCases 非空且全 passed），等价性由 shapes-tdd-strategy.test.ts 锁定。
+    return getShape(topic.taskShape).verification.isDevVerified(topic);
   }
   if (phase === "clarify") {
     // clarify gatePassed：全 clarifyRecords 的 status ∈ {resolved, skipped}（无 pending）。
