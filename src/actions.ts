@@ -2439,13 +2439,16 @@ function validateAppendOnly(
  * handleReplan — append-only dev-plan.json / test.json 同步。
  *
  * 支持两种输入（可同时提供）：
- *   - planJson → parseDevPlan + validateAppendOnly(waves, [legacyTestCases 兼容])
+ *   - planJson → parseDevPlan + planCheck(uncommittedNew 存在性) + validateAppendOnly(waves, [legacyTestCases 兼容])
  *     → replaceUncommittedWaves（+旧格式 plan.json 的 legacyTestCases 也走 replaceUnpassedTestCases）
  *   - testJson → parseTestJson + validateAppendOnly(testCases) → replaceUnpassedTestCases
  *   - 都不提供 → throw CwError("replan requires --plan or --test")
  *
  * 数据流：
- *   parse（planJson→parseDevPlan / testJson→parseTestJson）→ validateAppendOnly（4 违规检测）
+ *   parse（planJson→parseDevPlan / testJson→parseTestJson）
+ *   → [PR9] hoist committedWaveIds/uncommittedNew（事务前计算，供 planCheck + 事务内复用）
+ *   → [PR8] planCheck（只对 uncommittedNew，存在性失败 throw，W3 AC-6/FR-4a）
+ *   → validateAppendOnly（4 违规检测）
  *   → 事务{ replaceUncommittedWaves/replaceUnpassedTestCases → status 回退 planned
  *     → gatePassed 重算（dev+test，事务内同步——砍掉 cache_inconsistent guard 后的强依赖）
  *     → gateHistory(pass) } → buildNextAction
@@ -2461,6 +2464,7 @@ function validateAppendOnly(
  *
  * 失败路径：
  *   - parseDevPlan/parseTestJson throw（format/schema）→ propagate（exit ≥1）
+ *   - 文件存在性校验失败（uncommittedNew 含幽灵文件）→ throw CwError（W3 AC-6/FR-4a，exit ≥1）
  *   - append-only 违规 → throw（exit ≥1，AC-6.2）
  *   - planJson 和 testJson 都不提供 → throw CwError
  */
@@ -2482,6 +2486,41 @@ export function handleReplan(
 
   // 解析 testJson（testCases + 可选 testRunner）。
   const parsedTest = hasTest ? parseTestJson(params.testJson) : null;
+
+  // [PR9] 提前计算 committedWaveIds / uncommittedNew（原本在事务内、validateAppendOnly 后）。
+  // 上提原因：planCheck 复用 uncommittedNew（只对本次新提交的未 committed wave 做存在性校验）。
+  // 原事务内重复计算处已删，统一用这里的 hoisted 变量。
+  const committedWaveIds = parsedPlan
+    ? new Set(topic.waves.filter((w) => w.committed !== null).map((w) => w.id))
+    : new Set<string>();
+  const uncommittedNew = parsedPlan
+    ? parsedPlan.waves.filter((w) => !committedWaveIds.has(w.id))
+    : [];
+
+  // [PR8] 文件存在性校验（W3，AC-6/FR-4a）：只对 uncommittedNew 调 planCheck。
+  // 已 committed wave 不校验存在性（它们已落地，且走 append-only 不可改路径，
+  // 两条路径不重叠）。失败走 throw（与 append-only 违规语义一致），不走 gate fail。
+  if (parsedPlan && uncommittedNew.length > 0) {
+    const tempPlan: {
+      format: "lite";
+      objective: string;
+      waves: typeof uncommittedNew;
+    } = {
+      format: "lite",
+      objective: parsedPlan.objective,
+      waves: uncommittedNew,
+    };
+    const existenceCheck = planCheck(
+      tempPlan,
+      topic.specSections,
+      topic.workspacePath,
+    );
+    if (existenceCheck.result === "fail") {
+      throw new CwError(
+        `replan 文件存在性校验失败: ${existenceCheck.report}`,
+      );
+    }
+  }
 
   // append-only 校验（核心安全门，4 违规类型）。
   // 只校验本次实际改动的部分：
@@ -2523,13 +2562,8 @@ export function handleReplan(
   // 事务内 append-only 写入 + status 回退 + gatePassed 同步。
   deps.store.transaction(() => {
     // waves replace：只在 planJson 提供时执行。
+    // committedWaveIds / uncommittedNew 已在事务前上提计算（见 PR9 注释），这里复用。
     if (parsedPlan) {
-      const committedWaveIds = new Set(
-        topic.waves.filter((w) => w.committed !== null).map((w) => w.id),
-      );
-      const uncommittedNew = parsedPlan.waves.filter(
-        (w) => !committedWaveIds.has(w.id),
-      );
       deps.store.replaceUncommittedWaves(params.topicId, uncommittedNew);
     }
 

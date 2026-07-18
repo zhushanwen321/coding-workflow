@@ -334,6 +334,47 @@ describe("[BUG-HUNT] retrospect/closeout 后 replan 被 guard 拒——状态死
   });
 });
 
+// ── replan 文件存在性校验（W3 AC-6/PR5：新增 wave 含幽灵文件 → 拒绝）──
+//
+// replan 走 uncommittedNew 过滤路径——只对本次新提交的、未 committed 的 wave 做存在性校验。
+// modify 一个不存在的幽灵文件 → 被 planCheck 拦，走 throw → CLI 非 0 退出 + stderr 含文件名。
+
+describe("replan 新增 wave 含幽灵文件 → 拒绝（W3 文件存在性校验）", () => {
+  it("replan 追加 W2（modify 幽灵文件 ghost.ts）→ 非 0 退出 + stderr 含 ghost.ts", () => {
+    const topicId = setupToDevelopedLocal("replan-ghost");
+
+    // replan plan：W1 与 store 完全一致（append-only 不误判），追加 W2 modify 一个不存在的文件。
+    // planWithWaves(["W1"]) 产出的 W1 changes 是 [{file:"src/file0.ts", action:"create",...}]，
+    // 这里必须照抄以保证 append-only 通过，然后存在性校验（planCheck）才会被触发并对 W2 拒。
+    const replanPlan = JSON.stringify({
+      format: "lite",
+      objective: "replan ghost test",
+      waves: [
+        {
+          id: "W1",
+          changes: [{ file: "src/file0.ts", action: "create", description: "change for W1" }],
+          dependsOn: [],
+        },
+        {
+          id: "W2",
+          changes: [{ file: "src/ghost.ts", action: "modify", description: "改幽灵" }],
+          dependsOn: ["W1"],
+        },
+      ],
+    });
+
+    const replanResult = runCli(["replan", "--topicId", topicId, "--plan"], e, {
+      input: replanPlan,
+    });
+    expect(
+      replanResult.exitCode,
+      "replan 新增 wave modify 幽灵文件应被 planCheck 拒（exitCode 非 0）。" +
+        `实际 exitCode=${replanResult.exitCode}——如果=0，说明 handleReplan 没调 planCheck 或没走 uncommittedNew 过滤。`,
+    ).not.toBe(0);
+    expect(replanResult.stderr).toContain("ghost.ts");
+  });
+});
+
 // ── --test only 不 reset review loop（P2-8：选择性 reset）─────
 //
 // replan --test（不改 plan）时代码没变，review 审查结论仍有效。

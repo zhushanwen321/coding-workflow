@@ -84,13 +84,17 @@ const LEGACY_PATH_RE =
 /**
  * migrateChanges — 旧格式 changes（string[]）迁移为 WaveChange[]。
  *
- * 新格式（{file, action, description}[]）原样返回。
+ * 新格式（{file, action, description}[]）原样返回，但若旧 record 的对象缺 action
+ * 字段（pre-W1 数据）补默认 'modify'（PR3）。
  * 旧格式（string[]）每条转成 {file: 尽量提取的路径, action: 'modify', description: 原文本}。
  * 提取不出路径时 file 为空字符串（不阻断，复杂度分桶会忽略空 file）。
  *
- * W1 起 WaveChange.action 必填；旧 string[] 迁移时补默认 'modify'
- * （与 W3 AC-7 契约一致——committed wave 缺 action 经 migrate 补 modify，
- * 保持 append-only 校验对称）。
+ * W1 起 WaveChange.action 必填；迁移时补默认值统一为 'modify'：
+ *   - 旧 string[] → 补 modify（W1 契约）
+ *   - 旧对象 record 缺 action → 补 modify（W3 PR3 契约）
+ * 补 modify 而非 create 的理由：旧 committed record 是已落地修改，语义是 modify；
+ * committed wave 走 append-only、新增 wave 走 planCheck 存在性校验两条路径不重叠，
+ * 与 W1 fixture 的 create 是两套策略不可混（W3 AC-7 锚定此契约）。
  */
 function migrateChanges(
   changes: WaveChange[] | string[] | undefined,
@@ -98,7 +102,12 @@ function migrateChanges(
   if (!changes || changes.length === 0) return [];
   // 新格式：元素是对象（有 file 字段）
   if (typeof changes[0] === "object") {
-    return changes as WaveChange[];
+    // PR3：对缺 action 的旧对象 record 补默认 'modify'（有 action 原样保留）。
+    // committed wave 的 changes 经 migrate 后 action='modify'，与新 plan 显式 modify
+    // 对称 → validateAppendOnly 的 JSON.stringify 比对相等，不误判 wave_modified_committed。
+    return (changes as WaveChange[]).map((c) =>
+      c.action ? c : { ...c, action: "modify" },
+    );
   }
   // 旧格式：元素是 string
   return (changes as unknown as string[]).map((s) => {
