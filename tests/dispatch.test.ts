@@ -1865,8 +1865,8 @@ describe("dispatch review loop（W3：review + review_fix）", () => {
         action: "review",
         topicId,
         issues: [
-          { severity: "must-fix", description: "问题1", file: "src/a.ts" },
-          { severity: "should-fix", description: "问题2" },
+          { severity: "must-fix", dimension: "type-safety", description: "问题1", ref: "src/a.ts" },
+          { severity: "should-fix", dimension: "edge-case", description: "问题2" },
         ],
       },
       deps,
@@ -1908,7 +1908,7 @@ describe("dispatch review loop（W3：review + review_fix）", () => {
       {
         action: "review",
         topicId,
-        issues: [{ severity: "must-fix", description: "问题1", file: "src/a.ts" }],
+        issues: [{ severity: "must-fix", dimension: "type-safety", description: "问题1", ref: "src/a.ts" }],
       },
       deps,
     );
@@ -1946,7 +1946,7 @@ describe("dispatch review loop（W3：review + review_fix）", () => {
       {
         action: "review",
         topicId,
-        issues: [{ severity: "must-fix", description: "问题1" }],
+        issues: [{ severity: "must-fix", dimension: "edge-case", description: "问题1" }],
       },
       deps,
     );
@@ -1960,7 +1960,7 @@ describe("dispatch review loop（W3：review + review_fix）", () => {
       {
         action: "review",
         topicId,
-        issues: [{ severity: "must-fix", description: "新问题" }],
+        issues: [{ severity: "must-fix", dimension: "edge-case", description: "新问题" }],
       },
       deps,
     );
@@ -2162,7 +2162,7 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
 
     // 注入 reviewIssues + reviewTurn + testFixLog + testTurn（模拟走过 review/test loop）
     store.appendReviewIssues(topicId, 1, [
-      { severity: "must-fix", description: "问题1" },
+      { severity: "must-fix", dimension: "edge-case", description: "问题1" },
     ]);
     store.incReviewTurn(topicId);
     store.appendTestFix(topicId, {

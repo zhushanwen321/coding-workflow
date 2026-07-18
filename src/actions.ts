@@ -44,6 +44,8 @@ import {
   buildNextAction,
   computeGatePassed,
   computeNextStatus,
+  getDevIncompleteMessage,
+  getTestIncompleteMessage,
   REVIEW_TURN_LIMIT,
   TEST_TURN_LIMIT,
 } from "./state-machine.js";
@@ -109,9 +111,11 @@ function assertPhasePrerequisite(action: Action, topic: Topic): void {
     case "review": {
       // dev gate = 全 wave committed（≥1 且全 committed !== null）
       if (!computeGatePassed("dev", topic)) {
+        // 文案按 taskShape 选（FR-6）：tdd 提 wave，existence 提产物，避免把 TDD 专属概念
+        // 硬塞给 delete-only/doc-only 这类无 wave 的 shape。
         throw new GuardError(
           "phase_prerequisite_failed",
-          `review 前置失败：dev 阶段未完成（有 wave 未 committed）。需先调 cw(dev) 提交所有 wave 的 commit。`,
+          `review 前置失败：${getDevIncompleteMessage(topic)}`,
           "dev",
           topic.status,
         );
@@ -140,12 +144,11 @@ function assertPhasePrerequisite(action: Action, topic: Topic): void {
       const testGatePassed = computeGatePassed("test", topic);
       const escapeByTurn = topic.testTurn >= TEST_TURN_LIMIT;
       if (!testGatePassed && !escapeByTurn) {
-        const pending = topic.testCases
-          .filter((c) => c.status !== "passed")
-          .map((c) => c.id);
+        // 文案按 taskShape 选（FR-6）：tdd 提 testCase，existence 提产物清单，
+        // 避免把 TDD 专属概念硬塞给无 testCase 的 shape。
         throw new GuardError(
           "phase_prerequisite_failed",
-          `retrospect 前置失败：test 阶段未完成（testCase ${pending.join(", ")} 未 passed）。需先调 cw(test_fix) 修复或 cw(test) 重跑。`,
+          `retrospect 前置失败：${getTestIncompleteMessage(topic)}`,
           "test",
           topic.status,
         );
@@ -1467,8 +1470,23 @@ export function handleReview(
   // reviewPath 提供时做 fileExistsCheck（前置条件）。fail → gate fail，status 不变。
   const fileCheck =
     path.length > 0 ? fileExistsCheck(path) : { result: "pass" as const, report: "" };
-  // passed 在 transaction 外算完（fileCheck 已经算完，无需在闭包内赋值）。
-  const passed = fileCheck.result === "pass";
+
+  // 步骤 4：dimension 子集校验——issue.dimension 必须落在该 shape 声明的 dimensions 内（AC-10）。
+  // gate 层的 reviewIssueCheck 只保证 dimension 是合法的 ReviewDimension 枚举值（全 12 值），
+  // 但 REVIEW_PROMPT 按 shape 声明的 dimensions 子集展示维度表（W3）——agent 不该提交子集外的维度，
+  // 否则就是 prompt 与 gate 不对齐。子集校验放 handler 层，与 gate 的结构校验职责分离。
+  const allowedDimensions = getShape(topic.taskShape).review.dimensions;
+  const dimViolation = hasIssues
+    ? issues.find((i) => !allowedDimensions.includes(i.dimension))
+    : undefined;
+  const dimReport = dimViolation
+    ? `issue.dimension "${dimViolation.dimension}" 不在该 taskShape 声明的 review 维度子集内` +
+      `（允许: ${allowedDimensions.join(", ")}）。REVIEW_PROMPT 只展示这些维度，请按维度表归类发现。`
+    : "";
+
+  // passed：fileCheck + dimension 子集校验都通过才算通过。
+  const passed = fileCheck.result === "pass" && dimViolation === undefined;
+  const failReport = fileCheck.result === "fail" ? fileCheck.report : dimReport;
 
   deps.store.transaction(() => {
     if (!passed) {
@@ -1478,7 +1496,7 @@ export function handleReview(
         action: "review",
         gate: "file-exists+non-empty",
         result: "fail",
-        report: fileCheck.report,
+        report: failReport,
         progressive: true,
       });
       return;
@@ -1532,7 +1550,7 @@ export function handleReview(
     nextAction: buildNextAction("review", updated),
   };
   if (!passed) {
-    (result as Record<string, unknown>).mustFix = fileCheck.report;
+    (result as Record<string, unknown>).mustFix = failReport;
   }
   return result;
 }

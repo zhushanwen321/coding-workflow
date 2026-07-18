@@ -502,9 +502,10 @@ describe("tdd_plan 转换与 guard", () => {
     expect(computeNextStatus("tdd_plan", "plan_reviewed")).toBe("tdd_inited");
   });
 
-  it("tdd_plan 从 planned 调 → guard 拒绝（FR-5 后必须先过 plan_review）", () => {
-    // FR-5 改变了 tdd_plan 的前置：planned 不再合法，需先 plan_review
-    expect(checkLinear("tdd_plan", "planned").ok).toBe(false);
+  it("tdd_plan 从 planned 调 → guard 通过（步骤 4 裁剪：delete-only/doc-only 跳过 plan_review）", () => {
+    // 步骤 4 扩展 tdd_plan.expectedStatuses 加 planned——裁剪 shape（stages 不含 plan_review）
+    // 从 plan 直接进 tdd_plan 合法。full-tdd 仍走 plan_review→tdd_plan。
+    expect(checkLinear("tdd_plan", "planned").ok).toBe(true);
   });
 
   it("tdd_plan 从 created 调 → guard 拒绝(illegal_transition)", () => {
@@ -1103,9 +1104,10 @@ describe("FR-4: spec_review 状态机", () => {
     expect(checkLinear("plan", "spec_reviewed" as never).ok).toBe(true);
   });
 
-  it("plan 从 clarify_confirmed 调 → guard 拒绝（必须先过 spec_review）", () => {
-    // FR-4 改变了 plan 的前置：从 clarify_confirmed 改为 spec_reviewed
-    expect(checkLinear("plan", "clarify_confirmed").ok).toBe(false);
+  it("plan 从 clarify_confirmed 调 → guard 通过（步骤 4 裁剪：delete-only/doc-only 跳过 spec_review）", () => {
+    // 步骤 4 扩展 plan.expectedStatuses 加 clarify_confirmed——裁剪 shape（stages 不含 spec_review）
+    // 从 confirm_clarify 直接进 plan 合法。full-tdd 仍走 spec_review→plan。
+    expect(checkLinear("plan", "clarify_confirmed").ok).toBe(true);
   });
 
   it("buildNextAction spec_review 无 open issue → 指向 plan", () => {
@@ -1161,9 +1163,9 @@ describe("FR-5: plan_review 状态机", () => {
     expect(checkLinear("tdd_plan", "plan_reviewed" as never).ok).toBe(true);
   });
 
-  it("tdd_plan 从 planned 调 → guard 拒绝（必须先过 plan_review）", () => {
-    // FR-5 改变了 tdd_plan 的前置：从 planned 改为 plan_reviewed
-    expect(checkLinear("tdd_plan", "planned").ok).toBe(false);
+  it("tdd_plan 从 planned 调 → guard 通过（步骤 4 裁剪：跳过 plan_review）", () => {
+    // 步骤 4 扩展 tdd_plan.expectedStatuses 加 planned——裁剪 shape 跳过 plan_review 时合法。
+    expect(checkLinear("tdd_plan", "planned").ok).toBe(true);
   });
 
   it("buildNextAction plan_review 无 open issue → 指向 tdd_plan", () => {

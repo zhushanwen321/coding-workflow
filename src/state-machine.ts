@@ -16,13 +16,13 @@
  *   REVIEW/TEST_TURN_LIMIT（loop 轮数上限）达上限后强制前推到下一阶段（review→test, test→retrospect）。
  */
 
-import { CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, EXISTENCE_PLAN_PROMPT, NO_VERIFY_PROMPT, PLAN_REVIEW_PROMPT, RETROSPECT_PROMPT, REVIEW_PROMPT, SPEC_REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
+import { buildReviewPrompt, CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PROMPT, EXECUTE_PROMPT, EXISTENCE_PLAN_PROMPT, NO_VERIFY_PROMPT, PLAN_REVIEW_PROMPT, RETROSPECT_PROMPT, SPEC_REVIEW_PROMPT, TDD_PLAN_PROMPT } from "./prompts/index.js";
 // W4: TaskShape 策略路由——computeGatePassed("test") 通过 topic.taskShape 路由到
 // verification.isDevVerified（FR-6 解耦）。registry → tdd-strategy → actions → state-machine
 // 构成循环依赖：ESM live binding 在函数调用时延迟解析（tdd-strategy 只在函数内调 actions，
 // registry 顶层 new TddVerificationStrategy() 构造函数不触达 actions），运行时安全。
 import { getShape } from "./shapes/registry.js";
-import type { TaskShapeId } from "./shapes/types.js";
+import type { TaskShapeId, ReviewStage } from "./shapes/types.js";
 import { computeRetrospectDerived } from "./stats.js";
 import type {
   Action,
@@ -124,6 +124,56 @@ function getPreDevGuidance(taskShape: TaskShapeId | undefined): {
   return { prefix: "写测试代码（红灯）+ test.json", prompt: TDD_PLAN_PROMPT };
 }
 
+/**
+ * 判断某 review 阶段是否被 topic 的 taskShape 启用（步骤 4：阶段裁剪接线）。
+ *
+ * buildNextAction 的 confirm_clarify / plan pass 出口据此分流：
+ *   - stages 含该阶段 → 走该 review 阶段（full-tdd 全链）
+ *   - stages 不含 → 跳过，直接推下游（delete-only/doc-only 裁剪 spec_review/plan_review）
+ *
+ * topic.taskShape 为 undefined 时回退 full-tdd（全链，与 getShape 回退一致）。
+ */
+function isStageEnabled(topic: Topic, stage: ReviewStage): boolean {
+  return getShape(topic.taskShape).review.stages.includes(stage);
+}
+
+/**
+ * dev 未完成时的错误文案——按 taskShape 选（步骤 4：去 TDD 措辞，FR-6）。
+ *
+ *   - tdd：提及 wave（TDD 专属概念）
+ *   - existence：提及产物删除/创建（delete-only 语义）
+ *   - review-only：通用文案（doc-only 无 wave / 产物清单）
+ */
+export function getDevIncompleteMessage(topic: Topic): string {
+  const id = getShape(topic.taskShape).verification.id;
+  if (id === "tdd") {
+    return "dev 阶段未完成（有 wave 未 committed）。需先调 cw(dev) 提交所有 wave 的 commit。";
+  }
+  if (id === "existence") {
+    return "dev 阶段未完成。需先调 cw(dev) 完成产物删除/创建。";
+  }
+  return "dev 阶段未完成。需先调 cw(dev) 提交实现。";
+}
+
+/**
+ * test 未通过时的错误文案——按 taskShape 选（步骤 4：去 TDD 措辞，FR-6）。
+ *
+ *   - tdd：提及 testCase（TDD 专属概念）
+ *   - existence：提及产物清单验证（delete-only 语义）
+ *   - review-only：不会出现（isDevVerified 恒 true）
+ */
+export function getTestIncompleteMessage(topic: Topic): string {
+  const id = getShape(topic.taskShape).verification.id;
+  if (id === "tdd") {
+    return "test 未通过（有 testCase 未 passed）。需调 cw(test_fix) 修复后重跑。";
+  }
+  if (id === "existence") {
+    return "产物清单验证未通过（有 artifact 未符合 expectedState）。需调 cw(test_fix) 修复后重跑。";
+  }
+  // review-only 的 isDevVerified 恒 true，不会走到这里
+  return "验证未通过。需调 cw(test_fix) 修复后重跑。";
+}
+
 // ── 声明式转换表 ────────────────────────────────────────────
 
 export interface TransitionRule {
@@ -182,7 +232,9 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   },
   // FR-1: plan 前必须经过 confirm_clarify。
   // FR-4/6 向后兼容：含 planned（旧 topic 已 plan 过的重调不拒绝）。
-  plan: { expectedStatuses: ["spec_reviewed", "planned"], nextStatus: "planned" },
+  // 步骤 4 裁剪：含 clarify_confirmed——delete-only/doc-only 跳过 spec_review 时，
+  //   confirm_clarify 后直接 plan 合法（stages 不含 spec_review）。full-tdd 仍走 spec_review→plan。
+  plan: { expectedStatuses: ["clarify_confirmed", "spec_reviewed", "planned"], nextStatus: "planned" },
   // FR-5: plan_review 在 plan 之后、tdd_plan 之前，审查 plan 是否覆盖 spec、架构是否合理。
   // progressive：plan_reviewed 状态下可多轮 plan_review（loop fix 后重审）。
   plan_review: {
@@ -195,7 +247,9 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     nextStatus: "plan_reviewed",
     progressive: true,
   },
-  tdd_plan: { expectedStatuses: ["plan_reviewed", "tdd_inited"], nextStatus: "tdd_inited" },
+  // 步骤 4 裁剪：含 planned——delete-only/doc-only 跳过 plan_review 时，
+  //   plan 后直接 tdd_plan 合法（stages 不含 plan_review）。full-tdd 仍走 plan_review→tdd_plan。
+  tdd_plan: { expectedStatuses: ["planned", "plan_reviewed", "tdd_inited"], nextStatus: "tdd_inited" },
   dev: {
     // dev 只从 tdd_inited/developed 进入。
     // test/review 失败走 test_fix/review_fix loop（不回 dev——所有 Wave 已 committed，dev 没有新任务）。
@@ -374,6 +428,53 @@ export function computeGatePassed(phase: Action, topic: Topic): boolean {
   return topic.gateHistory.some((e) => e.phase === phase && e.result === "pass");
 }
 
+/**
+ * test 阶段的去 TDD 措辞——按 verification.id 提供文案片段（步骤 4：阶段裁剪接线）。
+ *
+ * test case 有三个 guidance 出口（pass→retrospect / overLimit→retrospect / 未达上限→test_fix），
+ * 原文案全部硬编码 TDD 词汇（testCase / coverage / case 未通过）。此处按验证策略切换：
+ *   - tdd：保留 testCase 措辞（red/green、通过率）
+ *   - existence：换成产物清单措辞（artifact / expectedState / 符合率）
+ *   - review-only：无机器验证（isDevVerified 恒 true），test 直接进 retrospect，文案只说"无机器验证"
+ *
+ * 计数（failedCount/passedCount/total）由调用方算——三种策略共用同一 testCases 计数，
+ * 这里只换措辞不算数，避免改 test case 的 status/gate 逻辑。
+ */
+function getTestWording(topic: Topic): {
+  passPrefix: string;
+  failedPrefix: (failedCount: number) => string;
+  /** overLimit 强制进 retrospect 时的未通过项描述。 */
+  overLimitFailedDesc: (failedCount: number) => string;
+  /** 通过率指标名（coverage / 符合率）；review-only 返回 undefined 表示无此概念。 */
+  coverageLabel: string | undefined;
+} {
+  const id = getShape(topic.taskShape).verification.id;
+  if (id === "existence") {
+    return {
+      passPrefix: "产物清单验证全部符合（所有 artifact 的实际状态与 expectedState 一致）。",
+      failedPrefix: (n) => `产物清单验证有 ${n} 个 artifact 未符合 expectedState。`,
+      overLimitFailedDesc: (failed) => `${failed} 个 artifact 仍未符合 expectedState`,
+      coverageLabel: "符合率",
+    };
+  }
+  if (id === "review-only") {
+    // review-only 无机器验证——test 阶段直接进 retrospect，没有"产物/testCase 全过"的概念。
+    return {
+      passPrefix: "无机器验证（review-only 策略）。dev 阶段已交付，直接进复盘。",
+      failedPrefix: () => "无机器验证（review-only 策略不会走到此处）。",
+      overLimitFailedDesc: () => "无机器验证",
+      coverageLabel: undefined,
+    };
+  }
+  // tdd（默认）
+  return {
+    passPrefix: "所有 testCase 已 passed。",
+    failedPrefix: (n) => `test 有 ${n} 个 case 未通过。`,
+    overLimitFailedDesc: (failed) => `${failed} 个 case 仍未通过`,
+    coverageLabel: "coverage",
+  };
+}
+
 // ── nextAction 组装 ──────────────────────────────────────────
 
 /** waves 进度摘要（nextAction.waves 字段用）。 */
@@ -522,18 +623,31 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "confirm_clarify": {
-      // FR-4: confirm_clarify 通过 → 进 spec_review（审查 spec 完整性/合理性）。
+      // 步骤 4 裁剪：full-tdd 走 spec_review；delete-only/doc-only 跳过（stages 不含）直接 plan。
+      // agent 不感知裁剪——guidance 是唯一导航，跳过的阶段不出现在导航里。
+      const clarifyAlternatives = [
+        {
+          action: "clarify" as Action,
+          guidance: `如需修改需求，提交 cw(clarify) 追加/修改记录，再重新 cw(confirm_clarify)。\n\n${CLARIFY_PROMPT}`,
+        },
+      ];
+      if (isStageEnabled(topic, "spec_review")) {
+        // FR-4: confirm_clarify 通过 → 进 spec_review（审查 spec 完整性/合理性）。
+        return {
+          action: "spec_review",
+          guidance: `需求已确认（clarify_confirmed）。下一步：审查 spec 的完整性和合理性（spec_review），完成后调 cw(spec_review)。\n\n${SPEC_REVIEW_PROMPT}`,
+          clarifyProgress: clarifyProgress(topic),
+          specProgress: specProgress(topic),
+          alternatives: clarifyAlternatives,
+        };
+      }
+      // stages 不含 spec_review（delete-only/doc-only）→ 跳过，直接 plan。
       return {
-        action: "spec_review",
-        guidance: `需求已确认（clarify_confirmed）。下一步：审查 spec 的完整性和合理性（spec_review），完成后调 cw(spec_review)。\n\n${SPEC_REVIEW_PROMPT}`,
+        action: "plan",
+        guidance: `需求已确认（clarify_confirmed）。该 taskShape 跳过 spec_review（stages 不含）。下一步：写 dev-plan.json 并提交 cw(plan)。\n\n${DEV_PLAN_PROMPT}`,
         clarifyProgress: clarifyProgress(topic),
         specProgress: specProgress(topic),
-        alternatives: [
-          {
-            action: "clarify",
-            guidance: `如需修改需求，提交 cw(clarify) 追加/修改记录，再重新 cw(confirm_clarify)。\n\n${CLARIFY_PROMPT}`,
-          },
-        ],
+        alternatives: clarifyAlternatives,
       };
     }
     case "spec_review": {
@@ -590,6 +704,8 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         };
       }
       // plan gate 通过 → 进入 plan_review 阶段（FR-5: 审查 plan 是否覆盖 spec、架构是否合理）。
+      // 步骤 4 裁剪：full-tdd 走 plan_review；delete-only/doc-only 跳过（stages 不含）直接 tdd_plan。
+      // specNote（FR 覆盖提醒）两种路径都带——它提醒 plan 覆盖 spec，与是否审查 plan 无关。
       const frSection = topic.specSections.find(
         (s) => s.type === "functionalRequirements",
       );
@@ -597,9 +713,19 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         frSection && "items" in frSection
           ? `\n\n注意：spec 定义了 ${frSection.items.length} 个功能需求（FR）。plan 的 waves 必须覆盖这些 FR。`
           : "";
+      if (isStageEnabled(topic, "plan_review")) {
+        return {
+          action: "plan_review",
+          guidance: `plan gate 通过（status=planned）。下一步：审查 plan 是否完整覆盖 spec、架构是否合理（plan_review），完成后调 cw(plan_review)。\n\n${PLAN_REVIEW_PROMPT}` + specNote,
+          waves: waveProgress(topic),
+          alternatives: [replanAlternative()],
+        };
+      }
+      // stages 不含 plan_review（delete-only/doc-only）→ 跳过，直接 tdd_plan。
+      const dev = getPreDevGuidance(topic.taskShape);
       return {
-        action: "plan_review",
-        guidance: `plan gate 通过（status=planned）。下一步：审查 plan 是否完整覆盖 spec、架构是否合理（plan_review），完成后调 cw(plan_review)。\n\n${PLAN_REVIEW_PROMPT}` + specNote,
+        action: "tdd_plan",
+        guidance: `plan gate 通过（status=planned）。该 taskShape 跳过 plan_review（stages 不含）。下一步：${dev.prefix}，调 cw(tdd_plan)。\n\n${dev.prompt}` + specNote,
         waves: waveProgress(topic),
         alternatives: [replanAlternative()],
       };
@@ -678,9 +804,14 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
     }
     case "dev": {
       if (computeGatePassed("dev", topic)) {
+        // W3: review 提示词按 shape 声明的 dimensions 子集生成（FR-6）。
+        // REVIEW_PROMPT 常量 = 全 6 维，与 full-tdd 等价；裁剪 shape 只展示声明的维度。
+        const reviewPrompt = buildReviewPrompt(
+          getShape(topic.taskShape).review.dimensions,
+        );
         return {
           action: "review",
-          guidance: `所有 Wave 已 committed。下一步：做 code review（审查代码质量 + 逐条核对 plan changes），产出 review.md 后调 cw(review)。\n\n${REVIEW_PROMPT}`,
+          guidance: `所有 Wave 已 committed。下一步：做 code review（审查代码质量 + 逐条核对 plan changes），产出 review.md 后调 cw(review)。\n\n${reviewPrompt}`,
           waves: waveProgress(topic),
           alternatives: [replanAlternative()],
         };
@@ -710,12 +841,15 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         lastReviewGate?.gate === "file-exists+non-empty" &&
         lastReviewGate?.result === "fail";
       if (isReviewFileFail) {
+        const reviewPrompt = buildReviewPrompt(
+          getShape(topic.taskShape).review.dimensions,
+        );
         return {
           action: "review",
           guidance:
             reviewFails >= GATE_RETRY_LIMIT
               ? buildCircuitBreakerGuidance("review", reviewFails)
-              : `review gate FAIL（reviewPath 文件不存在或为空）。修 mustFix 后重调 cw(review)。\n\n${REVIEW_PROMPT}`,
+              : `review gate FAIL（reviewPath 文件不存在或为空）。修 mustFix 后重调 cw(review)。\n\n${reviewPrompt}`,
         };
       }
 
@@ -753,10 +887,13 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         topic.specSections.length > 0
           ? `\n\n注意：核对 spec 的 FR/AC 是否被正确实现（dimension=design-consistency）。`
           : "";
+      const reviewPrompt = buildReviewPrompt(
+        getShape(topic.taskShape).review.dimensions,
+      );
       return {
         action: "review_fix",
         guidance: `review 发现 ${openIssues.length} 个 open issue（${mustFixCount} 个 must-fix）。` +
-          `下一步：逐条修 issue 并 commit，调 cw(review_fix) 提交 fixes（issueId + commitHash + resolution）。\n\n${REVIEW_PROMPT}` +
+          `下一步：逐条修 issue 并 commit，调 cw(review_fix) 提交 fixes（issueId + commitHash + resolution）。\n\n${reviewPrompt}` +
           reviewSpecNote,
       };
     }
@@ -765,20 +902,26 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // 修完 issue 后应重新 review（下一轮），若已达 review 轮数上限则告警。
       const turn = topic.reviewTurn;
       const overLimit = turn >= REVIEW_TURN_LIMIT;
+      const reviewPrompt = buildReviewPrompt(
+        getShape(topic.taskShape).review.dimensions,
+      );
       return {
         action: "review",
         guidance: overLimit
           ? `review 已达 ${REVIEW_TURN_LIMIT} 轮上限（当前 turn=${turn}）。建议 ask_user 人工介入审查，或调 cw(replan) 调整计划。`
-          : `review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(review) 开启下一轮审查，确认所有 issue 已闭环。\n\n${REVIEW_PROMPT}`,
+          : `review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(review) 开启下一轮审查，确认所有 issue 已闭环。\n\n${reviewPrompt}`,
         alternatives: overLimit ? [replanAlternative()] : undefined,
       };
     }
     case "test": {
+      // 步骤 4 裁剪：guidance 按 verification.id 去 TDD 措辞（tdd/existence/review-only）。
+      // 核心逻辑（status 流转、gate 判定、计数）不变——只换文案，避免误导非 TDD shape 的 agent。
+      const testWording = getTestWording(topic);
       if (computeGatePassed("test", topic)) {
         return {
           action: "retrospect",
           guidance:
-            `所有 testCase 已 passed。下一步：写复盘报告（retrospect.md）+ 结构化 retrospectData，完成后调 cw(retrospect) 提交。\n\n${buildDerivedSummary(topic)}\n\n${RETROSPECT_PROMPT}`,
+            `${testWording.passPrefix} 下一步：写复盘报告（retrospect.md）+ 结构化 retrospectData，完成后调 cw(retrospect) 提交。\n\n${buildDerivedSummary(topic)}\n\n${RETROSPECT_PROMPT}`,
           alternatives: [replanAlternative()],
         };
       }
@@ -797,14 +940,16 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
           ? Math.round((passedCount / topic.testCases.length) * 100)
           : 0;
         // 逃生阀可被 test_fix 刷满 testTurn 但无 case 真正 passed（coverage=0%），此时补告警。
-        const lowCoverageWarning = coveragePct < 50
-          ? `\n⚠️ 当前 coverage=${coveragePct}%（${passedCount}/${topic.testCases.length}），建议 ask_user 人工审查或调 cw(replan) 重新评估，而非带极低覆盖率进 closeout。`
-          : "";
+        // review-only 无 coverage 概念（coverageLabel undefined）→ 跳过低覆盖率告警。
+        const lowCoverageWarning =
+          testWording.coverageLabel !== undefined && coveragePct < 50
+            ? `\n⚠️ 当前${testWording.coverageLabel}=${coveragePct}%（${passedCount}/${topic.testCases.length}），建议 ask_user 人工审查或调 cw(replan) 重新评估，而非带极低${testWording.coverageLabel}进 closeout。`
+            : "";
         return {
           action: "retrospect",
           guidance:
             `test 已达 ${TEST_TURN_LIMIT} 轮上限（当前 turn=${topic.testTurn}），` +
-            `${failedCount} 个 case 仍未通过。强制进复盘阶段——在 retrospect 中记录未通过原因和 knownRisks，` +
+            `${testWording.overLimitFailedDesc(failedCount)}。强制进复盘阶段——在 retrospect 中记录未通过原因和 knownRisks，` +
             `由用户决定是否接受或调 cw(replan) 调整计划。\n` +
             `注意：可带未全过的 test case 进入 closeout，closeout 的 coverage（通过率 = passed/total）会如实记录到 evidence，不强制 100% passed。` +
             lowCoverageWarning +
@@ -816,7 +961,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // 未达上限 → 进 test_fix loop。
       return {
         action: "test_fix",
-        guidance: `test 有 ${failedCount} 个 case 未通过。下一步：修代码 + commit，调 cw(test_fix) 提交 fixes（caseId + commitHash + resolution），再重跑 test。\n\n${EXECUTE_PROMPT}`,
+        guidance: `${testWording.failedPrefix(failedCount)} 下一步：修代码 + commit，调 cw(test_fix) 提交 fixes（caseId + commitHash + resolution），再重跑 test。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };

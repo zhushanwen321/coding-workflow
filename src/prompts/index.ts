@@ -13,6 +13,6 @@ export { EXISTENCE_PLAN_PROMPT } from "./existence-plan.js";
 export { NO_VERIFY_PROMPT } from "./no-verify.js";
 export { PLAN_REVIEW_PROMPT } from "./plan-review.js";
 export { RETROSPECT_PROMPT } from "./retrospect.js";
-export { REVIEW_PROMPT } from "./review.js";
+export { REVIEW_PROMPT, buildReviewPrompt } from "./review.js";
 export { SPEC_REVIEW_PROMPT } from "./spec-review.js";
 export { TDD_PLAN_PROMPT } from "./tdd-plan.js";
