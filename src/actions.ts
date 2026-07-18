@@ -1052,11 +1052,18 @@ export function handleDev(
 /** exit_zero / script 模式 CW 自动执行的结果（exact 模式不在此表，沿用 agent actual）。 */
 type AutoExecResult = { actual: Actual } | { error: string };
 
-/** 从 execFileSync 抛出的异常里取退出 status；无 status（spawn 失败/timeout）返回 null。 */
-function readExitStatus(e: unknown): number | null {
+/**
+ * 从 execFileSync 抛出的异常里取退出 status；无 status（spawn 失败/timeout）返回 null。
+ *
+ * NaN/Infinity/-Infinity 虽然 typeof === "number"，但不是合法的进程退出码——execFileSync
+ * 在进程正常退出时返回有限整数，被 signal 杀/spawn 失败时无 status。用 Number.isFinite 收窄，
+ * 让非法数值归到 null（基础设施异常分支），职责归位：本函数只返回合法 exit code。
+ * 判定层 judgeByExpected 另有 isFinite 兜底作纵深防御，但 readExitStatus 不应依赖下游兜底。
+ */
+export function readExitStatus(e: unknown): number | null {
   if (typeof e === "object" && e !== null && "status" in e) {
     const status = (e as { status: unknown }).status;
-    if (typeof status === "number") return status;
+    if (typeof status === "number" && Number.isFinite(status)) return status;
   }
   return null;
 }
