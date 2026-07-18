@@ -697,7 +697,7 @@ export function handlePlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = planCheck(params.planJson, topic.specSections);
+  const check = planCheck(params.planJson, topic.specSections, topic.workspacePath);
 
   let passed: boolean;
   deps.store.transaction(() => {

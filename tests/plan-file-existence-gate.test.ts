@@ -15,9 +15,7 @@
  * 类型断言说明：
  *   - WaveChange.action 字段 W1 后才存在于类型定义。vitest 用 esbuild 转译不 typecheck，
  *     所以 fixture 直接写字面量 `{file, action, description}` 运行时能透传。
- *   - planCheck 第3参 workspacePath W2 后才加入签名。用 `as unknown as` 双断言绕过当前
- *     2 参签名的编译检查（tests 禁用 taste/no-unsafe-cast，符合 expected-multi-mode 同模式）。
- *   - W1/W2 落地后这些断言可清理（action 直接被类型认、第3参合法），不影响测试体行为。
+ *   - planCheck 第3参 workspacePath W2 后已加入签名，直接 planCheck(plan, undefined, workspace) 调用。
  *
  * 测试规范（AGENTS.md）：
  *   - 零 mock 框架：真实 fs（mkdtempSync/writeFileSync/mkdirSync）+ 真实 dispatch + 真实 git
@@ -34,18 +32,6 @@ import { GitValidator, planCheck } from "../src/gate.js";
 import { CwStore } from "../src/store.js";
 import type { ActionDeps } from "../src/types.js";
 import { commitFile,setupGitRepo } from "./helpers/git.js";
-
-// ── 类型断言 helper ──────────────────────────────────────────
-//
-// W2 之前 planCheck 签名是 (planJson, specSections?) 只有 2 参；W2 加第3参 workspacePath。
-// 测试需要传 workspacePath 精确控制文件存在性，所以用 unknown 双断言绕过当前签名。
-// W2 落地后可改为直接调用 planCheck(plan, undefined, workspace)。
-type PlanCheckWithWorkspace = (
-  planJson: unknown,
-  specSections?: unknown,
-  workspacePath?: string,
-) => { result: "pass" | "fail"; report: string; warning?: string };
-const planCheckWs = planCheck as unknown as PlanCheckWithWorkspace;
 
 // ── fixture 构造（changes 带 action——W1 起 action 是 WaveChange 必填字段） ──
 
@@ -93,7 +79,7 @@ describe("AC-1/2/3/4: planCheck 按 action 校验文件存在性", () => {
   it("AC-1 modify 的 file 不存在 → fail，report 含文件名", () => {
     // 建一个存在的文件，ghost 不存在。modify ghost 应 fail。
     writeFileSync(join(tmpDir, "exists.txt"), "x");
-    const r = planCheckWs(
+    const r = planCheck(
       plan([ch("exists.txt", "modify"), ch("ghost.ts", "modify")]),
       undefined,
       tmpDir,
@@ -103,20 +89,20 @@ describe("AC-1/2/3/4: planCheck 按 action 校验文件存在性", () => {
   });
 
   it("AC-2 delete 的 file 不存在 → fail", () => {
-    const r = planCheckWs(plan([ch("ghost.ts", "delete")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("ghost.ts", "delete")]), undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
   it("AC-3 create 的 file 已存在 → fail，report 含文件名", () => {
     writeFileSync(join(tmpDir, "exists.txt"), "x");
-    const r = planCheckWs(plan([ch("exists.txt", "create")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("exists.txt", "create")]), undefined, tmpDir);
     expect(r.result).toBe("fail");
     expect(r.report).toContain("exists.txt");
   });
 
   it("AC-4 全合法（modify 存在 + create 不存在）→ pass", () => {
     writeFileSync(join(tmpDir, "modify.txt"), "x");
-    const r = planCheckWs(
+    const r = planCheck(
       plan([ch("modify.txt", "modify"), ch("new.ts", "create")]),
       undefined,
       tmpDir,
@@ -126,7 +112,7 @@ describe("AC-1/2/3/4: planCheck 按 action 校验文件存在性", () => {
 
   it("AC-4 delete 存在的文件 → pass", () => {
     writeFileSync(join(tmpDir, "to-delete.txt"), "x");
-    const r = planCheckWs(plan([ch("to-delete.txt", "delete")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("to-delete.txt", "delete")]), undefined, tmpDir);
     expect(r.result).toBe("pass");
   });
 });
@@ -138,7 +124,7 @@ describe("AC-1/2/3/4: planCheck 按 action 校验文件存在性", () => {
 describe("AC-3.4/AC-3.6/AC-8: 边界与越界", () => {
   it("AC-3.4 create 命中已存在目录 → fail（目录算已存在）", () => {
     mkdirSync(join(tmpDir, "subdir"));
-    const r = planCheckWs(plan([ch("subdir", "create")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("subdir", "create")]), undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
@@ -146,25 +132,25 @@ describe("AC-3.4/AC-3.6/AC-8: 边界与越界", () => {
     // 关键：越界拒绝必须 action 无关。modify 若按"存在性"逻辑会因 ../../etc/passwd 不存在
     // 而 fail（巧合通过），但 AC-3.6 要求的是 pathResolve 越界前置过滤。
     // 即便 ../../etc/passwd 真实存在（如 /etc/passwd），越界也要 fail。
-    const r = planCheckWs(plan([ch("../../etc/passwd", "modify")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("../../etc/passwd", "modify")]), undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
   it("AC-3.6/AC-8 file 含 .. 越界 + action=create → fail（无论 action 都 fail）", () => {
     // 反向锚定：create 若按"存在性"逻辑会因 ../../etc/passwd 不存在而 pass（巧合通过），
     // AC-3.6 要求越界无论 action 都 fail。这条测试防 create 漏过越界检查。
-    const r = planCheckWs(plan([ch("../../etc/passwd", "create")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("../../etc/passwd", "create")]), undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
   it("AC-3.6/AC-8 file 含 .. 越界 + action=delete → fail（无论 action 都 fail）", () => {
-    const r = planCheckWs(plan([ch("../../etc/passwd", "delete")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("../../etc/passwd", "delete")]), undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
   it("AC-8 非顶层 .. 越界（foo/../../../etc/passwd）→ fail（必须 resolve 而非 startsWith）", () => {
     // 字符串 startsWith('..') 抓不到 "foo/../../etc"。必须 path.resolve 后再判前缀。
-    const r = planCheckWs(
+    const r = planCheck(
       plan([ch("foo/../../../etc/passwd", "modify")]),
       undefined,
       tmpDir,
@@ -187,7 +173,7 @@ describe("AC-5/AC-1.2: action 字段 schema 校验", () => {
         { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
       ],
     };
-    const r = planCheckWs(oldPlan, undefined, tmpDir);
+    const r = planCheck(oldPlan, undefined, tmpDir);
     expect(r.result).toBe("fail");
     // schema 错误消息应含 action 或 changes 字段路径。
     expect(r.report.toLowerCase()).toMatch(/action|changes/);
@@ -207,7 +193,7 @@ describe("AC-5/AC-1.2: action 字段 schema 校验", () => {
         },
       ],
     };
-    const r = planCheckWs(badPlan, undefined, tmpDir);
+    const r = planCheck(badPlan, undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
@@ -223,7 +209,7 @@ describe("AC-5/AC-1.2: action 字段 schema 校验", () => {
         },
       ],
     };
-    const r = planCheckWs(badPlan, undefined, tmpDir);
+    const r = planCheck(badPlan, undefined, tmpDir);
     expect(r.result).toBe("fail");
   });
 
@@ -231,7 +217,7 @@ describe("AC-5/AC-1.2: action 字段 schema 校验", () => {
     // 反面回归：合法小写 action 不应被 schema 拒。文件不存在会因存在性 fail，
     // 但 report 应点出"不存在"而非 schema 错——这条区分 schema 通过 vs 存在性 fail。
     writeFileSync(join(tmpDir, "real.ts"), "x");
-    const r = planCheckWs(plan([ch("real.ts", "modify")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("real.ts", "modify")]), undefined, tmpDir);
     expect(r.result).toBe("pass");
   });
 });
@@ -466,14 +452,14 @@ describe("AC-9/AC-9a: fixture 默认 create 契合虚构路径（迁移后全量
     // W1+W2 后 helper 带 action:'create' → schema 通过 + create 对虚构 src/app.ts 不存在合法 → pass。
     const helper = await import("./helpers/plan.js");
     const devPlan = helper.makeValidDevPlanJson();
-    const r = planCheckWs(devPlan, undefined, tmpDir);
+    const r = planCheck(devPlan, undefined, tmpDir);
     expect(r.result).toBe("pass");
   });
 
   it("AC-9a create 对虚构路径合法（src/app.ts 不存在 → create pass）", () => {
     // FR-1a 核心契约：fixture 默认 create，因为 74 处 fixture 的 file 多是虚构路径（src/app.ts 等），
     // create 要求文件不存在正好合法。若默认 modify，绝大多数 fixture 会因文件不存在 fail。
-    const r = planCheckWs(plan([ch("src/app.ts", "create")]), undefined, tmpDir);
+    const r = planCheck(plan([ch("src/app.ts", "create")]), undefined, tmpDir);
     expect(r.result).toBe("pass");
   });
 });
@@ -487,11 +473,10 @@ describe("planCheck workspacePath 默认 process.cwd()（W2 第3参省略时）"
     // W2 契约：workspacePath 省略时默认 process.cwd()。
     // 这条测试锚定"省略时用 cwd"——src/gate.ts 文件在 cwd 下存在（相对 repo 根），
     // modify src/gate.ts 应 pass；modify 一个肯定不存在的虚构路径应 fail。
-    const r = planCheckWs(
+    const r = planCheck(
       plan([ch("src/gate.ts", "modify")]),
       undefined,
-      // 故意不传第3参——但当前 planCheckWs 签名要求传，所以这里传 undefined 让实现走默认。
-      // W2 实现应把 undefined workspacePath 当作 process.cwd()。
+      // 显式传 undefined 触发默认值 process.cwd()（W2 第3参默认值契约）。
       undefined,
     );
     // src/gate.ts 在 repo 根（process.cwd()）下存在 → modify pass。

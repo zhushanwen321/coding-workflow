@@ -191,8 +191,21 @@ export interface PlanCheckResult {
  * 失败路径（parseDevPlan throw）：
  *   - format !== "lite" / 非 object / size 超 1MB / schema 不符 / 环形 dependsOn → fail。
  *   - waves 空数组 → fail（schema 允许空数组，planCheck 额外校验非空）。
+ *
+ * 文件存在性校验（W2，AC-1~4/AC-3.4/AC-3.6/AC-8）：
+ *   - create → file 必须不存在（existsSync 对目录也返回 true，AC-3.4）
+ *   - modify/delete → file 必须存在
+ *   - 越界检查 action 无关（AC-3.6/AC-8）：isPathInsideWorkspace resolve+realpath，
+ *     对不存在路径 ENOENT 回退 lexical（create 的虚构文件也受 .. 越界检查）
+ *
+ * @param workspacePath workspace 绝对路径，用于 changes[].file 的存在性 + 越界校验。
+ *   省略时默认 process.cwd()。handlePlan 应传 topic.workspacePath。
  */
-export function planCheck(planJson: unknown, specSections?: SpecSection[]): PlanCheckResult {
+export function planCheck(
+  planJson: unknown,
+  specSections?: SpecSection[],
+  workspacePath: string = process.cwd(),
+): PlanCheckResult {
   try {
     const parsed = parseDevPlan(planJson);
 
@@ -202,6 +215,37 @@ export function planCheck(planJson: unknown, specSections?: SpecSection[]): Plan
         result: "fail",
         report: "dev-plan waves 为空：至少需要 1 个 wave。",
       };
+    }
+
+    // 文件存在性校验（W2，AC-1~4/AC-3.4/AC-3.6/AC-8）。
+    // 越界检查 action 无关（先于 existsSync）：isPathInsideWorkspace 复用 tdd_plan 的
+    // resolve+realpath 双层校验，ENOENT 回退 lexical（create 的虚构文件不存在也能挡 ..）。
+    const existenceErrors: string[] = [];
+    for (const wave of parsed.waves) {
+      for (const change of wave.changes ?? []) {
+        // 越界检查（AC-3.6/AC-8）：resolve 后必须在 workspace 内（无论 action）。
+        if (!isPathInsideWorkspace(change.file, workspacePath)) {
+          existenceErrors.push(
+            `file 越出 workspace: ${change.file} (action: ${change.action})`,
+          );
+          continue;
+        }
+        const fullPath = pathResolve(workspacePath, change.file);
+        if (change.action === "create") {
+          // create 要求文件不存在（AC-3）。existsSync 对目录也返回 true（AC-3.4）。
+          if (existsSync(fullPath)) {
+            existenceErrors.push(`create 的 file 已存在: ${change.file}`);
+          }
+        } else {
+          // modify/delete 要求文件存在（AC-1/AC-2）。
+          if (!existsSync(fullPath)) {
+            existenceErrors.push(`${change.action} 的 file 不存在: ${change.file}`);
+          }
+        }
+      }
+    }
+    if (existenceErrors.length > 0) {
+      return { result: "fail", report: existenceErrors.join("; ") };
     }
 
     // 合并 scope warning + FR 覆盖 warning
