@@ -6,7 +6,7 @@
  * 测什么（运行时构造对象验证字段可访问，相当于类型层契约的可执行文档）：
  *   - ProcessIssueType 四值枚举（pattern / oneOff / observation / uncategorized）
  *   - ProcessIssue 结构 { type, description }
- *   - RetrospectInsights 结构 { typeBuckets, topPatterns }
+ *   - RetrospectInsights 结构 { typeBuckets }
  *   - RetrospectData.processIssues 是 ProcessIssue[] 不是 string[]
  *
  * 防的 bug：类型定义遗漏字段、枚举值拼写错、ProcessIssue.type 退化为自由文本。
@@ -122,7 +122,7 @@ describe("RetrospectData.processIssues 类型升级（W1 / FR-3）", () => {
 // ── RetrospectInsights 结构（FR-6）────────────────────────────
 
 describe("RetrospectInsights 结构（W1 / FR-6）", () => {
-  it("RetrospectInsights 含 typeBuckets 四计数器 + topPatterns 数组", () => {
+  it("RetrospectInsights 含 typeBuckets 四计数器", () => {
     // FR-6：retrospectInsights 是 StatsAllOutput 顶层字段，结构由 W1 定义。
     const insights: RetrospectInsights = {
       typeBuckets: {
@@ -131,10 +131,6 @@ describe("RetrospectInsights 结构（W1 / FR-6）", () => {
         observation: 1,
         uncategorized: 4,
       },
-      topPatterns: [
-        { word: "subagent", count: 5 },
-        { word: "plan", count: 3 },
-      ],
     };
     // 运行时验证：typeBuckets 含四个固定 key。
     expect(insights.typeBuckets).toHaveProperty("pattern");
@@ -142,10 +138,6 @@ describe("RetrospectInsights 结构（W1 / FR-6）", () => {
     expect(insights.typeBuckets).toHaveProperty("observation");
     expect(insights.typeBuckets).toHaveProperty("uncategorized");
     expect(typeof insights.typeBuckets.pattern).toBe("number");
-    // topPatterns 是 {word, count} 数组
-    expect(Array.isArray(insights.topPatterns)).toBe(true);
-    expect(insights.topPatterns[0]).toHaveProperty("word");
-    expect(insights.topPatterns[0]).toHaveProperty("count");
   });
 
   it("RetrospectInsights.typeBuckets 四计数器初始值为 0（空聚合）", () => {
@@ -156,12 +148,10 @@ describe("RetrospectInsights 结构（W1 / FR-6）", () => {
         observation: 0,
         uncategorized: 0,
       },
-      topPatterns: [],
     };
     expect(empty.typeBuckets.pattern).toBe(0);
     expect(empty.typeBuckets.oneOff).toBe(0);
     expect(empty.typeBuckets.observation).toBe(0);
     expect(empty.typeBuckets.uncategorized).toBe(0);
-    expect(empty.topPatterns).toEqual([]);
   });
 });

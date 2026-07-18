@@ -8,7 +8,6 @@
  *   - computeStatsAll 输出含 retrospectInsights 字段
  *   - typeBuckets 四计数器正确（pattern/oneOff/observation/uncategorized 各几个）
  *   - 跨 topic 聚合（多 topic 的 processIssues 合并统计）
- *   - topPatterns 按 pattern 的 description 词频排序取 Top N
  *   - 排除 aborted topic
  *   - 无 retrospectData 的 topic 不崩
  *
@@ -103,7 +102,7 @@ describe("computeStatsAll — retrospectInsights 字段（W5 / AC-6）", () => {
     expect(output.retrospectInsights).toBeDefined();
   });
 
-  it("retrospectInsights 含 typeBuckets + topPatterns 结构", () => {
+  it("retrospectInsights 含 typeBuckets 结构", () => {
     const topics = [
       makeTopic({
         topicId: "t1",
@@ -116,12 +115,10 @@ describe("computeStatsAll — retrospectInsights 字段（W5 / AC-6）", () => {
     const output = computeStatsAll(topics);
     const insights = output.retrospectInsights as RetrospectInsights;
     expect(insights).toHaveProperty("typeBuckets");
-    expect(insights).toHaveProperty("topPatterns");
     expect(insights.typeBuckets).toHaveProperty("pattern");
     expect(insights.typeBuckets).toHaveProperty("oneOff");
     expect(insights.typeBuckets).toHaveProperty("observation");
     expect(insights.typeBuckets).toHaveProperty("uncategorized");
-    expect(Array.isArray(insights.topPatterns)).toBe(true);
   });
 
   it("无 retrospectData 的 topic → retrospectInsights 仍存在（空桶，不崩）", () => {
@@ -135,7 +132,6 @@ describe("computeStatsAll — retrospectInsights 字段（W5 / AC-6）", () => {
     expect(insights.typeBuckets.oneOff).toBe(0);
     expect(insights.typeBuckets.observation).toBe(0);
     expect(insights.typeBuckets.uncategorized).toBe(0);
-    expect(insights.topPatterns).toEqual([]);
   });
 
   it("空 topics → retrospectInsights 空桶（不崩）", () => {
@@ -222,82 +218,6 @@ describe("computeStatsAll — typeBuckets 四计数器（W5 / AC-6）", () => {
     const buckets = (output.retrospectInsights as RetrospectInsights).typeBuckets;
     // 跨 env 聚合：pattern=2（不是按 env 分组各 1）
     expect(buckets.pattern).toBe(2);
-  });
-});
-
-// ── topPatterns 词频排序 ─────────────────────────────────────
-
-describe("computeStatsAll — topPatterns 词频统计（W5 / AC-6）", () => {
-  it("pattern 的 description 词频统计 → topPatterns 按词频降序", () => {
-    // 3 条 pattern description 都含 "subagent" 词，1 条含 2 个 "plan" 词。
-    // plan 故意出现 2 次（count=2）：R5 引入中文 bigram 后 token 数从 ~6 涨到 ~27，
-    // count=1 的英文词会被中文 bigram 挤出 Top 10；让 plan count=2 稳进 Top 10，
-    // 同时 subagent（count=3）仍是最高频。
-    const topics = [
-      makeTopic({
-        topicId: "t1",
-        runtimeEnv: SAMPLE_ENV,
-        retrospectData: makeRetrospectData([
-          { type: "pattern", description: "subagent 切分支导致丢失改动" },
-          { type: "pattern", description: "subagent 行为不可控" },
-          { type: "pattern", description: "subagent 超时未处理" },
-          { type: "pattern", description: "plan 拆分粒度过细，plan 需重构" },
-        ]),
-      }),
-    ];
-    const output = computeStatsAll(topics);
-    const topPatterns = (output.retrospectInsights as RetrospectInsights).topPatterns;
-    expect(topPatterns.length).toBeGreaterThan(0);
-    // subagent 出现 3 次（最高频），plan 出现 2 次，都应进 Top 10
-    const subagent = topPatterns.find((p) => p.word === "subagent");
-    const plan = topPatterns.find((p) => p.word === "plan");
-    expect(subagent).toBeDefined();
-    expect(subagent!.count).toBe(3);
-    expect(plan).toBeDefined();
-    expect(plan!.count).toBe(2);
-    // subagent 词频 > plan → 排在前
-    const subagentIdx = topPatterns.findIndex((p) => p.word === "subagent");
-    const planIdx = topPatterns.findIndex((p) => p.word === "plan");
-    expect(subagentIdx).toBeLessThan(planIdx);
-  });
-
-  it("topPatterns 只统计 type=pattern，不含 oneOff/observation 的词", () => {
-    const topics = [
-      makeTopic({
-        topicId: "t1",
-        runtimeEnv: SAMPLE_ENV,
-        retrospectData: makeRetrospectData([
-          { type: "pattern", description: "patternword 模式" },
-          { type: "oneOff", description: "oneoffword 失误" },
-          { type: "observation", description: "obsword 观察" },
-        ]),
-      }),
-    ];
-    const output = computeStatsAll(topics);
-    const topPatterns = (output.retrospectInsights as RetrospectInsights).topPatterns;
-    const words = topPatterns.map((p) => p.word);
-    // patternword 可能被切分，但 oneoffword / obsword 不应出现（只在 pattern 里统计）
-    expect(words).not.toContain("oneoffword");
-    expect(words).not.toContain("obsword");
-  });
-
-  it("词频统计大小写归一（pattern description 大小写不同算同一词）", () => {
-    const topics = [
-      makeTopic({
-        topicId: "t1",
-        runtimeEnv: SAMPLE_ENV,
-        retrospectData: makeRetrospectData([
-          { type: "pattern", description: "Subagent 切分支" },
-          { type: "pattern", description: "subagent 超时" },
-        ]),
-      }),
-    ];
-    const output = computeStatsAll(topics);
-    const topPatterns = (output.retrospectInsights as RetrospectInsights).topPatterns;
-    // Subagent / subagent 归一为同一词，count=2
-    const subagent = topPatterns.find((p) => p.word === "subagent");
-    expect(subagent).toBeDefined();
-    expect(subagent!.count).toBe(2);
   });
 });
 

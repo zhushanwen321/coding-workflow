@@ -377,7 +377,6 @@ export interface RetrospectData {
  * 聚合规则（W5 computeStatsAll 实现）：
  *   - 排除 status=aborted 的废弃 topic
  *   - 无 retrospectData 的 topic 贡献空桶（不崩）
- *   - topPatterns 只统计 type=pattern 的 description，大小写归一 + 分词后按词频降序取 Top N
  */
 export interface RetrospectInsights {
   /** 按 ProcessIssueType 分桶统计（pattern/oneOff/observation/uncategorized 各多少条）。 */
@@ -387,8 +386,6 @@ export interface RetrospectInsights {
     observation: number;
     uncategorized: number;
   };
-  /** type=pattern 的 description 词频 Top N（单词降序，{ word, count } 数组）。 */
-  topPatterns: { word: string; count: number }[];
 }
 
 // ── 结构化 spec 章节（clarify 阶段产出，plan/review/test 追溯） ──

@@ -319,80 +319,6 @@ export interface StatsAllOutput {
 const UNKNOWN = "unknown";
 
 /**
- * topPatterns 词频 Top N 的 N（FR-6）。
- *
- * 常量——避免魔法数字，消费方按需自己再裁剪。
- */
-const TOP_PATTERNS_N = 10;
-
-/**
- * topPatterns 词频统计的英文停用词表（FR-6）。
- *
- * 中文分词难做，简单按标点/空格切分即可（pattern 的 description 多是短语）。
- * 停用词过滤掉无信息量的高频虚词，避免它们挤占 Top N 名额。
- */
-const STOP_WORDS = new Set([
-  // 英文虚词
-  "the",
-  "a",
-  "an",
-  "and",
-  "or",
-  "of",
-  "to",
-  "in",
-  "on",
-  "for",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  // 中文虚词（按空格切分后可能出现的单字）
-  "的",
-  "了",
-  "在",
-  "是",
-  "和",
-  "与",
-  "或",
-]);
-
-/**
- * 把 pattern 的 description 切成词频统计用的词数组。
- *
- * 按空格/标点（中英文）切分，小写归一，过滤停用词与过短词（长度 < 2）。
- * 中文段额外做 bigram（两字一组）近似分词——不引分词库，重叠短语会让词频重复，
- * 但作为粗粒度趋势分析够用：能让 topPatterns 提取到中文短语信息量，
- * 而不是把整句压成一个 token。
- */
-function tokenizePatternDescription(description: string): string[] {
-  const rawTokens = description
-    .toLowerCase()
-    .split(/[\s,.;:!?，。；：！？、\/\\()（）\[\]]+/)
-    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
-  // 中文 token（连续中文字符段）额外做 bigram，提取两字短语
-  const tokens: string[] = [];
-  for (const token of rawTokens) {
-    tokens.push(token);
-    // 匹配连续中文字符（CJK Unified Ideographs）
-    const cjkMatch = token.match(/[\u4e00-\u9fff]+/g);
-    if (cjkMatch) {
-      for (const seg of cjkMatch) {
-        if (seg.length >= 2) {
-          for (let i = 0; i < seg.length - 1; i++) {
-            const bigram = seg.slice(i, i + 2);
-            if (!STOP_WORDS.has(bigram)) tokens.push(bigram);
-          }
-        }
-      }
-    }
-  }
-  return tokens;
-}
-
-/**
  * 把 topic 归到它的分组键。
  *
  * 旧 topic（无 runtimeEnv）归入 agent=unknown / llm=unknown / cwVersion=unknown。
@@ -540,7 +466,6 @@ export function computeStatsAll(topics: Topic[]): StatsAllOutput {
     observation: 0,
     uncategorized: 0,
   };
-  const wordCount = new Map<string, number>(); // pattern 的 description 词频
   for (const topic of activeTopics) {
     const issues = topic.retrospectData?.processIssues;
     // 无 retrospectData 或 processIssues 不是数组 → 跳过（不崩）。
@@ -550,19 +475,10 @@ export function computeStatsAll(topics: Topic[]): StatsAllOutput {
     for (const issue of issues) {
       const type = issue.type;
       if (type in typeBuckets) typeBuckets[type]++;
-      if (type === "pattern" && typeof issue.description === "string") {
-        for (const w of tokenizePatternDescription(issue.description)) {
-          wordCount.set(w, (wordCount.get(w) ?? 0) + 1);
-        }
-      }
     }
   }
-  const topPatterns = [...wordCount.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, TOP_PATTERNS_N)
-    .map(([word, count]) => ({ word, count }));
 
-  return { groups, retrospectInsights: { typeBuckets, topPatterns } };
+  return { groups, retrospectInsights: { typeBuckets } };
 }
 
 // ── retrospect 派生指标（handleRetrospect 自动填充用） ────────
