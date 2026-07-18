@@ -21,7 +21,7 @@
  *   - 零 mock 框架：真实 fs（mkdtempSync/writeFileSync/mkdirSync）+ 真实 dispatch + 真实 git
  *   - 禁 any：用 unknown 双断言或 2 参调用
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -352,13 +352,37 @@ describe("AC-6: replan 新增 wave 含幽灵文件 → throw 含文件名", () =
 // ════════════════════════════════════════════════════════════════
 
 describe("AC-7: 存量 committed wave（旧格式无 action）经 migrateChanges 补默认 modify，不被 append-only 误判", () => {
-  it("旧格式 committed wave（changes 无 action）+ replan 保留不变 → 不报 wave_modified_committed", () => {
-    // 场景：旧 topic 的 committed wave 在 store 里是旧格式（changes 无 action）。
-    // W3 migrateChanges 读时补 action:'modify'。replan 时新 plan 的 W1 也是 modify，
-    // 两侧 action 对称（都是 modify）→ validateAppendOnly 的 JSON.stringify 比对相等 → 不误判。
-    //
-    // 关键：若 migrateChanges 补的不是 modify（如误补 create），而新 plan 是 modify，
-    // JSON.stringify 会 differ → 误报 wave_modified_committed。本测试锚定补 modify 的契约。
+  // 这组测试用 raw-JSON-write 模式直接操纵 _cw.json（照 store.test.ts:1176-1206 的 Artifacts
+  // 迁移测试写法），绕过 plan gate（plan gate 会因 W1 schema action 必填而拒绝旧格式 plan），
+  // 把一个真实的旧格式 committed wave 植入 store。这样 migrateChanges 对象分支才被真正触发，
+  // 而非空洞通过（旧版测试 dispatch({action:"plan", oldFormatPlan}) 在 plan gate 就 fail，
+  // topic.waves 始终空，.not.toThrow() 空洞通过，掩盖了 R1 键序 bug）。
+  //
+  // 复用模式：新建 topic → 直接改磁盘 _cw.json 写入旧格式 committed wave → 新 CwStore 实例 reload。
+
+  /** 把 topic 的 waves 改成旧格式 committed wave（changes 无 action 字段），写回磁盘。 */
+  function writeLegacyCommittedWave(
+    dbPath: string,
+    topicId: string,
+    initialCommit: string,
+  ): void {
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      waves: Array<Record<string, unknown>>;
+    };
+    // 直接在顶层 waves 数组 push 一条旧格式 committed wave。
+    // changes 写成 {file, description}（无 action），模拟 pre-W1 存量数据。
+    // committed 设为 initialCommit，模拟已落地 wave。
+    raw.waves.push({
+      topicId,
+      id: "W1",
+      dependsOn: [],
+      committed: initialCommit,
+      changes: [{ file: "src/app.ts", description: "改 app" }],
+    });
+    writeFileSync(dbPath, JSON.stringify(raw));
+  }
+
+  it("migrateChanges 对象分支：缺 action 补 modify 且键序 file→action→description（R1/R5）", () => {
     const dbPath = join(tmpDir, "cw.json");
     const store = new CwStore(dbPath);
     const git = new GitValidator(tmpDir);
@@ -366,74 +390,125 @@ describe("AC-7: 存量 committed wave（旧格式无 action）经 migrateChanges
     const initialCommit = setupGitRepo(tmpDir);
 
     const createResult = dispatch(
-      { action: "create", slug: "mig-test", objective: "obj", workspacePath: tmpDir },
+      { action: "create", slug: "mig-test-keys", objective: "obj", workspacePath: tmpDir },
       deps,
     );
     const topicId = createResult.topicId;
 
-    store.updateStatus(topicId, "clarify_confirmed");
-    store.updateGatePassed(topicId, "confirm_clarify", true);
-    store.updateStatus(topicId, "spec_reviewed");
-    store.updateGatePassed(topicId, "spec_review", true);
+    writeLegacyCommittedWave(dbPath, topicId, initialCommit);
 
-    commitFile(tmpDir, "src/app.ts", "export const app = 1;", "add app");
-    // 旧格式 plan：W1 changes 无 action 字段（模拟存量 topic）。
-    const oldFormatPlan = {
-      format: "lite",
-      objective: "obj",
-      waves: [
-        {
-          id: "W1",
-          changes: [{ file: "src/app.ts", description: "改 app" }],
-          dependsOn: [],
-        },
-      ],
-    };
-    dispatch({ action: "plan", topicId, planJson: oldFormatPlan }, deps);
-    store.updateStatus(topicId, "plan_reviewed");
-    store.updateGatePassed(topicId, "plan_review", true);
-    store.insertTestCases(topicId, [
-      {
-        id: "E1",
-        layer: "mock",
-        scenario: "s",
-        steps: "st",
-        expected: { type: "exact", text: "expected-output" },
-        executor: "vitest",
-        requiresScreenshot: false,
-      },
-      {
-        id: "E2",
-        layer: "real",
-        scenario: "s",
-        steps: "st",
-        expected: { type: "exact", text: "real-output" },
-        executor: "vitest",
-        requiresScreenshot: false,
-      },
-    ]);
-    store.updateStatus(topicId, "tdd_inited");
-    store.updateGatePassed(topicId, "tdd_plan", true);
-    dispatch(
-      { action: "dev", topicId, tasks: [{ waveId: "W1", commitHash: initialCommit }] },
+    // 新实例 reload（绕过内存缓存，强制从磁盘读旧格式）。
+    const reloaded = new CwStore(dbPath);
+    const topic = reloaded.loadTopic(topicId);
+    expect(topic).not.toBeNull();
+    expect(topic!.waves).toHaveLength(1);
+    const wave = topic!.waves[0]!;
+    expect(wave.committed).toBe(initialCommit);
+
+    // R1 核心：migrateChanges 补的 action 值是 modify。
+    const change = wave.changes[0]!;
+    expect(change.action).toBe("modify");
+    expect(change.file).toBe("src/app.ts");
+    expect(change.description).toBe("改 app");
+
+    // R1 核心：键序必须是 file→action→description（与 WaveChange 接口、DevPlanSchema 一致）。
+    // spread {...c, action} 会得到 file→description→action（键序错）。
+    expect(Object.keys(change)).toEqual(["file", "action", "description"]);
+
+    // R1 核心：经 migrate 后的 stringify 必须与新格式 plan 的 stringify 相等
+    // （validateAppendOnly 用 JSON.stringify 比对，键序敏感）。
+    const newPlanChange = { file: "src/app.ts", action: "modify", description: "改 app" };
+    expect(JSON.stringify(change)).toBe(JSON.stringify(newPlanChange));
+  });
+
+  it("migrateChanges 对象分支：有 action 原样保留且键序稳定（R5）", () => {
+    const dbPath = join(tmpDir, "cw.json");
+    const store = new CwStore(dbPath);
+    const git = new GitValidator(tmpDir);
+    const deps: ActionDeps = { store, git, workspacePath: tmpDir };
+    const initialCommit = setupGitRepo(tmpDir);
+
+    const createResult = dispatch(
+      { action: "create", slug: "mig-test-keep", objective: "obj", workspacePath: tmpDir },
       deps,
     );
+    const topicId = createResult.topicId;
 
-    // replan：W1 显式标 modify（与新格式对齐）。migrateChanges 已把旧 W1 补 modify，
-    // 两侧对称 → 不应 throw wave_modified_committed。
+    // 这条 wave 的 changes 已带 action:'create'，migrateChanges 应原样保留（不覆盖成 modify）。
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      waves: Array<Record<string, unknown>>;
+    };
+    raw.waves.push({
+      topicId,
+      id: "W1",
+      dependsOn: [],
+      committed: initialCommit,
+      // 注意：磁盘上故意写成 file→description→action 顺序，验证 migrate 输出键序被规范化。
+      changes: [{ file: "src/app.ts", description: "新建 app", action: "create" }],
+    });
+    writeFileSync(dbPath, JSON.stringify(raw));
+
+    const reloaded = new CwStore(dbPath);
+    const topic = reloaded.loadTopic(topicId);
+    const change = topic!.waves[0]!.changes[0]!;
+    // action 原样保留（create），不被覆盖成 modify。
+    expect(change.action).toBe("create");
+    // 键序被规范化为 file→action→description。
+    expect(Object.keys(change)).toEqual(["file", "action", "description"]);
+  });
+
+  it("replan 保留旧格式 committed wave → validateAppendOnly 不报 wave_modified_committed（R1 端到端）", () => {
+    // 端到端：旧 topic 的 committed wave 在 store 里是旧格式（无 action）。
+    // migrateChanges 读时补 action:'modify' + 规范键序。replan 时新 plan 的 W1 也是 modify，
+    // 两侧 stringify 相等 → validateAppendOnly 不误判 wave_modified_committed。
+    //
+    // 关键：若 migrateChanges 补的不是 modify，或键序错（spread {...c, action}），
+    // JSON.stringify 会 differ → 误报 wave_modified_committed。本测试锚定补 modify + 键序的契约。
+    const dbPath = join(tmpDir, "cw.json");
+    const store = new CwStore(dbPath);
+    const git = new GitValidator(tmpDir);
+    const deps: ActionDeps = { store, git, workspacePath: tmpDir };
+    const initialCommit = setupGitRepo(tmpDir);
+
+    const createResult = dispatch(
+      { action: "create", slug: "mig-test-replan", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    // 推到 replan 前置状态（replan 要求 status >= plan_reviewed）。
+    store.updateStatus(topicId, "spec_reviewed");
+    store.updateGatePassed(topicId, "spec_review", true);
+    store.updateStatus(topicId, "plan_reviewed");
+    store.updateGatePassed(topicId, "plan_review", true);
+
+    writeLegacyCommittedWave(dbPath, topicId, initialCommit);
+
+    // 确认 committed wave 在 commit 落地的文件存在（src/app.ts 被 setupGitRepo 外的 commitFile 落地）。
+    // 实际上 initialCommit 是 README，这里 committed wave 只用于 append-only 比对，
+    // 不走 planCheck 存在性校验（uncommittedNew 才走）。补一个真实文件落地避免干扰。
+    commitFile(tmpDir, "src/app.ts", "export const app = 1;", "add app");
+
+    // 新 plan：W1 显式 modify（与新格式对齐），与旧 wave（经 migrate 补 modify）对称。
     const newPlan = {
-      format: "lite",
+      format: "lite" as const,
       objective: "obj",
       waves: [
         {
           id: "W1",
-          changes: [{ file: "src/app.ts", action: "modify", description: "改 app" }],
+          changes: [{ file: "src/app.ts", action: "modify" as const, description: "改 app" }],
           dependsOn: [],
         },
       ],
     };
+    // 重新构造 deps 用 reloaded store（确保读到注入的旧 wave）。
+    const reloadedStore = new CwStore(dbPath);
+    const reloadedDeps: ActionDeps = {
+      store: reloadedStore,
+      git,
+      workspacePath: tmpDir,
+    };
     expect(() =>
-      dispatch({ action: "replan", topicId, planJson: newPlan }, deps),
+      dispatch({ action: "replan", topicId, planJson: newPlan }, reloadedDeps),
     ).not.toThrow();
   });
 });

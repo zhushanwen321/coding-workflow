@@ -105,9 +105,17 @@ function migrateChanges(
     // PR3：对缺 action 的旧对象 record 补默认 'modify'（有 action 原样保留）。
     // committed wave 的 changes 经 migrate 后 action='modify'，与新 plan 显式 modify
     // 对称 → validateAppendOnly 的 JSON.stringify 比对相等，不误判 wave_modified_committed。
-    return (changes as WaveChange[]).map((c) =>
-      c.action ? c : { ...c, action: "modify" },
-    );
+    //
+    // 键序契约（W3 review R1）：必须显式构造固定键序 file→action→description，
+    // 与 WaveChange 接口（types.ts）、DevPlanSchema（plan-parser.ts）一致。
+    // 禁止 {...c, action}：spread 会保留 c 的原键序 file→description，
+    // 末尾追加 action 得到 file→description→action，与新 plan 的 file→action→description
+    // 键序不同 → JSON.stringify（键序敏感）比对不等 → 误报 wave_modified_committed。
+    return (changes as WaveChange[]).map((c) => ({
+      file: c.file,
+      action: c.action ?? "modify",
+      description: c.description,
+    }));
   }
   // 旧格式：元素是 string
   return (changes as unknown as string[]).map((s) => {

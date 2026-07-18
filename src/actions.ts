@@ -77,6 +77,7 @@ import {
   type TestFixSubmission,
   type Topic,
   type Wave,
+  type WaveChange,
   type WaveSeed,
 } from "./types.js";
 
@@ -2501,14 +2502,28 @@ export function handleReplan(
   // 已 committed wave 不校验存在性（它们已落地，且走 append-only 不可改路径，
   // 两条路径不重叠）。失败走 throw（与 append-only 违规语义一致），不走 gate fail。
   if (parsedPlan && uncommittedNew.length > 0) {
+    // tempPlan 喂给 planCheck → parseDevPlan，要走 DevPlanSchema 校验（changes 必填）。
+    // uncommittedNew 源自 parsedPlan.waves（已过 schema 校验，changes 必存在），但 WaveSeed
+    // 类型把 changes 标成可选（seed 形态允许省略）。显式声明 tempPlan.waves 的 changes 必填，
+    // 与 DevPlanSchema（plan-parser.ts:47）对齐，避免类型与 schema 契约不一致。
     const tempPlan: {
       format: "lite";
       objective: string;
-      waves: typeof uncommittedNew;
+      waves: Array<{
+        id: string;
+        changes: WaveChange[];
+        dependsOn: string[];
+        priority?: "P0" | "P1" | "P2";
+      }>;
     } = {
       format: "lite",
       objective: parsedPlan.objective,
-      waves: uncommittedNew,
+      waves: uncommittedNew.map((w) => ({
+        id: w.id,
+        changes: w.changes ?? [],
+        dependsOn: w.dependsOn,
+        priority: w.priority,
+      })),
     };
     const existenceCheck = planCheck(
       tempPlan,
