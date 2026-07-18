@@ -4,7 +4,7 @@
  * 覆盖 AC：
  *   - AC-6: delete-only topic 走完整流程（create→tdd_plan(existence.json)→dev→test→closeout），
  *     test 阶段 postDevVerify 跑文件存在性检查 → existenceArtifacts.verified 缓存 →
- *     isDevVerified=true → status=tested → closeout → coverage=1.0
+ *     isDevVerified=true → status=post_dev_verified → closeout → coverage=1.0
  *
  * 这是 TDD 红灯阶段：
  *   - create 命令没有 --taskShape flag（cli.ts 未解析），需手动在 _cw.json 注入 taskShape='delete-only'
@@ -19,7 +19,7 @@
  *   3. tdd_plan 提交 existence.json（而非 test.json）—— existence 策略的 preDevCheck 校验
  *   4. dev：删除目标文件 + commit
  *   5. review：提交空 issue（lean-review，单阶段 review）
- *   6. test：postDevVerify 跑 existsSync 验证文件已删 → existenceArtifacts.verified=true → tested
+ *   6. test：postDevVerify 跑 existsSync 验证文件已删 → existenceArtifacts.verified=true → post_dev_verified
  *   7. retrospect → closeout
  *
  * 测试规范（AGENTS.md）：真实子进程跑 dist/cli.js，独立隔离环境，零 mock。
@@ -108,7 +108,7 @@ function makeExistenceJson(pathToFile: string): Record<string, unknown> {
 // ── AC-6: delete-only 完整流程 e2e ────────────────────────────
 
 describe("AC-6: delete-only shape 完整流程 e2e", () => {
-  it("create→tdd_plan(existence.json)→dev→test→tested，文件删除后 verified", () => {
+  it("create→tdd_plan(existence.json)→dev→test→post_dev_verified，文件删除后 verified", () => {
     // ── 准备：在 workspace 建一个待删文件 + 一个 plan wave 声明 delete ──
     // 目标文件：src/legacy-feature.ts（待删除）
     const targetFile = "src/legacy-feature.ts";
@@ -129,8 +129,8 @@ describe("AC-6: delete-only shape 完整流程 e2e", () => {
       }),
     );
 
-    // tdd_plan gate 通过 → status 流转到 tdd_inited
-    expect(tddPlanResult.status).toBe("tdd_inited");
+    // tdd_plan gate 通过 → status 流转到 pre_dev_verified
+    expect(tddPlanResult.status).toBe("pre_dev_verified");
     expect((tddPlanResult.gatePassed as Record<string, unknown>).tdd_plan).toBe(true);
 
     // ── 3. dev：删除目标文件 + commit ──
@@ -154,7 +154,7 @@ describe("AC-6: delete-only shape 完整流程 e2e", () => {
     );
     expect(reviewResult.status).toBe("reviewed");
 
-    // ── 5. test：postDevVerify 验证文件已删 → existenceArtifacts.verified=true → tested ──
+    // ── 5. test：postDevVerify 验证文件已删 → existenceArtifacts.verified=true → post_dev_verified ──
     // delete-only 的 test 不传 --cases（existence 策略的 postDevVerify 跑 existsSync，
     // 不依赖 agent 提交的 actual）。但 CLI test 命令可能仍要求 --cases——
     // 实现层需适配（existence 策略 caseId 语义是 artifact.path）。
@@ -169,7 +169,7 @@ describe("AC-6: delete-only shape 完整流程 e2e", () => {
     ).toBe(0);
 
     const testParsed = parseStdout(testResult);
-    expect(testParsed.status).toBe("tested");
+    expect(testParsed.status).toBe("post_dev_verified");
     expect((testParsed.gatePassed as Record<string, unknown>).test).toBe(true);
   });
 
@@ -266,9 +266,9 @@ describe("AC-6 边界：dev 未删干净 → test gate fail", () => {
     );
 
     // test：文件仍存在 → postDevVerify 判 absent 失败 → gatePassed.test=false。
-    // 注：status 仍流转到 tested（progressive 语义——status=tested 只表示 test 命令已调，
+    // 注：status 仍流转到 post_dev_verified（progressive 语义——status=post_dev_verified 只表示 test 命令已调，
     // 不表示全 pass；是否真通过看 gatePassed.test）。这与 full-tdd 一致：测试 case 失败时
-    // status=tested + gatePassed.test=false，retrospect 的 testTurn 逃生阀或 test_fix 才闭环。
+    // status=post_dev_verified + gatePassed.test=false，retrospect 的 testTurn 逃生阀或 test_fix 才闭环。
     const testResult = parseStdout(runCli(["test", "--topicId", topicId], e));
 
     // 文件没删 → existenceArtifacts.verified 不会全 true → isDevVerified=false

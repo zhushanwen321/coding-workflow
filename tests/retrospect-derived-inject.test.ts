@@ -84,7 +84,7 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     workspacePath: "/tmp",
     topicDir: "/tmp/.xyz-harness/retro-inject",
     createdAt: "2026-01-01T00:00:00.000Z",
-    status: "tested",
+    status: "post_dev_verified",
     waves: [makeCommittedWave("W1")],
     testCases: [makePassedCase("E1")],
     gateHistory: [],
@@ -171,7 +171,7 @@ describe("AC-1 补充: testTurn 达上限强制出口含 derived 摘要（W4 / F
   it("testTurn 达上限 + 有未通过 case → 强制进 retrospect, guidance 含 derived 摘要", () => {
     // testTurn 达上限 + 有 case 未通过 → 强制进 retrospect 出口。
     const topic = makeTopic({
-      status: "tested",
+      status: "post_dev_verified",
       testCases: [
         { ...makePassedCase("E1"), status: "failed" },
       ],
@@ -191,7 +191,7 @@ describe("AC-2: retrospect gate fail retry 出口含 derived 摘要（W4 / FR-1�
   it("retrospect gate 未 pass → retry 出口 guidance 含 derived 摘要", () => {
     // retrospect gate 未 pass（gateHistory 无 retrospect pass）→ retry 出口。
     const topic = makeTopic({
-      status: "tested",
+      status: "post_dev_verified",
       testCases: [makePassedCase("E1")],
       gateHistory: [
         // retrospect 有一条 fail 记录（无 pass）
@@ -207,7 +207,7 @@ describe("AC-2: retrospect gate fail retry 出口含 derived 摘要（W4 / FR-1�
 
   it("retrospect retry 出口 derived 摘要在 RETROSPECT_PROMPT 之前", () => {
     const topic = makeTopic({
-      status: "tested",
+      status: "post_dev_verified",
       testCases: [makePassedCase("E1")],
       gateHistory: [
         makeGateEntry(1, "retrospect", "file-exists+non-empty", "fail"),

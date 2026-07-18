@@ -22,7 +22,7 @@ npm install -g @zhushanwen/coding-workflow
 ## 它怎么工作
 
 ```
-created → planned → tdd_inited → developed → reviewed → tested → retrospected → closed
+created → planned → pre_dev_verified → developed → reviewed → post_dev_verified → retrospected → closed
               ↑                    |       |
               └────── replan ──────┘       │
 ```

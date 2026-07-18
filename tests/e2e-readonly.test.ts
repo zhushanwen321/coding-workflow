@@ -35,7 +35,7 @@ let closedSlug: string;
 beforeAll(() => {
   e = createE2eEnv();
   emptyEnv = createE2eEnv();
-  // 走到一个有完整 gate 数据的 topic（tested 阶段 gate 齐全）
+  // 走到一个有完整 gate 数据的 topic（post_dev_verified 阶段 gate 齐全）
   topicId = setupToTested(e, "e9-stats").topicId;
   // 走到 closed 的 topic（report 需要完整数据）
   const closed = setupToClosed(e, "e9-report");

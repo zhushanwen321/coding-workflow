@@ -72,7 +72,7 @@ function passTddPlanGate(store: CwStore, topicId: string): void {
       requiresScreenshot: false,
     },
   ]);
-  store.updateStatus(topicId, "tdd_inited");
+  store.updateStatus(topicId, "pre_dev_verified");
   store.updateGatePassed(topicId, "tdd_plan", true);
   store.appendGateHistory(topicId, {
     phase: "tdd_plan",
@@ -99,7 +99,7 @@ function passPlanReview(store: CwStore, topicId: string): void {
 }
 
 /**
- * 推进 topic 到 tested 状态（test gate pass），retrospect 前置就绪。
+ * 推进 topic 到 post_dev_verified 状态（test gate pass），retrospect 前置就绪。
  * 走 dispatch 全链，照 dispatch.test.ts U30 模式。
  */
 function setupToTested(slug: string): { topicId: string; deps: ActionDeps; store: CwStore } {
@@ -202,8 +202,8 @@ describe("validateRetrospectData type 合法性（W3 / AC-4）", () => {
       deps,
     );
 
-    // gate fail → status 不变（仍 tested）
-    expect(result.status).toBe("tested");
+    // gate fail → status 不变（仍 post_dev_verified）
+    expect(result.status).toBe("post_dev_verified");
     expect(result.gatePassed.retrospect).toBeFalsy();
     // mustFix 含校验失败信息（AC-4 验证点）
     expect((result as Record<string, unknown>).mustFix).toBeDefined();
@@ -229,7 +229,7 @@ describe("validateRetrospectData type 合法性（W3 / AC-4）", () => {
       deps,
     );
 
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
     expect((result as Record<string, unknown>).mustFix).toBeDefined();
   });
 
@@ -250,7 +250,7 @@ describe("validateRetrospectData type 合法性（W3 / AC-4）", () => {
       deps,
     );
 
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
     const mustFix = String((result as Record<string, unknown>).mustFix);
     expect(mustFix).toContain("retrospectData 校验失败");
   });
@@ -272,7 +272,7 @@ describe("validateRetrospectData type 合法性（W3 / AC-4）", () => {
       deps,
     );
 
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
     expect((result as Record<string, unknown>).mustFix).toBeDefined();
   });
 
@@ -294,7 +294,7 @@ describe("validateRetrospectData type 合法性（W3 / AC-4）", () => {
       deps,
     );
 
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
     const mustFix = String((result as Record<string, unknown>).mustFix);
     expect(mustFix).toContain("retrospectData 校验失败");
   });

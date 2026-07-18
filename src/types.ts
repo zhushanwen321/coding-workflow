@@ -54,7 +54,8 @@ export type Action =
  * 10 个 status（新增 clarify_confirmed + aborted）。
  * clarify_confirmed：clarify gate 通过（用户确认需求），允许进 plan。
  * aborted：终止态（agent 主动放弃 topic），不可恢复。
- * tdd_inited：tdd_plan gate 通过，测试代码 + test.json 已写入，等待 dev 阶段实现。
+ * pre_dev_verified：dev 前验证通过（tdd_plan/existence.json/no-verify gate pass），等待 dev。
+ * post_dev_verified：dev 后验证通过（test/postDevVerify/isDevVerified pass），等待 retrospect。
  */
 export type Status =
   | "created"
@@ -62,10 +63,10 @@ export type Status =
   | "spec_reviewed"
   | "planned"
   | "plan_reviewed"
-  | "tdd_inited"
+  | "pre_dev_verified"
   | "developed"
   | "reviewed"
-  | "tested"
+  | "post_dev_verified"
   | "retrospected"
   | "closed"
   | "aborted";

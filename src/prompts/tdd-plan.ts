@@ -199,7 +199,7 @@ gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_p
 CW 在 tdd_plan gate 通过后自动跑红灯校验（testRunner 必选）：
 - 执行 testRunner.command 一次（整体跑），确认 exit code ≠ 0（红灯——实现尚未写，测试应全 fail）
 - **红灯校验阻断 status 流转**——绿灯（exit code=0）时 status 回退到 planned，nextAction 指回 tdd_plan retry
-- 红灯 pass → status 流转到 tdd_inited，结果记录到 gateHistory（gate 名 tdd-red-light）
+- 红灯 pass → status 流转到 pre_dev_verified，结果记录到 gateHistory（gate 名 tdd-red-light）
 
 绿灯 = 你先写了实现再补测试 = 违反 TDD。必须删除实现代码，确保测试在实现缺失时 fail，再提交。
 
@@ -249,5 +249,5 @@ CW 在 tdd_plan gate 通过后自动跑红灯校验（testRunner 必选）：
 
 ## 完成标志
 
-test.json 写完且 cw(tdd_plan) gate 通过（status=tdd_inited）后，进入 dev 阶段写实现。
+test.json 写完且 cw(tdd_plan) gate 通过（status=pre_dev_verified）后，进入 dev 阶段写实现。
 `.trim();

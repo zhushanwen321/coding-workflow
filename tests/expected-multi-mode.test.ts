@@ -88,7 +88,7 @@ function passTddPlanGateWith(
       requiresScreenshot: false,
     })),
   );
-  store.updateStatus(topicId, "tdd_inited");
+  store.updateStatus(topicId, "pre_dev_verified");
   store.updateGatePassed(topicId, "tdd_plan", true);
   store.appendGateHistory(topicId, {
     phase: "tdd_plan",

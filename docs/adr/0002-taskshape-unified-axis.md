@@ -38,6 +38,8 @@ interface TaskShape {
 
 `tdd_inited`/`tested` 保留，语义从"TDD 专属"泛化为"验证阶段完成"。TRANSITIONS 表不变、checkLinear 不变、17 处断言不变。状态重命名（路径 2）留到策略模式稳定后再做。
 
+> **更新（步骤 5 已执行）**：策略模式稳定后，路径 2 的重命名已落地：`tdd_inited` → `pre_dev_verified`，`tested` → `post_dev_verified`。TRANSITIONS 表/checkLinear/断言不变，仅替换字面量。下方行文保留旧名作为历史记录。
+
 **2. 纯函数签名不变**
 
 `tddPlanCheck`/`judgeByExpected`/`redLightCheck`/`validateAppendOnly` 等纯函数签名保持不变。TddStrategy 内部原样调用，保 100+ 次纯函数单测零改动。
@@ -63,6 +65,7 @@ interface TaskShape {
 
 负面：
 - 状态名 tdd_inited/tested 在非 TDD 场景下名不副实（路径 1 的过渡期代价）
+  - **已解决（步骤 5 重命名）**：`tdd_inited` → `pre_dev_verified`、`tested` → `post_dev_verified`，过渡期代价消除
 - postDevVerify 从 handleTest 抽取有事务边界风险（缓解：抽成纯函数，事务留在 handler）
 
 ## 替代方案

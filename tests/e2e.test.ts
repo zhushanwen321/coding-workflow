@@ -108,7 +108,7 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     const tddPlanResult = parseStdout(
       runCli(["tdd_plan", "--topicId", topicId], e, { input: testJson }),
     );
-    expect(tddPlanResult.status).toBe("tdd_inited");
+    expect(tddPlanResult.status).toBe("pre_dev_verified");
     expect((tddPlanResult.nextAction as Record<string, unknown>).action).toBe("dev");
 
     // 3. dev
@@ -159,7 +159,7 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
         e,
       ),
     );
-    expect(testResult.status).toBe("tested");
+    expect(testResult.status).toBe("post_dev_verified");
     expect(testResult.gatePassed).toMatchObject({ test: true });
 
     // 6. retrospect（需 retrospect.md 文件）
@@ -232,7 +232,7 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
       e,
     );
 
-    // tdd_plan（test.json 含 testCases，推进到 tdd_inited 才能 dev）
+    // tdd_plan（test.json 含 testCases，推进到 pre_dev_verified 才能 dev）
     runCli(["tdd_plan", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidTestJson()),
     });

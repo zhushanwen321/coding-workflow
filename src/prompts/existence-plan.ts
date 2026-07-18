@@ -70,6 +70,6 @@ gate fail 时返回 mustFix，status 不变（plan_reviewed），修后重调 cw
 
 ## 完成标志
 
-existence.json 写完且 cw(tdd_plan) gate 通过（status=tdd_inited）后，进入 dev 阶段
+existence.json 写完且 cw(tdd_plan) gate 通过（status=pre_dev_verified）后，进入 dev 阶段
 执行删除/新建，commit 后调 cw(dev)。
 `.trim();

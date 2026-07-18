@@ -156,7 +156,7 @@ export function setupToReviewed(e: E2eEnv, slug: string): { topicId: string } {
   return { topicId };
 }
 
-/** setupToReviewed + test（全 pass）→ tested。 */
+/** setupToReviewed + test（全 pass）→ post_dev_verified。 */
 export function setupToTested(e: E2eEnv, slug: string): { topicId: string } {
   const { topicId } = setupToReviewed(e, slug);
   runCli(

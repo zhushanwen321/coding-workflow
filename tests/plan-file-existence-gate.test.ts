@@ -286,7 +286,7 @@ describe("AC-6: replan 新增 wave 含幽灵文件 → throw 含文件名", () =
         requiresScreenshot: false,
       },
     ]);
-    store.updateStatus(topicId, "tdd_inited");
+    store.updateStatus(topicId, "pre_dev_verified");
     store.updateGatePassed(topicId, "tdd_plan", true);
 
     // dev：commit W1（用初始 commit 即可，文件已存在）。

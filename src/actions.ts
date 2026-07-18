@@ -773,10 +773,10 @@ export function handlePlan(
 // ── handleTddPlan ───────────────────────────────────────────
 
 /**
- * handleTddPlan — test.json gate + testCases 写入 + 状态流转（planned → tdd_inited）。
+ * handleTddPlan — test.json gate + testCases 写入 + 状态流转（planned → pre_dev_verified）。
  *
  * 数据流：tddPlanCheck(testJson) → 事务{ pass: insertTestCases + (可选)setTestRunner
- *   + updateStatus(tdd_inited) + gatePassed(tdd_plan,true) + gateHistory(pass)
+ *   + updateStatus(pre_dev_verified) + gatePassed(tdd_plan,true) + gateHistory(pass)
  *   | fail: gateHistory(fail)，status 不变（仍 planned） }
  *   → 事务外对 redCheck=true 的 testCase 跑 redLightCheck（仅当配置了 testRunner）
  *   → buildNextAction("tdd_plan")。
@@ -825,7 +825,7 @@ export function handleTddPlan(
       passed = false;
       return;
     }
-    // gate pass：testCases 写入 + 状态流转到 tdd_inited。
+    // gate pass：testCases 写入 + 状态流转到 pre_dev_verified。
     // 通过 TaskShape 策略的 applyPreDevResult 把 parsed payload 应用到 store——
     // 替代原硬编码的 insertTestCases + setTestRunner（FR-6：策略封装写入语义）。
     // tdd 策略的 applyPreDevResult 等价于原逻辑（insertTestCases + 可选 setTestRunner），
@@ -873,7 +873,7 @@ export function handleTddPlan(
   // 红灯校验（事务外执行——调 execFileSync 跑测试命令，不能在事务内持锁）。
   // testRunner 已必选（tddPlanCheck 保证），红灯校验阻断 status 流转：
   //   - 红灯 fail（绿灯 = 先写了实现）→ 回退 status 到 tdd_plan 的前置状态，nextAction 指回 tdd_plan retry
-  //   - 红灯 pass 或无 redCheck case → 正常流转到 tdd_inited
+  //   - 红灯 pass 或无 redCheck case → 正常流转到 pre_dev_verified
   // M2: 回退目标按 taskShape 路由——full-tdd 走 plan_review，回退到 plan_reviewed；
   // delete-only/doc-only 跳过 plan_review 阶段（stages 不含），前置状态是 planned，
   // 回退到 planned（plan_reviewed 是它们从未进入过的状态）。tdd_plan 的 expectedStatuses
@@ -885,7 +885,7 @@ export function handleTddPlan(
     : "planned";
   const redWarnings = runRedLightVerification(updated);
   if (redWarnings.length > 0) {
-    // 红灯校验失败——回退 status（tdd_inited → 前置状态），gatePassed 置 false。
+    // 红灯校验失败——回退 status（pre_dev_verified → 前置状态），gatePassed 置 false。
     deps.store.transaction(() => {
       deps.store.updateStatus(params.topicId, rollbackStatus);
       deps.store.updateGatePassed(params.topicId, "tdd_plan", false);
@@ -1109,8 +1109,8 @@ export interface TestCaseResult {
  *
  * 砍掉旧版 mid 分支（信声明 + GitValidator 追溯 dev commit）——lite-only，丢 claimedStatus（D-008）。
  *
- * progressive 语义：computeNextStatus("test", tested) = tested（原地停留），
- * test 在 tested 状态下多次调用不报 illegal_transition，剩余 case 继续判定。
+ * progressive 语义：computeNextStatus("test", post_dev_verified) = post_dev_verified（原地停留），
+ * test 在 post_dev_verified 状态下多次调用不报 illegal_transition，剩余 case 继续判定。
  *
  * 失败路径：
  *   - caseId 不存在 → throw（propagate 给 CLI）
@@ -1365,7 +1365,7 @@ function handleTestForStrategyVerify(
 // ── handleTestFix ───────────────────────────────────────────
 
 /**
- * handleTestFix — test loop 内的修复动作（progressive，status 留在 tested）。
+ * handleTestFix — test loop 内的修复动作（progressive，status 留在 post_dev_verified）。
  *
  * 数据流：
  *   校验 fixes[].caseId 存在（不存在的 caseId 抛 CwError）
@@ -2099,7 +2099,7 @@ function validateRetrospectData(
  *
  * gate pass → status=retrospected + 记录 retrospectPath/retrospectAt artifacts +
  *   校验 retrospectData 后存入 topic.retrospectData（derived 由 cw 自动算覆盖）。
- * gate fail → status 不变（仍 tested）+ nextAction 指回 retry。
+ * gate fail → status 不变（仍 post_dev_verified）+ nextAction 指回 retry。
  *
  * retrospectData 必选——未传或校验失败 = gate fail（阻断 status 流转）。
  */

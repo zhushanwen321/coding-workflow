@@ -94,7 +94,7 @@ const REPLAN_GUIDANCE =
   `约束（append-only）：已 committed 的 wave 和已 passed 的 testCase 不可删改。` +
   `replan 后 status 回退到 planned，需重走 tdd_plan → dev → review → test。`;
 
-/** 构造 replan alternative 项（status∈{planned, tdd_inited, developed, reviewed, tested} 的 nextAction 用）。 */
+/** 构造 replan alternative 项（status∈{planned, pre_dev_verified, developed, reviewed, post_dev_verified} 的 nextAction 用）。 */
 function replanAlternative(): NextActionAlternative {
   return { action: "replan", guidance: REPLAN_GUIDANCE };
 }
@@ -188,10 +188,10 @@ export interface TransitionRule {
 /**
  * 8 个 action 的转换规则（lite 单轨，含 tdd_plan）。
  *
- * 线性序列：create → plan(planned) → tdd_plan(tdd_inited) → dev(developed)
- *   → review(reviewed) → test(tested) → retrospect(retrospected) → closeout(closed)。
+ * 线性序列：create → plan(planned) → tdd_plan(pre_dev_verified) → dev(developed)
+ *   → review(reviewed) → test(post_dev_verified) → retrospect(retrospected) → closeout(closed)。
  *
- * replan 允许在 planned/tdd_inited/developed/reviewed/tested 调用（覆盖 dev 中途追加场景），
+ * replan 允许在 planned/pre_dev_verified/developed/reviewed/post_dev_verified 调用（覆盖 dev 中途追加场景），
  * nextStatus 回退到 planned。progressive=true 使其在非 planned 状态调用时
  * 仍回退 planned（replan 后必须重新走 dev）——这是「回退」而非「原地停留」，
  * 所以 progressive 标记在这里不触发原地停留（current 不会 === nextStatus）。
@@ -249,11 +249,11 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
   },
   // 步骤 4 裁剪：含 planned——delete-only/doc-only 跳过 plan_review 时，
   //   plan 后直接 tdd_plan 合法（stages 不含 plan_review）。full-tdd 仍走 plan_review→tdd_plan。
-  tdd_plan: { expectedStatuses: ["planned", "plan_reviewed", "tdd_inited"], nextStatus: "tdd_inited" },
+  tdd_plan: { expectedStatuses: ["planned", "plan_reviewed", "pre_dev_verified"], nextStatus: "pre_dev_verified" },
   dev: {
-    // dev 只从 tdd_inited/developed 进入。
+    // dev 只从 pre_dev_verified/developed 进入。
     // test/review 失败走 test_fix/review_fix loop（不回 dev——所有 Wave 已 committed，dev 没有新任务）。
-    expectedStatuses: ["tdd_inited", "developed"],
+    expectedStatuses: ["pre_dev_verified", "developed"],
     nextStatus: "developed",
     progressive: true,
   },
@@ -270,20 +270,20 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
     progressive: true,
   },
   test: {
-    expectedStatuses: ["reviewed", "tested"],
-    nextStatus: "tested",
+    expectedStatuses: ["reviewed", "post_dev_verified"],
+    nextStatus: "post_dev_verified",
     progressive: true,
   },
   test_fix: {
-    // test_fix：tested 状态下修代码后的修复动作（progressive，留在 tested）。审计日志由 store 追加。
-    expectedStatuses: ["tested"],
-    nextStatus: "tested",
+    // test_fix：post_dev_verified 状态下修代码后的修复动作（progressive，留在 post_dev_verified）。审计日志由 store 追加。
+    expectedStatuses: ["post_dev_verified"],
+    nextStatus: "post_dev_verified",
     progressive: true,
   },
-  retrospect: { expectedStatuses: ["tested"], nextStatus: "retrospected" },
+  retrospect: { expectedStatuses: ["post_dev_verified"], nextStatus: "retrospected" },
   closeout: { expectedStatuses: ["retrospected"], nextStatus: "closed" },
   replan: {
-    expectedStatuses: ["planned", "plan_reviewed", "tdd_inited", "developed", "reviewed", "tested"],
+    expectedStatuses: ["planned", "plan_reviewed", "pre_dev_verified", "developed", "reviewed", "post_dev_verified"],
     nextStatus: "planned",
   },
   // FR-3: abort 从所有非终态 status 合法，流转到 aborted 终态。
@@ -294,10 +294,10 @@ export const TRANSITIONS: Record<Action, TransitionRule> = {
       "spec_reviewed",
       "planned",
       "plan_reviewed",
-      "tdd_inited",
+      "pre_dev_verified",
       "developed",
       "reviewed",
-      "tested",
+      "post_dev_verified",
       "retrospected",
     ],
     nextStatus: "aborted",
@@ -372,7 +372,7 @@ export function guard(action: Action, topic: Topic | null): GuardVerdict {
  *
  * 注意：replan 标 progressive，nextStatus=planned，expectedStatuses 含 planned 自身。
  * 当 current=planned（如 plan 刚过、tdd_plan 之前调 replan）时 current===nextStatus，
- * progressive 命中原地停留（仍 planned）；其余 4 个 status（tdd_inited/developed/reviewed/tested）
+ * progressive 命中原地停留（仍 planned）；其余 4 个 status（pre_dev_verified/developed/reviewed/post_dev_verified）
  * 调用时回退到 planned。两种情况结果一致——progressive 标记对 replan 无实际效果，
  * 保留标记仅为表的一致性（replan 可多次调用）。
  */
@@ -797,7 +797,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // tdd_plan gate 通过 → 进入 dev 阶段（写实现，让测试转绿）。
       return {
         action: "dev",
-        guidance: `tdd_plan gate 通过（status=tdd_inited），testCases 已写入。下一步：按 Wave 写实现让测试转绿，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
+        guidance: `tdd_plan gate 通过（status=pre_dev_verified），testCases 已写入。下一步：按 Wave 写实现让测试转绿，commit 后调 cw(dev)。\n\n${EXECUTE_PROMPT}`,
         testCases: testCaseProgress(topic),
         alternatives: [replanAlternative()],
       };
@@ -967,7 +967,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       };
     }
     case "test_fix": {
-      // test_fix：test loop 内的修复动作（status 留在 tested），审计日志由 store.appendTestFix 追加。
+      // test_fix：test loop 内的修复动作（status 留在 post_dev_verified），审计日志由 store.appendTestFix 追加。
       // 修完代码后应重新跑 test。
       // testTurn 在 handleTestFix 里已 inc，达上限时 test 分支会强制进 retrospect。
       const turn = topic.testTurn;

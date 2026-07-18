@@ -3,7 +3,7 @@
  *
  * 覆盖 AC：
  *   - AC-12: delete-only shape 从 confirm_clarify 后跳过 spec_review/plan_review，
- *     status 序列 clarify_confirmed → planned → tdd_inited（不经过 spec_reviewed/plan_reviewed）
+ *     status 序列 clarify_confirmed → planned → pre_dev_verified（不经过 spec_reviewed/plan_reviewed）
  *   - AC-13: doc-only shape 同上
  *
  * 与 e2e-delete-only.test.ts 的区别：
@@ -163,7 +163,7 @@ describe("AC-12: delete-only shape 裁剪路径", () => {
     expect(planResult.status).toBe("planned");
 
     // 从 status 流转看，delete-only 的路径是：
-    // created → clarify_confirmed → planned → tdd_inited
+    // created → clarify_confirmed → planned → pre_dev_verified
     // 不经过 spec_reviewed / plan_reviewed
     // gateHistory 是 _cw.json 顶层独立数组（通过 topicId 关联），不在 topic 对象内。
     const dbPath = resolveDbPath(e.workspaceDir, e.cwHome);

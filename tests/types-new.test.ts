@@ -1,10 +1,10 @@
 /**
- * W1 测试 — 新增类型定义验证（Priority, TestRunner, tdd_inited, tdd_plan）。
+ * W1 测试 — 新增类型定义验证（Priority, TestRunner, pre_dev_verified, tdd_plan）。
  *
  * 这些是纯类型层面的变更，测试验证：
  * - Priority 联合类型接受 P0/P1/P2，拒绝其他值
  * - TestRunnerConfig 各 mode 的结构正确性
- * - Status 包含 tdd_inited
+ * - Status 包含 pre_dev_verified
  * - Action 包含 tdd_plan
  * - Wave/TestCase/TestCaseSeed 包含 priority 字段
  * - TestCase/TestCaseSeed 包含 redCheck 字段
@@ -38,10 +38,10 @@ describe("W1: 新增类型定义", () => {
     });
   });
 
-  describe("Status 包含 tdd_inited", () => {
-    it("tdd_inited 是合法 Status 值", () => {
-      const s: Status = "tdd_inited";
-      expect(s).toBe("tdd_inited");
+  describe("Status 包含 pre_dev_verified", () => {
+    it("pre_dev_verified 是合法 Status 值", () => {
+      const s: Status = "pre_dev_verified";
+      expect(s).toBe("pre_dev_verified");
     });
   });
 

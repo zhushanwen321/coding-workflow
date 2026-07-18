@@ -78,11 +78,11 @@ function testFix(
 // ── E7a: test 失败 → nextAction=test_fix ────────────────────
 
 describe("E7a: test 失败 → nextAction=test_fix, testTurn 仍 0", () => {
-  it("actual 不匹配 → tested, nextAction=test_fix", () => {
+  it("actual 不匹配 → post_dev_verified, nextAction=test_fix", () => {
     const { topicId } = setupToReviewed(e, "e7a-fail");
     const result = testFail(topicId);
 
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
     expect((result.nextAction as Record<string, unknown>).action).toBe("test_fix");
     // testTurn 不在 ActionResult 直接暴露，但 test_fix 后会通过 guidance 体现
   });
@@ -99,7 +99,7 @@ describe("E7b: test_fix 修复 → nextAction=test", () => {
       { caseId: "E1", commitHash: "fix123", resolution: "修正了输出" },
     ]);
     expect((result.nextAction as Record<string, unknown>).action).toBe("test");
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
   });
 });
 

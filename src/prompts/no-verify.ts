@@ -20,7 +20,7 @@ export const NO_VERIFY_PROMPT = `
 
 ## 工作流
 
-直接进 dev 阶段写文档即可。tdd_plan 命令仍需调一次（推进状态机到 tdd_inited），
+直接进 dev 阶段写文档即可。tdd_plan 命令仍需调一次（推进状态机到 pre_dev_verified），
 但提交任意 payload 都会 pass（review-only 策略的 preDevCheck 恒 pass）：
 
     echo '{}' | cw tdd_plan --topicId <topicId>
@@ -47,5 +47,5 @@ export const NO_VERIFY_PROMPT = `
 
 ## 完成标志
 
-cw(tdd_plan) gate 通过（status=tdd_inited）后，进入 dev 阶段写文档。
+cw(tdd_plan) gate 通过（status=pre_dev_verified）后，进入 dev 阶段写文档。
 `.trim();
