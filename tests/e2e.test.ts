@@ -78,7 +78,7 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     const planJson = JSON.stringify({
       format: "lite",
       objective: "E2E 全链测试",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "实现功能" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "实现功能" }], dependsOn: [] }],
     });
     const planResult = parseStdout(
       runCli(["plan", "--topicId", topicId], e, { input: planJson }),
@@ -219,8 +219,8 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
       format: "lite",
       objective: "渐进式测试",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "wave1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "wave2" }], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "wave1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "wave2" }], dependsOn: ["W1"] },
       ],
     });
     runCli(["plan", "--topicId", topicId], e, { input: planJson });

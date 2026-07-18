@@ -44,7 +44,7 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     createdAt: "2026-01-01T00:00:00.000Z",
     status: "closed",
     waves: [
-      { id: "W1", dependsOn: [], committed: "abc", changes: [{ file: "src/a.ts", description: "c" }] },
+      { id: "W1", dependsOn: [], committed: "abc", changes: [{ file: "src/a.ts", action: "create", description: "c" }] },
     ],
     testCases: [],
     gateHistory: [],

@@ -81,7 +81,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
     const devPlan = {
       format: "lite",
       objective: "test obj",
-      waves: [{ id: "W1", changes: [{file: "src/app.ts", description: "change1"}], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{file: "src/app.ts", action: "create", description: "change1"}], dependsOn: [] }],
     };
     const result = planCheck(devPlan);
     expect(result.result).toBe("pass");
@@ -107,7 +107,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
   });
 
   it("format 非 lite → gate fail（parseDevPlan 抛错被捕获）", () => {
-    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: [{file: "src/a.ts", description: "a"}], dependsOn: [] }] };
+    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: [{file: "src/a.ts", action: "create", description: "a"}], dependsOn: [] }] };
     const result = planCheck(devPlan);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("format");
@@ -170,7 +170,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
   it("waves 数量超过阈值 → pass + warning 含 waves 数量", () => {
     const waves = Array.from({ length: 11 }, (_, i) => ({
       id: `W${i + 1}`,
-      changes: [{file: `src/w${i + 1}.ts`, description: `change ${i + 1}`}],
+      changes: [{file: `src/w${i + 1}.ts`, action: "create", description: `change ${i + 1}`}],
       dependsOn: i > 0 ? [`W${i}`] : [],
     }));
     const devPlan = { format: "lite", objective: "big task", waves };
@@ -181,7 +181,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
   });
 
   it("涉及文件数超过阈值 → pass + warning 含文件数", () => {
-    const changes = Array.from({ length: 16 }, (_, i) => ({file: `src/file${i + 1}.ts`, description: "改文件"}));
+    const changes = Array.from({ length: 16 }, (_, i) => ({file: `src/file${i + 1}.ts`, action: "create", description: "改文件"}));
     const devPlan = {
       format: "lite",
       objective: "many files",
@@ -197,7 +197,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
     const devPlan = {
       format: "lite",
       objective: "small task",
-      waves: [{ id: "W1", changes: [{file: "src/a.ts", description: "修改"}], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{file: "src/a.ts", action: "create", description: "修改"}], dependsOn: [] }],
     };
     const result = planCheck(devPlan);
     expect(result.result).toBe("pass");
@@ -629,7 +629,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -668,7 +668,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -722,7 +722,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -762,7 +762,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -859,7 +859,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/store.ts", description: "实现数据持久化"}],
+          changes: [{file: "src/store.ts", action: "modify", description: "实现数据持久化"}],
         },
       ],
       testCases: [],
@@ -896,7 +896,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: null,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
@@ -933,7 +933,7 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],

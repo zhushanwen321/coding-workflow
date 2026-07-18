@@ -50,7 +50,7 @@ function planWithWaves(waveIds: string[]): string {
     objective: "replan test",
     waves: waveIds.map((id, i) => ({
       id,
-      changes: [{ file: `src/file${i}.ts`, description: `change for ${id}` }],
+      changes: [{ file: `src/file${i}.ts`, action: "create", description: `change for ${id}` }],
       dependsOn: i === 0 ? [] : [waveIds[i - 1]!],
     })),
   });

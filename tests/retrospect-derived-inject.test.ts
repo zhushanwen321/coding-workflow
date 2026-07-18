@@ -72,7 +72,7 @@ function makeCommittedWave(id: string): Wave {
     id,
     dependsOn: [],
     committed: "hash" + id,
-    changes: [{ file: `src/${id}.ts`, description: "change" }],
+    changes: [{ file: `src/${id}.ts`, action: "create", description: "change" }],
   };
 }
 

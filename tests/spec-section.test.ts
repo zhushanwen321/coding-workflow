@@ -113,7 +113,7 @@ describe("U4: checkFrCoverage", () => {
       format: "lite" as const,
       objective: "test",
       waves: [
-        { id: "W1", changes: [{ file: "a.ts", description: "实现 FR-1" }], dependsOn: [] },
+        { id: "W1", changes: [{ file: "a.ts", action: "create" as const, description: "实现 FR-1" }], dependsOn: [] },
       ],
     };
     const warning = checkFrCoverage(parsed, specSections);
@@ -261,7 +261,7 @@ describe("E2: dispatch plan FR 覆盖 warning", () => {
           waves: [
             {
               id: "W1",
-              changes: [{ file: "src/a.ts", description: "实现 FR-1 功能A" }],
+              changes: [{ file: "src/a.ts", action: "create", description: "实现 FR-1 功能A" }],
               dependsOn: [],
             },
           ],

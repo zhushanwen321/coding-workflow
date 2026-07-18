@@ -79,7 +79,7 @@ describe("computeStats — 复杂度分桶", () => {
           id: "W1",
           dependsOn: [],
           committed: null,
-          changes: [{file: "src/foo.ts", description: "修改"}],
+          changes: [{file: "src/foo.ts", action: "create", description: "修改"}],
         },
       ],
     });
@@ -96,19 +96,19 @@ describe("computeStats — 复杂度分桶", () => {
           id: "W1",
           dependsOn: [],
           committed: null,
-          changes: [{file: "src/a.ts", description: "修改"}, {file: "src/b.ts", description: "修改"}],
+          changes: [{file: "src/a.ts", action: "create", description: "修改"}, {file: "src/b.ts", action: "create", description: "修改"}],
         },
         {
           id: "W2",
           dependsOn: ["W1"],
           committed: null,
-          changes: [{file: "src/c.ts", description: "修改"}],
+          changes: [{file: "src/c.ts", action: "create", description: "修改"}],
         },
         {
           id: "W3",
           dependsOn: ["W1"],
           committed: null,
-          changes: [{file: "src/d.ts", description: "修改"}, {file: "src/e.ts", description: "修改"}],
+          changes: [{file: "src/d.ts", action: "create", description: "修改"}, {file: "src/e.ts", action: "create", description: "修改"}],
         },
       ],
     });
@@ -123,13 +123,13 @@ describe("computeStats — 复杂度分桶", () => {
       id: `W${i + 1}`,
       dependsOn: [],
       committed: null,
-      changes: [{file: `src/file${i}.ts`, description: "修改"}],
+      changes: [{file: `src/file${i}.ts`, action: "create" as const, description: "修改"}],
     }));
     // 额外加几个文件让总数 > 5
     waves[0]!.changes.push(
-      {file: "src/extra1.ts", description: "修改"},
-      {file: "src/extra2.ts", description: "修改"},
-      {file: "src/extra3.ts", description: "修改"},
+      {file: "src/extra1.ts", action: "create", description: "修改"},
+      {file: "src/extra2.ts", action: "create", description: "修改"},
+      {file: "src/extra3.ts", action: "create", description: "修改"},
     );
     const stats = computeStats(makeTopic({ waves }));
     expect(stats.complexity.level).toBe("medium");
@@ -140,7 +140,7 @@ describe("computeStats — 复杂度分桶", () => {
       id: `W${i + 1}`,
       dependsOn: [],
       committed: null,
-      changes: [{file: `src/f${i}.ts`, description: "修改"}],
+      changes: [{file: `src/f${i}.ts`, action: "create" as const, description: "修改"}],
     }));
     const stats = computeStats(makeTopic({ waves }));
     expect(stats.complexity.level).toBe("complex");
@@ -150,7 +150,7 @@ describe("computeStats — 复杂度分桶", () => {
   it(`complex: files >= ${SCOPE_WARN_FILES}`, () => {
     const changes = Array.from(
       { length: SCOPE_WARN_FILES },
-      (_, i) => ({file: `src/f${i}.ts`, description: "修改"}),
+      (_, i) => ({file: `src/f${i}.ts`, action: "create" as const, description: "修改"}),
     );
     const topic = makeTopic({
       waves: [
@@ -447,7 +447,7 @@ describe("computeStatsAll — 跨 topic 聚合", () => {
       id,
       dependsOn: [],
       committed: "abc" + id,
-      changes: [{file: `src/${file}.ts`, description: "修改"}],
+      changes: [{file: `src/${file}.ts`, action: "create", description: "修改"}],
     };
   }
 
@@ -522,7 +522,7 @@ describe("computeStatsAll — 跨 topic 聚合", () => {
       id: `W${i}`,
       dependsOn: [],
       committed: "c" + i,
-      changes: [{file: `src/cf${i}.ts`, description: "修改"}],
+      changes: [{file: `src/cf${i}.ts`, action: "create" as const, description: "修改"}],
     }));
     const complexTopic = makeTopic({
       topicId: "cx",

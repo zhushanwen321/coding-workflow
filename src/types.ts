@@ -187,11 +187,14 @@ export type Priority = "P0" | "P1" | "P2";
 /**
  * WaveChange — 结构化的文件变更声明。
  *
- * file 是文件路径（结构化，无歧义），description 是该文件的改动说明（自然语言）。
+ * file 是文件路径（结构化，无歧义），action 声明对该文件的动作
+ * （create 新建 / modify 修改 / delete 删除，供 planCheck 文件存在性校验判定），
+ * description 是该文件的改动说明（自然语言）。
  * 取代旧版的 changes: string[]——不再用正则从自然语言提取路径。
  */
 export interface WaveChange {
   file: string;
+  action: "create" | "modify" | "delete";
   description: string;
 }
 

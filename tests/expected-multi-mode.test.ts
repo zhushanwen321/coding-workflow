@@ -101,7 +101,7 @@ function passTddPlanGateWith(
 const validPlanJson = {
   format: "lite",
   objective: "obj",
-  waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
+  waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] }],
 };
 
 beforeEach(() => {

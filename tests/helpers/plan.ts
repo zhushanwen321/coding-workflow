@@ -18,7 +18,7 @@ export function makeValidPlanJson(
     format: "lite",
     objective: "test objective",
     waves: [
-      { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+      { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
     ],
     testCases: [
       {
@@ -55,7 +55,7 @@ export function makeValidDevPlanJson(
     format: "lite",
     objective: "test objective",
     waves: [
-      { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+      { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
     ],
     ...overrides,
   };

@@ -331,8 +331,8 @@ describe("dispatch dev（U20-U21）", () => {
     // plan 含 W1 + W2（无依赖）
     const twoWavePlan = makeValidPlanJson({
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: [] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "change2" }], dependsOn: [] },
       ],
     });
     dispatch({ action: "plan", topicId, planJson: twoWavePlan }, deps);
@@ -469,7 +469,7 @@ describe("dispatch test（U22-U24c）", () => {
     const planJson = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "c" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
@@ -534,7 +534,7 @@ describe("dispatch test（U22-U24c）", () => {
     const planJson = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "c" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
@@ -714,8 +714,8 @@ describe("dispatch replan（U25-U29）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
@@ -766,7 +766,7 @@ describe("dispatch replan（U25-U29）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "modified-change" }], dependsOn: [] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "modified-change" }], dependsOn: [] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
@@ -804,7 +804,7 @@ describe("dispatch replan（U25-U29）", () => {
     const newPlan = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] }],
       testCases: [
         { id: "E2", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "mock-output" }, executor: "agent", requiresScreenshot: false },
         { id: "E3", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
@@ -840,7 +840,7 @@ describe("dispatch replan（U25-U29）", () => {
     const newPlan = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] }],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "modified-expected" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-output" }, executor: "agent", requiresScreenshot: false },
@@ -870,7 +870,7 @@ describe("dispatch replan（U25-U29）", () => {
     const newPlan = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] }],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "corrected-expected" }, executor: "agent", requiresScreenshot: false },
         { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "corrected-real" }, executor: "agent", requiresScreenshot: false },
@@ -1550,8 +1550,8 @@ describe("dispatch replan --plan 重置 planReviewLoop（SF-1）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },
@@ -2182,8 +2182,8 @@ describe("dispatch replan reset loop（W5e：resetReviewLoop/resetTestLoop）", 
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "change2" }], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "change2" }], dependsOn: ["W1"] },
       ],
       testCases: [
         { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "expected-output" }, executor: "agent", requiresScreenshot: false },

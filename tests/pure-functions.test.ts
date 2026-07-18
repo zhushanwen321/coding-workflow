@@ -340,7 +340,7 @@ describe("assertSafeSize (via parseLitePlan)", () => {
     const plan = {
       format: "lite",
       objective: "test",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: bigText }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: bigText }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
@@ -360,7 +360,7 @@ describe("assertSafeSize (via parseLitePlan)", () => {
     const plan = {
       format: "lite",
       objective: "test",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "改 src/app.ts" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "改 src/app.ts" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",

@@ -139,7 +139,7 @@ describe("setWaveCommitted 幂等更新（U15）", () => {
     const store = makeStore();
     store.insertTopic(makeTopic({ topicId: "cw-wave-test" }));
     store.insertWaves("cw-wave-test", [
-      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", description: "change1" }] },
+      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", action: "create", description: "change1" }] },
     ]);
 
     // 第一次提交
@@ -161,9 +161,9 @@ describe("Wave priority 持久化", () => {
     const store = makeStore();
     store.insertTopic(makeTopic({ topicId: "cw-wave-prio" }));
     store.insertWaves("cw-wave-prio", [
-      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", description: "c1" }], priority: "P0" },
-      { id: "W2", dependsOn: ["W1"], changes: [{ file: "src/app.ts", description: "c2" }], priority: "P2" },
-      { id: "W3", dependsOn: [], changes: [{ file: "src/app.ts", description: "c3" }] }, // 不设 priority
+      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", action: "create", description: "c1" }], priority: "P0" },
+      { id: "W2", dependsOn: ["W1"], changes: [{ file: "src/app.ts", action: "create", description: "c2" }], priority: "P2" },
+      { id: "W3", dependsOn: [], changes: [{ file: "src/app.ts", action: "create", description: "c3" }] }, // 不设 priority
     ]);
     const topic = store.loadTopic("cw-wave-prio");
     expect(topic!.waves[0]!.priority).toBe("P0");

@@ -47,6 +47,11 @@ export const DevPlanSchema = Type.Object({
       changes: Type.Array(
         Type.Object({
           file: Type.String(),
+          action: Type.Union([
+            Type.Literal("create"),
+            Type.Literal("modify"),
+            Type.Literal("delete"),
+          ]),
           description: Type.String(),
         }),
       ),
@@ -145,6 +150,11 @@ export const LegacyPlanSchema = Type.Object({
       changes: Type.Array(
         Type.Object({
           file: Type.String(),
+          action: Type.Union([
+            Type.Literal("create"),
+            Type.Literal("modify"),
+            Type.Literal("delete"),
+          ]),
           description: Type.String(),
         }),
       ),

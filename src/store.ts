@@ -84,9 +84,13 @@ const LEGACY_PATH_RE =
 /**
  * migrateChanges — 旧格式 changes（string[]）迁移为 WaveChange[]。
  *
- * 新格式（{file, description}[]）原样返回。
- * 旧格式（string[]）每条转成 {file: 尽量提取的路径, description: 原文本}。
+ * 新格式（{file, action, description}[]）原样返回。
+ * 旧格式（string[]）每条转成 {file: 尽量提取的路径, action: 'modify', description: 原文本}。
  * 提取不出路径时 file 为空字符串（不阻断，复杂度分桶会忽略空 file）。
+ *
+ * W1 起 WaveChange.action 必填；旧 string[] 迁移时补默认 'modify'
+ * （与 W3 AC-7 契约一致——committed wave 缺 action 经 migrate 补 modify，
+ * 保持 append-only 校验对称）。
  */
 function migrateChanges(
   changes: WaveChange[] | string[] | undefined,
@@ -101,7 +105,7 @@ function migrateChanges(
     LEGACY_PATH_RE.lastIndex = 0;
     const m = s.match(LEGACY_PATH_RE);
     const file = m?.[1] ?? m?.[2] ?? "";
-    return { file, description: s };
+    return { file, action: "modify", description: s };
   });
 }
 
