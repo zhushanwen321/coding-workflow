@@ -48,6 +48,11 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specHistory: [],
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],
@@ -883,12 +888,12 @@ describe("appendReviewIssues", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "i1" },
+        { severity: "must-fix", description: "i1", dimension: "error-handling" },
       ]),
     );
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 2, [
-        { severity: "should-fix", description: "i2" },
+        { severity: "should-fix", description: "i2", dimension: "error-handling" },
       ]),
     );
 
@@ -903,7 +908,7 @@ describe("appendReviewIssues", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "persist check" },
+        { severity: "must-fix", description: "persist check", dimension: "error-handling" },
       ]),
     );
 
@@ -920,7 +925,7 @@ describe("fixReviewIssue", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "bug" },
+        { severity: "must-fix", description: "bug", dimension: "error-handling" },
       ]),
     );
 
@@ -946,7 +951,7 @@ describe("fixReviewIssue", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "bug" },
+        { severity: "must-fix", description: "bug", dimension: "error-handling" },
       ]),
     );
 
@@ -1069,8 +1074,8 @@ describe("resetReviewLoop / resetTestLoop", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "x" },
-        { severity: "nit", description: "y" },
+        { severity: "must-fix", description: "x", dimension: "error-handling" },
+        { severity: "nit", description: "y", dimension: "design-consistency" },
       ]),
     );
     store.transaction(() => store.incReviewTurn("cw-test-topic"));
@@ -1113,13 +1118,13 @@ describe("resetReviewLoop / resetTestLoop", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "first" },
+        { severity: "must-fix", description: "first", dimension: "error-handling" },
       ]),
     );
     store.transaction(() => store.resetReviewLoop("cw-test-topic"));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "nit", description: "after reset" },
+        { severity: "nit", description: "after reset", dimension: "design-consistency" },
       ]),
     );
 

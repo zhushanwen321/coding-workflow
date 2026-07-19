@@ -39,6 +39,11 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     // review/test-fix 机制的空默认值（与 review-fix wave 并行开发的 types 字段）。
     reviewIssues: [],
     reviewTurn: 0,
+    specHistory: [],
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],

@@ -99,7 +99,9 @@ describe("TddVerificationStrategy.preDevCheck 与 tddPlanCheck 等价性（AC-5�
     expect(fromStrategy.parsed).toBeDefined();
     expect(fromPure.parsed).toBeDefined();
     // parsed.testCases 长度一致
-    expect(fromStrategy.parsed!.testCases).toHaveLength(
+    // fromStrategy.parsed 类型是 unknown（GateResult.parsed），断言成 ParsedTestJson 形态访问 testCases。
+    const strategyParsed = fromStrategy.parsed as { testCases: unknown[] } | undefined;
+    expect(strategyParsed!.testCases).toHaveLength(
       fromPure.parsed!.testCases.length,
     );
   });

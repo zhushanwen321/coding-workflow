@@ -287,7 +287,6 @@ describe("AC-6 边界：dev 未删干净 → test gate fail", () => {
 
 /** 在 workspace 删除 targetFile 并 commit，返回 commit hash。 */
 function commitFileDeletion(env: E2eEnv, targetFile: string): string {
-  const targetAbs = join(env.workspaceDir, targetFile);
   // git rm 要求文件已被 git 追踪。测试创建的 targetFile 在初始 commit 之后写入、
   // 尚未 git add，git rm 会失败（untracked）。先 git add + commit 让文件进版本库，
   // 再 git rm 删除并 commit，模拟「先有文件 → dev 阶段删除」的真实场景。

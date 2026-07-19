@@ -38,6 +38,7 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specHistory: [],
     specReviewIssues: [],
     specReviewTurn: 0,
     planReviewIssues: [],
@@ -89,7 +90,7 @@ describe("AC-3/AC-4: delete-only shape guidance 分流", () => {
       taskShape: "delete-only",
       status: "clarify_confirmed",
       gateHistory: [
-        { phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
       ],
     });
     const na = buildNextAction("confirm_clarify", topic);
@@ -102,7 +103,7 @@ describe("AC-3/AC-4: delete-only shape guidance 分流", () => {
       taskShape: "delete-only",
       status: "planned",
       gateHistory: [
-        { phase: "plan", action: "plan", gate: "dev-plan-schema", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "plan", action: "plan", gate: "dev-plan-schema", result: "pass", progressive: false },
       ],
       waves: [{ id: "W1", changes: [], dependsOn: [], committed: null }],
     });
@@ -120,7 +121,7 @@ describe("AC-5: doc-only shape guidance 分流", () => {
       taskShape: "doc-only",
       status: "clarify_confirmed",
       gateHistory: [
-        { phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
       ],
     });
     const na = buildNextAction("confirm_clarify", topic);
@@ -132,7 +133,7 @@ describe("AC-5: doc-only shape guidance 分流", () => {
       taskShape: "doc-only",
       status: "planned",
       gateHistory: [
-        { phase: "plan", action: "plan", gate: "dev-plan-schema", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "plan", action: "plan", gate: "dev-plan-schema", result: "pass", progressive: false },
       ],
       waves: [{ id: "W1", changes: [], dependsOn: [], committed: null }],
     });
@@ -149,7 +150,7 @@ describe("AC-6: full-tdd shape guidance 路径不变（回归）", () => {
       taskShape: "full-tdd",
       status: "clarify_confirmed",
       gateHistory: [
-        { phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
       ],
     });
     const na = buildNextAction("confirm_clarify", topic);
@@ -161,7 +162,7 @@ describe("AC-6: full-tdd shape guidance 路径不变（回归）", () => {
       taskShape: "full-tdd",
       status: "planned",
       gateHistory: [
-        { phase: "plan", action: "plan", gate: "dev-plan-schema", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "plan", action: "plan", gate: "dev-plan-schema", result: "pass", progressive: false },
       ],
       waves: [{ id: "W1", changes: [], dependsOn: [], committed: null }],
     });
@@ -174,7 +175,7 @@ describe("AC-6: full-tdd shape guidance 路径不变（回归）", () => {
       // taskShape 不设——模拟存量 topic
       status: "clarify_confirmed",
       gateHistory: [
-        { phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
+        { id: 0, ts: "2026-01-01T00:00:00.000Z", phase: "confirm_clarify", action: "confirm_clarify", gate: "confirm-gate", result: "pass", progressive: false },
       ],
     });
     const na = buildNextAction("confirm_clarify", topic);

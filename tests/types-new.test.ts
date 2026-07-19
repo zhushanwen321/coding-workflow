@@ -169,6 +169,7 @@ describe("W1+W2: issue tracking 类型", () => {
         id: "R1",
         severity: "must-fix",
         description: "缺少错误处理",
+        dimension: "error-handling",
         status: "open",
         foundAtTurn: 1,
       };
@@ -183,11 +184,12 @@ describe("W1+W2: issue tracking 类型", () => {
         id: "R2",
         severity: "should-fix",
         description: "命名不清晰",
-        file: "src/types.ts:42",
+        dimension: "design-consistency",
+        ref: "src/types.ts:42",
         status: "open",
         foundAtTurn: 2,
       };
-      expect(issue.file).toBe("src/types.ts:42");
+      expect(issue.ref).toBe("src/types.ts:42");
     });
 
     it("fixed 态：含 fix 证据（commitHash + resolution + fixedAtTurn）", () => {
@@ -195,6 +197,7 @@ describe("W1+W2: issue tracking 类型", () => {
         id: "R1",
         severity: "must-fix",
         description: "缺少错误处理",
+        dimension: "error-handling",
         status: "fixed",
         foundAtTurn: 1,
         fix: {
@@ -251,11 +254,17 @@ describe("W1+W2: issue tracking 类型", () => {
             id: "R1",
             severity: "must-fix",
             description: "bug",
+            dimension: "error-handling",
             status: "open",
             foundAtTurn: 1,
           },
         ],
         reviewTurn: 1,
+        specHistory: [],
+        specReviewIssues: [],
+        specReviewTurn: 0,
+        planReviewIssues: [],
+        planReviewTurn: 0,
         testFixLog: [
           {
             caseId: "E1",
@@ -279,7 +288,8 @@ describe("W1+W2: issue tracking 类型", () => {
       const sub: ReviewIssueSubmission = {
         severity: "nit",
         description: "拼写错误",
-        file: "README.md:10",
+        dimension: "design-consistency",
+        ref: "README.md:10",
       };
       expect(sub.severity).toBe("nit");
       expect((sub as { id?: string }).id).toBeUndefined();

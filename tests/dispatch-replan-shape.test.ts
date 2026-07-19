@@ -23,16 +23,15 @@ import { CwStore } from "../src/store.js";
 import { GitValidator } from "../src/gate.js";
 import { setupGitRepo } from "./helpers/git.js";
 import type { ActionDeps } from "../src/types.js";
-import type { ExistenceArtifact } from "../src/types.js";
+import type { ExistenceArtifact } from "../src/shapes/types.js";
 
 let tmpDir: string;
 let dbPath: string;
-let realCommitHash: string;
 
 beforeAll(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "cw-replan-shape-"));
   dbPath = join(tmpDir, "cw.json");
-  realCommitHash = setupGitRepo(tmpDir);
+  setupGitRepo(tmpDir);
   mkdirSync(join(tmpDir, "src"), { recursive: true });
 });
 
