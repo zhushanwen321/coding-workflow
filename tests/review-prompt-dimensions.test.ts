@@ -185,7 +185,90 @@ gate fail（文件不存在/空）→ 重写后重调 cw(review)。
 
 review.md 写完 + cw(review) 提交后：
 - issues 为空 → 进 test
-- issues 非空 → 进 review_fix → 修复后复查`;
+- issues 非空 → 进 review_fix → 修复后复查
+
+## Fowler 12 smell baseline（Standards 轴补充检查清单）
+
+以上维度是按维度找 bug。另外有一套 Fowler 经典代码坏味（code smell）baseline——即使仓库没有任何文档化规范，也始终携带这套 baseline 作为 Standards 轴的兜底检查。
+
+写 review.md 时，对每条命中的 smell：标注 smell 名 + 引用 diff hunk + 给出"怎么修"建议。smell 默认 judgement call（见下方级别规则），不是硬违反。
+
+### 12 smell 清单（是什么 → 怎么修）
+
+1. **Mysterious Name**（名不达意）：变量/函数/类名不能诚实表达其作用 → 重命名；若找不到诚实的名字，说明设计本身浑浊，先改设计
+2. **Duplicated Code**（重复代码）：相同逻辑形状在多个 hunk/文件重复 → 抽取共享形状，两处调用
+3. **Feature Envy**（特性嫉妒）：一个方法更多地伸手进别人的数据而非自己的 → 把方法搬到它嫉妒的数据所在的对象上
+4. **Data Clumps**（数据泥团）：同样的几个字段/参数总是一起出行（一个待出生的类型）→ 打包成一个类型传入
+5. **Primitive Obsession**（基本类型痴迷）：用基本类型/字符串冒充领域概念（如 \`userId: string\` 而非 \`UserId\`）→ 给概念自己的小类型
+6. **Repeated Switches**（重复分支）：同一个 switch/if-cascade 在变更中多处复现 → 多态替换，或两处共享一个 map
+7. **Shotgun Surgery**（霰弹枪手术）：一个逻辑变更逼得在多文件散点修改 → 把"一起变的东西"聚到一个模块
+8. **Divergent Change**（发散性变化）：一个文件/模块因多个不相关原因被改 → 拆分到每个模块只为一个原因变
+9. **Speculative Generality**（投机性泛化）：为 spec 没有的需求加抽象/参数/hook → 删除；内联回去直到真实需求出现
+10. **Message Chains**（消息链）：长的 \`a.b().c().d()\` 导航 → 在第一个对象背后用一个方法隐藏整段走查
+11. **Middle Man**（中间人）：类/函数主要只转发调用 → 删掉，直接调真实目标
+12. **Refused Bequest**（拒绝遗产）：子类/实现者忽略或覆写大部分继承物 → 弃用继承，改用组合
+
+### smell 的严重级别规则
+
+12 smell baseline **永远是 judgement call**——默认 should-fix 或 nit 级别，不强制 must-fix。
+
+例外：当 smell 与仓库文档化规范冲突时（仓库有 CODING_STANDARDS.md / CONTRIBUTING.md / .eslintrc 等明确禁止该 smell），升为 must-fix。
+
+### 仓库标准覆盖 baseline
+
+如果项目有以下文件（审查前先检查是否存在）：
+- \`CODING_STANDARDS.md\` / \`CONTRIBUTING.md\`
+- \`AGENTS.md\` / \`CLAUDE.md\`（AI 协作规范）
+- \`NFR.md\`（工程约束）
+- \`.eslintrc*\` / \`tsconfig.json\` / \`biome.json\`（linter 配置）
+
+**优先按仓库标准审查**——仓库标准 > 12 smell baseline。找到这些文件时：
+- 仓库标准禁止的 → must-fix（硬违反）
+- 仓库标准没说但 baseline 命中的 → should-fix 或 nit（judgement call）
+- 仓库标准与 baseline 冲突时 → 按仓库标准（baseline 降级）
+
+找不到任何仓库标准文件时：12 smell baseline 作为唯一兜底，全部 judgement call。
+
+## 两轴报告约束（Standards vs Spec 独立呈现）
+
+review.md 的发现必须按两个正交轴分组呈现，**禁止跨轴 rerank 选"最严重"**——一轴的 pass 不能掩盖另一轴的 fail。
+
+### Standards 组（代码符合规范吗）
+包含：上方各"代码质量"维度的发现（类型安全 / 错误处理 / 边界条件等当前 taskShape 启用的维度）+ 12 smell baseline 发现
+
+### Spec 组（代码忠实实现 spec 吗）
+包含：对照 spec（FR/AC）的发现——"实现是否忠实于 spec"维度的 spec 对照、plan 覆盖的 spec 部分、测试覆盖的 spec 契约部分（具体取当前 taskShape 启用的相关维度）
+
+### 报告结构
+
+review.md 末尾的总结必须是**每轴各自的发现数 + 每轴各自的最严重问题**，不是跨轴挑一个"最严重"。
+
+正确示例：
+\`\`\`
+## 总结
+- Standards 组：3 个发现（最严重：X 维度的 Y 问题，must-fix）
+- Spec 组：1 个发现（最严重：FR-2 未实现，must-fix）
+\`\`\`
+
+错误示例（禁止）：
+\`\`\`
+## 总结
+- 最严重问题：FR-2 未实现（跨轴 rerank，掩盖了 Standards 组的 must-fix）
+\`\`\`
+
+### 为什么禁止 rerank
+
+Standards 全过但实现错了东西（Spec fail）是可能的；完全按 issue 做但违反项目约定（Spec pass + Standards fail）也是可能的。两轴的发现互相不可替代——rerank 会让一轴的严重问题被另一轴的表象掩盖。
+
+## Spec 轴三看（对照 spec 审查的具体检查）
+
+对照 spec（FR / AC）审查实现时（配合上面的"禁读重建法"），看三件事，每条都要**引用 spec 原文行**：
+
+1. **spec 要求但缺失或部分实现**：spec 的某条 FR/AC 在 diff 里找不到对应实现，或只实现了一部分
+2. **未要求的 scope creep**：diff 里有 spec 没要求的行为（额外功能 / 提前优化 / 演示性代码）
+3. **看似已实现但实现错误**：spec 要求 X，diff 里有 X 的代码，但 X 的行为与 spec 描述不一致
+
+每条发现的 issue.ref 必须指向 spec 的 AC ID（如 \`AC-3\` / \`FR-2.AC-1\`），形成 spec_review → tdd_plan → review 的契约闭环。`;
 
 describe("AC-8: buildReviewPrompt 全 6 维 == 原 REVIEW_PROMPT（黄金快照等价性）", () => {
   const ALL_6_DIMENSIONS: ReviewDimension[] = [
