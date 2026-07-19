@@ -279,6 +279,39 @@ function assertAcyclicDeps(items: DepNode[], label: string): void {
   }
 }
 
+// ── dependsOn 存在性校验 ─────────────────────────────────────
+
+/**
+ * assertKnownDeps — 校验每个 wave 的 dependsOn 指向的 waveId 必须在 waves 列表内。
+ *
+ * 与 assertAcyclicDeps 互补：assertAcyclicDeps 只检环（cycle detection），
+ * assertKnownDeps 只检存在性（unknown waveId）。两者都过 = dependsOn 完整校验。
+ *
+ * engine 层（actions.ts handleDev Step 1c）已兜底标 missingDeps，但 plan 阶段挡下
+ * 更早（fail fast）——agent 拼错 waveId 在 cw(plan) 阶段就报错，不必等到 cw(dev)。
+ *
+ * 只对 waves 校验（testCase 的 dependsOn 在 engine 不强制存在性，U21e 类语义
+ * 仅适用于 wave 的拓扑提交约束）。
+ *
+ * throw 模式对称 assertAcyclicDeps：抛 CwError，消息含未知 waveId 清单。
+ */
+function assertKnownDeps(items: DepNode[], label: string): void {
+  if (items.length === 0) return;
+
+  const knownIds = new Set(items.map((it) => it.id));
+  // 同一 wave 可能依赖多个未知 waveId，按 wave 聚合后逐 wave 报错。
+  for (const item of items) {
+    const deps = item.dependsOn ?? [];
+    const unknown = deps.filter((dep) => !knownIds.has(dep));
+    if (unknown.length > 0) {
+      throw new CwError(
+        `${label} ${item.id} dependsOn 指向未知 ${label} id: ${unknown.join(", ")}` +
+          `（必须在 ${label} 列表内）`,
+      );
+    }
+  }
+}
+
 // ── 共用校验 ─────────────────────────────────────────────────
 
 function assertFormat(json: unknown, label: string): void {
@@ -311,7 +344,8 @@ function assertSchema(schema: Schema, json: unknown, label: string): void {
  * parseDevPlan — 解析 dev-plan.json（只含 format + objective + waves）。
  *
  * 向后兼容：如果 json 同时含 testCases 字段（旧版 plan.json），提取到 legacyTestCases。
- * 校验链：assertSafeSize → assertFormat → assertSchema(DevPlanSchema) → extract → assertAcyclicDeps。
+ * 校验链：assertSafeSize → assertFormat → assertSchema(DevPlanSchema) → extract →
+ *         assertAcyclicDeps(waves) → assertKnownDeps(waves)。
  */
 export function parseDevPlan(json: unknown): ParsedDevPlan {
   assertSafeSize(json, "dev-plan");
@@ -319,6 +353,7 @@ export function parseDevPlan(json: unknown): ParsedDevPlan {
   assertSchema(DevPlanSchema, json, "dev-plan");
   const parsed = extractDevPlan(json);
   assertAcyclicDeps(parsed.waves, "wave");
+  assertKnownDeps(parsed.waves, "wave");
   // 旧版兼容：如果同时含 testCases（旧格式），也做环形检测。
   if (parsed.legacyTestCases) {
     assertAcyclicDeps(parsed.legacyTestCases, "testCase");

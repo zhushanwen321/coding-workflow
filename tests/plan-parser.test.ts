@@ -6,7 +6,8 @@
 
 import { describe, expect,it } from "vitest";
 
-import { parseLitePlan } from "../src/plan-parser.js";
+import { parseDevPlan, parseLitePlan } from "../src/plan-parser.js";
+import { CwError } from "../src/types.js";
 
 // ── 测试夹具：合法 plan.json ─────────────────────────────────
 
@@ -301,10 +302,86 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
   });
 });
 
+// ── dependsOn 存在性检测（assertKnownDeps）─────────────────────
+
+describe("parseDevPlan dependsOn 存在性检测（assertKnownDeps）", () => {
+  it("dependsOn 指向存在的 wave → 解析成功（正向）", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/b.ts", action: "create", description: "b" }], dependsOn: ["W1"] },
+      ],
+    };
+    expect(() => parseDevPlan(json)).not.toThrow();
+  });
+
+  it("dependsOn 指向不存在的 waveId（WGhost）→ 抛 CwError（负向）", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        {
+          id: "W1",
+          changes: [{ file: "src/a.ts", action: "create", description: "a" }],
+          dependsOn: ["WGhost"],
+        },
+      ],
+    };
+    expect(() => parseDevPlan(json)).toThrow(CwError);
+    expect(() => parseDevPlan(json)).toThrow(/未知 wave id: WGhost/);
+  });
+
+  it("多个 dependsOn 同时含已知/未知 → 抛 CwError 只列未知项", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+        {
+          id: "W2",
+          changes: [{ file: "src/b.ts", action: "create", description: "b" }],
+          dependsOn: ["W1", "Ghost1", "Ghost2"],
+        },
+      ],
+    };
+    expect(() => parseDevPlan(json)).toThrow(/Ghost1, Ghost2/);
+  });
+
+  it("空 dependsOn 列表 → 不触发存在性校验（边界）", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+      ],
+    };
+    expect(() => parseDevPlan(json)).not.toThrow();
+  });
+
+  it("存在性校验在环形校验之前生效（W1→W2，W2 dependsOn 含未知）", () => {
+    // W2 依赖 WGhost（未知）。即使有环假设，未知校验也会先挡。
+    // 实际无环（WGhost 不存在），但 unknown 校验独立有效。
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+        {
+          id: "W2",
+          changes: [{ file: "src/b.ts", action: "create", description: "b" }],
+          dependsOn: ["WGhost"],
+        },
+      ],
+    };
+    expect(() => parseDevPlan(json)).toThrow(/未知 wave id: WGhost/);
+  });
+});
+
 // ── W2: parseDevPlan + parseTestJson 新增测试 ─────────────────
 
-import { parseClarifyJson, parseDevPlan, parseTestJson } from "../src/plan-parser.js";
-import { CwError } from "../src/types.js";
+import { parseClarifyJson, parseTestJson } from "../src/plan-parser.js";
 
 describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
   it("只含 waves 不含 testCases → legacyTestCases undefined", () => {

@@ -96,7 +96,7 @@ describe("E7b: test_fix 修复 → nextAction=test", () => {
     testFail(topicId);
 
     const result = testFix(topicId, [
-      { caseId: "E1", commitHash: "fix123", resolution: "修正了输出" },
+      { caseId: "E1", commitHash: "abc1234", resolution: "修正了输出" },
     ]);
     expect((result.nextAction as Record<string, unknown>).action).toBe("test");
     expect(result.status).toBe("post_dev_verified");
@@ -113,7 +113,7 @@ describe("E7c: 完整 loop——test(失败)→fix→test(pass)→nextAction=ret
     testFail(topicId);
     // test_fix
     testFix(topicId, [
-      { caseId: "E1", commitHash: "c1", resolution: "已修" },
+      { caseId: "E1", commitHash: "abc1234", resolution: "已修" },
     ]);
     // 重跑 test，全 pass
     const result = testPass(topicId);
@@ -138,7 +138,7 @@ describe("E7d: 连续 5 次 test_fix → 强制转 retrospect", () => {
     // test_fix → test(失败) → test_fix → test(失败) → ... 直到 testTurn=5
     for (let i = 0; i < 5; i++) {
       const fixResult = testFix(topicId, [
-        { caseId: "E1", commitHash: `c${i}`, resolution: `fix ${i}` },
+        { caseId: "E1", commitHash: `abc123${i}`, resolution: `fix ${i}` },
       ]);
       // 第 5 次 test_fix 后 testTurn=5，test 分支会强制转 retrospect
       if (i < 4) {
@@ -198,7 +198,7 @@ describe("[BUG-HUNT] test_fix 对已 passed case 提交——应被拒绝", () =
     // 对已 passed 的 E1 提交 test_fix
     const result = runCli(["test_fix", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { caseId: "E1", commitHash: "fake", resolution: "不该被接受的 fix" },
+        { caseId: "E1", commitHash: "abc1234", resolution: "不该被接受的 fix" },
       ]),
     });
 
@@ -215,7 +215,7 @@ describe("[BUG-HUNT] test_fix 对已 passed case 提交——应被拒绝", () =
 
     runCli(["test_fix", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { caseId: "E1", commitHash: "fake", resolution: "虚增 turn" },
+        { caseId: "E1", commitHash: "abc1234", resolution: "虚增 turn" },
       ]),
     });
 

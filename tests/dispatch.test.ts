@@ -464,7 +464,7 @@ describe("dispatch dev（U20-U21）", () => {
     expect(w2Result.validation.unsatisfiedDeps).toBeUndefined();
   });
 
-  it("U21e: dependsOn 指向未知 waveId → 拒绝 committed + 标 missingDeps", () => {
+  it("U21e: dependsOn 指向未知 waveId → engine 兜底拒绝 committed + 标 missingDeps", () => {
     const { deps, store } = makeDeps();
     const createResult = dispatch(
       { action: "create", slug: "u21e", objective: "obj", workspacePath: tmpDir },
@@ -473,19 +473,19 @@ describe("dispatch dev（U20-U21）", () => {
     const topicId = createResult.topicId;
     confirmClarify(store, topicId);
     passSpecReview(store, topicId);
-    // W1 dependsOn 不存在的 WGhost（plan-parser 不校验存在性，只检环——这里要兜底）。
-    const ghostPlan = makeValidPlanJson({
-      waves: [
-        {
-          id: "W1",
-          changes: [{ file: "src/app.ts", action: "create", description: "change1" }],
-          dependsOn: ["WGhost"],
-        },
-      ],
-    });
-    dispatch({ action: "plan", topicId, planJson: ghostPlan }, deps);
     passPlanReview(store, topicId);
     passTddPlanGate(store, topicId);
+
+    // plan-parser 现在校验 dependsOn 存在性（assertKnownDeps），所以走 cw(plan)
+    // 会被挡在 plan 阶段。这里要测 engine 层的 defense-in-depth——直接用 store.insertWaves
+    // 绕过 plan-parser，模拟"plan 阶段漏了/被绕过"的场景，验证 engine Step 1c 仍能挡下。
+    store.insertWaves(topicId, [
+      {
+        id: "W1",
+        changes: [{ file: "src/app.ts", action: "create", description: "change1" }],
+        dependsOn: ["WGhost"],
+      },
+    ]);
 
     const result = dispatch(
       {
@@ -2207,7 +2207,7 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
         fixes: [
           {
             caseId: "E1",
-            commitHash: "fix123",
+            commitHash: "abc1234",
             resolution: "修正了输出",
           },
         ],
@@ -2221,7 +2221,7 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
     const topic = store.loadTopic(topicId);
     expect(topic!.testFixLog).toHaveLength(1);
     expect(topic!.testFixLog[0]!.caseId).toBe("E1");
-    expect(topic!.testFixLog[0]!.commitHash).toBe("fix123");
+    expect(topic!.testFixLog[0]!.commitHash).toBe("abc1234");
     // turn 记录用的是 inc 前的值（0），inc 后 testTurn=1
     expect(topic!.testFixLog[0]!.turn).toBe(0);
     expect(topic!.testTurn).toBe(1);
@@ -2269,17 +2269,82 @@ describe("dispatch test loop（W4：test + test_fix）", () => {
 
   it("W4-4: test_fix 从 reviewed 调 → illegal_transition（GuardError）", () => {
     const { topicId, deps } = setupReviewedTopic();
-    // status=reviewed，test_fix 要求 post_dev_verified
+    // status=reviewed，test_fix 要求 post_dev_verified（状态机 guard 先于 handler 校验抛 GuardError）
     expect(() =>
       dispatch(
         {
           action: "test_fix",
           topicId,
-          fixes: [{ caseId: "E1", commitHash: "x", resolution: "y" }],
+          fixes: [{ caseId: "E1", commitHash: "abc1234", resolution: "y" }],
         },
         deps,
       ),
     ).toThrow(GuardError);
+  });
+
+  it("W4-5: test_fix commitHash 格式非法 → throw CwError（与 review_fix 同校验）", () => {
+    const { topicId, deps, store } = setupReviewedTopic();
+    // 先 test 让 E1 fail
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1", actual: { text: "wrong-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
+      },
+      deps,
+    );
+
+    // commitHash 不是 7-40 位 hex → engine 校验格式拒（事务外校验失败）
+    expect(() =>
+      dispatch(
+        {
+          action: "test_fix",
+          topicId,
+          fixes: [
+            { caseId: "E1", commitHash: "not-a-hex", resolution: "修正了输出" },
+          ],
+        },
+        deps,
+      ),
+    ).toThrow(/commitHash 格式无效/);
+
+    // 验证 store 未污染（事务外校验失败 → 不应 appendTestFix）
+    expect(store.loadTopic(topicId)!.testFixLog).toHaveLength(0);
+  });
+
+  it("W4-6: test_fix commitHash 合法格式（7 位 / 40 位 hex）→ 正常 append", () => {
+    const { topicId, deps, store } = setupReviewedTopic();
+    dispatch(
+      {
+        action: "test",
+        topicId,
+        cases: [
+          { caseId: "E1", actual: { text: "wrong-output" } },
+          { caseId: "E2", actual: { text: "real-output" } },
+        ],
+      },
+      deps,
+    );
+
+    // 短 hash（7 位 hex）合法
+    const result = dispatch(
+      {
+        action: "test_fix",
+        topicId,
+        fixes: [
+          { caseId: "E1", commitHash: "abc1234", resolution: "修正了输出" },
+        ],
+      },
+      deps,
+    );
+
+    expect(result.nextAction.action).toBe("test");
+    const topic = store.loadTopic(topicId);
+    expect(topic!.testFixLog).toHaveLength(1);
+    expect(topic!.testFixLog[0]!.commitHash).toBe("abc1234");
   });
 });
 

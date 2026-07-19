@@ -25,6 +25,9 @@ import type { ReviewDimension } from "../src/types.js";
 // 这是「基准」——buildReviewPrompt(全 6 维) 必须与它逐字节相等。任何空行数量、JSON 示例
 // dimension、维度表顺序的偏差都会让下面的断言失败。快照以模板字面量内嵌（反引号已转义），
 // 便于人工 diff 审查。
+//
+// A7 修订（prompt-vs-engine 审计）：reviewPath 文案从「代码签名上可选」改为「实际必填」
+// （去除内部实现细节泄露）。黄金快照同步更新——仅一行文案变化，prompt 结构未动。
 const SNAPSHOT_ORIGINAL_REVIEW_PROMPT = `[review 阶段] 代码审查 + issue tracking
 
 所有 Wave 已 committed（dev gate 通过）。在进入 test 之前，必须审查代码。
@@ -167,7 +170,7 @@ review.md 内容：
 
     echo '<issuesJson>' | cw review --topicId <topicId> --reviewPath <review.md>
 
-- --reviewPath：review.md 的路径（必填——gate 校验文件存在 + 非空）。代码签名上 reviewPath 可选，但 prompt 层面纪律要求必须写 review.md 并通过 --reviewPath 提交，与 plan/tdd_plan/retrospect 的文件校验对称。漏传 = gate fail = 重写。
+- --reviewPath：review.md 的路径（实际必填——gate 校验文件存在 + 非空，漏传 = gate fail）。与 plan/tdd_plan/retrospect 的文件校验对称，必须写 review.md 并通过 --reviewPath 提交。
 - issues：通过 stdin 传入的结构化问题清单（空数组 = 无问题，直接进 test）
 
 gate fail（文件不存在/空）→ 重写后重调 cw(review)。

@@ -1441,7 +1441,8 @@ function handleTestForStrategyVerify(
  *       + appendGateHistory(test-fix, pass, progressive) }
  *     → reload → buildNextAction("test_fix")（指向 test 重跑失败的 case）。
  *
- * 不做 commit 校验：commitHash 只记录审计，不验证真实性（与 dev 的 commit 校验语义不同）。
+ * commitHash 格式校验（7-40 位 hex，与 review_fix 同校验），但不做存在性校验：只记录审计，
+ * 不验证真实性（与 dev 的 commit 存在性+diff 校验语义不同）。
  * turn = 当前 testTurn（修复发生在哪一轮 test 之后）。
  *
  * 失败路径：fixes 里某 caseId 不存在于 topic.testCases → throw CwError。
@@ -1468,6 +1469,19 @@ export function handleTestFix(
       throw new CwError(
         `test_fix caseId ${fix.caseId} 当前 status=${tc.status}，只有 failed 的 case 才能提交 test_fix` +
           `（对称 review_fix 的 status=open 守门——对已 passed 的 case 提交 fix 会污染审计）`,
+      );
+    }
+  }
+
+  // commitHash 格式校验（只查格式，不做存在性校验——保持 audit-only 语义）。
+  // git hash：7-40 字符的十六进制字符串（短/长 hash 均允许），与 review_fix 同校验。
+  // test_fix 的 commitHash 在类型上必填（TestFixSubmission.commitHash: string），
+  // 这里只做格式校验，对称 review_fix 的 GIT_HASH_RE 守门。
+  const GIT_HASH_RE = /^[0-9a-f]{7,40}$/;
+  for (const fix of fixes) {
+    if (!GIT_HASH_RE.test(fix.commitHash)) {
+      throw new CwError(
+        `test_fix commitHash 格式无效: "${fix.commitHash}"（应为 7-40 字符十六进制 git hash，与 review_fix 同校验）`,
       );
     }
   }
@@ -2731,12 +2745,25 @@ export function handleReplan(
     } = {
       format: "lite",
       objective: parsedPlan.objective,
-      waves: uncommittedNew.map((w) => ({
-        id: w.id,
-        changes: w.changes ?? [],
-        dependsOn: w.dependsOn,
-        priority: w.priority,
-      })),
+      waves: [
+        // uncommittedNew 是本次文件存在性校验的目标（changes 必填，由 planCheck 逐文件查）。
+        ...uncommittedNew.map((w) => ({
+          id: w.id,
+          changes: w.changes ?? [],
+          dependsOn: w.dependsOn,
+          priority: w.priority,
+        })),
+        // 已 committed wave 以 stub 追加（空 changes = planCheck 跳过文件校验），
+        // 让 parseDevPlan 的 assertKnownDeps 看到完整 wave id 集合——uncommittedNew
+        // 的 dependsOn 可能指向已 committed wave（合法跨批次依赖），不能误判为未知 waveId。
+        ...topic.waves
+          .filter((w) => committedWaveIds.has(w.id))
+          .map((w) => ({
+            id: w.id,
+            changes: [] as WaveChange[],
+            dependsOn: [] as string[],
+          })),
+      ],
     };
     const existenceCheck = planCheck(
       tempPlan,

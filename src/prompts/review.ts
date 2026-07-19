@@ -286,7 +286,7 @@ review.md 内容：
 
     echo '<issuesJson>' | cw review --topicId <topicId> --reviewPath <review.md>
 
-- --reviewPath：review.md 的路径（必填——gate 校验文件存在 + 非空）。代码签名上 reviewPath 可选，但 prompt 层面纪律要求必须写 review.md 并通过 --reviewPath 提交，与 plan/tdd_plan/retrospect 的文件校验对称。漏传 = gate fail = 重写。
+- --reviewPath：review.md 的路径（实际必填——gate 校验文件存在 + 非空，漏传 = gate fail）。与 plan/tdd_plan/retrospect 的文件校验对称，必须写 review.md 并通过 --reviewPath 提交。
 - issues：通过 stdin 传入的结构化问题清单（空数组 = 无问题，直接进 test）
 
 gate fail（文件不存在/空）→ 重写后重调 cw(review)。
