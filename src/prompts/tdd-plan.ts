@@ -176,6 +176,55 @@ CW 跑 \`path\` 指向的脚本，exit 0 即 pass。约束：
 写完 testCases 后逐条核对：每个 case 能否说出它在防什么具体 bug？
 如果一组测试「全绿通过」但你对代码的信心没有实质增长，说明它们是覆盖率填充。
 
+## 测试反模式（写测试时逐条自检）
+
+写每个 testCase 前对照这三条，命中任何一条都是无效测试：
+
+### 1. 实现耦合（implementation-coupled）
+- 表现：mock 内部 collaborator / 测私有方法 / 通过 side channel 验证（如查数据库而非用接口）
+- 识别信号：**行为没变却因重构而测试失败**——这是测试耦合了实现细节的铁证
+- 正确做法：测试只落在 seam 上（公共边界），不深入内部；通过接口观察结果，不通过 side channel
+
+### 2. 重言式断言（tautological）—— 补 FUZZY_EXPECTED_RE 之外的语义漏洞
+- 表现：期望值用与代码相同的方式重新计算出（构造上必然通过，永远无法与代码不一致）
+- 例子：\`expect(add(a,b)).toBe(a+b)\`、用同样手法推导的 snapshot、常量断言等于自身
+- 正确做法：**期望值必须来自独立的真值源**——已知正确的字面量 / worked example / spec 定义
+- 注意：FUZZY_EXPECTED_RE 正则拦截"模糊期望值"（如 \`[object Object]\`），但拦不住用代码自身逻辑重算期望的语义重言式——这条要靠设计纪律
+
+### 3. 水平切片（horizontal slicing）—— 强化 Wave 四原则已覆盖的纪律
+- 表现：先写完全部 testCase 再写全部实现
+- 问题：批量测试验证的是想象中的行为（测"形状"而非用户行为），对真实变更迟钝，且在理解实现前就锁死测试结构
+- 正确做法：vertical slice——一个 testCase → 一个实现 → 重复（cw 的 Wave 四原则已要求"垂直切片"，这里强化）
+
+## mock 边界纪律
+
+mock/real 各≥1 是 gate 要求（见上文），但**哪些该 mock 哪些该 real** 有明确边界：
+
+### 只在 system boundary mock
+- external API（第三方服务：Stripe / Twilio / GitHub API）
+- 数据库（除非用 PGLite 这类本地替身）
+- time / random（时间相关 / 随机数）
+- 文件系统（跨进程的 fs 调用）
+
+### 禁止 mock 的
+- 自己的 class / module（你能控制的东西）
+- 内部 collaborator（不是 system boundary）
+- 纯函数 / 纯计算（直接测，无需 mock）
+
+**判据**：mock 的目的是隔离**你不拥有的**外部依赖，不是简化测试 setup。如果 mock 是为了"让测试好写"而非"隔离外部依赖"，说明被测代码的依赖设计有问题（该接收依赖而非自建依赖，见 dev-plan.ts 的可测试性三原则）。
+
+## 测试即规范（命名纪律）
+
+好测试读起来像规格说明——测试名描述**用户行为**（WHAT），不描述**实现机制**（HOW）。
+
+| 好（描述 WHAT） | 坏（描述 HOW） |
+|-----------------|----------------|
+| \`user_can_checkout_with_valid_cart\` | \`checkout_calls_paymentService_process\` |
+| \`expired_token_returns_401\` | \`verifyToken_checks_expiry_field\` |
+| \`empty_input_rejected_with_400\` | \`validateInput_throws_when_empty\` |
+
+**判据**：重构实现（不改接口）时，测试名应不需要改。如果重构让测试名失效，说明测试名描述了 HOW 而非 WHAT。
+
 ## tdd_plan gate 校验
 
 - testCases 非空
@@ -250,4 +299,15 @@ CW 在 tdd_plan gate 通过后自动跑红灯校验（testRunner 必选）：
 ## 完成标志
 
 test.json 写完且 cw(tdd_plan) gate 通过（status=pre_dev_verified）后，进入 dev 阶段写实现。
+
+## AC → testCase 显式映射
+
+每个 spec 的 AC（验收标准）至少对应一个 testCase。testCase.ref 字段必须能反查到 spec 的 AC ID。
+
+- 写 testCase 前先列 spec 的所有 AC
+- 每个 AC 至少一个 testCase 覆盖
+- testCase.ref 填 AC 的标识（如 \`AC-3\` / \`FR-2.AC-1\`）
+- 完成标志：所有 AC 都有至少一个 testCase 指向它（无 orphan AC）
+
+这条填补 spec_review（AC 验收路径）→ tdd_plan（testCase 设计）→ review（design-consistency 反查）三处的契约闭环。
 `.trim();
