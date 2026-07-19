@@ -1258,3 +1258,74 @@ describe("D7: replan 条件回退（hasPlan→planned, hasTest only→plan_revie
     expect(checkLinear("replan", "clarify_confirmed").ok).toBe(false);
   });
 });
+
+// ── plan §3.3: review_fix/test_fix diagnosing-bugs 引导 ──────
+
+describe("buildNextAction: review_fix/test_fix diagnosing-bugs 引导（plan §3.3）", () => {
+  it("review_fix turn=0 不引导 diagnosing-bugs（太早）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 0 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).not.toContain("red-capable");
+  });
+
+  it("review_fix turn=1 不引导 diagnosing-bugs（太早）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 1 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("review_fix turn=2 引导 diagnosing-bugs（下一轮就 overLimit）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 2 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).toContain("red-capable");
+    expect(na.guidance).toContain("turn=2/3");
+  });
+
+  it("review_fix turn=3 (overLimit) 走 overLimit 文案，不重复引导 diagnosing-bugs", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 3 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).toContain("已达 3 轮上限");
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("test_fix turn=0 不引导 diagnosing-bugs", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 0,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("test_fix turn=1 不引导 diagnosing-bugs", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 1,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("test_fix turn=2 引导 diagnosing-bugs", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 2,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).toContain("red-capable");
+    expect(na.guidance).toContain("turn=2/5");
+  });
+
+  it("test_fix turn=4 仍引导（test overLimit 由 test case 在 turn=5 接管，test_fix 不自己 overLimit）", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 4,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).toContain("turn=4/5");
+  });
+});

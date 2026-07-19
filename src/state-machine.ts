@@ -78,6 +78,24 @@ function buildCircuitBreakerGuidance(phase: Action, fails: number): string {
   );
 }
 
+/**
+ * review_fix / test_fix 连续修复仍未通过时，提前引导 bug 诊断方法论（plan §3.3）。
+ *
+ * 触发条件：turn >= 2（已修 2 轮仍卡住，下一轮或几轮就要 overLimit 强制前推）。
+ * 提前于 overLimit 给出引导——overLimit 文案只说"人工介入/replan"，
+ * 但更常见的情况是 agent 反复修不对根因，这时切换到结构化诊断方法论比继续盲修更有效。
+ *
+ * 引导指向 `cw skill diagnosing-bugs`（非固定 skill，agent-agnostic，文本打包进 dist）。
+ */
+function buildDiagnoseHint(phase: "review_fix" | "test_fix", turn: number, limit: number): string {
+  return (
+    `\n\n诊断方法论提示：${phase} 连续修复仍未通过（turn=${turn}/${limit}）。` +
+    `如果失败模式反复出现，考虑切换到 bug 诊断方法论——调 \`cw skill diagnosing-bugs\` ` +
+    `获取 6 阶段诊断循环（强制先建 red-capable feedback loop，再读代码建理论）。` +
+    `常见陷阱：还没有能稳定复现 bug 的命令就开始读代码猜原因。`
+  );
+}
+
 // ── replan alternative ─────────────────────────────────────
 
 /**
@@ -905,11 +923,16 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       const reviewPrompt = buildReviewPrompt(
         getShape(topic.taskShape).review.dimensions,
       );
+      // turn>=2 且未 overLimit：提前引导 bug 诊断方法论（下一轮 turn=3 就 overLimit 强制前推）。
+      const diagnoseHint =
+        !overLimit && turn >= 2
+          ? buildDiagnoseHint("review_fix", turn, REVIEW_TURN_LIMIT)
+          : "";
       return {
         action: "review",
         guidance: overLimit
           ? `review 已达 ${REVIEW_TURN_LIMIT} 轮上限（当前 turn=${turn}）。建议 ask_user 人工介入审查，或调 cw(replan) 调整计划。`
-          : `review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(review) 开启下一轮审查，确认所有 issue 已闭环。\n\n${reviewPrompt}`,
+          : `review_fix 完成（第 ${turn} 轮）。下一步：重新调 cw(review) 开启下一轮审查，确认所有 issue 已闭环。\n\n${reviewPrompt}${diagnoseHint}`,
         alternatives: overLimit ? [replanAlternative()] : undefined,
       };
     }
@@ -971,9 +994,14 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // 修完代码后应重新跑 test。
       // testTurn 在 handleTestFix 里已 inc，达上限时 test 分支会强制进 retrospect。
       const turn = topic.testTurn;
+      // turn>=2：提前引导 bug 诊断方法论（test overLimit 是 TEST_TURN_LIMIT，但 2 轮不过就该诊断了）。
+      // 无 !overLimit 守卫——test_fix 自身无 overLimit 分支（test 的 overLimit 在 test case 接管），
+      // turn=2/3/...都会引导，直到 test case 的 overLimit 接管。
+      const diagnoseHint =
+        turn >= 2 ? buildDiagnoseHint("test_fix", turn, TEST_TURN_LIMIT) : "";
       return {
         action: "test",
-        guidance: `test_fix 完成（第 ${turn} 轮）。下一步：重新跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}`,
+        guidance: `test_fix 完成（第 ${turn} 轮）。下一步：重新跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}${diagnoseHint}`,
         alternatives: [replanAlternative()],
       };
     }
