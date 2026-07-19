@@ -145,4 +145,11 @@ retrospect.md 写完 + retrospectData 构造好后提交：
 ## 完成标志
 
 retrospect.md 写完 + cw(retrospect) gate 通过（status=retrospected）后，调 cw(closeout) 归档。
+
+## 相关 skill（按需调用）
+
+本阶段如遇以下情况，可调 \`cw skill <name>\` 获取方法论：
+
+- **复盘时发现架构问题**（本 topic 暴露的"没好的 test seam / 模块边界划错 / 浅模块"等可泛化模式）→ \`cw skill improve-codebase-architecture\`（找深化机会 + 候选评估，用于规划下一个 topic 做架构深化）
+  - 注：retrospect 只记录问题（knownRisks / processIssues），不直接实施深化——深化走单独的 cw topic
 `.trim();

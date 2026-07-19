@@ -280,4 +280,13 @@ replan 支持两种模式（可同时用）：
 ## 完成标志
 
 全部 testCase passed（test gate 通过，status=post_dev_verified）后，进入 retrospect 阶段做复盘。
+
+## 相关 skill（按需调用）
+
+本阶段如遇以下情况，可调 \`cw skill <name>\` 获取方法论：
+
+- **dev 中发现架构问题**（没好的 test seam / 调用方纠缠 / 隐藏耦合 / 浅模块）→ \`cw skill improve-codebase-architecture\`（找深化机会 + 浅模块识别 + 候选评估）
+  - 注：本阶段只标记问题，不直接重构——架构性重构必须触发 replan 或留到 review 阶段（见上方"refactor 边界"）
+
+> 注：review_fix / test_fix 连续修复仍未通过（turn >= 2）时，cw 会在 guidance 里自动提示 bug 诊断方法论 skill（由 state-machine.ts 的 buildDiagnoseHint 注入，turn < 2 不提示——避免过早引导）。这里不重复列出。
 `.trim();

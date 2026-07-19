@@ -13,6 +13,8 @@
  */
 
 import { DIAGNOSING_BUGS_SKILL } from "./diagnosing-bugs.js";
+import { IMPROVE_CODEBASE_ARCHITECTURE_SKILL } from "./improve-codebase-architecture.js";
+import { WAYFINDER_SKILL } from "./wayfinder.js";
 import type { SkillEntry, SkillListEntry, SkillName } from "./types.js";
 
 /**
@@ -21,6 +23,8 @@ import type { SkillEntry, SkillListEntry, SkillName } from "./types.js";
  */
 const REGISTRY: Partial<Record<SkillName, SkillEntry>> = {
   "diagnosing-bugs": DIAGNOSING_BUGS_SKILL,
+  "improve-codebase-architecture": IMPROVE_CODEBASE_ARCHITECTURE_SKILL,
+  wayfinder: WAYFINDER_SKILL,
 };
 
 /** 按 name 查 skill，未找到返回 null（由 CLI 层映射 exit code）。 */

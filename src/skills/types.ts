@@ -14,7 +14,10 @@
  */
 
 /** skill 名（字面量联合，每加一个 skill 加一项）。 */
-export type SkillName = "diagnosing-bugs";
+export type SkillName =
+  | "diagnosing-bugs"
+  | "improve-codebase-architecture"
+  | "wayfinder";
 
 /** 单个 skill 的完整条目。 */
 export interface SkillEntry {

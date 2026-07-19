@@ -76,6 +76,14 @@ const DOC_GROUPS: readonly DocGroup[] = [
   { name: "NFR.md", candidates: ["NFR.md"], level: "推荐", alwaysCurrent: true },
   { name: "TEST-STRATEGY.md", candidates: ["TEST-STRATEGY.md"], level: "可选", alwaysCurrent: false },
   { name: "DESIGN-LOG.md", candidates: ["DESIGN-LOG.md"], level: "可选", alwaysCurrent: false },
+  // §6.3 仓库规范来源采集——code-review 的"仓库标准覆盖 baseline"需要知道这些文件在哪。
+  // 检测到就报告存在（InitDocResult），不强制存在；missing 不阻断 ready（level=可选）。
+  // cw 不机器解析内容，只提示 agent"这些文件定义了仓库规范，审查时优先对照"。
+  { name: "CODING_STANDARDS.md", candidates: ["CODING_STANDARDS.md"], level: "可选", alwaysCurrent: false },
+  { name: "CONTRIBUTING.md", candidates: ["CONTRIBUTING.md"], level: "可选", alwaysCurrent: false },
+  // TODO(§6.3): linter 配置文件（.eslintrc* / tsconfig.json / biome.json）需 glob 匹配，
+  // DOC_GROUPS 当前只支持固定文件名（candidates + isFile），不支持 glob。未来扩展 candidates
+  // 为 string | GlobPattern 后再接入。届时 review.ts 的 Standards 轴也能读取 linter 配置位置。
 ];
 
 // ── 骨架判定（ASCII-only 占位符） ─────────────────────────────
@@ -736,6 +744,59 @@ MIT
 - 同一术语在不同 context 可有不同定义（context-scoped），互不冲突
 - 跨 context 复用的术语应在每个 context 各自的 CONTEXT.md 重复定义（保持 context 自包含）
 - 新增 context 时更新本索引；废弃 context 时从索引移除并归档其 CONTEXT.md
+`,
+
+  "CODING_STANDARDS.md": `# 编码规范
+
+> 本项目的代码标准真相源。code-review 的 Standards 轴优先读本文件——存在时覆盖 12 smell baseline，
+> 不存在时降级为通用 smell 检查。cw 不解析本文件内容，只提示 agent 审查时对照此规范。
+
+## 通用约定
+
+- {语言版本 / 运行时}
+- {是否 strict（TS strictNullChecks / Rust deny warnings）}
+
+## 命名
+
+- {模块 / 文件 / 变量 / 类型 的命名约定}
+
+## 结构约定
+
+- {函数行数上限 / 圈复杂度上限 / 单文件职责边界}
+
+## 禁止模式
+
+- {反模式清单：any / 隐式 any / 直接抛 unknown / 修改入参 等}
+
+## 例外
+
+- {明确允许的偏离，标理由}
+`,
+
+  "CONTRIBUTING.md": `# 贡献规范
+
+> 本项目对外部/内部贡献者的流程要求。code-review 的 Standards 轴会检测本文件存在——
+> 存在时建议 agent 审查时参考其中的提交/分支/测试约定。
+
+## 提交流程
+
+- {分支策略：feature 分支 / trunk-based}
+- {commit message 格式：Conventional Commits / 自定义}
+- {PR 规模上限：单 PR 改动行数 / 文件数}
+
+## 代码审查
+
+- {审查清单：必查项}
+- {审查者约定：响应时长 / 审查轮数上限}
+
+## 测试要求
+
+- {新功能必须带哪些层的测试}
+- {不可回退基线（见 TEST-STRATEGY.md RB-*）}
+
+## 例外
+
+- {hotfix 流程 / 紧急通道}
 `,
 };
 
