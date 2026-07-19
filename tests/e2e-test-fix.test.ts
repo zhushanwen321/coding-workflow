@@ -37,12 +37,13 @@ afterAll(() => {
   disposeE2eEnv(e);
 });
 
-/** test 提交 cases（--cases flag），E1 失败（actual 不匹配）。 */
+/** test 提交 cases（--cases flag），E1 失败（actual 不匹配），E2 pass。 */
 function testFail(topicId: string): Record<string, unknown> {
   return parseStdout(
     runCli(
       ["test", "--topicId", topicId, "--cases", JSON.stringify([
         { caseId: "E1", actual: { text: "wrong-output" } },
+        { caseId: "E2", actual: { text: "real-output" } },
       ])],
       e,
     ),
@@ -77,11 +78,11 @@ function testFix(
 // ── E7a: test 失败 → nextAction=test_fix ────────────────────
 
 describe("E7a: test 失败 → nextAction=test_fix, testTurn 仍 0", () => {
-  it("actual 不匹配 → tested, nextAction=test_fix", () => {
+  it("actual 不匹配 → post_dev_verified, nextAction=test_fix", () => {
     const { topicId } = setupToReviewed(e, "e7a-fail");
     const result = testFail(topicId);
 
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
     expect((result.nextAction as Record<string, unknown>).action).toBe("test_fix");
     // testTurn 不在 ActionResult 直接暴露，但 test_fix 后会通过 guidance 体现
   });
@@ -95,10 +96,10 @@ describe("E7b: test_fix 修复 → nextAction=test", () => {
     testFail(topicId);
 
     const result = testFix(topicId, [
-      { caseId: "E1", commitHash: "fix123", resolution: "修正了输出" },
+      { caseId: "E1", commitHash: "abc1234", resolution: "修正了输出" },
     ]);
     expect((result.nextAction as Record<string, unknown>).action).toBe("test");
-    expect(result.status).toBe("tested");
+    expect(result.status).toBe("post_dev_verified");
   });
 });
 
@@ -112,7 +113,7 @@ describe("E7c: 完整 loop——test(失败)→fix→test(pass)→nextAction=ret
     testFail(topicId);
     // test_fix
     testFix(topicId, [
-      { caseId: "E1", commitHash: "c1", resolution: "已修" },
+      { caseId: "E1", commitHash: "abc1234", resolution: "已修" },
     ]);
     // 重跑 test，全 pass
     const result = testPass(topicId);
@@ -125,6 +126,8 @@ describe("E7c: 完整 loop——test(失败)→fix→test(pass)→nextAction=ret
 // ── E7d: turn 上限熔断（TEST_TURN_LIMIT=5）────────────────
 
 describe("E7d: 连续 5 次 test_fix → 强制转 retrospect", () => {
+  // CI 慢机上 spawn 多个子进程累计耗时：setup(~10 cli) + 1 test + 5×(test_fix + test) ≈ 21 次子进程，
+  // 本地 ~1.6s，CI 慢机可达 30s+。vitest 单测默认 5s 超时，此处放宽到 60s。
   it("testTurn 达 5 上限 → nextAction 强制转 retrospect", () => {
     const { topicId } = setupToReviewed(e, "e7d-limit");
 
@@ -135,7 +138,7 @@ describe("E7d: 连续 5 次 test_fix → 强制转 retrospect", () => {
     // test_fix → test(失败) → test_fix → test(失败) → ... 直到 testTurn=5
     for (let i = 0; i < 5; i++) {
       const fixResult = testFix(topicId, [
-        { caseId: "E1", commitHash: `c${i}`, resolution: `fix ${i}` },
+        { caseId: "E1", commitHash: `abc123${i}`, resolution: `fix ${i}` },
       ]);
       // 第 5 次 test_fix 后 testTurn=5，test 分支会强制转 retrospect
       if (i < 4) {
@@ -155,13 +158,14 @@ describe("E7d: 连续 5 次 test_fix → 强制转 retrospect", () => {
         expect(guidance).toContain("上限");
       }
     }
-  });
+    // 60s：21 次子进程 spawn 在 CI 慢机上累计耗时远超 vitest 默认 5s
+  }, 60000);
 });
 
 // ── E7e: 非法——test 传不存在的 caseId ───────────────────────
 
 describe("E7e: test 传不存在的 caseId → exit≠0", () => {
-  it("caseId E99 不存在 → exit≠0, stderr 含 case not found", () => {
+  it("caseId E99 不存在 → exit≠0, stderr 含集合不一致（D 全覆盖校验先于逐条 not found）", () => {
     const { topicId } = setupToReviewed(e, "e7e-illegal");
 
     const result = runCli(
@@ -171,7 +175,8 @@ describe("E7e: test 传不存在的 caseId → exit≠0", () => {
       e,
     );
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("case not found");
+    // D 全覆盖校验先抛"不一致/多余"（E99 是多余 id），而非旧的逐条 "case not found"
+    expect(result.stderr).toMatch(/不一致|多余/);
   });
 });
 
@@ -193,7 +198,7 @@ describe("[BUG-HUNT] test_fix 对已 passed case 提交——应被拒绝", () =
     // 对已 passed 的 E1 提交 test_fix
     const result = runCli(["test_fix", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { caseId: "E1", commitHash: "fake", resolution: "不该被接受的 fix" },
+        { caseId: "E1", commitHash: "abc1234", resolution: "不该被接受的 fix" },
       ]),
     });
 
@@ -210,7 +215,7 @@ describe("[BUG-HUNT] test_fix 对已 passed case 提交——应被拒绝", () =
 
     runCli(["test_fix", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { caseId: "E1", commitHash: "fake", resolution: "虚增 turn" },
+        { caseId: "E1", commitHash: "abc1234", resolution: "虚增 turn" },
       ]),
     });
 
@@ -222,28 +227,32 @@ describe("[BUG-HUNT] test_fix 对已 passed case 提交——应被拒绝", () =
 });
 
 // test progressive merge——对照组（验证正确的 merge 语义，非 bug）
-describe("test 分批提交——已 pass case 不丢失（对照组）", () => {
-  it("先提交 E1(pass)，再单独提交 E2(pass) → 两个都 passed", () => {
+// D 全覆盖校验后，每次 cw test 必须提交全部 testCase id（禁止部分提交）。
+// progressive 语义通过"重跑全部 case"验证：已 passed 的 case 重跑仍 passed。
+describe("test 全覆盖重跑——已 pass case 不丢失（对照组）", () => {
+  it("第一次 E1(pass)+E2(fail)，第二次 E1(pass)+E2(pass) → 两个都 passed", () => {
     const { topicId } = setupToReviewed(e, "bh-progressive");
 
-    // 第一次：只提交 E1
+    // 第一次：E1 pass，E2 fail
     runCli(
       ["test", "--topicId", topicId, "--cases", JSON.stringify([
         { caseId: "E1", actual: { text: "expected-output" } },
+        { caseId: "E2", actual: { text: "wrong" } },
       ])],
       e,
     );
 
-    // 中间状态：E1 passed, E2 pending, gate=false
+    // 中间状态：E1 passed, E2 failed, gate=false
     let status = parseStdout(runCli(["status", "--topicId", topicId], e));
     let cases = status.testCases as Array<{ id: string; status: string }>;
     expect(cases.find((c) => c.id === "E1")!.status).toBe("passed");
-    expect(cases.find((c) => c.id === "E2")!.status).toBe("pending");
+    expect(cases.find((c) => c.id === "E2")!.status).toBe("failed");
 
-    // 第二次：只提交 E2
+    // 第二次：全覆盖重跑，E1 仍 pass，E2 转 pass
     const result = parseStdout(
       runCli(
         ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E1", actual: { text: "expected-output" } },
           { caseId: "E2", actual: { text: "real-output" } },
         ])],
         e,
@@ -257,7 +266,7 @@ describe("test 分批提交——已 pass case 不丢失（对照组）", () => 
     expect(cases.find((c) => c.id === "E2")!.status).toBe("passed");
   });
 
-  it("E1(pass)+E2(fail) 后，只重提交 E2(pass) → E1 的 passed 不丢失", () => {
+  it("E1(pass)+E2(fail) 后重跑全覆盖 → E1 的 passed 不丢失", () => {
     const { topicId } = setupToReviewed(e, "bh-retry");
 
     runCli(
@@ -271,6 +280,7 @@ describe("test 分批提交——已 pass case 不丢失（对照组）", () => 
     const result = parseStdout(
       runCli(
         ["test", "--topicId", topicId, "--cases", JSON.stringify([
+          { caseId: "E1", actual: { text: "expected-output" } },
           { caseId: "E2", actual: { text: "real-output" } },
         ])],
         e,

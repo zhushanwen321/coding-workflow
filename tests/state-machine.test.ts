@@ -34,9 +34,15 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     gateHistory: [],
     gatePassed: {},
     clarifyRecords: [],
+    specSections: [],
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specHistory: [],
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],
@@ -56,9 +62,18 @@ describe("checkLinear / guard（U1-U5）", () => {
     expect(TRANSITIONS.create.nextStatus).toBe("created");
   });
 
-  it("U2: plan action, status=created → guard 通过", () => {
-    const verdict = checkLinear("plan", "created");
+  it("U2: plan action, status=spec_reviewed → guard 通过（FR-4 spec_review 前置）", () => {
+    // FR-4: plan 的前置从 clarify_confirmed 改为 spec_reviewed
+    const verdict = checkLinear("plan", "spec_reviewed");
     expect(verdict.ok).toBe(true);
+  });
+
+  it("AC-1: plan action, status=created（未 confirm）→ guard 拒绝（FR-1 核心防跳过 gate）", () => {
+    const verdict = checkLinear("plan", "created");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+    }
   });
 
   it("U3: dev action, status=created → guard 拒绝(illegal_transition)", () => {
@@ -134,7 +149,7 @@ describe("computeGatePassed（U6-U8）", () => {
           layer: "mock",
           scenario: "s1",
           steps: "steps",
-          expected: { text: "hi" },
+          expected: { type: "exact", text: "hi" },
           executor: "agent",
           status: "passed",
           requiresScreenshot: false,
@@ -153,7 +168,7 @@ describe("computeGatePassed（U6-U8）", () => {
           layer: "mock",
           scenario: "s1",
           steps: "steps",
-          expected: { text: "hi" },
+          expected: { type: "exact", text: "hi" },
           executor: "agent",
           status: "passed",
           requiresScreenshot: false,
@@ -164,7 +179,7 @@ describe("computeGatePassed（U6-U8）", () => {
           layer: "mock",
           scenario: "s2",
           steps: "steps",
-          expected: { text: "hi" },
+          expected: { type: "exact", text: "hi" },
           executor: "agent",
           status: "pending",
           requiresScreenshot: false,
@@ -212,14 +227,14 @@ describe("computeNextStatus progressive（U9b/U9c）", () => {
     expect(next).toBe("developed");
   });
 
-  it("U9c: test 在 tested 再调 → 仍 tested（progressive 原地停留）", () => {
-    const next = computeNextStatus("test", "tested");
-    expect(next).toBe("tested");
+  it("U9c: test 在 post_dev_verified 再调 → 仍 post_dev_verified（progressive 原地停留）", () => {
+    const next = computeNextStatus("test", "post_dev_verified");
+    expect(next).toBe("post_dev_verified");
   });
 
-  it("U9c 补充: test 在 developed 调 → tested（正常前进）", () => {
+  it("U9c 补充: test 在 developed 调 → post_dev_verified（正常前进）", () => {
     const next = computeNextStatus("test", "developed");
-    expect(next).toBe("tested");
+    expect(next).toBe("post_dev_verified");
   });
 
   it("replan 总回退 planned（非原地停留）", () => {
@@ -231,20 +246,18 @@ describe("computeNextStatus progressive（U9b/U9c）", () => {
 // ── U9-U11: buildNextAction ─────────────────────────────────
 
 describe("buildNextAction（U9-U11）", () => {
-  it("U9: create 后 → nextAction.action=clarify, alternatives 含 plan, guidance 含 clarify 提示词", () => {
+  it("U9: create 后 → nextAction.action=clarify, guidance 含 clarify 提示词", () => {
     const topic = makeTopic({ status: "created" });
     const na = buildNextAction("create", topic);
     expect(na.action).toBe("clarify");
     // guidance 含 clarify 提示词（探索→预判→提问→ADR）
     expect(na.guidance).toContain("[clarify 阶段]");
     expect(na.guidance).toContain("澄清需求");
-    // plan 作为 alternative（清晰需求可直接跳过 clarify）
-    expect(na.alternatives).toBeDefined();
-    expect(na.alternatives!.length).toBeGreaterThanOrEqual(1);
-    expect(na.alternatives!.some((a) => a.action === "plan")).toBe(true);
+    // FR-1: plan 不再作为 alternative（created 状态下 plan 会 illegal_transition）
+    // 必须先 clarify → confirm_clarify → plan
   });
 
-  it("U10: plan gate pass 后 → nextAction.action=tdd_plan, waves 列表返回", () => {
+  it("U10: plan gate pass 后 → nextAction.action=plan_review（FR-5 新增 plan_review 前置）, waves 列表返回", () => {
     const topic = makeTopic({
       status: "planned",
       waves: [
@@ -264,8 +277,8 @@ describe("buildNextAction（U9-U11）", () => {
       ],
     });
     const na = buildNextAction("plan", topic);
-    // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
-    expect(na.action).toBe("tdd_plan");
+    // FR-5: plan gate 通过 → 进入 plan_review 阶段（不再直接到 tdd_plan）
+    expect(na.action).toBe("plan_review");
     expect(na.waves).toBeDefined();
     expect(na.waves).toHaveLength(2);
     expect(na.waves![0]).toEqual({ id: "W1", committed: false });
@@ -277,14 +290,14 @@ describe("buildNextAction（U9-U11）", () => {
 
   it("U10 新增: tdd_plan gate pass 后 → nextAction.action=dev, testCases 列表返回", () => {
     const topic = makeTopic({
-      status: "tdd_inited",
+      status: "pre_dev_verified",
       testCases: [
         {
           id: "E1",
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           status: "pending",
           requiresScreenshot: false,
@@ -333,14 +346,14 @@ describe("buildNextAction（U9-U11）", () => {
 
   it("test gate fail → nextAction.action=test_fix（进 test_fix loop，不再回 dev）", () => {
     const topic = makeTopic({
-      status: "tested",
+      status: "post_dev_verified",
       testCases: [
         {
           id: "E1",
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           status: "failed",
           requiresScreenshot: false,
@@ -354,10 +367,10 @@ describe("buildNextAction（U9-U11）", () => {
     expect(na.testCases).toBeDefined();
   });
 
-  it("dev 从 tested 状态非法（test 失败走 test_fix，不回 dev）", () => {
-    // 回归测试：dev.expectedStatuses 不含 tested。
+  it("dev 从 post_dev_verified 状态非法（test 失败走 test_fix，不回 dev）", () => {
+    // 回归测试：dev.expectedStatuses 不含 post_dev_verified。
     // 新设计：test 失败 → test_fix loop（所有 Wave 已 committed，dev 没有新任务）。
-    const verdict = checkLinear("dev", "tested");
+    const verdict = checkLinear("dev", "post_dev_verified");
     expect(verdict.ok).toBe(false);
   });
 
@@ -368,12 +381,12 @@ describe("buildNextAction（U9-U11）", () => {
     expect(verdict.ok).toBe(false);
   });
 
-  it("replan 后 nextAction 指向 tdd_plan（不是 dev）", () => {
-    // 回归测试：replan 后 status=planned，nextAction 必须指向 tdd_plan
-    // 否则 agent 调 cw dev 会 illegal_transition（dev 不接受 planned）
+  it("replan 后 nextAction 指向 plan_review（status=planned 时, D7 改造）", () => {
+    // D7: replan 后 status=planned → nextAction 指向 plan_review（FR-5 新增 plan_review 前置）
+    // 不再直接指向 tdd_plan（tdd_plan 前置改为 plan_reviewed）
     const topic = makeTopic({ status: "planned" });
     const na = buildNextAction("replan", topic);
-    expect(na.action).toBe("tdd_plan");
+    expect(na.action).toBe("plan_review");
   });
 
   it("U10 补充: plan gate fail → nextAction 指回 plan retry", () => {
@@ -431,50 +444,48 @@ describe("buildNextAction（U9-U11）", () => {
 // ── 状态机全链路 status 校验 ─────────────────────────────────
 
 describe("状态机线性转换完整性", () => {
-  it("8 个 status 的线性序列合法", () => {
-    const statuses: Status[] = [
-      "created",
-      "planned",
-      "tdd_inited",
-      "developed",
-      "reviewed",
-      "tested",
-      "retrospected",
-      "closed",
+  it("线性序列合法（含 clarify_confirmed + spec_review + plan_review）", () => {
+    // FR-1: plan 前必须经过 confirm_clarify
+    // FR-4/5: confirm_clarify → spec_review → plan → plan_review → tdd_plan
+    const sequence: Array<{ status: Status; action: string }> = [
+      { status: "created", action: "confirm_clarify" },
+      { status: "clarify_confirmed", action: "spec_review" },
+      { status: "spec_reviewed", action: "plan" },
+      { status: "planned", action: "plan_review" },
+      { status: "plan_reviewed", action: "tdd_plan" },
+      { status: "pre_dev_verified", action: "dev" },
+      { status: "developed", action: "review" },
+      { status: "reviewed", action: "test" },
+      { status: "post_dev_verified", action: "retrospect" },
     ];
-    // 每个 status 对应的合法 action（非 progressive 路径）
-    const actionByStatus: Record<
-      Status,
-      "plan" | "tdd_plan" | "dev" | "review" | "test" | "retrospect" | "closeout"
-    > = {
-      created: "plan",
-      planned: "tdd_plan",
-      tdd_inited: "dev",
-      developed: "review",
-      reviewed: "test",
-      tested: "retrospect",
-      retrospected: "closeout",
-      closed: "closeout", // closed 是终态，仅用于穷尽
-    };
 
-    for (const status of statuses.slice(0, 7)) {
-      const action = actionByStatus[status];
-      const verdict = checkLinear(action, status);
+    for (const { status, action } of sequence) {
+      const verdict = checkLinear(action as never, status);
       expect(verdict.ok, `${action} from ${status} should pass`).toBe(true);
     }
   });
 
-  it("TRANSITIONS 含全部 9 个 action", () => {
+  it("TRANSITIONS 含全部 action（含 spec_review/plan_review + fix）", () => {
     const actions = [
       "create",
+      "clarify",
+      "confirm_clarify",
+      "spec_review",
+      "spec_review_fix",
       "plan",
+      "plan_review",
+      "plan_review_fix",
       "tdd_plan",
       "dev",
       "review",
+      "review_fix",
       "test",
+      "test_fix",
       "retrospect",
       "closeout",
       "replan",
+      "abort",
+      "assess",
     ];
     for (const a of actions) {
       expect(TRANSITIONS).toHaveProperty(a);
@@ -485,10 +496,17 @@ describe("状态机线性转换完整性", () => {
 // ── tdd_plan 转换 + guard ───────────────────────────────────
 
 describe("tdd_plan 转换与 guard", () => {
-  it("tdd_plan 从 planned 调 → guard 通过, nextStatus=tdd_inited", () => {
+  it("tdd_plan 从 plan_reviewed 调 → guard 通过, nextStatus=pre_dev_verified（FR-5 plan_review 前置）", () => {
+    // FR-5: tdd_plan 的前置从 planned 改为 plan_reviewed
+    expect(checkLinear("tdd_plan", "plan_reviewed").ok).toBe(true);
+    expect(TRANSITIONS.tdd_plan.nextStatus).toBe("pre_dev_verified");
+    expect(computeNextStatus("tdd_plan", "plan_reviewed")).toBe("pre_dev_verified");
+  });
+
+  it("tdd_plan 从 planned 调 → guard 通过（步骤 4 裁剪：delete-only/doc-only 跳过 plan_review）", () => {
+    // 步骤 4 扩展 tdd_plan.expectedStatuses 加 planned——裁剪 shape（stages 不含 plan_review）
+    // 从 plan 直接进 tdd_plan 合法。full-tdd 仍走 plan_review→tdd_plan。
     expect(checkLinear("tdd_plan", "planned").ok).toBe(true);
-    expect(TRANSITIONS.tdd_plan.nextStatus).toBe("tdd_inited");
-    expect(computeNextStatus("tdd_plan", "planned")).toBe("tdd_inited");
   });
 
   it("tdd_plan 从 created 调 → guard 拒绝(illegal_transition)", () => {
@@ -518,17 +536,17 @@ describe("tdd_plan 转换与 guard", () => {
     }
   });
 
-  it("dev 从 tdd_inited 调 → guard 通过", () => {
-    expect(checkLinear("dev", "tdd_inited").ok).toBe(true);
+  it("dev 从 pre_dev_verified 调 → guard 通过", () => {
+    expect(checkLinear("dev", "pre_dev_verified").ok).toBe(true);
   });
 
-  it("replan 从 tdd_inited 调 → guard 通过", () => {
-    expect(checkLinear("replan", "tdd_inited").ok).toBe(true);
+  it("replan 从 pre_dev_verified 调 → guard 通过", () => {
+    expect(checkLinear("replan", "pre_dev_verified").ok).toBe(true);
   });
 
   it("tdd_plan gate 有 pass 记录 → computeGatePassed=true", () => {
     const topic = makeTopic({
-      status: "tdd_inited",
+      status: "pre_dev_verified",
       gateHistory: [
         {
           id: 1,
@@ -558,13 +576,48 @@ describe("clarify 状态机", () => {
     expect(checkLinear("clarify", "created").ok).toBe(true);
   });
 
+  it("checkLinear(\"clarify\", \"clarify_confirmed\") → ok=true（FR-1 回头修改）", () => {
+    // FR-1: clarify 在 clarify_confirmed 也合法（用户看了确认文档后改 spec 再重新 confirm）。
+    expect(checkLinear("clarify", "clarify_confirmed").ok).toBe(true);
+  });
+
   it("checkLinear(\"clarify\", \"planned\") → ok=false, code=\"illegal_transition\"", () => {
-    // clarify 只在 created 合法，plan 之后不再允许。
+    // clarify 只在 created/clarify_confirmed 合法，plan 之后不再允许。
     const verdict = checkLinear("clarify", "planned");
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.code).toBe("illegal_transition");
     }
+  });
+
+  it("AC-1: checkLinear(\"confirm_clarify\", \"created\") → ok=true（FR-1 状态流转）", () => {
+    expect(checkLinear("confirm_clarify", "created").ok).toBe(true);
+  });
+
+  it("confirm_clarify progressive：checkLinear(\"confirm_clarify\", \"clarify_confirmed\") → ok=true", () => {
+    // FR-1: confirm_clarify 在 clarify_confirmed 也合法（重新 confirm 覆盖旧 md）。
+    expect(checkLinear("confirm_clarify", "clarify_confirmed").ok).toBe(true);
+  });
+
+  it("abort 从各 status 合法（FR-3）", () => {
+    // FR-3: abort 从所有非终态 status 合法
+    const nonTerminal: Status[] = [
+      "created",
+      "clarify_confirmed",
+      "planned",
+      "pre_dev_verified",
+      "developed",
+      "reviewed",
+      "post_dev_verified",
+      "retrospected",
+    ];
+    for (const s of nonTerminal) {
+      const verdict = checkLinear("abort", s);
+      expect(verdict.ok, `abort from ${s} should pass`).toBe(true);
+    }
+    // abort 从终态不合法
+    expect(checkLinear("abort", "closed").ok).toBe(false);
+    expect(checkLinear("abort", "aborted").ok).toBe(false);
   });
 
   it("computeGatePassed(\"clarify\", topic) 空 clarifyRecords → true", () => {
@@ -649,16 +702,17 @@ describe("clarify 状态机", () => {
       ],
     });
     const na = buildNextAction("clarify", topic);
-    expect(na.action).toBe("plan");
+    // FR-1: 有 resolved 记录 → 推荐 confirm_clarify（不再直接 plan）
+    expect(na.action).toBe("confirm_clarify");
     expect(na.alternatives).toBeDefined();
     expect(na.alternatives!.some((a) => a.action === "clarify")).toBe(true);
   });
 
-    it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"plan\"", () => {
-    // 空数组也算完成，推荐直接进 plan（无需澄清）。
+    it("buildNextAction(\"clarify\", topic) 空 clarifyRecords → action=\"clarify\"", () => {
+    // FR-1: 空数组时不能 confirm（gate 会拒）→ 继续指向 clarify。
     const topic = makeTopic({ clarifyRecords: [] });
     const na = buildNextAction("clarify", topic);
-    expect(na.action).toBe("plan");
+    expect(na.action).toBe("clarify");
   });
 });
 
@@ -677,9 +731,9 @@ describe("review_fix / test_fix 状态机", () => {
       expect(TRANSITIONS.review_fix.progressive).toBe(true);
     });
 
-    it("test_fix: expectedStatuses=[tested], nextStatus=tested, progressive=true", () => {
-      expect(TRANSITIONS.test_fix.expectedStatuses).toEqual(["tested"]);
-      expect(TRANSITIONS.test_fix.nextStatus).toBe("tested");
+    it("test_fix: expectedStatuses=[post_dev_verified], nextStatus=post_dev_verified, progressive=true", () => {
+      expect(TRANSITIONS.test_fix.expectedStatuses).toEqual(["post_dev_verified"]);
+      expect(TRANSITIONS.test_fix.nextStatus).toBe("post_dev_verified");
       expect(TRANSITIONS.test_fix.progressive).toBe(true);
     });
 
@@ -689,9 +743,9 @@ describe("review_fix / test_fix 状态机", () => {
       expect(TRANSITIONS.review.progressive).toBe(true);
     });
 
-    it("test 仍是 progressive（expectedStatuses=[reviewed, tested]）", () => {
-      expect(TRANSITIONS.test.expectedStatuses).toEqual(["reviewed", "tested"]);
-      expect(TRANSITIONS.test.nextStatus).toBe("tested");
+    it("test 仍是 progressive（expectedStatuses=[reviewed, post_dev_verified]）", () => {
+      expect(TRANSITIONS.test.expectedStatuses).toEqual(["reviewed", "post_dev_verified"]);
+      expect(TRANSITIONS.test.nextStatus).toBe("post_dev_verified");
       expect(TRANSITIONS.test.progressive).toBe(true);
     });
   });
@@ -706,13 +760,13 @@ describe("review_fix / test_fix 状态机", () => {
     });
   });
 
-  describe("test_fix 转换（tested → tested progressive）", () => {
-    it("checkLinear(\"test_fix\", \"tested\") → ok=true", () => {
-      expect(checkLinear("test_fix", "tested").ok).toBe(true);
+  describe("test_fix 转换（post_dev_verified → post_dev_verified progressive）", () => {
+    it("checkLinear(\"test_fix\", \"post_dev_verified\") → ok=true", () => {
+      expect(checkLinear("test_fix", "post_dev_verified").ok).toBe(true);
     });
 
-    it("computeNextStatus(\"test_fix\", \"tested\") → tested（progressive 原地停留）", () => {
-      expect(computeNextStatus("test_fix", "tested")).toBe("tested");
+    it("computeNextStatus(\"test_fix\", \"post_dev_verified\") → post_dev_verified（progressive 原地停留）", () => {
+      expect(computeNextStatus("test_fix", "post_dev_verified")).toBe("post_dev_verified");
     });
   });
 
@@ -727,8 +781,8 @@ describe("review_fix / test_fix 状态机", () => {
       }
     });
 
-    it("checkLinear(\"review_fix\", \"tested\") → ok=false（test_fix 只接 reviewed）", () => {
-      const verdict = checkLinear("review_fix", "tested");
+    it("checkLinear(\"review_fix\", \"post_dev_verified\") → ok=false（test_fix 只接 reviewed）", () => {
+      const verdict = checkLinear("review_fix", "post_dev_verified");
       expect(verdict.ok).toBe(false);
       if (!verdict.ok) {
         expect(verdict.code).toBe("illegal_transition");
@@ -782,8 +836,8 @@ describe("review_fix / test_fix 状态机", () => {
       expect(checkLinear("review", "developed").ok).toBe(true);
     });
 
-    it("checkLinear(\"review\", \"tested\") → ok=false（review 不接 tested）", () => {
-      const verdict = checkLinear("review", "tested");
+    it("checkLinear(\"review\", \"post_dev_verified\") → ok=false（review 不接 post_dev_verified）", () => {
+      const verdict = checkLinear("review", "post_dev_verified");
       expect(verdict.ok).toBe(false);
     });
   });
@@ -805,14 +859,14 @@ describe("review_fix / test_fix 状态机", () => {
     });
 
     it("buildNextAction(\"test_fix\", topic) 未达上限 → action=test（重跑）", () => {
-      const topic = makeTopic({ status: "tested", testTurn: 1 });
+      const topic = makeTopic({ status: "post_dev_verified", testTurn: 1 });
       const na = buildNextAction("test_fix", topic);
       expect(na.action).toBe("test");
       expect(na.guidance).toContain("test_fix");
     });
 
     it("buildNextAction(\"test_fix\", topic) 达上限 → action 仍为 test（overLimit 判定在 test 分支）", () => {
-      const topic = makeTopic({ status: "tested", testTurn: 5 });
+      const topic = makeTopic({ status: "post_dev_verified", testTurn: 5 });
       const na = buildNextAction("test_fix", topic);
       // test_fix 总是指向 test（重跑），达上限的强制前推在 test 分支判定（→ retrospect）
       expect(na.action).toBe("test");
@@ -832,6 +886,7 @@ describe("buildNextAction review/test loop（W5）", () => {
           id: "R1",
           severity: "must-fix",
           description: "问题",
+          dimension: "error-handling",
           status: "open",
           foundAtTurn: 1,
         },
@@ -860,6 +915,7 @@ describe("buildNextAction review/test loop（W5）", () => {
           id: "R1",
           severity: "must-fix",
           description: "问题",
+          dimension: "error-handling",
           status: "fixed",
           foundAtTurn: 1,
           fix: { commitHash: "abc", resolution: "已修", fixedAtTurn: 1 },
@@ -879,6 +935,7 @@ describe("buildNextAction review/test loop（W5）", () => {
           id: "R1",
           severity: "must-fix",
           description: "未修",
+          dimension: "error-handling",
           status: "open",
           foundAtTurn: 3,
         },
@@ -898,7 +955,7 @@ describe("buildNextAction review/test loop（W5）", () => {
 
   it("W5-6: test fail → nextAction=test_fix（不再回 dev）", () => {
     const topic = makeTopic({
-      status: "tested",
+      status: "post_dev_verified",
       testTurn: 0,
       testCases: [
         {
@@ -906,7 +963,7 @@ describe("buildNextAction review/test loop（W5）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           status: "failed",
           requiresScreenshot: false,
@@ -919,14 +976,14 @@ describe("buildNextAction review/test loop（W5）", () => {
   });
 
   it("W5-7: test_fix → nextAction=test（重跑）", () => {
-    const topic = makeTopic({ status: "tested", testTurn: 1 });
+    const topic = makeTopic({ status: "post_dev_verified", testTurn: 1 });
     const na = buildNextAction("test_fix", topic);
     expect(na.action).toBe("test");
   });
 
   it("W5-8: test 达上限（testTurn>=5）+ failed → 强制进 retrospect（打破死循环）", () => {
     const topic = makeTopic({
-      status: "tested",
+      status: "post_dev_verified",
       testTurn: 5,
       testCases: [
         {
@@ -934,7 +991,7 @@ describe("buildNextAction review/test loop（W5）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           status: "failed",
           requiresScreenshot: false,
@@ -946,5 +1003,329 @@ describe("buildNextAction review/test loop（W5）", () => {
     // overLimit 时强制 action=retrospect（不再 test_fix），打破 test↔test_fix 死循环
     expect(na.action).toBe("retrospect");
     expect(na.guidance).toMatch(/上限|强制/);
+  });
+});
+
+// ── FR-1: buildNextAction confirm_clarify 分支 ───────────────
+
+describe("FR-1: buildNextAction confirm_clarify 分支", () => {
+  it("created 状态（有 resolved clarifyRecord）→ nextAction=confirm_clarify", () => {
+    const topic = makeTopic({
+      status: "created",
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "test",
+          assessment: "背景",
+          question: "Q?",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const na = buildNextAction("clarify", topic);
+    // 有 resolved 记录 → 主推荐 confirm_clarify（不再停在 clarify）
+    expect(na.action).toBe("confirm_clarify");
+  });
+
+  it("created 状态（无 clarifyRecord）→ nextAction 仍 clarify（还没探索）", () => {
+    const topic = makeTopic({ status: "created", clarifyRecords: [] });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("clarify");
+  });
+
+  it("created 状态（有 pending clarifyRecord）→ nextAction 仍 clarify（等用户回答）", () => {
+    const topic = makeTopic({
+      status: "created",
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "test",
+          assessment: "背景",
+          question: "Q?",
+          status: "pending",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const na = buildNextAction("clarify", topic);
+    expect(na.action).toBe("clarify");
+  });
+});
+
+// ── FR-3: buildNextAction abort 分支 ─────────────────────────
+
+describe("FR-3: buildNextAction abort 分支", () => {
+  it("abort 后 nextAction.action 为空（终态）", () => {
+    const topic = makeTopic({ status: "aborted" });
+    const na = buildNextAction("abort", topic);
+    expect(na.action).toBeUndefined();
+  });
+});
+
+// ── FR-4: spec_review 转换 + guard + buildNextAction ─────────
+
+describe("FR-4: spec_review 状态机", () => {
+  it("spec_review 从 clarify_confirmed 调 → guard 通过, nextStatus=spec_reviewed", () => {
+    expect(checkLinear("spec_review" as never, "clarify_confirmed").ok).toBe(true);
+    expect(TRANSITIONS.spec_review.nextStatus).toBe("spec_reviewed");
+    expect(computeNextStatus("spec_review" as never, "clarify_confirmed" as never)).toBe("spec_reviewed");
+  });
+
+  it("spec_review 从 spec_reviewed 调 → guard 通过（progressive，多轮 loop）", () => {
+    expect(checkLinear("spec_review" as never, "spec_reviewed" as never).ok).toBe(true);
+  });
+
+  it("spec_review 从 created 调 → guard 拒绝（必须先 confirm_clarify）", () => {
+    const verdict = checkLinear("spec_review" as never, "created");
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.code).toBe("illegal_transition");
+      expect(verdict.reason).toContain("spec_review");
+      expect(verdict.reason).toContain("created");
+    }
+  });
+
+  it("spec_review 从 planned 调 → guard 拒绝（spec_review 在 plan 之前）", () => {
+    expect(checkLinear("spec_review" as never, "planned" as never).ok).toBe(false);
+  });
+
+  it("spec_review_fix 从 spec_reviewed 调 → guard 通过（progressive 留在 reviewed）", () => {
+    expect(checkLinear("spec_review_fix" as never, "spec_reviewed" as never).ok).toBe(true);
+  });
+
+  it("spec_review_fix 从 clarify_confirmed 调 → guard 拒绝", () => {
+    expect(checkLinear("spec_review_fix" as never, "clarify_confirmed").ok).toBe(false);
+  });
+
+  it("spec_review_fix 的 nextStatus=spec_reviewed（progressive 留原地）", () => {
+    expect(TRANSITIONS.spec_review_fix.nextStatus).toBe("spec_reviewed");
+  });
+
+  it("plan 从 spec_reviewed 调 → guard 通过（spec_review 是 plan 前置）", () => {
+    expect(checkLinear("plan", "spec_reviewed" as never).ok).toBe(true);
+  });
+
+  it("plan 从 clarify_confirmed 调 → guard 通过（步骤 4 裁剪：delete-only/doc-only 跳过 spec_review）", () => {
+    // 步骤 4 扩展 plan.expectedStatuses 加 clarify_confirmed——裁剪 shape（stages 不含 spec_review）
+    // 从 confirm_clarify 直接进 plan 合法。full-tdd 仍走 spec_review→plan。
+    expect(checkLinear("plan", "clarify_confirmed").ok).toBe(true);
+  });
+
+  it("buildNextAction spec_review 无 open issue → 指向 plan", () => {
+    const topic = makeTopic({
+      status: "spec_reviewed" as never,
+      specReviewIssues: [],
+    });
+    const na = buildNextAction("spec_review" as never, topic);
+    expect(na.action).toBe("plan");
+  });
+
+  it("buildNextAction spec_review 有 open issue 未达上限 → 指向 spec_review_fix", () => {
+    const topic = makeTopic({
+      status: "spec_reviewed" as never,
+      specReviewTurn: 0,
+      specReviewIssues: [
+        {
+          id: "SR1",
+          dimension: "completeness" as never,
+          severity: "must-fix",
+          description: "UC-1 缺异常流程",
+          status: "open",
+          foundAtTurn: 1,
+        },
+      ],
+    });
+    const na = buildNextAction("spec_review" as never, topic);
+    expect(na.action).toBe("spec_review_fix");
+  });
+});
+
+// ── FR-5: plan_review 转换 + guard + buildNextAction ─────────
+
+describe("FR-5: plan_review 状态机", () => {
+  it("plan_review 从 planned 调 → guard 通过, nextStatus=plan_reviewed", () => {
+    expect(checkLinear("plan_review" as never, "planned").ok).toBe(true);
+    expect(TRANSITIONS.plan_review.nextStatus).toBe("plan_reviewed");
+  });
+
+  it("plan_review 从 plan_reviewed 调 → guard 通过（progressive）", () => {
+    expect(checkLinear("plan_review" as never, "plan_reviewed" as never).ok).toBe(true);
+  });
+
+  it("plan_review 从 pre_dev_verified 调 → guard 拒绝（plan_review 在 tdd_plan 之前）", () => {
+    expect(checkLinear("plan_review" as never, "pre_dev_verified").ok).toBe(false);
+  });
+
+  it("plan_review_fix 从 plan_reviewed 调 → guard 通过", () => {
+    expect(checkLinear("plan_review_fix" as never, "plan_reviewed" as never).ok).toBe(true);
+  });
+
+  it("tdd_plan 从 plan_reviewed 调 → guard 通过（plan_review 是 tdd_plan 前置）", () => {
+    expect(checkLinear("tdd_plan", "plan_reviewed" as never).ok).toBe(true);
+  });
+
+  it("tdd_plan 从 planned 调 → guard 通过（步骤 4 裁剪：跳过 plan_review）", () => {
+    // 步骤 4 扩展 tdd_plan.expectedStatuses 加 planned——裁剪 shape 跳过 plan_review 时合法。
+    expect(checkLinear("tdd_plan", "planned").ok).toBe(true);
+  });
+
+  it("buildNextAction plan_review 无 open issue → 指向 tdd_plan", () => {
+    const topic = makeTopic({
+      status: "plan_reviewed" as never,
+      planReviewIssues: [],
+    });
+    const na = buildNextAction("plan_review" as never, topic);
+    expect(na.action).toBe("tdd_plan");
+  });
+
+  it("buildNextAction plan_review 有 open issue 未达上限 → 指向 plan_review_fix", () => {
+    const topic = makeTopic({
+      status: "plan_reviewed" as never,
+      planReviewTurn: 0,
+      planReviewIssues: [
+        {
+          id: "PR1",
+          dimension: "coverage" as never,
+          severity: "must-fix",
+          description: "FR-3 无对应 Wave",
+          status: "open",
+          foundAtTurn: 1,
+        },
+      ],
+    });
+    const na = buildNextAction("plan_review" as never, topic);
+    expect(na.action).toBe("plan_review_fix");
+  });
+});
+
+// ── FR-4/5 turn 上限强制前推 ────────────────────────────────
+
+describe("FR-4/5: spec_review/plan_review turn 上限强制前推", () => {
+  it("spec_review 达上限 + 有 open issue → 强制前推到 plan", () => {
+    const topic = makeTopic({
+      status: "spec_reviewed" as never,
+      specReviewTurn: 2,
+      specReviewIssues: [
+        {
+          id: "SR1",
+          dimension: "completeness" as never,
+          severity: "must-fix",
+          description: "未闭环",
+          status: "open",
+          foundAtTurn: 1,
+        },
+      ],
+    });
+    const na = buildNextAction("spec_review" as never, topic);
+    expect(na.action).toBe("plan");
+  });
+
+  it("plan_review 达上限 + 有 open issue → 强制前推到 tdd_plan", () => {
+    const topic = makeTopic({
+      status: "plan_reviewed" as never,
+      planReviewTurn: 2,
+      planReviewIssues: [
+        {
+          id: "PR1",
+          dimension: "coverage" as never,
+          severity: "must-fix",
+          description: "未闭环",
+          status: "open",
+          foundAtTurn: 1,
+        },
+      ],
+    });
+    const na = buildNextAction("plan_review" as never, topic);
+    expect(na.action).toBe("tdd_plan");
+  });
+});
+
+// ── D7: replan 条件回退 ─────────────────────────────────────
+
+describe("D7: replan 条件回退（hasPlan→planned, hasTest only→plan_reviewed）", () => {
+  it("replan 从 plan_reviewed 调 → guard 通过", () => {
+    expect(checkLinear("replan", "plan_reviewed" as never).ok).toBe(true);
+  });
+
+  it("replan 从 planned 调 → guard 通过（plan 阶段直接 replan）", () => {
+    expect(checkLinear("replan", "planned").ok).toBe(true);
+  });
+
+  it("replan 从 clarify_confirmed 调 → guard 拒绝（replan 不能回退到 spec_review 之前）", () => {
+    expect(checkLinear("replan", "clarify_confirmed").ok).toBe(false);
+  });
+});
+
+// ── plan §3.3: review_fix/test_fix diagnosing-bugs 引导 ──────
+
+describe("buildNextAction: review_fix/test_fix diagnosing-bugs 引导（plan §3.3）", () => {
+  it("review_fix turn=0 不引导 diagnosing-bugs（太早）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 0 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).not.toContain("red-capable");
+  });
+
+  it("review_fix turn=1 不引导 diagnosing-bugs（太早）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 1 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("review_fix turn=2 引导 diagnosing-bugs（下一轮就 overLimit）", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 2 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).toContain("red-capable");
+    expect(na.guidance).toContain("turn=2/3");
+  });
+
+  it("review_fix turn=3 (overLimit) 走 overLimit 文案，不重复引导 diagnosing-bugs", () => {
+    const topic = makeTopic({ status: "reviewed", reviewTurn: 3 });
+    const na = buildNextAction("review_fix", topic);
+    expect(na.guidance).toContain("已达 3 轮上限");
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("test_fix turn=0 不引导 diagnosing-bugs", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 0,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("test_fix turn=1 不引导 diagnosing-bugs", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 1,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).not.toContain("cw skill diagnosing-bugs");
+  });
+
+  it("test_fix turn=2 引导 diagnosing-bugs", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 2,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).toContain("red-capable");
+    expect(na.guidance).toContain("turn=2/5");
+  });
+
+  it("test_fix turn=4 仍引导（test overLimit 由 test case 在 turn=5 接管，test_fix 不自己 overLimit）", () => {
+    const topic = makeTopic({
+      status: "post_dev_verified",
+      testTurn: 4,
+    });
+    const na = buildNextAction("test_fix", topic);
+    expect(na.guidance).toContain("cw skill diagnosing-bugs");
+    expect(na.guidance).toContain("turn=4/5");
   });
 });

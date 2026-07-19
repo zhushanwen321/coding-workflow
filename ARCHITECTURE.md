@@ -63,23 +63,23 @@ stateDiagram-v2
     [*] --> created: create
     created --> planned: plan
     created --> created: clarify
-    planned --> tdd_inited: tdd_plan
-    tdd_inited --> developed: dev
+    planned --> pre_dev_verified: tdd_plan
+    pre_dev_verified --> developed: dev
     developed --> reviewed: review
     reviewed --> reviewed: review_fix
-    reviewed --> tested: test
-    tested --> tested: test_fix
-    tested --> retrospected: retrospect
+    reviewed --> post_dev_verified: test
+    post_dev_verified --> post_dev_verified: test_fix
+    post_dev_verified --> retrospected: retrospect
     retrospected --> closed: closeout
     closed --> closed: assess
     planned --> planned: replan
-    tdd_inited --> planned: replan
+    pre_dev_verified --> planned: replan
     developed --> planned: replan
     reviewed --> planned: replan
-    tested --> planned: replan
+    post_dev_verified --> planned: replan
 ```
 
-progressive action（dev/review/review_fix/test/test_fix/clarify/assess）可在同一 status 下多次调用。replan 从 planned~tested 回退到 planned（append-only 约束）。
+progressive action（dev/review/review_fix/test/test_fix/clarify/assess）可在同一 status 下多次调用。replan 从 planned~post_dev_verified 回退到 planned（append-only 约束）。
 
 ### fix loop（review / test）
 

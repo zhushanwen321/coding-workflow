@@ -22,6 +22,7 @@ import type {
   Action,
   GateHistoryEntry,
   RetrospectDerived,
+  RetrospectInsights,
   RuntimeEnv,
   Topic,
 } from "./types.js";
@@ -159,8 +160,12 @@ function computeEfficiency(topic: Topic): Efficiency {
   const planCompletionRate = totalWaves === 0 ? 0 : committedWaves / totalWaves;
 
   // 覆盖率门槛：closeout 后才有 evidence.coverage，无 evidence 视为未达标关注=false。
+  // review-only shape（coverageApplicable=false）不计入——它无机器验证产物，
+  // coverage=0 是「不适用」而非「不达标」，不应拉低跨 topic 均值/触发误报。
   const coverageFlag =
-    topic.evidence?.coverage !== undefined && topic.evidence.coverage < 0.5;
+    topic.evidence?.coverage !== undefined &&
+    topic.evidence.coverageApplicable !== false &&
+    topic.evidence.coverage < 0.5;
 
   return {
     firstTryPass,
@@ -310,6 +315,8 @@ interface GroupAgg {
 
 export interface StatsAllOutput {
   groups: GroupAgg[];
+  /** FR-6: 跨 topic 聚合 processIssues（不按 RuntimeEnv 分组——流程问题是 agent 通用问题）。 */
+  retrospectInsights: RetrospectInsights;
 }
 
 /** 分组用的 unknown 占位值——旧 topic 无 runtimeEnv 时归入此组。 */
@@ -421,12 +428,15 @@ function aggregateBuckets(topics: Topic[]): BucketAgg[] {
  * 分组顺序按首次出现的顺序（Map 保持插入序），桶顺序固定 simple → medium → complex。
  */
 export function computeStatsAll(topics: Topic[]): StatsAllOutput {
+  // FR-3: 排除 aborted topic（废弃 topic 不污染 stats 聚合）。
+  const activeTopics = topics.filter((t) => t.status !== "aborted");
+
   // 按 GroupKey 字符串分组，保持插入顺序。
   const groupOrder: string[] = [];
   const groupKeyMap = new Map<string, GroupKey>();
   const groupTopicsMap = new Map<string, Topic[]>();
 
-  for (const topic of topics) {
+  for (const topic of activeTopics) {
     const key = groupKeyOf(topic);
     const keyStr = groupKeyToString(key);
     if (!groupKeyMap.has(keyStr)) {
@@ -452,7 +462,27 @@ export function computeStatsAll(topics: Topic[]): StatsAllOutput {
     };
   });
 
-  return { groups };
+  // FR-6: 跨 topic 聚合 processIssues（不按 RuntimeEnv 分组——
+  // 流程问题是 agent 通用问题，跨 env 聚合更有意义）。
+  const typeBuckets = {
+    pattern: 0,
+    oneOff: 0,
+    observation: 0,
+    uncategorized: 0,
+  };
+  for (const topic of activeTopics) {
+    const issues = topic.retrospectData?.processIssues;
+    // 无 retrospectData 或 processIssues 不是数组 → 跳过（不崩）。
+    // 依赖 W2 迁移：listTopics 已把旧 string[] 统一为 ProcessIssue[]，
+    // 但此处仍做 Array.isArray 防御（直接 import 的纯函数测试可能传未迁移数据）。
+    if (!issues || !Array.isArray(issues)) continue;
+    for (const issue of issues) {
+      const type = issue.type;
+      if (type in typeBuckets) typeBuckets[type]++;
+    }
+  }
+
+  return { groups, retrospectInsights: { typeBuckets } };
 }
 
 // ── retrospect 派生指标（handleRetrospect 自动填充用） ────────

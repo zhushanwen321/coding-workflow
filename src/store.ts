@@ -46,12 +46,17 @@ import type {
   ClarifyRecord,
   ClarifySeed,
   Evidence,
+  Expected,
   GateHistoryEntry,
   Priority,
+  ProcessIssue,
   RetrospectData,
+  ReviewDimension,
   ReviewIssue,
   ReviewIssueSubmission,
   RuntimeEnv,
+  SpecSection,
+  SpecVersion,
   Status,
   TestCase,
   TestCaseSeed,
@@ -63,6 +68,7 @@ import type {
   WaveSeed,
 } from "./types.js";
 import { CwError } from "./types.js";
+import type { TaskShapeId, ExistenceArtifact } from "./shapes/types.js";
 
 const JSON_INDENT = 2;
 
@@ -79,9 +85,17 @@ const LEGACY_PATH_RE =
 /**
  * migrateChanges — 旧格式 changes（string[]）迁移为 WaveChange[]。
  *
- * 新格式（{file, description}[]）原样返回。
- * 旧格式（string[]）每条转成 {file: 尽量提取的路径, description: 原文本}。
+ * 新格式（{file, action, description}[]）原样返回，但若旧 record 的对象缺 action
+ * 字段（pre-W1 数据）补默认 'modify'（PR3）。
+ * 旧格式（string[]）每条转成 {file: 尽量提取的路径, action: 'modify', description: 原文本}。
  * 提取不出路径时 file 为空字符串（不阻断，复杂度分桶会忽略空 file）。
+ *
+ * W1 起 WaveChange.action 必填；迁移时补默认值统一为 'modify'：
+ *   - 旧 string[] → 补 modify（W1 契约）
+ *   - 旧对象 record 缺 action → 补 modify（W3 PR3 契约）
+ * 补 modify 而非 create 的理由：旧 committed record 是已落地修改，语义是 modify；
+ * committed wave 走 append-only、新增 wave 走 planCheck 存在性校验两条路径不重叠，
+ * 与 W1 fixture 的 create 是两套策略不可混（W3 AC-7 锚定此契约）。
  */
 function migrateChanges(
   changes: WaveChange[] | string[] | undefined,
@@ -89,14 +103,27 @@ function migrateChanges(
   if (!changes || changes.length === 0) return [];
   // 新格式：元素是对象（有 file 字段）
   if (typeof changes[0] === "object") {
-    return changes as WaveChange[];
+    // PR3：对缺 action 的旧对象 record 补默认 'modify'（有 action 原样保留）。
+    // committed wave 的 changes 经 migrate 后 action='modify'，与新 plan 显式 modify
+    // 对称 → validateAppendOnly 的 JSON.stringify 比对相等，不误判 wave_modified_committed。
+    //
+    // 键序契约（W3 review R1）：必须显式构造固定键序 file→action→description，
+    // 与 WaveChange 接口（types.ts）、DevPlanSchema（plan-parser.ts）一致。
+    // 禁止 {...c, action}：spread 会保留 c 的原键序 file→description，
+    // 末尾追加 action 得到 file→description→action，与新 plan 的 file→action→description
+    // 键序不同 → JSON.stringify（键序敏感）比对不等 → 误报 wave_modified_committed。
+    return (changes as WaveChange[]).map((c) => ({
+      file: c.file,
+      action: c.action ?? "modify",
+      description: c.description,
+    }));
   }
   // 旧格式：元素是 string
   return (changes as unknown as string[]).map((s) => {
     LEGACY_PATH_RE.lastIndex = 0;
     const m = s.match(LEGACY_PATH_RE);
     const file = m?.[1] ?? m?.[2] ?? "";
-    return { file, description: s };
+    return { file, action: "modify", description: s };
   });
 }
 
@@ -126,19 +153,33 @@ interface TopicRecord {
   createdAt: string;
   status: Status;
   runtimeEnv?: RuntimeEnv;
+  /** TaskShape id（create 时注入）。旧 record 可能缺（in-memory migration 补默认 full-tdd）。 */
+  taskShape?: TaskShapeId;
   gatePassed: Partial<Record<Action, boolean>>;
   evidence?: Evidence;
   artifacts?: Artifacts;
   retrospectData?: RetrospectData;
   testRunner?: TestRunnerConfig;
+  /** existence 策略的产物清单（delete-only shape 用，tdd_plan 从 existence.json 写入）。 */
+  existenceArtifacts?: ExistenceArtifact[];
   /** review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
   reviewIssues?: ReviewIssue[];
   reviewTurn?: number;
+  /** FR-4: spec_review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
+  specReviewIssues?: ReviewIssue[];
+  specReviewTurn?: number;
+  /** FR-5: plan_review 闭环追踪（可选，向后兼容旧 _cw.json 数据）。 */
+  planReviewIssues?: ReviewIssue[];
+  planReviewTurn?: number;
   /** test 修复审计日志（可选，向后兼容旧 _cw.json 数据）。 */
   testFixLog?: TestFixEntry[];
   testTurn?: number;
   /** post-closeout 评估记录（可选，向后兼容旧 _cw.json 数据）。 */
   assessments?: Assessment[];
+  /** clarify 阶段产出的结构化 spec 章节（可选，向后兼容旧 _cw.json 数据）。 */
+  specSections?: SpecSection[];
+  /** spec 替换时的历史版本快照（可选，向后兼容旧 _cw.json 数据）。 */
+  specHistory?: SpecVersion[];
 }
 
 interface WaveRecord {
@@ -157,7 +198,7 @@ interface TestCaseRecord {
   layer: TestCase["layer"];
   scenario: string;
   steps: string;
-  expected: { url?: string; text?: string };
+  expected: Expected;
   executor: string;
   status: TestCase["status"];
   actual?: object;
@@ -478,16 +519,24 @@ export class CwStore {
         createdAt: topic.createdAt,
         status: topic.status,
         runtimeEnv: topic.runtimeEnv,
+        taskShape: topic.taskShape,
         gatePassed: topic.gatePassed,
         evidence: topic.evidence,
         artifacts: topic.artifacts,
         retrospectData: topic.retrospectData,
         testRunner: topic.testRunner,
+        existenceArtifacts: topic.existenceArtifacts,
         reviewIssues: topic.reviewIssues,
         reviewTurn: topic.reviewTurn,
+        specReviewIssues: topic.specReviewIssues,
+        specReviewTurn: topic.specReviewTurn,
+        planReviewIssues: topic.planReviewIssues,
+        planReviewTurn: topic.planReviewTurn,
         testFixLog: topic.testFixLog,
         testTurn: topic.testTurn,
         assessments: topic.assessments,
+        specSections: topic.specSections,
+        specHistory: topic.specHistory,
       };
       this.fileData!.topics.push(record);
     });
@@ -497,7 +546,38 @@ export class CwStore {
     const data = this.getActiveData();
     const record = data.topics.find((t) => t.topicId === topicId);
     if (!record) return null;
-    return this.assembleTopicFromData(record, topicId, data);
+    const topic = this.assembleTopicFromData(record, topicId, data);
+    // [HISTORICAL] FR-1: Artifacts 旧格式迁移（平铺 → 嵌套）。
+    if (topic.artifacts) {
+      topic.artifacts = this.migrateArtifacts(
+        topic.artifacts as unknown as Record<string, unknown>,
+      );
+    }
+    // [HISTORICAL] FR-3: ReviewIssue 旧数据迁移 category→dimension, file→ref。
+    if (topic.reviewIssues) {
+      for (const issue of topic.reviewIssues) {
+        const raw = issue as unknown as Record<string, unknown>;
+        if ("category" in raw && !("dimension" in raw)) {
+          (issue as { dimension: ReviewDimension }).dimension =
+            raw.category as ReviewDimension;
+        }
+        if ("file" in raw && !("ref" in raw)) {
+          (issue as { ref: string }).ref = raw.file as string;
+        }
+      }
+    }
+    // [HISTORICAL] FR-4: processIssues 旧 string[] → ProcessIssue[] 迁移。
+    if (topic.retrospectData?.processIssues) {
+      topic.retrospectData.processIssues = this.migrateProcessIssues(
+        topic.retrospectData.processIssues as unknown as
+          | ProcessIssue[]
+          | string[],
+      );
+    }
+    // taskShape 迁移：旧 topic 无此字段 → 默认 full-tdd（in-memory，不写回磁盘）。
+    // AC-3：存量 topic（无 taskShape）经 loadTopic 读出后 taskShape='full-tdd'。
+    this.applyLegacyMigrations(topic);
+    return topic;
   }
 
   /**
@@ -506,9 +586,47 @@ export class CwStore {
    */
   listTopics(): Topic[] {
     const data = this.getActiveData();
-    return data.topics.map((record) =>
-      this.assembleTopicFromData(record, record.topicId, data),
-    );
+    // [HISTORICAL] FR-4 / PR1: listTopics 不经 loadTopic（直接调
+    // assembleTopicFromData），必须在此独立接入 processIssues 迁移钩子。
+    // cw stats --all 走 listTopics → computeStatsAll，漏接会让旧 string[]
+    // 原样流出污染聚合（裸字符串无 type 字段，按 type 分桶会崩）。
+    // 长期改进：抽 applyLegacyMigrations(topic) 把 artifacts/reviewIssues/processIssues
+    // 三处迁移集中，loadTopic + listTopics 共调（当前为最小改动，artifacts/reviewIssues
+    // 在 listTopics 不崩所以未暴露问题，暂保持只在 loadTopic）。
+    return data.topics.map((record) => {
+      const topic = this.assembleTopicFromData(record, record.topicId, data);
+      if (topic.retrospectData?.processIssues) {
+        topic.retrospectData.processIssues = this.migrateProcessIssues(
+          topic.retrospectData.processIssues as unknown as
+            | ProcessIssue[]
+            | string[],
+        );
+      }
+      // taskShape 迁移：旧 topic 无此字段 → 默认 full-tdd（in-memory，不写回磁盘）。
+      // PR1 教训：listTopics 不经 loadTopic，必须独立接入迁移钩子，否则 cw stats --all
+      // 走这里会让旧数据原样流出（taskShape=undefined）。
+      this.applyLegacyMigrations(topic);
+      return topic;
+    });
+  }
+
+  /**
+   * 集中处理 in-memory 迁移（避免 loadTopic/listTopics 双入口漏接，PR1 教训）。
+   *
+   * mutate topic 就地补字段——assembleTopic 返回新对象，loadTopic/listTopics 持有的是
+   * 调用栈内的局部 topic，mutate 安全。迁移只在内存生效，不写回磁盘（保持存量数据兼容）。
+   *
+   * 当前迁移项：
+   *   - taskShape：旧 topic 无此字段 → 默认 full-tdd（AC-3 存量 topic 迁移）。
+   *
+   * 未来新增 in-memory 迁移（artifacts/reviewIssues/processIssues 等当前在 loadTopic 内联、
+   * listTopics 漏接的）应陆续收敛到这里，使两入口行为一致。
+   */
+  private applyLegacyMigrations(topic: Topic): void {
+    // taskShape 迁移：旧 topic 无 taskShape 字段 → 默认 full-tdd（in-memory，不写回磁盘）。
+    if (!topic.taskShape) {
+      topic.taskShape = "full-tdd";
+    }
   }
 
   /**
@@ -539,6 +657,75 @@ export class CwStore {
     );
   }
 
+  /**
+   * [HISTORICAL] Artifacts 旧格式迁移：平铺 → 嵌套。
+   *
+   * FR-1 重构后 Artifacts 从 { reviewPath, reviewAt, retrospectPath, retrospectAt }
+   * 改为 { review: {path, at}, retrospect: {path, at} }。
+   * 旧 _cw.json 加载时检测平铺字段并迁移。一次性迁移，迁移后写回时已是新格式。
+   *
+   * 检测逻辑：artifacts 对象上有 reviewPath/reviewAt/retrospectPath/retrospectAt 任一字段
+   * → 旧格式。迁移为嵌套后删除平铺字段。
+   */
+  private migrateArtifacts(
+    artifacts: Record<string, unknown> | undefined,
+  ): Artifacts | undefined {
+    if (!artifacts) return undefined;
+    // 已经是新格式（有 review/retrospect/confirmSpec 对象字段）→ 不迁移
+    if (
+      "review" in artifacts ||
+      "retrospect" in artifacts ||
+      "confirmSpec" in artifacts
+    ) {
+      return artifacts as Artifacts;
+    }
+    // 旧格式：检测平铺字段
+    const migrated: Artifacts = {};
+    const a = artifacts as Record<string, unknown>;
+    if (a.reviewPath || a.reviewAt) {
+      migrated.review = {
+        path: String(a.reviewPath ?? ""),
+        at: String(a.reviewAt ?? ""),
+      };
+    }
+    if (a.retrospectPath || a.retrospectAt) {
+      migrated.retrospect = {
+        path: String(a.retrospectPath ?? ""),
+        at: String(a.retrospectAt ?? ""),
+      };
+    }
+    return Object.keys(migrated).length > 0 ? migrated : undefined;
+  }
+
+  /**
+   * migrateProcessIssues — 旧格式 processIssues（string[]）迁移为 ProcessIssue[]。
+   *
+   * FR-4: RetrospectData.processIssues 从 string[] 破坏性升级为 ProcessIssue[]。
+   * 读取 _cw.json 时若发现旧 string[]，自动包装为
+   * [{ type: "uncategorized", description: 原串 }]。
+   * 新格式（对象数组）原样返回。一次性 in-memory 迁移，不写回磁盘
+   * （与 reviewIssues 迁移语义一致）。
+   *
+   * [HISTORICAL] PR1: 必须双入口接入 loadTopic + listTopics——listTopics 不经
+   * loadTopic，而 cw stats --all 走 listTopics → computeStatsAll，漏接会导致
+   * 旧 string[] 污染聚合（裸字符串无 type 字段，分桶统计崩）。
+   */
+  private migrateProcessIssues(
+    issues: ProcessIssue[] | string[] | undefined,
+  ): ProcessIssue[] {
+    if (!issues || !Array.isArray(issues)) return [];
+    if (issues.length === 0) return [];
+    // 首元素是 object（有 type 字段）→ 新格式原样返回（避免重复包装）。
+    if (typeof issues[0] === "object" && issues[0] !== null) {
+      return issues as ProcessIssue[];
+    }
+    // 首元素是 string → 旧格式，每条包装。
+    return (issues as string[]).map((s) => ({
+      type: "uncategorized" as const,
+      description: s,
+    }));
+  }
+
   private assembleTopic(
     topic: TopicRecord,
     waves: WaveRecord[],
@@ -556,6 +743,7 @@ export class CwStore {
       createdAt: topic.createdAt,
       status: topic.status,
       runtimeEnv: topic.runtimeEnv,
+      taskShape: topic.taskShape,
       waves: waves.map((w) => this.mapWaveRecord(w)),
       testCases: testCases.map((tc) => this.mapTestCaseRecord(tc)),
       gateHistory: gateHistory.map((g) => this.mapGateHistoryRecord(g)),
@@ -564,13 +752,20 @@ export class CwStore {
       artifacts: topic.artifacts,
       retrospectData: topic.retrospectData,
       testRunner: topic.testRunner,
+      existenceArtifacts: topic.existenceArtifacts,
       clarifyRecords: clarifyRecords.map((c) => this.mapClarifyRecord(c)),
       adrs: adrs.map((a) => this.mapAdrRecord(a)),
       reviewIssues: topic.reviewIssues ?? [],
       reviewTurn: topic.reviewTurn ?? 0,
+      specReviewIssues: topic.specReviewIssues ?? [],
+      specReviewTurn: topic.specReviewTurn ?? 0,
+      planReviewIssues: topic.planReviewIssues ?? [],
+      planReviewTurn: topic.planReviewTurn ?? 0,
       testFixLog: topic.testFixLog ?? [],
       testTurn: topic.testTurn ?? 0,
       assessments: topic.assessments ?? [],
+      specSections: topic.specSections ?? [],
+      specHistory: topic.specHistory ?? [],
     };
   }
 
@@ -687,6 +882,14 @@ export class CwStore {
     });
   }
 
+  updateObjective(topicId: string, objective: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.objective = objective;
+    });
+  }
+
   updateGatePassed(topicId: string, phase: Action, passed: boolean): void {
     this.executeWrite(() => {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
@@ -745,6 +948,41 @@ export class CwStore {
     });
   }
 
+  // ── existenceArtifacts DAO（delete-only shape 用） ──────────
+
+  /**
+   * 写入 topic 的 existence 产物清单（整体覆盖语义，与 setTestRunner 一致）。
+   * delete-only shape 的 tdd_plan 阶段从 existence.json 解析后调用（经策略 applyPreDevResult）。
+   * postDevVerify 跑 existsSync 验证后通过 updateExistenceArtifactVerified 回填 verified 缓存。
+   */
+  setExistenceArtifacts(topicId: string, artifacts: ExistenceArtifact[]): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (topic) {
+        topic.existenceArtifacts = artifacts;
+      }
+    });
+  }
+
+  /**
+   * 回填单个 existenceArtifact 的 verified 缓存（postDevVerify 验证后写回）。
+   * 找不到 topic / artifact（path 不匹配）时静默忽略（与 updateClarifyRecord 的 find-or-skip 同模式）。
+   */
+  updateExistenceArtifactVerified(
+    topicId: string,
+    path: string,
+    verified: boolean,
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic?.existenceArtifacts) return;
+      const artifact = topic.existenceArtifacts.find((a) => a.path === path);
+      if (artifact) {
+        artifact.verified = verified;
+      }
+    });
+  }
+
   // ── review / test issue tracking DAO（闭环追踪） ──────────
 
   /**
@@ -765,11 +1003,12 @@ export class CwStore {
       for (const issue of issues) {
         const record: ReviewIssue = {
           id: `R${nextN}`,
+          dimension: issue.dimension,
           severity: issue.severity,
           description: issue.description,
-          file: issue.file,
           status: "open",
           foundAtTurn: turn,
+          ...(issue.ref ? { ref: issue.ref } : {}),
         };
         existing.push(record);
         nextN++;
@@ -785,7 +1024,7 @@ export class CwStore {
   fixReviewIssue(
     topicId: string,
     issueId: string,
-    fix: { commitHash: string; resolution: string; fixedAtTurn: number },
+    fix: { commitHash?: string; resolution: string; fixedAtTurn: number },
   ): void {
     this.executeWrite(() => {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
@@ -794,9 +1033,9 @@ export class CwStore {
       if (!issue) return;
       issue.status = "fixed";
       issue.fix = {
-        commitHash: fix.commitHash,
         resolution: fix.resolution,
         fixedAtTurn: fix.fixedAtTurn,
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
       };
     });
   }
@@ -821,6 +1060,138 @@ export class CwStore {
       const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
       if (!topic) return;
       topic.reviewTurn = (topic.reviewTurn ?? 0) + 1;
+    });
+  }
+
+  // ── spec_review issue DAO（FR-4，与 review issue DAO 1:1 同构，SR 前缀） ──
+
+  /**
+   * 追加 spec_review issue 列表（FR-4 spec_review 阶段 progressive）。
+   * id（SR1, SR2...）在 topic 内按现有 specReviewIssues 数量自增分配。
+   * foundAtTurn 由调用方传入（对应当前 specReviewTurn）。
+   */
+  appendSpecReviewIssues(
+    topicId: string,
+    turn: number,
+    issues: ReviewIssueSubmission[],
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.specReviewIssues ?? [];
+      let nextN = existing.length + 1;
+      for (const issue of issues) {
+        const record: ReviewIssue = {
+          id: `SR${nextN}`,
+          dimension: issue.dimension,
+          severity: issue.severity,
+          description: issue.description,
+          status: "open",
+          foundAtTurn: turn,
+          ...(issue.ref ? { ref: issue.ref } : {}),
+        };
+        existing.push(record);
+        nextN++;
+      }
+      topic.specReviewIssues = existing;
+    });
+  }
+
+  /**
+   * 标记 spec_review issue 为 fixed（FR-4 spec_review_fix）。
+   * issue 不存在时静默忽略。commitHash 可选（spec 修复可能走 cw 内部无独立 commit）。
+   */
+  fixSpecReviewIssue(
+    topicId: string,
+    issueId: string,
+    fix: { commitHash?: string; resolution: string; fixedAtTurn: number },
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic || !topic.specReviewIssues) return;
+      const issue = topic.specReviewIssues.find((i) => i.id === issueId);
+      if (!issue) return;
+      issue.status = "fixed";
+      issue.fix = {
+        resolution: fix.resolution,
+        fixedAtTurn: fix.fixedAtTurn,
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+      };
+    });
+  }
+
+  /** spec_review turn 计数器 +1（每次开启新一轮 spec_review 时调用）。 */
+  incSpecReviewTurn(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.specReviewTurn = (topic.specReviewTurn ?? 0) + 1;
+    });
+  }
+
+  // ── plan_review issue DAO（FR-5，与 review issue DAO 1:1 同构，PR 前缀） ──
+
+  /**
+   * 追加 plan_review issue 列表（FR-5 plan_review 阶段 progressive）。
+   * id（PR1, PR2...）在 topic 内按现有 planReviewIssues 数量自增分配。
+   * foundAtTurn 由调用方传入（对应当前 planReviewTurn）。
+   */
+  appendPlanReviewIssues(
+    topicId: string,
+    turn: number,
+    issues: ReviewIssueSubmission[],
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.planReviewIssues ?? [];
+      let nextN = existing.length + 1;
+      for (const issue of issues) {
+        const record: ReviewIssue = {
+          id: `PR${nextN}`,
+          dimension: issue.dimension,
+          severity: issue.severity,
+          description: issue.description,
+          status: "open",
+          foundAtTurn: turn,
+          ...(issue.ref ? { ref: issue.ref } : {}),
+        };
+        existing.push(record);
+        nextN++;
+      }
+      topic.planReviewIssues = existing;
+    });
+  }
+
+  /**
+   * 标记 plan_review issue 为 fixed（FR-5 plan_review_fix）。
+   * issue 不存在时静默忽略。commitHash 可选（plan 修复可能走 cw 内部无独立 commit）。
+   */
+  fixPlanReviewIssue(
+    topicId: string,
+    issueId: string,
+    fix: { commitHash?: string; resolution: string; fixedAtTurn: number },
+  ): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic || !topic.planReviewIssues) return;
+      const issue = topic.planReviewIssues.find((i) => i.id === issueId);
+      if (!issue) return;
+      issue.status = "fixed";
+      issue.fix = {
+        resolution: fix.resolution,
+        fixedAtTurn: fix.fixedAtTurn,
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+      };
+    });
+  }
+
+  /** plan_review turn 计数器 +1（每次开启新一轮 plan_review 时调用）。 */
+  incPlanReviewTurn(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.planReviewTurn = (topic.planReviewTurn ?? 0) + 1;
     });
   }
 
@@ -856,6 +1227,20 @@ export class CwStore {
       if (!topic) return;
       topic.testFixLog = [];
       topic.testTurn = 0;
+    });
+  }
+
+  /**
+   * replan --plan 时重置 plan_review loop：planReviewIssues=[], planReviewTurn=0。
+   * SF-1 (review fix): plan 被修改后旧 plan_review 闭环数据失效（引用旧 plan 的条目），
+   * 需清空重走 plan_review，否则 stale issue 干扰 buildNextAction 路由 + turn 计数不归零。
+   */
+  resetPlanReviewLoop(topicId: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      topic.planReviewIssues = [];
+      topic.planReviewTurn = 0;
     });
   }
 
@@ -1065,6 +1450,43 @@ export class CwStore {
       data.clarifyRecords.push(record);
     });
     return assignedId;
+  }
+
+  /**
+   * 追加 spec 章节（progressive，与 clarifyRecords 独立）。
+   * 参考 appendClarifyRecord 的 append-only 模式：旧 specSections 保留，新章节往后拼。
+   */
+  appendSpecSections(topicId: string, sections: SpecSection[]): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const existing = topic.specSections ?? [];
+      topic.specSections = [...existing, ...sections];
+    });
+  }
+
+  /**
+   * FR-2: 替换 spec 章节（spec 可修改）。
+   *
+   * 把当前 specSections 整体快照归档到 specHistory（version 自增），
+   * 然后替换 specSections 为新内容。spec 是规划产物（非执行产物），允许修改。
+   */
+  replaceSpecSections(topicId: string, sections: SpecSection[], reason: string): void {
+    this.executeWrite(() => {
+      const topic = this.fileData!.topics.find((t) => t.topicId === topicId);
+      if (!topic) return;
+      const currentSections = topic.specSections ?? [];
+      const history = topic.specHistory ?? [];
+      const version = history.length + 1;
+      const snapshot: SpecVersion = {
+        version,
+        archivedAt: new Date().toISOString(),
+        sections: currentSections,
+        reason,
+      };
+      topic.specHistory = [...history, snapshot];
+      topic.specSections = sections;
+    });
   }
 
   /**

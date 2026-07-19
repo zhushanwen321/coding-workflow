@@ -1,10 +1,10 @@
 /**
- * W1 测试 — 新增类型定义验证（Priority, TestRunner, tdd_inited, tdd_plan）。
+ * W1 测试 — 新增类型定义验证（Priority, TestRunner, pre_dev_verified, tdd_plan）。
  *
  * 这些是纯类型层面的变更，测试验证：
  * - Priority 联合类型接受 P0/P1/P2，拒绝其他值
  * - TestRunnerConfig 各 mode 的结构正确性
- * - Status 包含 tdd_inited
+ * - Status 包含 pre_dev_verified
  * - Action 包含 tdd_plan
  * - Wave/TestCase/TestCaseSeed 包含 priority 字段
  * - TestCase/TestCaseSeed 包含 redCheck 字段
@@ -38,10 +38,10 @@ describe("W1: 新增类型定义", () => {
     });
   });
 
-  describe("Status 包含 tdd_inited", () => {
-    it("tdd_inited 是合法 Status 值", () => {
-      const s: Status = "tdd_inited";
-      expect(s).toBe("tdd_inited");
+  describe("Status 包含 pre_dev_verified", () => {
+    it("pre_dev_verified 是合法 Status 值", () => {
+      const s: Status = "pre_dev_verified";
+      expect(s).toBe("pre_dev_verified");
     });
   });
 
@@ -58,7 +58,7 @@ describe("W1: 新增类型定义", () => {
         id: "W1",
         dependsOn: [],
         committed: null,
-        changes: [{ file: "src/app.ts", description: "change1" }],
+        changes: [{ file: "src/app.ts", action: "create", description: "change1" }],
         priority: "P0",
       };
       expect(wave.priority).toBe("P0");
@@ -72,7 +72,7 @@ describe("W1: 新增类型定义", () => {
         layer: "mock",
         scenario: "test",
         steps: "steps",
-        expected: { text: "result" },
+        expected: { type: "exact", text: "result" },
         executor: "vitest",
         status: "pending",
         requiresScreenshot: false,
@@ -92,7 +92,7 @@ describe("W1: 新增类型定义", () => {
         layer: "mock",
         scenario: "test",
         steps: "steps",
-        expected: { text: "result" },
+        expected: { type: "exact", text: "result" },
         executor: "vitest",
         requiresScreenshot: false,
         priority: "P1",
@@ -169,6 +169,7 @@ describe("W1+W2: issue tracking 类型", () => {
         id: "R1",
         severity: "must-fix",
         description: "缺少错误处理",
+        dimension: "error-handling",
         status: "open",
         foundAtTurn: 1,
       };
@@ -183,11 +184,12 @@ describe("W1+W2: issue tracking 类型", () => {
         id: "R2",
         severity: "should-fix",
         description: "命名不清晰",
-        file: "src/types.ts:42",
+        dimension: "design-consistency",
+        ref: "src/types.ts:42",
         status: "open",
         foundAtTurn: 2,
       };
-      expect(issue.file).toBe("src/types.ts:42");
+      expect(issue.ref).toBe("src/types.ts:42");
     });
 
     it("fixed 态：含 fix 证据（commitHash + resolution + fixedAtTurn）", () => {
@@ -195,6 +197,7 @@ describe("W1+W2: issue tracking 类型", () => {
         id: "R1",
         severity: "must-fix",
         description: "缺少错误处理",
+        dimension: "error-handling",
         status: "fixed",
         foundAtTurn: 1,
         fix: {
@@ -244,17 +247,24 @@ describe("W1+W2: issue tracking 类型", () => {
         gateHistory: [],
         gatePassed: {},
         clarifyRecords: [],
+        specSections: [],
         adrs: [],
         reviewIssues: [
           {
             id: "R1",
             severity: "must-fix",
             description: "bug",
+            dimension: "error-handling",
             status: "open",
             foundAtTurn: 1,
           },
         ],
         reviewTurn: 1,
+        specHistory: [],
+        specReviewIssues: [],
+        specReviewTurn: 0,
+        planReviewIssues: [],
+        planReviewTurn: 0,
         testFixLog: [
           {
             caseId: "E1",
@@ -278,7 +288,8 @@ describe("W1+W2: issue tracking 类型", () => {
       const sub: ReviewIssueSubmission = {
         severity: "nit",
         description: "拼写错误",
-        file: "README.md:10",
+        dimension: "design-consistency",
+        ref: "README.md:10",
       };
       expect(sub.severity).toBe("nit");
       expect((sub as { id?: string }).id).toBeUndefined();

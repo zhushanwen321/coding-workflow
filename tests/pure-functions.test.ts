@@ -49,9 +49,15 @@ function makeTopicWithFails(phase: Action, failCount: number): Topic {
     gateHistory,
     gatePassed: {},
     clarifyRecords: [],
+    specSections: [],
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specHistory: [],
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],
@@ -84,35 +90,67 @@ describe("encodeCwd", () => {
 describe("judgeByExpected", () => {
   it("url + text 全匹配 → passed", () => {
     const r = judgeByExpected(
-      { url: "http://x", text: "ok" },
+      { type: "exact", url: "http://x", text: "ok" },
       { url: "http://x", text: "ok" },
     );
     expect(r.status).toBe("passed");
   });
 
   it("url 不等 → failed，reason 含 url 不匹配", () => {
-    const r = judgeByExpected({ url: "http://a" }, { url: "http://b" });
+    const r = judgeByExpected({ type: "exact", url: "http://a" }, { url: "http://b" });
     expect(r.status).toBe("failed");
     expect(r.reason).toContain("http://b");
     expect(r.reason).toContain("http://a");
   });
 
   it("text 不等 → failed", () => {
-    const r = judgeByExpected({ text: "yes" }, { text: "no" });
+    const r = judgeByExpected({ type: "exact", text: "yes" }, { text: "no" });
     expect(r.status).toBe("failed");
     expect(r.reason).toContain("yes");
   });
 
   it("expected 有 url 但 actual 缺 url → failed，reason 含 missing", () => {
-    const r = judgeByExpected({ url: "http://x" }, {});
+    const r = judgeByExpected({ type: "exact", url: "http://x" }, {});
     expect(r.status).toBe("failed");
     expect(r.reason).toContain("missing");
   });
 
   it("expected 无 url 无 text → failed，reason 含 no judgeable", () => {
-    const r = judgeByExpected({}, {});
+    const r = judgeByExpected({ type: "exact" }, {});
     expect(r.status).toBe("failed");
     expect(r.reason).toContain("no judgeable field");
+  });
+
+  // ── exit_zero 模式（纯函数判定：按 actual.exitCode 归一化） ──
+
+  it("exit_zero + actual.exitCode=0 → passed（无需 url/text）", () => {
+    const r = judgeByExpected({ type: "exit_zero" }, { exitCode: 0 });
+    expect(r.status).toBe("passed");
+  });
+
+  it("exit_zero + actual.exitCode=1 → failed，reason 含 exitCode", () => {
+    const r = judgeByExpected({ type: "exit_zero" }, { exitCode: 1 });
+    expect(r.status).toBe("failed");
+    expect(r.reason).toContain("exitCode=1");
+  });
+
+  it("exit_zero + 无 actual.exitCode → failed，reason 不含 no judgeable field", () => {
+    const r = judgeByExpected({ type: "exit_zero" }, {});
+    expect(r.status).toBe("failed");
+    expect(r.reason).not.toContain("no judgeable field");
+  });
+
+  // ── script 模式（纯函数判定：同 exit_zero，读 actual.exitCode） ──
+
+  it("script + actual.exitCode=0 → passed", () => {
+    const r = judgeByExpected({ type: "script", path: "check.sh" }, { exitCode: 0 });
+    expect(r.status).toBe("passed");
+  });
+
+  it("script + actual.exitCode=2 → failed，reason 含 exitCode=2", () => {
+    const r = judgeByExpected({ type: "script", path: "check.sh" }, { exitCode: 2 });
+    expect(r.status).toBe("failed");
+    expect(r.reason).toContain("exitCode=2");
   });
 });
 
@@ -181,7 +219,7 @@ describe("testCheck", () => {
       layer: "mock" as const,
       scenario: "x",
       steps: "x",
-      expected: { text: "ok" },
+      expected: { type: "exact" as const, text: "ok" },
       executor: "vitest",
       status: "pending" as const,
       requiresScreenshot: true,
@@ -200,7 +238,7 @@ describe("testCheck", () => {
       layer: "mock" as const,
       scenario: "x",
       steps: "x",
-      expected: { text: "ok" },
+      expected: { type: "exact" as const, text: "ok" },
       executor: "vitest",
       status: "pending" as const,
       requiresScreenshot: true,
@@ -216,7 +254,7 @@ describe("testCheck", () => {
       layer: "mock" as const,
       scenario: "x",
       steps: "x",
-      expected: { text: "42" },
+      expected: { type: "exact" as const, text: "42" },
       executor: "vitest",
       status: "pending" as const,
       requiresScreenshot: false,
@@ -307,14 +345,14 @@ describe("assertSafeSize (via parseLitePlan)", () => {
     const plan = {
       format: "lite",
       objective: "test",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: bigText }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: bigText }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
           layer: "mock",
           scenario: "x",
           steps: "x",
-          expected: { text: "x" },
+          expected: { type: "exact", text: "x" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -327,14 +365,14 @@ describe("assertSafeSize (via parseLitePlan)", () => {
     const plan = {
       format: "lite",
       objective: "test",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "改 src/app.ts" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "改 src/app.ts" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
           layer: "mock",
           scenario: "x",
           steps: "x",
-          expected: { text: "x" },
+          expected: { type: "exact", text: "x" },
           executor: "vitest",
           requiresScreenshot: false,
         },

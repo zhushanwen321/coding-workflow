@@ -19,15 +19,17 @@
  * - handleReplan 事务内必须同步 gatePassed（砍掉 cache_inconsistent guard 后的注释强依赖）。
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
   clarifyCheck,
+  confirmClarifyCheck,
   devCheck,
   fileExistsCheck,
   planCheck,
   redLightCheck,
-  tddPlanCheck,
+  reviewIssueCheck,
   testCheck,
 } from "./gate.js";
 import { runInit } from "./init.js";
@@ -36,13 +38,20 @@ import {
   parseDevPlan,
   parseTestJson,
 } from "./plan-parser.js";
+import { getShape, VALID_SHAPE_IDS } from "./shapes/registry.js";
+import type { TaskShapeId, Violation } from "./shapes/types.js";
 import {
   buildNextAction,
   computeGatePassed,
   computeNextStatus,
+  getDevIncompleteMessage,
+  getTestIncompleteMessage,
+  REVIEW_TURN_LIMIT,
+  TEST_TURN_LIMIT,
 } from "./state-machine.js";
 import { computeRetrospectDerived } from "./stats.js";
 import {
+  type Action,
   type ActionDeps,
   type ActionResult,
   type Actual,
@@ -53,21 +62,118 @@ import {
   CwError,
   type DefectSeverity,
   type Evidence,
+  GuardError,
+  type ProcessIssue,
+  type ProcessIssueType,
   type RetrospectData,
   type RetrospectKnownRisk,
   type ReviewFixSubmission,
   type ReviewIssue,
   type ReviewIssueSubmission,
   type RuntimeEnv,
+  type Status,
   type TestCase,
   type TestCaseSeed,
   type TestFixSubmission,
   type Topic,
   type Wave,
+  type WaveChange,
   type WaveSeed,
 } from "./types.js";
 
-// ── 参数类型（7 个 action）──────────────────────────────────
+// ── 纵向 gate 链：前序阶段完成度前置检查 ──────────────────────
+
+/**
+ * checkPhasePrerequisite — 在 handler 开头检查前序阶段完成度。
+ *
+ * 与 checkLinear（guard 层，防 status 跳步）正交：checkLinear 只看 status 是否合法，
+ * 本函数看前序阶段的 gate 是否真过。blind follower agent 可能 status 合法但前序未完成
+ * （如 dev progressive 调一次后 status=developed，但 W2 仍未 committed）。
+ *
+ * 四个关卡（守全部阶段）：
+ *   - review  → dev gate（全 wave committed）
+ *   - test    → review 完成度（issues 全 closed OR reviewTurn>=REVIEW_TURN_LIMIT 逃生阀）
+ *   - retrospect → test 完成度（cases 全 passed OR testTurn>=TEST_TURN_LIMIT 逃生阀）
+ *   - closeout → retrospect gate（gateHistory 有 pass 记录）
+ *
+ * 逃生阀（FR-3）：test/review 达 turn 上限时放行，防 test↔test_fix / review↔review_fix 死循环。
+ * dev/retrospect 无逃生阀（dev 是入口无前序；retrospect 是 single-shot gate 无 turn 概念）。
+ *
+ * 未通过时 throw GuardError(code=phase_prerequisite_failed)，status 不流转、不进 gateHistory
+ * （走 guard 拒绝路径，非 gate fail 路径——不留 retry 的 nextAction，agent 需回去补前置阶段）。
+ *
+ * 设计取舍（WARNING-3）：不记 gateHistory 意味着越权尝试在 closeout 的 evidence 快照里不可见。
+ * 这与 illegal_transition（guard 层）历史一致——guard 拒绝都不留痕，只有 gate fail 才记 gateHistory。
+ * 若需审计越权行为，应在 CLI 层写独立 audit log，而非破坏 guard 拒绝的一致性。
+ */
+function assertPhasePrerequisite(action: Action, topic: Topic): void {
+  switch (action) {
+    case "review": {
+      // dev gate = 全 wave committed（≥1 且全 committed !== null）
+      if (!computeGatePassed("dev", topic)) {
+        // 文案按 taskShape 选（FR-6）：tdd 提 wave，existence 提产物，避免把 TDD 专属概念
+        // 硬塞给 delete-only/doc-only 这类无 wave 的 shape。
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `review 前置失败：${getDevIncompleteMessage(topic)}`,
+          "dev",
+          topic.status,
+        );
+      }
+      return;
+    }
+    case "test": {
+      // review 完成度 = reviewIssues 全 closed（无 open）
+      // 空数组陷阱防护：从未 review 过时 reviewIssues=[] 且 every() 返回 true，
+      // 必须额外要求 computeGatePassed("review")（gateHistory 有 review pass 记录）。
+      const reviewGatePassed = computeGatePassed("review", topic);
+      const hasOpenIssues = topic.reviewIssues.some((i) => i.status === "open");
+      const escapeByTurn = topic.reviewTurn >= REVIEW_TURN_LIMIT;
+      if ((!reviewGatePassed || hasOpenIssues) && !escapeByTurn) {
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `test 前置失败：review 阶段未完成（有 open issue 未闭环或 review 未过 gate）。需先调 cw(review_fix) 修复 issue 或 cw(review) 闭环。`,
+          "review",
+          topic.status,
+        );
+      }
+      return;
+    }
+    case "retrospect": {
+      // test 完成度 = 全 testCase passed
+      const testGatePassed = computeGatePassed("test", topic);
+      const escapeByTurn = topic.testTurn >= TEST_TURN_LIMIT;
+      if (!testGatePassed && !escapeByTurn) {
+        // 文案按 taskShape 选（FR-6）：tdd 提 testCase，existence 提产物清单，
+        // 避免把 TDD 专属概念硬塞给无 testCase 的 shape。
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `retrospect 前置失败：${getTestIncompleteMessage(topic)}`,
+          "test",
+          topic.status,
+        );
+      }
+      return;
+    }
+    case "closeout": {
+      // retrospect gate = gateHistory 有 retrospect pass 记录
+      if (!computeGatePassed("retrospect", topic)) {
+        throw new GuardError(
+          "phase_prerequisite_failed",
+          `closeout 前置失败：retrospect 阶段未完成（retrospect gate 未过）。需先调 cw(retrospect) 提交复盘。`,
+          "retrospect",
+          topic.status,
+        );
+      }
+      return;
+    }
+    default:
+      // dev / create / clarify / plan / tdd_plan / *_fix / replan / abort / assess 无前置检查
+      return;
+  }
+}
+
+
 
 export interface CreateParams {
   action: "create";
@@ -80,6 +186,8 @@ export interface CreateParams {
   llm?: string;
   /** cw-cli 版本号，cli 层从 package.json 自动读取后传入。 */
   cwVersion?: string;
+  /** TaskShape id。不传时默认 "full-tdd"。 */
+  taskShape?: TaskShapeId;
 }
 
 export interface ClarifyParams {
@@ -87,6 +195,12 @@ export interface ClarifyParams {
   topicId: string;
   /** clarifyJson 内容（CLI 从 stdin 读为对象，支持单条或批量数组）。 */
   clarifyJson: unknown;
+  /**
+   * FR-2: spec 替换模式。提供时，CW 调 replaceSpecSections（旧 spec 归档到 specHistory + 替换为新内容），
+   * 而非默认的 appendSpecSections。值是替换原因（agent 提供）。
+   * 替换内容从 clarifyJson 的 specSections 字段取。
+   */
+  replaceSpec?: string;
 }
 
 export interface PlanParams {
@@ -167,6 +281,52 @@ export interface CloseoutParams {
   topicId: string;
 }
 
+/** FR-1: confirm_clarify 参数——用户确认需求后提交，流转 created → clarify_confirmed。 */
+export interface ConfirmClarifyParams {
+  action: "confirm_clarify";
+  topicId: string;
+}
+
+/** FR-4: spec_review 参数——提交 spec 审查报告 + 结构化 issue。 */
+export interface SpecReviewParams {
+  action: "spec_review";
+  topicId: string;
+  /** spec-review.md 路径（必填，gate 校验存在+非空）。 */
+  specReviewPath: string;
+  /** 结构化 issue（stdin 传入，空数组=无问题）。 */
+  issues?: ReviewIssueSubmission[];
+}
+
+/** FR-4: spec_review_fix 参数——提交 issue 修复。 */
+export interface SpecReviewFixParams {
+  action: "spec_review_fix";
+  topicId: string;
+  fixes: ReviewFixSubmission[];
+}
+
+/** FR-5: plan_review 参数——提交 plan 审查报告 + 结构化 issue。 */
+export interface PlanReviewParams {
+  action: "plan_review";
+  topicId: string;
+  /** plan-review.md 路径（必填，gate 校验存在+非空）。 */
+  planReviewPath: string;
+  /** 结构化 issue（stdin 传入，空数组=无问题）。 */
+  issues?: ReviewIssueSubmission[];
+}
+
+/** FR-5: plan_review_fix 参数——提交 issue 修复。 */
+export interface PlanReviewFixParams {
+  action: "plan_review_fix";
+  topicId: string;
+  fixes: ReviewFixSubmission[];
+}
+
+/** FR-3: abort 参数——终止 topic，流转到 aborted 终态。 */
+export interface AbortParams {
+  action: "abort";
+  topicId: string;
+}
+
 export interface ReplanParams {
   action: "replan";
   topicId: string;
@@ -195,7 +355,12 @@ export interface AssessParams {
 export type CwParams =
   | CreateParams
   | ClarifyParams
+  | ConfirmClarifyParams
+  | SpecReviewParams
+  | SpecReviewFixParams
   | PlanParams
+  | PlanReviewParams
+  | PlanReviewFixParams
   | TddPlanParams
   | DevParams
   | TestParams
@@ -205,6 +370,7 @@ export type CwParams =
   | TestFixParams
   | CloseoutParams
   | ReplanParams
+  | AbortParams
   | AssessParams;
 
 // ── handleCreate ────────────────────────────────────────────
@@ -221,6 +387,16 @@ export type CwParams =
  * 失败路径：slug 重复 → insertTopic 抛 UNIQUE 约束错误（propagate 给 CLI 映射 exit code）。
  */
 export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResult {
+  // W1: taskShape 白名单校验。CLI 层只透传字符串，这里把住合法性——
+  // 防止磁盘/脚本手写非法值静默落到 topic（getShape 虽会降级 full-tdd，但 topic
+  // 字段会存原始脏值，后续 report/stats 渲染混乱）。
+  // 白名单从 registry 派生（VALID_SHAPE_IDS），避免新增 shape 时漏改第二份列表。
+  if (params.taskShape && !VALID_SHAPE_IDS.includes(params.taskShape)) {
+    throw new CwError(
+      `无效的 taskShape: ${params.taskShape}（合法值: ${VALID_SHAPE_IDS.join(", ")}）`,
+    );
+  }
+
   const topicId = buildTopicId(params.slug);
   const workspacePath = params.workspacePath ?? deps.workspacePath;
   const topicDir = join(workspacePath, ".xyz-harness", params.slug);
@@ -244,6 +420,7 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     createdAt: new Date().toISOString(),
     status: "created",
     runtimeEnv,
+    taskShape: params.taskShape ?? "full-tdd",
     waves: [],
     testCases: [],
     gateHistory: [],
@@ -252,9 +429,15 @@ export function handleCreate(params: CreateParams, deps: ActionDeps): ActionResu
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],
+    specSections: [],
+    specHistory: [],
   };
 
   deps.store.transaction(() => {
@@ -334,6 +517,8 @@ export function handleClarify(
   void topic;
   const check = clarifyCheck(params.clarifyJson);
 
+  // FR-9: replaceSpec 提供但未带 specSections 时记录 warning（不阻断，事务后挂到 result）。
+  let replaceWarning: string | undefined;
   let passed: boolean;
   deps.store.transaction(() => {
     if (check.result === "fail") {
@@ -378,6 +563,28 @@ export function handleClarify(
       result: "pass",
       progressive: true,
     });
+    // 聚合所有条目的 specSections（挂在 ParsedClarify 上，不在 ClarifySeed 上）。
+    const allSpecSections = parsed.flatMap((item) => item.specSections ?? []);
+    if (params.replaceSpec !== undefined) {
+      // FR-2: spec 替换模式——旧 spec 整体快照归档到 specHistory，替换为新内容。
+      // replaceSpec 值是替换原因（agent 提供）。
+      if (allSpecSections.length > 0) {
+        deps.store.replaceSpecSections(
+          params.topicId,
+          allSpecSections,
+          params.replaceSpec,
+        );
+      } else {
+        // FR-9: replaceSpec flag 提供但未带 specSections → warning 不阻断。
+        replaceWarning =
+          "replaceSpec 已设但未提供 specSections，本次未执行替换也未追加。若要替换 spec 需在同一条 clarifyJson 里带完整 specSections。";
+      }
+    } else {
+      // 默认 append 模式——progressive append-only，与 clarifyRecord/adr 同语义。
+      if (allSpecSections.length > 0) {
+        deps.store.appendSpecSections(params.topicId, allSpecSections);
+      }
+    }
     passed = true;
   });
 
@@ -403,6 +610,9 @@ export function handleClarify(
   );
   if (!passed!) {
     (result as Record<string, unknown>).mustFix = check.report;
+  }
+  if (replaceWarning) {
+    (result as Record<string, unknown>).warning = replaceWarning;
   }
   return result;
 }
@@ -502,7 +712,7 @@ export function handlePlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = planCheck(params.planJson);
+  const check = planCheck(params.planJson, topic.specSections, topic.workspacePath);
 
   let passed: boolean;
   deps.store.transaction(() => {
@@ -523,9 +733,21 @@ export function handlePlan(
     // planCheck 内部已调 parseDevPlan 成功，这里再调一次拿 parsed（parseDevPlan 是纯函数，幂等）。
     const parsed = parseDevPlan(params.planJson);
     deps.store.insertWaves(params.topicId, parsed.waves);
+    // 持久化 objective（如果 dev-plan.json 提供了与 create 时不同的 objective）。
+    // create 时存的 objective 可能是占位/草稿，plan 阶段 dev-plan.json 的 objective 更权威——同步覆盖。
+    if (parsed.objective && parsed.objective !== topic.objective) {
+      deps.store.updateObjective(params.topicId, parsed.objective);
+    }
     // 向后兼容：旧格式 plan.json 同时含 testCases（extractDevPlan 提取到 legacyTestCases）。
     // 新格式 dev-plan.json 不含 testCases（test.json 在 tdd_plan 阶段提交），跳过 insertTestCases。
-    if (parsed.legacyTestCases && parsed.legacyTestCases.length > 0) {
+    // m1: legacy testCases 只对 tdd shape 有意义——非 tdd shape（delete-only/doc-only）
+    // 的 isDevVerified 不读 testCases（existence 读 existenceArtifacts，review-only 恒空），
+    // 写入多余的 testCases 会污染 topic 数据（如 closeout coverage 误算通过率）。加 shape 守卫。
+    if (
+      parsed.legacyTestCases &&
+      parsed.legacyTestCases.length > 0 &&
+      getShape(topic.taskShape).verification.id === "tdd"
+    ) {
       deps.store.insertTestCases(params.topicId, parsed.legacyTestCases);
     }
     deps.store.updateStatus(
@@ -568,10 +790,10 @@ export function handlePlan(
 // ── handleTddPlan ───────────────────────────────────────────
 
 /**
- * handleTddPlan — test.json gate + testCases 写入 + 状态流转（planned → tdd_inited）。
+ * handleTddPlan — test.json gate + testCases 写入 + 状态流转（planned → pre_dev_verified）。
  *
  * 数据流：tddPlanCheck(testJson) → 事务{ pass: insertTestCases + (可选)setTestRunner
- *   + updateStatus(tdd_inited) + gatePassed(tdd_plan,true) + gateHistory(pass)
+ *   + updateStatus(pre_dev_verified) + gatePassed(tdd_plan,true) + gateHistory(pass)
  *   | fail: gateHistory(fail)，status 不变（仍 planned） }
  *   → 事务外对 redCheck=true 的 testCase 跑 redLightCheck（仅当配置了 testRunner）
  *   → buildNextAction("tdd_plan")。
@@ -595,16 +817,24 @@ export function handleTddPlan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
-  const check = tddPlanCheck(params.testJson);
+  // W4: 通过 TaskShape 策略路由调 preDevCheck（解耦硬编码的 tddPlanCheck 调用，FR-6）。
+  // preDevCheck 内部等价 tddPlanCheck(payload, topic.specSections, topic.workspacePath)，
+  // 等价性由 shapes-tdd-strategy.test.ts AC-5 锁定。返回 GateResult（含 result/report/parsed?/warning?），
+  // 结构与 tddPlanCheck 的 TddPlanCheckResult 对齐，后续 check.result/check.report/check.parsed 不变。
+  const check = getShape(topic.taskShape).verification.preDevCheck(
+    topic,
+    params.testJson,
+  );
 
   let passed: boolean;
+  const preDevGateName = getShape(topic.taskShape).verification.preDevGateName;
   deps.store.transaction(() => {
     if (check.result === "fail") {
       // gate fail：status 不变，只 append gateHistory(fail)。
       deps.store.appendGateHistory(params.topicId, {
         phase: "tdd_plan",
         action: "tdd_plan",
-        gate: "test-json-schema",
+        gate: preDevGateName,
         result: "fail",
         report: check.report,
         progressive: false,
@@ -612,13 +842,16 @@ export function handleTddPlan(
       passed = false;
       return;
     }
-    // gate pass：testCases 写入 + 状态流转到 tdd_inited。
-    const parsed = check.parsed!;
-    deps.store.insertTestCases(params.topicId, parsed.testCases);
-    // 存储项目级 testRunner 配置（若 test.json 提供），供 test 阶段 runTestRunner 和红灯校验复用。
-    if (parsed.testRunner) {
-      deps.store.setTestRunner(params.topicId, parsed.testRunner);
-    }
+    // gate pass：testCases 写入 + 状态流转到 pre_dev_verified。
+    // 通过 TaskShape 策略的 applyPreDevResult 把 parsed payload 应用到 store——
+    // 替代原硬编码的 insertTestCases + setTestRunner（FR-6：策略封装写入语义）。
+    // tdd 策略的 applyPreDevResult 等价于原逻辑（insertTestCases + 可选 setTestRunner），
+    // delete-only/existence 策略则写 existenceArtifacts（W4 接入）。parsed 形态由 preDevCheck 保证。
+    getShape(topic.taskShape).verification.applyPreDevResult(
+      params.topicId,
+      deps.store,
+      check.parsed,
+    );
     deps.store.updateStatus(
       params.topicId,
       computeNextStatus("tdd_plan", topic.status),
@@ -627,7 +860,7 @@ export function handleTddPlan(
     deps.store.appendGateHistory(params.topicId, {
       phase: "tdd_plan",
       action: "tdd_plan",
-      gate: "test-json-schema",
+      gate: preDevGateName,
       result: "pass",
       progressive: false,
     });
@@ -649,17 +882,29 @@ export function handleTddPlan(
   if (!passed!) {
     (result as Record<string, unknown>).mustFix = check.report;
     return result;
+  } else if (check.warning) {
+    // gate pass 但 AC 映射可能未全覆盖 → warning 挂 mustFix（不阻断 status，对称 handlePlan 的 warning 处理）。
+    (result as Record<string, unknown>).mustFix = `AC 映射 warning（不阻断）：${check.warning}`;
   }
 
   // 红灯校验（事务外执行——调 execFileSync 跑测试命令，不能在事务内持锁）。
   // testRunner 已必选（tddPlanCheck 保证），红灯校验阻断 status 流转：
-  //   - 红灯 fail（绿灯 = 先写了实现）→ 回退 status 到 planned，nextAction 指回 tdd_plan retry
-  //   - 红灯 pass 或无 redCheck case → 正常流转到 tdd_inited
+  //   - 红灯 fail（绿灯 = 先写了实现）→ 回退 status 到 tdd_plan 的前置状态，nextAction 指回 tdd_plan retry
+  //   - 红灯 pass 或无 redCheck case → 正常流转到 pre_dev_verified
+  // M2: 回退目标按 taskShape 路由——full-tdd 走 plan_review，回退到 plan_reviewed；
+  // delete-only/doc-only 跳过 plan_review 阶段（stages 不含），前置状态是 planned，
+  // 回退到 planned（plan_reviewed 是它们从未进入过的状态）。tdd_plan 的 expectedStatuses
+  // 同时含 planned 和 plan_reviewed，两种回退都能让 buildNextAction 指回 tdd_plan retry。
+  const rollbackStatus: Status = getShape(updated.taskShape).review.stages.includes(
+    "plan_review",
+  )
+    ? "plan_reviewed"
+    : "planned";
   const redWarnings = runRedLightVerification(updated);
   if (redWarnings.length > 0) {
-    // 红灯校验失败——回退 status（tdd_inited → planned），gatePassed 置 false。
+    // 红灯校验失败——回退 status（pre_dev_verified → 前置状态），gatePassed 置 false。
     deps.store.transaction(() => {
-      deps.store.updateStatus(params.topicId, "planned");
+      deps.store.updateStatus(params.topicId, rollbackStatus);
       deps.store.updateGatePassed(params.topicId, "tdd_plan", false);
       deps.store.appendGateHistory(params.topicId, {
         phase: "tdd_plan",
@@ -790,6 +1035,57 @@ export function handleDev(
     }
   }
 
+  // Step 1c: dependsOn 拓扑校验（gate fail，阻断 committed）。
+  // wave 的 dependsOn 必须都已 committed，否则该 wave 视为 invalid 不写入。
+  // 「已 committed」包含两个来源：
+  //   1. topic.waves 里 committed !== null 的 wave（历史批次已落盘）
+  //   2. 本次批次内 commit 校验通过（validation.valid）的 wave（同一 cw(dev) 调用内串行提交）
+  // 第二点的意义：agent 可以一次 cw(dev) 同时提交 W1+W2（W2 dependsOn W1）——
+  // 只要 W1 在本次 commit 校验通过，W2 的依赖就算满足。
+  //
+  // 不存在的 dependsOn waveId（指向未定义 wave）：视为未满足，标 missingDeps。
+  // plan-parser 只检环不检存在性，这里兜底——agent 写错 waveId 会被拓扑校验挡下。
+  const committedSet = new Set<string>();
+  for (const w of topic.waves) {
+    if (w.committed !== null) committedSet.add(w.id);
+  }
+  // 同批次有效 task 的 waveId 也算满足（事务里会一起 committed）。
+  for (const t of taskResults) {
+    if (t.validation.valid) committedSet.add(t.waveId);
+  }
+  const waveIdKnown = new Set(topic.waves.map((w) => w.id));
+  for (const t of taskResults) {
+    const wave = topic.waves.find((w) => w.id === t.waveId);
+    const deps = wave?.dependsOn ?? [];
+    if (deps.length === 0) continue;
+    const unsatisfied: string[] = [];
+    const missing: string[] = [];
+    for (const dep of deps) {
+      if (!waveIdKnown.has(dep)) {
+        missing.push(dep);
+      } else if (!committedSet.has(dep)) {
+        unsatisfied.push(dep);
+      }
+    }
+    if (unsatisfied.length > 0 || missing.length > 0) {
+      // 拓扑不满足：标 invalid，阻断该 wave committed。
+      // 若 commit 本身也无效，保留原 reason（不被拓扑覆盖，commit 校验是更前置的问题）。
+      t.validation.unsatisfiedDeps = unsatisfied;
+      t.validation.missingDeps = missing;
+      if (t.validation.valid) {
+        t.validation.valid = false;
+        const parts: string[] = [];
+        if (unsatisfied.length > 0) {
+          parts.push(`dependsOn 未 committed: ${unsatisfied.join(", ")}`);
+        }
+        if (missing.length > 0) {
+          parts.push(`dependsOn 指向未知 waveId: ${missing.join(", ")}`);
+        }
+        t.validation.reason = `dependency_unsatisfied (${parts.join("; ")})`;
+      }
+    }
+  }
+
   const invalidTasks = taskResults.filter((t) => !t.validation.valid);
 
   // Step 2: 计算流转后状态（progressive：已 developed 则原地停留）。
@@ -844,6 +1140,25 @@ export function handleDev(
 
 // ── handleTest ──────────────────────────────────────────────
 
+/** exit_zero / script 模式 CW 自动执行的结果（exact 模式不在此表，沿用 agent actual）。 */
+type AutoExecResult = { actual: Actual } | { error: string };
+
+/**
+ * 从 execFileSync 抛出的异常里取退出 status；无 status（spawn 失败/timeout）返回 null。
+ *
+ * NaN/Infinity/-Infinity 虽然 typeof === "number"，但不是合法的进程退出码——execFileSync
+ * 在进程正常退出时返回有限整数，被 signal 杀/spawn 失败时无 status。用 Number.isFinite 收窄，
+ * 让非法数值归到 null（基础设施异常分支），职责归位：本函数只返回合法 exit code。
+ * 判定层 judgeByExpected 另有 isFinite 兜底作纵深防御，但 readExitStatus 不应依赖下游兜底。
+ */
+export function readExitStatus(e: unknown): number | null {
+  if (typeof e === "object" && e !== null && "status" in e) {
+    const status = (e as { status: unknown }).status;
+    if (typeof status === "number" && Number.isFinite(status)) return status;
+  }
+  return null;
+}
+
 export interface TestCaseResult {
   caseId: string;
   status: TestCase["status"];
@@ -862,8 +1177,8 @@ export interface TestCaseResult {
  *
  * 砍掉旧版 mid 分支（信声明 + GitValidator 追溯 dev commit）——lite-only，丢 claimedStatus（D-008）。
  *
- * progressive 语义：computeNextStatus("test", tested) = tested（原地停留），
- * test 在 tested 状态下多次调用不报 illegal_transition，剩余 case 继续判定。
+ * progressive 语义：computeNextStatus("test", post_dev_verified) = post_dev_verified（原地停留），
+ * test 在 post_dev_verified 状态下多次调用不报 illegal_transition，剩余 case 继续判定。
  *
  * 失败路径：
  *   - caseId 不存在 → throw（propagate 给 CLI）
@@ -874,6 +1189,76 @@ export function handleTest(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：test 前置检查（review 完成度 + 逃生阀）
+  assertPhasePrerequisite("test", topic);
+
+  // W6: 非 TDD 策略分流——existence（无 testCases，用 existenceArtifacts）和 review-only
+  // （无 testCases，恒 verified）的 test 阶段不依赖 agent 提交的 cases。postDevVerify 自查
+  // 产物状态，verified 缓存由事务内写回 existenceArtifacts（无 updateTestCase）。
+  // 触发条件：非 tdd 策略（existence / review-only）——用 verification.id 显式判断而非
+  // testCases.length === 0，防未来混合 shape（同时有 testCases + existenceArtifacts）误判。
+  // full-tdd 的 verification.id === "tdd"，走原路径（全覆盖校验 + updateTestCase）。
+  if (getShape(topic.taskShape).verification.id !== "tdd") {
+    return handleTestForStrategyVerify(params, topic, deps);
+  }
+
+  // FR-4: handleTest 全覆盖校验——params.cases 的 caseId 集合必须 == topic.testCases 的 id 集合。
+  // 防止 agent 选择性提交（如只跑单测跳过 e2e），导致部分 testCase 永远 pending。
+  // 不跑的 case 必须在 tdd_plan/replan 阶段就移除，不能在 test 时静默跳过。
+  // 校验在事务外做——throw 前不修改任何 testCase。
+  const rawIds = params.cases.map((c) => c.caseId);
+  const submittedIds = new Set(rawIds);
+  const expectedIds = new Set(topic.testCases.map((c) => c.id));
+  // 重复 caseId 检查：Set 去重会掩盖重复提交（[{E1},{E1}] 的 Set 大小=1，与单 testCase topic 匹配，
+  // 但事务内循环两次 updateTestCase(E1) 产生脏数据）。用 rawIds.length vs Set.size 捕捉。
+  const duplicates = rawIds.filter(
+    (id, i) => rawIds.indexOf(id) !== i,
+  );
+  const missing = [...expectedIds].filter((id) => !submittedIds.has(id));
+  const extra = [...submittedIds].filter((id) => !expectedIds.has(id));
+  if (duplicates.length > 0 || missing.length > 0 || extra.length > 0) {
+    const parts: string[] = [];
+    if (duplicates.length > 0)
+      parts.push(`重复 [${[...new Set(duplicates)].join(", ")}]`);
+    if (missing.length > 0) parts.push(`缺失 [${missing.join(", ")}]`);
+    if (extra.length > 0) parts.push(`多余 [${extra.join(", ")}]`);
+    throw new CwError(
+      `handleTest 的 cases 与 topic.testCases 的 id 集合不一致：${parts.join("，")}。每个 testCase 必须提交恰好一次结果（不跑的 case 在 tdd_plan/replan 阶段移除，不能在 test 时跳过）。`,
+    );
+  }
+
+  // 事务外：策略执行验证——把 exit_zero/script 的命令/脚本执行抽取到 postDevVerify（FR-6）。
+  // postDevVerify 是纯函数：只读 topic，返回每个 case 的 VerifyResult（含 CW 重算的 actual）。
+  // 等价性约束（postdev-extract-equivalence.test.ts AC-3/AC-5）：
+  //   - exit_zero 去重执行一次 testRunner（同 command 跑一次），归一化 exitCode 给每个 exit_zero case
+  //   - script 各自执行 expected.path（execFileSync 直接执行，不经 shell）
+  //   - exact 模式不执行（postDevVerify 无 agent 提交的 actual）——judgeByExpected 判 failed，
+  //     但下面 executedActualByCaseId 只收 exit_zero/script 的执行结果，exact 走 agent 提交的 actual
+  // 注：postDevVerify 内调 testCheck 时 screenshotPath=undefined，requiresScreenshot case 会判 failed；
+  // 但 handleTest 下面用自己的 testCheck（带 submission.screenshotPath）覆盖判定，等价性不破。
+  const verifyResults = getShape(topic.taskShape).verification.postDevVerify(topic);
+  const verifyByCaseId = new Map(verifyResults.map((r) => [r.caseId, r]));
+
+  // 从 postDevVerify 的 VerifyResult 重构 caseId → 执行结果映射（仅 exit_zero/script case）。
+  // 等价于原 handleTest 内联的 executedActualByCaseId：
+  //   - result.actual defined（含 exitCode）→ 执行成功，actual 回填
+  //   - exit_zero/script case 但 actual undefined → 执行基础设施异常，failureReason 即 error
+  //   - exact case 不进此表（沿用 agent 提交的 actual.text/url）
+  const executedActualByCaseId = new Map<string, AutoExecResult>();
+  for (const tc of topic.testCases) {
+    if (tc.expected.type !== "exit_zero" && tc.expected.type !== "script") {
+      continue;
+    }
+    const result = verifyByCaseId.get(tc.id);
+    if (!result) continue;
+    if (result.actual !== undefined) {
+      executedActualByCaseId.set(tc.id, { actual: result.actual as Actual });
+    } else if (result.failureReason !== undefined) {
+      // 执行异常（testRunner 缺失/spawn 失败/symlink 越界）——failureReason 即原 error 文本。
+      executedActualByCaseId.set(tc.id, { error: result.failureReason });
+    }
+  }
+
   const caseResults: TestCaseResult[] = [];
 
   deps.store.transaction(() => {
@@ -883,22 +1268,38 @@ export function handleTest(
         throw new CwError(`case not found: ${submission.caseId}`);
       }
 
-      const judged = testCheck(tc, submission.actual, submission.screenshotPath);
+      // exit_zero/script：用 CW 执行回填的 actual（含 exitCode），忽略 agent 提交的 actual。
+      // exact：用 agent 提交的 actual.text/url 做 === 比较。
+      const autoExec = executedActualByCaseId.get(submission.caseId);
+      let judgedStatus: "passed" | "failed";
+      let judgedReason: string;
+      let judgedActual: Actual | undefined;
+      if (autoExec && "error" in autoExec) {
+        // 执行基础设施异常（spawn 失败/testRunner 缺失）→ 直接 failed，不走 testCheck。
+        judgedStatus = "failed";
+        judgedReason = autoExec.error;
+        judgedActual = submission.actual;
+      } else {
+        judgedActual = autoExec ? autoExec.actual : submission.actual;
+        const judged = testCheck(tc, judgedActual, submission.screenshotPath);
+        judgedStatus = judged.status;
+        judgedReason = judged.reason;
+      }
       const patch: Partial<TestCase> = {
-        status: judged.status,
-        actual: submission.actual as object | undefined,
+        status: judgedStatus,
+        actual: judgedActual as object | undefined,
         screenshotPath: submission.screenshotPath,
-        ...(judged.status === "failed" ? { failureReason: judged.reason } : {}),
+        ...(judgedStatus === "failed" ? { failureReason: judgedReason } : {}),
       };
-      // judged.status === "passed" 时清理之前的 failureReason（retry 场景）。
-      if (judged.status === "passed") {
+      // judgedStatus === "passed" 时清理之前的 failureReason（retry 场景）。
+      if (judgedStatus === "passed") {
         patch.failureReason = undefined;
       }
       deps.store.updateTestCase(params.topicId, submission.caseId, patch);
       caseResults.push({
         caseId: submission.caseId,
-        status: judged.status,
-        failureReason: judged.status === "failed" ? judged.reason : undefined,
+        status: judgedStatus,
+        failureReason: judgedStatus === "failed" ? judgedReason : undefined,
       });
     }
 
@@ -945,10 +1346,94 @@ export function handleTest(
   };
 }
 
+// ── handleTestForStrategyVerify（W6: 无 testCases 策略的 test 阶段） ─────
+
+/**
+ * handleTestForStrategyVerify — existence / review-only 策略的 test 阶段处理。
+ *
+ * 与 TDD 的 handleTest 区别：无 testCases（existence 用 existenceArtifacts，review-only
+ * 无任何产物）。test 阶段完全靠策略的 postDevVerify 自查 + isDevVerified 缓存判定：
+ *   - existence：postDevVerify 跑 existsSync 返回 VerifyResult[]（caseId=artifact.path），
+ *     事务内把 actual.verified 写回 existenceArtifacts[i].verified。写回后 isDevVerified
+ *     读缓存判定全 verified → test gate pass。
+ *   - review-only：postDevVerify 返回 []，isDevVerified 恒 true → test gate pass。
+ *
+ * 不校验 params.cases（agent 可省略 --cases；提供了也忽略——策略自查不依赖 agent actual）。
+ * 不调 updateTestCase（无 testCase 记录）。caseResults 从 VerifyResult 派生（供 report）。
+ *
+ * @param params 同 handleTest（cases 字段对非 TDD 策略无意义，保留签名对称）
+ */
+function handleTestForStrategyVerify(
+  params: TestParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  // 事务外：策略执行验证（纯函数，只读 topic + existsSync）。
+  // existence 返回每个 artifact 的 VerifyResult；review-only 返回 []。
+  const verifyResults = getShape(topic.taskShape).verification.postDevVerify(topic);
+
+  const caseResults: TestCaseResult[] = verifyResults.map((r) => ({
+    caseId: r.caseId,
+    status: (r.passed ? "passed" : "failed") as TestCase["status"],
+    failureReason: r.failureReason,
+  }));
+
+  deps.store.transaction(() => {
+    // existence 策略：把 postDevVerify 的 actual.verified 写回 existenceArtifacts。
+    // actual 形态由 ExistenceVerificationStrategy.postDevVerify 保证：{ exists, verified }。
+    // review-only 返回 []，此循环空跑（无写回），isDevVerified 恒 true 不依赖缓存。
+    for (const r of verifyResults) {
+      const actual = r.actual as { verified?: boolean } | undefined;
+      if (actual && typeof actual.verified === "boolean") {
+        deps.store.updateExistenceArtifactVerified(
+          params.topicId,
+          r.caseId,
+          actual.verified,
+        );
+      }
+    }
+
+    // 事务内 reload 拿最新数据（verified 已写回）算 gatePassed + status。
+    const reloaded = deps.store.loadTopic(params.topicId);
+    if (!reloaded) {
+      throw new Error(`topic not found after test: ${params.topicId}`);
+    }
+    const gatePassed = computeGatePassed("test", reloaded);
+    const nextStatus = computeNextStatus("test", reloaded.status);
+    if (nextStatus !== reloaded.status) {
+      deps.store.updateStatus(params.topicId, nextStatus);
+    }
+    deps.store.updateGatePassed(params.topicId, "test", gatePassed);
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "test",
+      action: "test",
+      gate: getShape(topic.taskShape).verification.postDevGateName,
+      result: caseResults.every((c) => c.status === "passed") ? "pass" : "fail",
+      report: JSON.stringify(caseResults),
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after test: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("test", updated),
+    testProgress: updated.testCases.map((c) => ({ id: c.id, status: c.status })),
+    caseResults,
+  };
+}
+
 // ── handleTestFix ───────────────────────────────────────────
 
 /**
- * handleTestFix — test loop 内的修复动作（progressive，status 留在 tested）。
+ * handleTestFix — test loop 内的修复动作（progressive，status 留在 post_dev_verified）。
  *
  * 数据流：
  *   校验 fixes[].caseId 存在（不存在的 caseId 抛 CwError）
@@ -956,7 +1441,8 @@ export function handleTest(
  *       + appendGateHistory(test-fix, pass, progressive) }
  *     → reload → buildNextAction("test_fix")（指向 test 重跑失败的 case）。
  *
- * 不做 commit 校验：commitHash 只记录审计，不验证真实性（与 dev 的 commit 校验语义不同）。
+ * commitHash 格式校验（7-40 位 hex，与 review_fix 同校验），但不做存在性校验：只记录审计，
+ * 不验证真实性（与 dev 的 commit 存在性+diff 校验语义不同）。
  * turn = 当前 testTurn（修复发生在哪一轮 test 之后）。
  *
  * 失败路径：fixes 里某 caseId 不存在于 topic.testCases → throw CwError。
@@ -983,6 +1469,19 @@ export function handleTestFix(
       throw new CwError(
         `test_fix caseId ${fix.caseId} 当前 status=${tc.status}，只有 failed 的 case 才能提交 test_fix` +
           `（对称 review_fix 的 status=open 守门——对已 passed 的 case 提交 fix 会污染审计）`,
+      );
+    }
+  }
+
+  // commitHash 格式校验（只查格式，不做存在性校验——保持 audit-only 语义）。
+  // git hash：7-40 字符的十六进制字符串（短/长 hash 均允许），与 review_fix 同校验。
+  // test_fix 的 commitHash 在类型上必填（TestFixSubmission.commitHash: string），
+  // 这里只做格式校验，对称 review_fix 的 GIT_HASH_RE 守门。
+  const GIT_HASH_RE = /^[0-9a-f]{7,40}$/;
+  for (const fix of fixes) {
+    if (!GIT_HASH_RE.test(fix.commitHash)) {
+      throw new CwError(
+        `test_fix commitHash 格式无效: "${fix.commitHash}"（应为 7-40 字符十六进制 git hash，与 review_fix 同校验）`,
       );
     }
   }
@@ -1051,6 +1550,9 @@ export function handleReview(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：review 前置检查（dev gate 必须通过）
+  assertPhasePrerequisite("review", topic);
+
   const path = params.reviewPath ?? "";
   const issues = params.issues ?? [];
   const hasIssues = issues.length > 0;
@@ -1058,8 +1560,23 @@ export function handleReview(
   // reviewPath 提供时做 fileExistsCheck（前置条件）。fail → gate fail，status 不变。
   const fileCheck =
     path.length > 0 ? fileExistsCheck(path) : { result: "pass" as const, report: "" };
-  // passed 在 transaction 外算完（fileCheck 已经算完，无需在闭包内赋值）。
-  const passed = fileCheck.result === "pass";
+
+  // 步骤 4：dimension 子集校验——issue.dimension 必须落在该 shape 声明的 dimensions 内（AC-10）。
+  // gate 层的 reviewIssueCheck 只保证 dimension 是合法的 ReviewDimension 枚举值（全 12 值），
+  // 但 REVIEW_PROMPT 按 shape 声明的 dimensions 子集展示维度表（W3）——agent 不该提交子集外的维度，
+  // 否则就是 prompt 与 gate 不对齐。子集校验放 handler 层，与 gate 的结构校验职责分离。
+  const allowedDimensions = getShape(topic.taskShape).review.dimensions;
+  const dimViolation = hasIssues
+    ? issues.find((i) => !allowedDimensions.includes(i.dimension))
+    : undefined;
+  const dimReport = dimViolation
+    ? `issue.dimension "${dimViolation.dimension}" 不在该 taskShape 声明的 review 维度子集内` +
+      `（允许: ${allowedDimensions.join(", ")}）。REVIEW_PROMPT 只展示这些维度，请按维度表归类发现。`
+    : "";
+
+  // passed：fileCheck + dimension 子集校验都通过才算通过。
+  const passed = fileCheck.result === "pass" && dimViolation === undefined;
+  const failReport = fileCheck.result === "fail" ? fileCheck.report : dimReport;
 
   deps.store.transaction(() => {
     if (!passed) {
@@ -1069,7 +1586,7 @@ export function handleReview(
         action: "review",
         gate: "file-exists+non-empty",
         result: "fail",
-        report: fileCheck.report,
+        report: failReport,
         progressive: true,
       });
       return;
@@ -1085,8 +1602,7 @@ export function handleReview(
     // 记录 review artifacts（reviewPath + 时间戳）。
     if (path.length > 0) {
       deps.store.setArtifacts(params.topicId, {
-        reviewPath: path,
-        reviewAt: new Date().toISOString(),
+        review: { path, at: new Date().toISOString() },
       });
     }
 
@@ -1124,7 +1640,7 @@ export function handleReview(
     nextAction: buildNextAction("review", updated),
   };
   if (!passed) {
-    (result as Record<string, unknown>).mustFix = fileCheck.report;
+    (result as Record<string, unknown>).mustFix = failReport;
   }
   return result;
 }
@@ -1174,8 +1690,15 @@ export function handleReviewFix(
 
   // commitHash 格式校验（只查格式，不做存在性校验——保持 audit-only 语义）。
   // git hash：7-40 字符的十六进制字符串（短/长 hash 均允许）。
+  // ReviewFixSubmission.commitHash 现在类型上可选（其它 review 阶段不强制），
+  // 但 review_fix（代码审查修复）要求必填 commitHash——这里保持必填校验。
   const GIT_HASH_RE = /^[0-9a-f]{7,40}$/;
   for (const fix of fixes) {
+    if (!fix.commitHash) {
+      throw new CwError(
+        `review_fix 需要 commitHash（代码审查修复必须提供 git commit hash）`,
+      );
+    }
     if (!GIT_HASH_RE.test(fix.commitHash)) {
       throw new CwError(
         `review_fix commitHash 格式无效: "${fix.commitHash}"（应为 7-40 字符十六进制 git hash）`,
@@ -1217,6 +1740,350 @@ export function handleReviewFix(
   };
 }
 
+// ── handleSpecReview ─────────────────────────────────────────
+
+/**
+ * handleSpecReview — FR-4: spec 语义审查 handler（progressive，多轮 loop）。
+ *
+ * gate：fileExistsCheck(specReviewPath) + reviewIssueCheck(issues)。
+ * 有 issue 则 appendSpecReviewIssues + incSpecReviewTurn；无 issue → nextAction=plan；
+ * 有 issue 未达上限 → spec_review_fix；达上限 → 强制前推 plan。
+ *
+ * 与 handleReview 的区别：
+ *   - specReviewPath 必填（review.reviewPath 可选）
+ *   - 用 topic.specReviewIssues / appendSpecReviewIssues / incSpecReviewTurn
+ *   - phase="spec_review"，gate 名 "file-exists+issue-schema" / "review-found"
+ */
+export function handleSpecReview(
+  params: SpecReviewParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const path = params.specReviewPath ?? "";
+  const issues = params.issues ?? [];
+  const hasIssues = issues.length > 0;
+
+  // 先跑 reviewIssueCheck 校验 issue 结构合法性（dimension 必填等）。
+  // M3: spec_review/plan_review 不做 dimension 子集校验。
+  // 这两个阶段的维度（completeness/consistency/reasonableness 和 coverage/architecture/feasibility）
+  // 由阶段固定，不随 taskShape 变化。只有 review 阶段（代码审查）的 dimensions 受 shape 声明子集影响。
+  const issueCheck = hasIssues
+    ? reviewIssueCheck(issues)
+    : {
+        result: "pass" as const,
+        report: "",
+        parsed: [] as ReviewIssueSubmission[],
+      };
+
+  const fileCheck =
+    path.length > 0
+      ? fileExistsCheck(path)
+      : { result: "fail" as const, report: "specReviewPath 必填" };
+  const passed = fileCheck.result === "pass" && issueCheck.result === "pass";
+
+  deps.store.transaction(() => {
+    if (!passed) {
+      const failReport =
+        fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "spec_review",
+        action: "spec_review",
+        gate: "file-exists+issue-schema",
+        result: "fail",
+        report: failReport,
+        progressive: true,
+      });
+      return;
+    }
+
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("spec_review", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "spec_review", true);
+
+    if (path.length > 0) {
+      deps.store.setArtifacts(params.topicId, {
+        specReview: { path, at: new Date().toISOString() },
+      });
+    }
+
+    if (hasIssues && issueCheck.parsed) {
+      const newTurn = topic.specReviewTurn + 1;
+      deps.store.appendSpecReviewIssues(params.topicId, newTurn, issueCheck.parsed);
+      deps.store.incSpecReviewTurn(params.topicId);
+    }
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "spec_review",
+      action: "spec_review",
+      gate: hasIssues ? "review-found" : "file-exists+issue-schema",
+      result: "pass",
+      report: hasIssues
+        ? `${issues.length} issue(s) found in turn ${topic.specReviewTurn + 1}`
+        : undefined,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after spec_review: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("spec_review", updated),
+  };
+  if (!passed) {
+    const failReport =
+      fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+    (result as Record<string, unknown>).mustFix = failReport;
+  }
+  return result;
+}
+
+// ── handleSpecReviewFix ──────────────────────────────────────
+
+/**
+ * handleSpecReviewFix — FR-4: spec_review loop 内的修复动作（progressive）。
+ *
+ * 与 handleReviewFix 同构，区别：
+ *   - 用 topic.specReviewIssues / fixSpecReviewIssue
+ *   - commitHash 不校验（spec_review 修复可能走 cw clarify 内部，无独立 commit）
+ *   - fixedAtTurn = topic.specReviewTurn；gate 名 "spec-review-fix"
+ */
+export function handleSpecReviewFix(
+  params: SpecReviewFixParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const fixes = params.fixes ?? [];
+
+  // 校验 issueId 存在且 status=open（事务外做，避免事务内 throw 触发回滚后又 throw）。
+  const issueMap = new Map<string, ReviewIssue>();
+  for (const issue of topic.specReviewIssues) {
+    issueMap.set(issue.id, issue);
+  }
+  for (const fix of fixes) {
+    const issue = issueMap.get(fix.issueId);
+    if (!issue) {
+      throw new CwError(
+        `spec_review_fix issueId 不存在: ${fix.issueId}（不存在于 topic.specReviewIssues）`,
+      );
+    }
+    if (issue.status !== "open") {
+      throw new CwError(
+        `spec_review_fix issueId ${fix.issueId} 状态为 ${issue.status}（只能修 open 的 issue）`,
+      );
+    }
+  }
+  // commitHash 不校验（spec_review 修复可选）。
+
+  const fixedAtTurn = topic.specReviewTurn;
+
+  deps.store.transaction(() => {
+    for (const fix of fixes) {
+      deps.store.fixSpecReviewIssue(params.topicId, fix.issueId, {
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+        resolution: fix.resolution,
+        fixedAtTurn,
+      });
+    }
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "spec_review_fix",
+      action: "spec_review_fix",
+      gate: "spec-review-fix",
+      result: "pass",
+      report: `${fixes.length} issue(s) fixed at turn ${fixedAtTurn}`,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after spec_review_fix: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("spec_review_fix", updated),
+  };
+}
+
+// ── handlePlanReview ─────────────────────────────────────────
+
+/**
+ * handlePlanReview — FR-5: plan 语义审查 handler（progressive，多轮 loop）。
+ *
+ * gate：fileExistsCheck(planReviewPath) + reviewIssueCheck(issues)。
+ * 有 issue 则 appendPlanReviewIssues + incPlanReviewTurn；无 issue → nextAction=tdd_plan；
+ * 有 issue 未达上限 → plan_review_fix；达上限 → 强制前推 tdd_plan。
+ *
+ * 与 handleSpecReview 同构（spec→plan, specReview→planReview, SR→PR）。
+ */
+export function handlePlanReview(
+  params: PlanReviewParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const path = params.planReviewPath ?? "";
+  const issues = params.issues ?? [];
+  const hasIssues = issues.length > 0;
+
+  // 先跑 reviewIssueCheck 校验 issue 结构合法性（dimension 必填等）。
+  // M3: spec_review/plan_review 不做 dimension 子集校验。
+  // 这两个阶段的维度（completeness/consistency/reasonableness 和 coverage/architecture/feasibility）
+  // 由阶段固定，不随 taskShape 变化。只有 review 阶段（代码审查）的 dimensions 受 shape 声明子集影响。
+  const issueCheck = hasIssues
+    ? reviewIssueCheck(issues)
+    : {
+        result: "pass" as const,
+        report: "",
+        parsed: [] as ReviewIssueSubmission[],
+      };
+
+  const fileCheck =
+    path.length > 0
+      ? fileExistsCheck(path)
+      : { result: "fail" as const, report: "planReviewPath 必填" };
+  const passed = fileCheck.result === "pass" && issueCheck.result === "pass";
+
+  deps.store.transaction(() => {
+    if (!passed) {
+      const failReport =
+        fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "plan_review",
+        action: "plan_review",
+        gate: "file-exists+issue-schema",
+        result: "fail",
+        report: failReport,
+        progressive: true,
+      });
+      return;
+    }
+
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("plan_review", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "plan_review", true);
+
+    if (path.length > 0) {
+      deps.store.setArtifacts(params.topicId, {
+        planReview: { path, at: new Date().toISOString() },
+      });
+    }
+
+    if (hasIssues && issueCheck.parsed) {
+      const newTurn = topic.planReviewTurn + 1;
+      deps.store.appendPlanReviewIssues(params.topicId, newTurn, issueCheck.parsed);
+      deps.store.incPlanReviewTurn(params.topicId);
+    }
+
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "plan_review",
+      action: "plan_review",
+      gate: hasIssues ? "review-found" : "file-exists+issue-schema",
+      result: "pass",
+      report: hasIssues
+        ? `${issues.length} issue(s) found in turn ${topic.planReviewTurn + 1}`
+        : undefined,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after plan_review: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("plan_review", updated),
+  };
+  if (!passed) {
+    const failReport =
+      fileCheck.result === "fail" ? fileCheck.report : issueCheck.report;
+    (result as Record<string, unknown>).mustFix = failReport;
+  }
+  return result;
+}
+
+// ── handlePlanReviewFix ──────────────────────────────────────
+
+/**
+ * handlePlanReviewFix — FR-5: plan_review loop 内的修复动作（progressive）。
+ *
+ * 与 handleSpecReviewFix 同构（spec→plan, specReview→planReview, SR→PR）。
+ */
+export function handlePlanReviewFix(
+  params: PlanReviewFixParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const fixes = params.fixes ?? [];
+
+  // 校验 issueId 存在且 status=open（事务外做）。
+  const issueMap = new Map<string, ReviewIssue>();
+  for (const issue of topic.planReviewIssues) {
+    issueMap.set(issue.id, issue);
+  }
+  for (const fix of fixes) {
+    const issue = issueMap.get(fix.issueId);
+    if (!issue) {
+      throw new CwError(
+        `plan_review_fix issueId 不存在: ${fix.issueId}（不存在于 topic.planReviewIssues）`,
+      );
+    }
+    if (issue.status !== "open") {
+      throw new CwError(
+        `plan_review_fix issueId ${fix.issueId} 状态为 ${issue.status}（只能修 open 的 issue）`,
+      );
+    }
+  }
+  // commitHash 不校验（plan_review 修复可选）。
+
+  const fixedAtTurn = topic.planReviewTurn;
+
+  deps.store.transaction(() => {
+    for (const fix of fixes) {
+      deps.store.fixPlanReviewIssue(params.topicId, fix.issueId, {
+        ...(fix.commitHash ? { commitHash: fix.commitHash } : {}),
+        resolution: fix.resolution,
+        fixedAtTurn,
+      });
+    }
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "plan_review_fix",
+      action: "plan_review_fix",
+      gate: "plan-review-fix",
+      result: "pass",
+      report: `${fixes.length} issue(s) fixed at turn ${fixedAtTurn}`,
+      progressive: true,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after plan_review_fix: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("plan_review_fix", updated),
+  };
+}
+
 // ── handleRetrospect ────────────────────────────────────────
 
 /**
@@ -1230,7 +2097,11 @@ export function handleReviewFix(
  */
 function validateRetrospectData(
   raw: unknown,
-): { knownRisks?: RetrospectKnownRisk[]; processIssues?: string[]; error?: string } {
+): {
+  knownRisks?: RetrospectKnownRisk[];
+  processIssues?: ProcessIssue[];
+  error?: string;
+} {
   if (typeof raw !== "object" || raw === null) {
     return { error: "retrospectData 不是对象" };
   }
@@ -1265,18 +2136,47 @@ function validateRetrospectData(
     knownRisks = validated;
   }
 
-  // processIssues 校验
-  let processIssues: string[] | undefined;
+  // processIssues 校验（FR-3 升级：每条必须是对象 + type 合法 + description 非空）
+  // as const satisfies 让本数组与 types.ts 的 ProcessIssueType 同源：
+  // 若 ProcessIssueType 加/删值，这里编译期报错，避免硬编码漂移。
+  const VALID_ISSUE_TYPES = [
+    "pattern",
+    "oneOff",
+    "observation",
+    "uncategorized",
+  ] as const satisfies readonly ProcessIssueType[];
+  let processIssues: ProcessIssue[] | undefined;
   if (obj.processIssues !== undefined) {
     if (!Array.isArray(obj.processIssues)) {
       return { error: "retrospectData.processIssues 不是数组" };
     }
+    const validatedIssues: ProcessIssue[] = [];
     for (let i = 0; i < obj.processIssues.length; i++) {
-      if (typeof obj.processIssues[i] !== "string") {
-        return { error: `processIssues[${i}] 不是字符串` };
+      const item = obj.processIssues[i];
+      if (!item || typeof item !== "object") {
+        return { error: `processIssues[${i}] 不是对象` };
       }
+      const rec = item as Record<string, unknown>;
+      if (
+        typeof rec.type !== "string" ||
+        !VALID_ISSUE_TYPES.includes(rec.type as ProcessIssueType)
+      ) {
+        return {
+          error: `processIssues[${i}].type 必须是 pattern/oneOff/observation/uncategorized`,
+        };
+      }
+      if (
+        typeof rec.description !== "string" ||
+        rec.description.trim().length === 0
+      ) {
+        return { error: `processIssues[${i}].description 必须是非空字符串` };
+      }
+      validatedIssues.push({
+        type: rec.type as ProcessIssueType,
+        description: rec.description,
+      });
     }
-    processIssues = obj.processIssues as string[];
+    processIssues = validatedIssues;
   }
 
   return { knownRisks, processIssues };
@@ -1287,7 +2187,7 @@ function validateRetrospectData(
  *
  * gate pass → status=retrospected + 记录 retrospectPath/retrospectAt artifacts +
  *   校验 retrospectData 后存入 topic.retrospectData（derived 由 cw 自动算覆盖）。
- * gate fail → status 不变（仍 tested）+ nextAction 指回 retry。
+ * gate fail → status 不变（仍 post_dev_verified）+ nextAction 指回 retry。
  *
  * retrospectData 必选——未传或校验失败 = gate fail（阻断 status 流转）。
  */
@@ -1296,6 +2196,9 @@ export function handleRetrospect(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：retrospect 前置检查（test 完成度 + 逃生阀）
+  assertPhasePrerequisite("retrospect", topic);
+
   const path = params.retrospectPath ?? "";
 
   // retrospectData 必选校验（gate 前置）。
@@ -1363,8 +2266,7 @@ export function handleRetrospect(
     deps,
     () => {
       deps.store.setArtifacts(params.topicId, {
-        retrospectPath: path,
-        retrospectAt: new Date().toISOString(),
+        retrospect: { path, at: new Date().toISOString() },
       });
 
       const derived = computeRetrospectDerived(topic);
@@ -1374,6 +2276,24 @@ export function handleRetrospect(
         processIssues: validated.processIssues ?? [],
       };
       deps.store.setRetrospectData(params.topicId, data);
+
+      // FR-5 / AC-5：无 pattern 类型的 processIssue 时追加 warning（不阻断 gate）。
+      // processIssues 全 oneOff/observation/uncategorized 时，提示 agent 自省未识别
+      // 可泛化流程模式——结果仍为 pass（不阻断流转），只在 gateHistory 留软引导痕迹。
+      const hasPattern = (validated.processIssues ?? []).some(
+        (issue) => issue.type === "pattern",
+      );
+      if (!hasPattern) {
+        deps.store.appendGateHistory(params.topicId, {
+          phase: "retrospect",
+          action: "retrospect",
+          gate: "process-pattern-check",
+          result: "pass",
+          report:
+            "warning: processIssues 无 type=pattern 条目——自省未识别可泛化流程模式，建议从一次性失误抽象出模式",
+          progressive: false,
+        });
+      }
     },
   );
 
@@ -1383,17 +2303,89 @@ export function handleRetrospect(
 // ── handleCloseout ──────────────────────────────────────────
 
 /**
+ * 按 taskShape 计算 closeout evidence 的 coverage（0-1）。
+ *
+ *   - full-tdd（有 testCases）：通过率 = passed / total
+ *   - existence（无 testCases，有 existenceArtifacts）：verified 率 = verified / total
+ *   - review-only（两者皆无）：0（无机器验证产物）
+ *   - 兜底（无任何产物）：0
+ *
+ * existence 分流与 computeGatePassed("test") 的 isDevVerified 语义对齐——
+ * coverage 反映「产物存在性契约的满足比例」，而非测试通过率。
+ */
+function computeCoverage(topic: Topic): { value: number; applicable: boolean } {
+  if (topic.testCases.length > 0) {
+    return {
+      value:
+        topic.testCases.filter((c) => c.status === "passed").length /
+        topic.testCases.length,
+      applicable: true,
+    };
+  }
+  const artifacts = topic.existenceArtifacts;
+  if (artifacts && artifacts.length > 0) {
+    return {
+      value:
+        artifacts.filter((a) => a.verified === true).length / artifacts.length,
+      applicable: true,
+    };
+  }
+  // review-only（无 testCases 也无 existenceArtifacts）：coverage 不适用
+  return { value: 0, applicable: false };
+}
+
+/**
  * handleCloseout — 终态归档 + evidence 填充，委托 gateAdvance。
  *
- * gate pass → status=closed + onPass 回调事务内 reload 取 gateHistory 快照写入 evidence。
- * gate 用 topicDir 存在性（归档目录就绪）。gateAdvance 返回的 result 已含 evidence
- * （事务后 reload 的 updated.evidence）。
+ * FR-2: closeout 前先校验 artifacts 记录的 review/retrospect 文件存在（如有记录）。
+ * 文件缺失 → gate fail（artifacts-exist），status 不变，mustFix 列出缺失路径。
+ * artifacts 无记录时不阻断（向后兼容：旧 topic 可能没走过 review/retrospect）。
+ *
+ * artifacts 校验通过后才走 gateAdvance（topicDir 存在性 gate），gate pass →
+ * status=closed + onPass 回调事务内 reload 取 gateHistory 快照写入 evidence。
  */
 export function handleCloseout(
   params: CloseoutParams,
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // 纵向 gate 链：closeout 前置检查（retrospect gate 必须通过）
+  assertPhasePrerequisite("closeout", topic);
+
+  // FR-2: 先校验 artifacts 记录的 review/retrospect 文件存在（如果有记录）。
+  const missingPaths: string[] = [];
+  if (topic.artifacts?.review?.path && !existsSync(topic.artifacts.review.path)) {
+    missingPaths.push(`review: ${topic.artifacts.review.path}`);
+  }
+  if (
+    topic.artifacts?.retrospect?.path &&
+    !existsSync(topic.artifacts.retrospect.path)
+  ) {
+    missingPaths.push(`retrospect: ${topic.artifacts.retrospect.path}`);
+  }
+  if (missingPaths.length > 0) {
+    const report = `closeout artifacts 文件不存在: ${missingPaths.join(", ")}`;
+    deps.store.transaction(() => {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "closeout",
+        action: "closeout",
+        gate: "artifacts-exist",
+        result: "fail",
+        report,
+        progressive: false,
+      });
+    });
+    const updated = deps.store.loadTopic(params.topicId);
+    const failResult: ActionResult = {
+      topicId: params.topicId,
+      status: updated?.status ?? topic.status,
+      gatePassed: updated?.gatePassed ?? topic.gatePassed,
+      nextAction: buildNextAction("closeout", updated ?? topic),
+    };
+    (failResult as Record<string, unknown>).mustFix = report;
+    return failResult;
+  }
+
   return gateAdvance(
     "closeout",
     "topicDir-exists",
@@ -1407,12 +2399,18 @@ export function handleCloseout(
       if (!fresh) {
         throw new Error(`topic not found after closeout: ${params.topicId}`);
       }
+      const coverageResult = computeCoverage(fresh);
       const evidence: Evidence = {
         closedAt: new Date().toISOString(),
-        coverage: fresh.testCases.length > 0
-          ? fresh.testCases.filter((c) => c.status === "passed").length /
-            fresh.testCases.length
-          : 0,
+        // W6: coverage 按 taskShape 分流——
+        //   - full-tdd（有 testCases）：通过率 = passed / total
+        //   - existence（无 testCases，有 existenceArtifacts）：verified 通过率 = verified / total
+        //   - review-only（两者皆无）：0（无可机器验证产物，coverage 不适用）
+        // M4: existence 策略的 coverage 基于 test 阶段时点的 verified 缓存。
+        // closeout 后文件状态可能 drift（如外部 git checkout 恢复已删文件），CW 不重新核对。
+        // 这是 ADR-0003 接受的权衡（isDevVerified 信缓存不信文件系统）。
+        coverage: coverageResult.value,
+        coverageApplicable: coverageResult.applicable,
         gateHistory: fresh.gateHistory,
       };
       deps.store.setEvidence(params.topicId, evidence);
@@ -1420,12 +2418,119 @@ export function handleCloseout(
   );
 }
 
+// ── handleConfirmClarify ───────────────────────────────────
+
+/**
+ * handleConfirmClarify — FR-1: clarify 阶段用户确认 gate。
+ *
+ * gate 条件：至少 1 条 resolved/skipped 的 clarifyRecord（confirmClarifyCheck）。
+ * gate pass → status 流转 created → clarify_confirmed + gatePassed + gateHistory。
+ * gate fail → status 不变 + gateHistory(fail) + mustFix。
+ *
+ * confirm_clarify 不生成文档——文档由 gen-spec 只读命令生成。
+ * confirm_clarify 只做 gate + 状态流转。
+ */
+export function handleConfirmClarify(
+  params: ConfirmClarifyParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  const check = confirmClarifyCheck(topic);
+
+  let passed: boolean;
+  deps.store.transaction(() => {
+    if (check.result === "fail") {
+      deps.store.appendGateHistory(params.topicId, {
+        phase: "confirm_clarify",
+        action: "confirm_clarify",
+        gate: "has-clarify-record",
+        result: "fail",
+        report: check.report,
+        progressive: false,
+      });
+      passed = false;
+      return;
+    }
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("confirm_clarify", topic.status),
+    );
+    deps.store.updateGatePassed(params.topicId, "confirm_clarify", true);
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "confirm_clarify",
+      action: "confirm_clarify",
+      gate: "has-clarify-record",
+      result: "pass",
+      progressive: false,
+    });
+    passed = true;
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after confirm_clarify: ${params.topicId}`);
+  }
+
+  const result: ActionResult = {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("confirm_clarify", updated),
+  };
+  if (!passed!) {
+    (result as Record<string, unknown>).mustFix = check.report;
+  }
+  return result;
+}
+
+// ── handleAbort ────────────────────────────────────────────
+
+/**
+ * handleAbort — FR-3: 终止 topic，流转到 aborted 终态。
+ *
+ * 无 gate（abort 无条件执行——agent 调了就是确认要终止）。
+ * status 流转到 aborted，gateHistory 记录 abort 事件。
+ * aborted 是终态，不可恢复。
+ */
+export function handleAbort(
+  params: AbortParams,
+  topic: Topic,
+  deps: ActionDeps,
+): ActionResult {
+  deps.store.transaction(() => {
+    deps.store.updateStatus(
+      params.topicId,
+      computeNextStatus("abort", topic.status),
+    );
+    deps.store.appendGateHistory(params.topicId, {
+      phase: "abort",
+      action: "abort",
+      gate: "user-requested",
+      result: "pass",
+      progressive: false,
+      report: `aborted from status=${topic.status}`,
+    });
+  });
+
+  const updated = deps.store.loadTopic(params.topicId);
+  if (!updated) {
+    throw new Error(`topic not found after abort: ${params.topicId}`);
+  }
+
+  return {
+    topicId: params.topicId,
+    status: updated.status,
+    gatePassed: updated.gatePassed,
+    nextAction: buildNextAction("abort", updated),
+  };
+}
+
 // ── handleReplan ────────────────────────────────────────────
 
 /**
  * replan 的 append-only 违规类型（4 种，plan.md 约束全保留）。
  */
-type AppendOnlyViolation =
+export type AppendOnlyViolation =
   | { type: "wave_deleted_committed"; waveId: string; reason: string }
   | { type: "wave_modified_committed"; waveId: string; reason: string }
   | { type: "case_deleted_passed"; caseId: string; reason: string }
@@ -1452,7 +2557,7 @@ export interface ReplanSummary {
  * wave 只比 changes + dependsOn；testCase 比 expected + layer + scenario + steps + executor +
  * requiresScreenshot + dependsOn（expected 是 judgeByExpected 基准，改了会让已 passed 的 case 失效）。
  */
-function validateAppendOnly(
+export function validateAppendOnly(
   newWaves: WaveSeed[],
   newCases: TestCaseSeed[],
   oldWaves: Wave[],
@@ -1554,20 +2659,23 @@ function validateAppendOnly(
  * handleReplan — append-only dev-plan.json / test.json 同步。
  *
  * 支持两种输入（可同时提供）：
- *   - planJson → parseDevPlan + validateAppendOnly(waves, [legacyTestCases 兼容])
+ *   - planJson → parseDevPlan + planCheck(uncommittedNew 存在性) + validateAppendOnly(waves, [legacyTestCases 兼容])
  *     → replaceUncommittedWaves（+旧格式 plan.json 的 legacyTestCases 也走 replaceUnpassedTestCases）
  *   - testJson → parseTestJson + validateAppendOnly(testCases) → replaceUnpassedTestCases
  *   - 都不提供 → throw CwError("replan requires --plan or --test")
  *
  * 数据流：
- *   parse（planJson→parseDevPlan / testJson→parseTestJson）→ validateAppendOnly（4 违规检测）
+ *   parse（planJson→parseDevPlan / testJson→parseTestJson）
+ *   → [PR9] hoist committedWaveIds/uncommittedNew（事务前计算，供 planCheck + 事务内复用）
+ *   → [PR8] planCheck（只对 uncommittedNew，存在性失败 throw，W3 AC-6/FR-4a）
+ *   → validateAppendOnly（4 违规检测）
  *   → 事务{ replaceUncommittedWaves/replaceUnpassedTestCases → status 回退 planned
  *     → gatePassed 重算（dev+test，事务内同步——砍掉 cache_inconsistent guard 后的强依赖）
  *     → gateHistory(pass) } → buildNextAction
  *
- * status 回退语义：replan 的 nextStatus=planned（TRANSITIONS 表）。
- *   - current=planned → computeNextStatus("replan", planned) = planned（不变）
- *   - current=developed/tdd_inited → computeNextStatus("replan", ...) = planned（回退，让 dev 重新走）
+ * status 回退语义（D7: 条件回退）：
+ *   - hasPlan（plan 改了）→ 回退到 planned（plan 变了需重走 plan_review → tdd_plan）
+ *   - hasTest only（plan 没变）→ 回退到 plan_reviewed（plan_review 仍有效，直接重走 tdd_plan）
  * replan 后必须重新走 dev（即使之前 developed），因为可能追加了新 wave。
  *
  * 事务内同步 gatePassed（关键约束）：砍掉 cache_inconsistent guard 后，gatePassed 缓存漂移
@@ -1576,6 +2684,7 @@ function validateAppendOnly(
  *
  * 失败路径：
  *   - parseDevPlan/parseTestJson throw（format/schema）→ propagate（exit ≥1）
+ *   - 文件存在性校验失败（uncommittedNew 含幽灵文件）→ throw CwError（W3 AC-6/FR-4a，exit ≥1）
  *   - append-only 违规 → throw（exit ≥1，AC-6.2）
  *   - planJson 和 testJson 都不提供 → throw CwError
  */
@@ -1584,6 +2693,14 @@ export function handleReplan(
   topic: Topic,
   deps: ActionDeps,
 ): ActionResult {
+  // M1: replan 安全门按 taskShape 路由（ADR-0005）。
+  //   - tdd：保持原 validateAppendOnly 双路径调用（plan 路径 + test 路径），零行为变更。
+  //   - existence / review-only：走各自策略的 replanGuard。
+  //     existence 检查 artifact 篡改（已 verified 的 expectedState 不可改/不可删）；
+  //     review-only.replanGuard 恒返回空（无机器验证契约可保护，不误拦）。
+  // tdd 不复用 TddVerificationStrategy.replanGuard：那个内部从单 payload 提取 waves/cases，
+  // 与本 handler 的双路径（planJson + testJson 可同时提供）+ legacyTestCases 兼容组装不匹配。
+  // 保留原内联调用，既零回归又避免重复组装逻辑。
   const hasPlan = params.planJson !== undefined;
   const hasTest = params.testJson !== undefined;
   if (!hasPlan && !hasTest) {
@@ -1598,33 +2715,108 @@ export function handleReplan(
   // 解析 testJson（testCases + 可选 testRunner）。
   const parsedTest = hasTest ? parseTestJson(params.testJson) : null;
 
-  // append-only 校验（核心安全门，4 违规类型）。
-  // 只校验本次实际改动的部分：
-  //   - planJson 提供时 → 校验 waves（+ legacyTestCases 如有）
-  //   - testJson 提供时 → 校验 testCases
-  // --test-only 模式不校验 waves（waves 未提交，不参与变更）。
-  const violations: AppendOnlyViolation[] = [];
-  if (parsedPlan) {
-    const newWaves = parsedPlan.waves;
-    // planJson 里的 legacyTestCases（旧格式兼容）也要校验。
-    // 新格式 dev-plan.json 不含 testCases → legacyCases=[]，此时不碰 testCase 校验
-    // （oldTestCases 传 []，避免把 topic 已有的 passed testCase 误判为"被删除"）。
-    const legacyCases = parsedPlan.legacyTestCases ?? [];
-    violations.push(
-      ...validateAppendOnly(
-        newWaves,
-        legacyCases,
-        topic.waves,
-        legacyCases.length > 0 ? topic.testCases : [],
-      ),
+  // [PR9] 提前计算 committedWaveIds / uncommittedNew（原本在事务内、validateAppendOnly 后）。
+  // 上提原因：planCheck 复用 uncommittedNew（只对本次新提交的未 committed wave 做存在性校验）。
+  // 原事务内重复计算处已删，统一用这里的 hoisted 变量。
+  const committedWaveIds = parsedPlan
+    ? new Set(topic.waves.filter((w) => w.committed !== null).map((w) => w.id))
+    : new Set<string>();
+  const uncommittedNew = parsedPlan
+    ? parsedPlan.waves.filter((w) => !committedWaveIds.has(w.id))
+    : [];
+
+  // [PR8] 文件存在性校验（W3，AC-6/FR-4a）：只对 uncommittedNew 调 planCheck。
+  // 已 committed wave 不校验存在性（它们已落地，且走 append-only 不可改路径，
+  // 两条路径不重叠）。失败走 throw（与 append-only 违规语义一致），不走 gate fail。
+  if (parsedPlan && uncommittedNew.length > 0) {
+    // tempPlan 喂给 planCheck → parseDevPlan，要走 DevPlanSchema 校验（changes 必填）。
+    // uncommittedNew 源自 parsedPlan.waves（已过 schema 校验，changes 必存在），但 WaveSeed
+    // 类型把 changes 标成可选（seed 形态允许省略）。显式声明 tempPlan.waves 的 changes 必填，
+    // 与 DevPlanSchema（plan-parser.ts:47）对齐，避免类型与 schema 契约不一致。
+    const tempPlan: {
+      format: "lite";
+      objective: string;
+      waves: Array<{
+        id: string;
+        changes: WaveChange[];
+        dependsOn: string[];
+        priority?: "P0" | "P1" | "P2";
+      }>;
+    } = {
+      format: "lite",
+      objective: parsedPlan.objective,
+      waves: [
+        // uncommittedNew 是本次文件存在性校验的目标（changes 必填，由 planCheck 逐文件查）。
+        ...uncommittedNew.map((w) => ({
+          id: w.id,
+          changes: w.changes ?? [],
+          dependsOn: w.dependsOn,
+          priority: w.priority,
+        })),
+        // 已 committed wave 以 stub 追加（空 changes = planCheck 跳过文件校验），
+        // 让 parseDevPlan 的 assertKnownDeps 看到完整 wave id 集合——uncommittedNew
+        // 的 dependsOn 可能指向已 committed wave（合法跨批次依赖），不能误判为未知 waveId。
+        ...topic.waves
+          .filter((w) => committedWaveIds.has(w.id))
+          .map((w) => ({
+            id: w.id,
+            changes: [] as WaveChange[],
+            dependsOn: [] as string[],
+          })),
+      ],
+    };
+    const existenceCheck = planCheck(
+      tempPlan,
+      topic.specSections,
+      topic.workspacePath,
     );
+    if (existenceCheck.result === "fail") {
+      throw new CwError(
+        `replan 文件存在性校验失败: ${existenceCheck.report}`,
+      );
+    }
   }
-  if (parsedTest) {
-    // --test 模式只校验 testCases，waves 传空跳过（oldWaves=[] → 不产生 wave 违规）
-    const newCases = parsedTest.testCases;
-    violations.push(
-      ...validateAppendOnly([], newCases, [], topic.testCases),
-    );
+
+  // append-only / replanGuard 校验（核心安全门）。
+  // M1: 按 taskShape 路由——tdd 走 validateAppendOnly（双路径零回归），
+  // 其他 shape 走策略的 replanGuard（existence 查 artifact 篡改，review-only 恒空）。
+  // 数组类型放宽为 AppendOnlyViolation | Violation 联合：两者共有 {type, reason}，
+  // mustFix 渲染只需这两字段。caseId/waveId 是可选定位字段，按各 type 各填其一。
+  const violations: Array<AppendOnlyViolation | Violation> = [];
+  const verification = getShape(topic.taskShape).verification;
+  if (verification.id === "tdd") {
+    // tdd 路径：保持原双路径 validateAppendOnly 调用不变（零回归硬指标）。
+    //   - planJson 提供时 → 校验 waves（+ legacyTestCases 如有）
+    //   - testJson 提供时 → 校验 testCases
+    // --test-only 模式不校验 waves（waves 未提交，不参与变更）。
+    if (parsedPlan) {
+      const newWaves = parsedPlan.waves;
+      // planJson 里的 legacyTestCases（旧格式兼容）也要校验。
+      // 新格式 dev-plan.json 不含 testCases → legacyCases=[]，此时不碰 testCase 校验
+      // （oldTestCases 传 []，避免把 topic 已有的 passed testCase 误判为"被删除"）。
+      const legacyCases = parsedPlan.legacyTestCases ?? [];
+      violations.push(
+        ...validateAppendOnly(
+          newWaves,
+          legacyCases,
+          topic.waves,
+          legacyCases.length > 0 ? topic.testCases : [],
+        ),
+      );
+    }
+    if (parsedTest) {
+      // --test 模式只校验 testCases，waves 传空跳过（oldWaves=[] → 不产生 wave 违规）
+      const newCases = parsedTest.testCases;
+      violations.push(
+        ...validateAppendOnly([], newCases, [], topic.testCases),
+      );
+    }
+  } else {
+    // 非 tdd 路径：走策略 replanGuard（existence 检查 artifact 篡改，review-only 恒空）。
+    // 用 planJson ?? testJson ?? {} 作为 payload——existence.replanGuard 从中提取
+    // artifacts 清单（结构不符时安全降级返回空，不误拦）。
+    const replanPayload = params.planJson ?? params.testJson ?? {};
+    violations.push(...verification.replanGuard(topic, replanPayload));
   }
   if (violations.length > 0) {
     const mustFix = violations.map((v) => `[${v.type}] ${v.reason}`).join("\n");
@@ -1638,20 +2830,17 @@ export function handleReplan(
   // 事务内 append-only 写入 + status 回退 + gatePassed 同步。
   deps.store.transaction(() => {
     // waves replace：只在 planJson 提供时执行。
+    // committedWaveIds / uncommittedNew 已在事务前上提计算（见 PR9 注释），这里复用。
     if (parsedPlan) {
-      const committedWaveIds = new Set(
-        topic.waves.filter((w) => w.committed !== null).map((w) => w.id),
-      );
-      const uncommittedNew = parsedPlan.waves.filter(
-        (w) => !committedWaveIds.has(w.id),
-      );
       deps.store.replaceUncommittedWaves(params.topicId, uncommittedNew);
     }
 
     // testCases replace：testJson 或旧格式 planJson 的 legacyTestCases 提供时执行。
     const newCases =
       parsedTest?.testCases ?? parsedPlan?.legacyTestCases ?? [];
-    if (newCases.length > 0) {
+    // shape 守卫（同 handlePlan 的 m1 模式）：非 tdd shape 不写 testCases——
+    // review-only / existence shape 无 testCases 概念，写入会污染 topic 数据。
+    if (newCases.length > 0 && getShape(topic.taskShape).verification.id === "tdd") {
       const passedCaseIds = new Set(
         topic.testCases.filter((c) => c.status === "passed").map((c) => c.id),
       );
@@ -1665,10 +2854,12 @@ export function handleReplan(
       throw new Error(`topic not found after replan replace: ${params.topicId}`);
     }
 
-    // status：developed/tdd_inited → planned（回退，让 dev gate progressive 重新评估）。
-    const nextStatus = computeNextStatus("replan", reloaded.status);
-    if (nextStatus !== reloaded.status) {
-      deps.store.updateStatus(params.topicId, nextStatus);
+    // D7: replan 条件回退。
+    // hasPlan（plan 改了）→ 回退到 planned（需重走 plan_review → tdd_plan）
+    // hasTest only（plan 没变）→ 回退到 plan_reviewed（plan_review 仍有效，直接重走 tdd_plan）
+    const targetStatus: Status = hasPlan ? "planned" : "plan_reviewed";
+    if (targetStatus !== reloaded.status) {
+      deps.store.updateStatus(params.topicId, targetStatus);
     }
 
     // gatePassed 重算：必须在事务内同步。
@@ -1683,9 +2874,12 @@ export function handleReplan(
     //   - hasTest && !hasPlan（只改 testCases，代码没变）→ review 数据仍有效，不 reset
     //     只有 testCases 变了 → resetTestLoop
     // 核心区分：--test only 时代码不变，review 结论（reviewIssues）仍然成立。
+    // m2: existenceArtifacts 不在此 reset——tdd_plan 重跑时 setExistenceArtifacts 会整体覆盖，
+    // replan 阶段不触碰 existenceArtifacts（它的契约由 existence.replanGuard 守护，不是 reset 语义）。
     if (hasPlan) {
       deps.store.resetReviewLoop(params.topicId);
       deps.store.resetTestLoop(params.topicId);
+      deps.store.resetPlanReviewLoop(params.topicId);
     } else if (hasTest) {
       deps.store.resetTestLoop(params.topicId);
     }
@@ -1705,7 +2899,7 @@ export function handleReplan(
         addedCases: newCases
           .filter((c) => !topic.testCases.some((o) => o.id === c.id))
           .map((c) => c.id),
-        statusChanged: nextStatus !== statusBefore ? `${statusBefore}→${nextStatus}` : null,
+        statusChanged: targetStatus !== statusBefore ? `${statusBefore}→${targetStatus}` : null,
       }),
       progressive: true,
     });

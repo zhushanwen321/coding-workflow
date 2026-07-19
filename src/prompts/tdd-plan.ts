@@ -5,7 +5,8 @@
  * 交付物：test.json（testCases + testRunner 必选），由 cw tdd_plan 消费。
  *
  * 本阶段核心：agent 已知要实现什么（dev-plan.json 的 waves），先写测试代码（红灯），
- * 再写 test.json 定义 testCases + expected。expected 来源于测试断言，不是猜的。
+ * 再写 test.json 定义 testCases + expected。expected 是判别联合（exact/exit_zero/script 三模式），
+ * 从测试断言决定模式与取值，不是猜的。
  */
 
 export const TDD_PLAN_PROMPT = `
@@ -34,7 +35,7 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
       "priority": "P0",
       "scenario": "<测什么场景>",
       "steps": "<怎么测>",
-      "expected": { "text": "<预期结果>" },
+      "expected": { "type": "exact", "text": "<预期结果>" },
       "executor": "<vitest|pytest|junit|shell|custom>",
       "redCheck": true,
       "requiresScreenshot": false,
@@ -44,9 +45,9 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
       "id": "E1",
       "layer": "real",
       "priority": "P1",
-      "scenario": "<集成场景>",
-      "steps": "<怎么测>",
-      "expected": { "text": "<预期结果>" },
+      "scenario": "<命令整体成功>",
+      "steps": "<跑集成命令>",
+      "expected": { "type": "exit_zero" },
       "executor": "shell",
       "redCheck": false,
       "requiresScreenshot": true
@@ -68,9 +69,11 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
 - **priority**: P0/P1/P2，全部必须完成
 - **scenario**: 测什么场景（AC 级可判定）
 - **steps**: 怎么测
-- **expected**: 机器判定基准。expected.text 会被 CW 做**精确字符串比较**（===），不是给人看的描述
-  - 正确："text": "2"、"text": '{"status":"ok"}'
-  - 错误："text": "返回正确结果"、"text": "passed"（gate 拒绝模糊值）
+- **expected**: 机器判定基准（判别联合，**type 字段必填**）。3 种模式见下方「expected 撰写规范」：
+  - \`{ "type": "exact", "text": "2" }\`：精确字符串 === 比较
+  - \`{ "type": "exit_zero" }\`：退出码判定（exit 0 → pass）
+  - \`{ "type": "script", "path": ".cw/judge-E1.sh" }\`：判定脚本（exit 0 → pass）
+  - exact 模式的 text 不可填结论词（passed/ok/success），gate 拒绝模糊值
 - **executor**: 谁跑这个测试（vitest / pytest / junit / shell / custom）
 - **redCheck**: tdd_plan 阶段是否对此 case 做红灯校验
   - mock 层通常 true（纯逻辑，可立即跑）
@@ -92,13 +95,54 @@ dev-plan gate 已通过（status=planned）。你已经知道要实现什么（d
 
 ## expected 撰写规范（重要）
 
-expected.text 会被 CW engine 做**精确字符串比较**（===），不是给人看的描述，是机器判定基准。
+expected 支持 **3 种判定模式**（type 字段必填）。从你写的测试断言决定用哪种模式——不要猜值。
 
-agent 先写了测试代码（如 \`expect(add(1,1)).toBe(2)\`），expected 直接从测试断言取值：
-- 测试断言 \`.toBe(2)\` → expected: \`{ "text": "2" }\`
-- 测试断言 \`.toBe("hello")\` → expected: \`{ "text": "hello" }\`
+### 1. exact（精确字符串，默认/现状语义）
 
-不要猜输出值——从你写的测试断言里取。这就是 tdd_plan 阶段的价值：expected 有据可依。
+\`\`\`
+expected: { "type": "exact", "text": "2" }
+\`\`\`
+
+CW 对 \`expected.text\` 与 \`actual.text\` 做**精确 === 比较**（无 trim/容差）。
+适用：单元测试断言值。从断言直接取值：
+- 测试断言 \`.toBe(2)\` → \`{ "type": "exact", "text": "2" }\`
+- 测试断言 \`.toBe("hello")\` → \`{ "type": "exact", "text": "hello" }\`
+
+text 仍受 FUZZY_EXPECTED_RE 约束——不可填 passed/ok/true 等结论词。
+
+### 2. exit_zero（退出码判定）
+
+\`\`\`
+expected: { "type": "exit_zero" }
+\`\`\`
+
+CW 跑 testRunner 命令一次，所有 exit_zero case 共享结果（exit 0 → pass，非 0 → failed）。
+actual 可省略（CW 自己跑命令）。适用：
+- 布尔/状态类断言（如 \`.toBe(true)\`——无合法字符串值可填）
+- 命令行测试（命令整体成功即 pass）
+
+exit_zero 解决了「布尔断言无合法字符串值可填」的死锁——exit code 是确定的，仍是机器重算。
+
+### 3. script（判定脚本）
+
+\`\`\`
+expected: { "type": "script", "path": ".cw/judge-E1.sh" }
+\`\`\`
+
+CW 跑 \`path\` 指向的脚本，exit 0 即 pass。约束：
+- 脚本**自包含**（不接收 agent actual，自己读系统状态/产出物）
+- 须有可执行权限 + shebang（\`#!/usr/bin/env bash\` 等）
+- path 相对 workspace，resolve 后必须在 workspace 内（沙箱校验，逃逸路径会被 gate 拒绝）
+
+适用：复杂判定（正则匹配、JSON 字段提取、多字段组合）。
+
+### 选型决策
+
+| 测试断言形态 | 用哪种模式 |
+|---|---|
+| \`.toBe(具体值)\` / \`.toEqual(对象)\` | exact（从断言取 text） |
+| \`.toBe(true)\` / \`.toBeTruthy()\` / 命令整体成功 | exit_zero |
+| 正则 / JSON 字段 / 多条件组合 | script |
 
 ## 测试设计思路（测出 bug，不是凑覆盖率）
 
@@ -132,12 +176,64 @@ agent 先写了测试代码（如 \`expect(add(1,1)).toBe(2)\`），expected 直
 写完 testCases 后逐条核对：每个 case 能否说出它在防什么具体 bug？
 如果一组测试「全绿通过」但你对代码的信心没有实质增长，说明它们是覆盖率填充。
 
+## 测试反模式（写测试时逐条自检）
+
+写每个 testCase 前对照这三条，命中任何一条都是无效测试：
+
+### 1. 实现耦合（implementation-coupled）
+- 表现：mock 内部 collaborator / 测私有方法 / 通过 side channel 验证（如查数据库而非用接口）
+- 识别信号：**行为没变却因重构而测试失败**——这是测试耦合了实现细节的铁证
+- 正确做法：测试只落在 seam 上（公共边界），不深入内部；通过接口观察结果，不通过 side channel
+
+### 2. 重言式断言（tautological）—— 补 FUZZY_EXPECTED_RE 之外的语义漏洞
+- 表现：期望值用与代码相同的方式重新计算出（构造上必然通过，永远无法与代码不一致）
+- 例子：\`expect(add(a,b)).toBe(a+b)\`、用同样手法推导的 snapshot、常量断言等于自身
+- 正确做法：**期望值必须来自独立的真值源**——已知正确的字面量 / worked example / spec 定义
+- 注意：FUZZY_EXPECTED_RE 正则拦截"模糊期望值"（如 \`[object Object]\`），但拦不住用代码自身逻辑重算期望的语义重言式——这条要靠设计纪律
+
+### 3. 水平切片（horizontal slicing）—— 强化 Wave 四原则已覆盖的纪律
+- 表现：先写完全部 testCase 再写全部实现
+- 问题：批量测试验证的是想象中的行为（测"形状"而非用户行为），对真实变更迟钝，且在理解实现前就锁死测试结构
+- 正确做法：vertical slice——一个 testCase → 一个实现 → 重复（cw 的 Wave 四原则已要求"垂直切片"，这里强化）
+
+## mock 边界纪律
+
+mock/real 各≥1 是 gate 要求（见上文），但**哪些该 mock 哪些该 real** 有明确边界：
+
+### 只在 system boundary mock
+- external API（第三方服务：Stripe / Twilio / GitHub API）
+- 数据库（除非用 PGLite 这类本地替身）
+- time / random（时间相关 / 随机数）
+- 文件系统（跨进程的 fs 调用）
+
+### 禁止 mock 的
+- 自己的 class / module（你能控制的东西）
+- 内部 collaborator（不是 system boundary）
+- 纯函数 / 纯计算（直接测，无需 mock）
+
+**判据**：mock 的目的是隔离**你不拥有的**外部依赖，不是简化测试 setup。如果 mock 是为了"让测试好写"而非"隔离外部依赖"，说明被测代码的依赖设计有问题（该接收依赖而非自建依赖，见 dev-plan.ts 的可测试性三原则）。
+
+## 测试即规范（命名纪律）
+
+好测试读起来像规格说明——测试名描述**用户行为**（WHAT），不描述**实现机制**（HOW）。
+
+| 好（描述 WHAT） | 坏（描述 HOW） |
+|-----------------|----------------|
+| \`user_can_checkout_with_valid_cart\` | \`checkout_calls_paymentService_process\` |
+| \`expired_token_returns_401\` | \`verifyToken_checks_expiry_field\` |
+| \`empty_input_rejected_with_400\` | \`validateInput_throws_when_empty\` |
+
+**判据**：重构实现（不改接口）时，测试名应不需要改。如果重构让测试名失效，说明测试名描述了 HOW 而非 WHAT。
+
 ## tdd_plan gate 校验
 
 - testCases 非空
 - testRunner 必选（mode 合法 + command 或 path 有值）
 - mock 层 + real 层各至少 1 个
-- expected.text 不可填 passed/ok/success 等结论词
+- **expected.type 必填**（exact / exit_zero / script 三选一）
+- exact 模式：text 不可填 passed/ok/success 等结论词（FUZZY_EXPECTED_RE 拦截）
+- exit_zero / script 模式：跳过 FUZZY 检查（无 text 字段）
+- script 模式：path 必填，resolve 后必须在 workspace 内（沙箱校验，逃逸路径拒绝）
 - 环形 dependsOn 检测
 
 gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_plan)。
@@ -152,7 +248,7 @@ gate fail 时返回 mustFix，status 不变（planned），修后重调 cw(tdd_p
 CW 在 tdd_plan gate 通过后自动跑红灯校验（testRunner 必选）：
 - 执行 testRunner.command 一次（整体跑），确认 exit code ≠ 0（红灯——实现尚未写，测试应全 fail）
 - **红灯校验阻断 status 流转**——绿灯（exit code=0）时 status 回退到 planned，nextAction 指回 tdd_plan retry
-- 红灯 pass → status 流转到 tdd_inited，结果记录到 gateHistory（gate 名 tdd-red-light）
+- 红灯 pass → status 流转到 pre_dev_verified，结果记录到 gateHistory（gate 名 tdd-red-light）
 
 绿灯 = 你先写了实现再补测试 = 违反 TDD。必须删除实现代码，确保测试在实现缺失时 fail，再提交。
 
@@ -202,5 +298,16 @@ CW 在 tdd_plan gate 通过后自动跑红灯校验（testRunner 必选）：
 
 ## 完成标志
 
-test.json 写完且 cw(tdd_plan) gate 通过（status=tdd_inited）后，进入 dev 阶段写实现。
+test.json 写完且 cw(tdd_plan) gate 通过（status=pre_dev_verified）后，进入 dev 阶段写实现。
+
+## AC → testCase 显式映射
+
+每个 spec 的 AC（验收标准）至少对应一个 testCase。testCase.ref 字段必须能反查到 spec 的 AC ID。
+
+- 写 testCase 前先列 spec 的所有 AC
+- 每个 AC 至少一个 testCase 覆盖
+- testCase.ref 填 AC 的标识（如 \`AC-3\` / \`FR-2.AC-1\`）
+- 完成标志：所有 AC 都有至少一个 testCase 指向它（无 orphan AC）
+
+这条填补 spec_review（AC 验收路径）→ tdd_plan（testCase 设计）→ review（design-consistency 反查）三处的契约闭环。
 `.trim();

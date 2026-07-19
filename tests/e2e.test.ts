@@ -21,10 +21,15 @@ import {
   disposeE2eEnv,
   type E2eEnv,
   parseStdout,
+  planReviewMdPath,
   retrospectMdPath,
   reviewMdPath,
   runCli,
+  setupToClarifyConfirmed,
   setupToTested,
+  specReviewMdPath,
+  writePlanReviewMd,
+  writeSpecReviewMd,
 } from "./helpers/e2e.js";
 import { makeValidTestJson } from "./helpers/plan.js";
 
@@ -55,21 +60,32 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     expect(createResult.topicId).toMatch(/^cw-\d{4}-\d{2}-\d{2}-e1-full$/);
     const topicId = createResult.topicId as string;
     const nextAction = createResult.nextAction as Record<string, unknown>;
-    // create 后推荐 clarify（advisory），但可直接跳 plan（alternative）
+    // create 后推荐 clarify
     expect(nextAction.action).toBe("clarify");
+
+    // FR-1/FR-4: plan 前必须 confirm_clarify → spec_review（状态机 gate）
+    setupToClarifyConfirmed(e, "e1-full", topicId);
+    writeSpecReviewMd(e.workspaceDir, "e1-full");
+    const specReviewResult = parseStdout(
+      runCli(
+        ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, "e1-full")],
+        e,
+      ),
+    );
+    expect(specReviewResult.status).toBe("spec_reviewed");
 
     // 2. plan（stdin 传 dev-plan.json，只含 waves）
     const planJson = JSON.stringify({
       format: "lite",
       objective: "E2E 全链测试",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "实现功能" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "实现功能" }], dependsOn: [] }],
     });
     const planResult = parseStdout(
       runCli(["plan", "--topicId", topicId], e, { input: planJson }),
     );
     expect(planResult.status).toBe("planned");
-    // plan gate 通过 → 进入 tdd_plan 阶段（不再直接到 dev）
-    expect((planResult.nextAction as Record<string, unknown>).action).toBe("tdd_plan");
+    // plan gate 通过 → 进入 plan_review 阶段（FR-5: 审查 plan 是否覆盖 spec，不再直接到 tdd_plan）
+    expect((planResult.nextAction as Record<string, unknown>).action).toBe("plan_review");
     // plan 通过后 status=planned，replan 作为 alternative 暴露
     const planAlts = (planResult.nextAction as Record<string, unknown>).alternatives as
       | Array<{ action: string }>
@@ -77,12 +93,22 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
     expect(planAlts).toBeDefined();
     expect(planAlts![0].action).toBe("replan");
 
+    // 2a. plan_review（FR-5: tdd_plan 前必须 plan_review）
+    writePlanReviewMd(e.workspaceDir, "e1-full");
+    const planReviewResult = parseStdout(
+      runCli(
+        ["plan_review", "--topicId", topicId, "--planReviewPath", planReviewMdPath(e.workspaceDir, "e1-full")],
+        e,
+      ),
+    );
+    expect(planReviewResult.status).toBe("plan_reviewed");
+
     // 2b. tdd_plan（stdin 传 test.json，含 testCases）
     const testJson = JSON.stringify(makeValidTestJson());
     const tddPlanResult = parseStdout(
       runCli(["tdd_plan", "--topicId", topicId], e, { input: testJson }),
     );
-    expect(tddPlanResult.status).toBe("tdd_inited");
+    expect(tddPlanResult.status).toBe("pre_dev_verified");
     expect((tddPlanResult.nextAction as Record<string, unknown>).action).toBe("dev");
 
     // 3. dev
@@ -133,7 +159,7 @@ describe("E1: create→plan→tdd_plan→dev→review→test→retrospect→clos
         e,
       ),
     );
-    expect(testResult.status).toBe("tested");
+    expect(testResult.status).toBe("post_dev_verified");
     expect(testResult.gatePassed).toMatchObject({ test: true });
 
     // 6. retrospect（需 retrospect.md 文件）
@@ -181,17 +207,32 @@ describe("E2: dev 阶段渐进式提交（progressive）", () => {
     );
     const topicId = createResult.topicId as string;
 
+    // FR-1/FR-4: plan 前必须 confirm_clarify → spec_review
+    setupToClarifyConfirmed(e, "e2-progressive", topicId);
+    writeSpecReviewMd(e.workspaceDir, "e2-progressive");
+    runCli(
+      ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, "e2-progressive")],
+      e,
+    );
+
     const planJson = JSON.stringify({
       format: "lite",
       objective: "渐进式测试",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "wave1" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "wave2" }], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "wave1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "wave2" }], dependsOn: ["W1"] },
       ],
     });
     runCli(["plan", "--topicId", topicId], e, { input: planJson });
 
-    // tdd_plan（test.json 含 testCases，推进到 tdd_inited 才能 dev）
+    // FR-5: tdd_plan 前必须 plan_review
+    writePlanReviewMd(e.workspaceDir, "e2-progressive");
+    runCli(
+      ["plan_review", "--topicId", topicId, "--planReviewPath", planReviewMdPath(e.workspaceDir, "e2-progressive")],
+      e,
+    );
+
+    // tdd_plan（test.json 含 testCases，推进到 pre_dev_verified 才能 dev）
     runCli(["tdd_plan", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidTestJson()),
     });

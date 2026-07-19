@@ -8,8 +8,10 @@
  * - 砍掉 ClarifyParams / DetailParams 分支（mid 专属）
  * - guard 从三重（checkLinear → checkPhaseCascade → checkCacheConsistency）砍为单重（checkLinear）
  * - guard 签名从 (action, topic, store) 改为 (action, topic)——纵深防御 guard 不再需要 store
- * - GuardError.code 类型从 GuardErrorCode 联合（illegal_transition/phase_incomplete/cache_inconsistent）
- *   缩窄为只含 "illegal_transition"（types.ts 已定义）
+ * - GuardError.code 现含两值：illegal_transition（checkLinear 产生，status 跳步）+
+ *   phase_prerequisite_failed（handler 层 assertPhasePrerequisite 产生，前序阶段未完成）。
+ *   guard 层只产生 illegal_transition；phase_prerequisite_failed 在各 handler 开头检查前序完成度时抛出。
+ *   两者正交：guard 在 handler 前执行，status 非法则 handler 根本进不去。
  *
  * 数据流：params → loadTopic（非 create）→ guard → handler → ActionResult。
  * 失败路径：
@@ -21,30 +23,42 @@
  */
 
 import {
+  type AbortParams,
   type AssessParams,
   type ClarifyParams,
   type CloseoutParams,
+  type ConfirmClarifyParams,
   type CreateParams,
   type CwParams,
   type DevParams,
+  handleAbort,
   handleAssess,
   handleClarify,
   handleCloseout,
+  handleConfirmClarify,
   handleCreate,
   handleDev,
   handlePlan,
+  handlePlanReview,
+  handlePlanReviewFix,
   handleReplan,
   handleRetrospect,
   handleReview,
   handleReviewFix,
+  handleSpecReview,
+  handleSpecReviewFix,
   handleTddPlan,
   handleTest,
   handleTestFix,
   type PlanParams,
+  type PlanReviewParams,
+  type PlanReviewFixParams,
   type ReplanParams,
   type RetrospectParams,
   type ReviewFixParams,
   type ReviewParams,
+  type SpecReviewParams,
+  type SpecReviewFixParams,
   type TddPlanParams,
   type TestFixParams,
   type TestParams,
@@ -54,27 +68,18 @@ import {
   type ActionDeps,
   type ActionResult,
   CwError,
-  type GuardErrorCode,
+  GuardError,
   type Topic,
 } from "./types.js";
 
 // ── GuardError（guard 拒绝，extends CwError 走 exit 1）──────
 
 /**
- * GuardError — guard 拒绝时抛出。
- *
- * code 仅 "illegal_transition"（GuardErrorCode 单值，纵深防御 guard 砍掉后只剩这一种）。
- * extends CwError，CLI 层 mapExitCode 用 instanceof CwError 统一判定 exit code=1。
+ * GuardError 从 types.ts re-export（定义移至 types.ts 以打破 actions↔dispatch 循环依赖：
+ * actions.ts handler 需抛 phase_prerequisite_failed，而 dispatch.ts import actions.ts）。
+ * 外部 API 不变：`import { GuardError } from "./dispatch.js"` 仍可用。
  */
-export class GuardError extends CwError {
-  constructor(
-    public readonly code: GuardErrorCode,
-    public readonly reason: string,
-  ) {
-    super(`${code}: ${reason}`);
-    this.name = "GuardError";
-  }
-}
+export { GuardError } from "./types.js";
 
 // ── dispatch（统一入口）─────────────────────────────────────
 
@@ -118,6 +123,10 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleClarify(params as ClarifyParams, topic, deps);
     case "plan":
       return handlePlan(params as PlanParams, topic, deps);
+    case "plan_review":
+      return handlePlanReview(params as PlanReviewParams, topic, deps);
+    case "plan_review_fix":
+      return handlePlanReviewFix(params as PlanReviewFixParams, topic, deps);
     case "tdd_plan":
       return handleTddPlan(params as TddPlanParams, topic, deps);
     case "dev":
@@ -134,6 +143,14 @@ export function dispatch(params: CwParams, deps: ActionDeps): ActionResult {
       return handleRetrospect(params as RetrospectParams, topic, deps);
     case "closeout":
       return handleCloseout(params as CloseoutParams, topic, deps);
+    case "confirm_clarify":
+      return handleConfirmClarify(params as ConfirmClarifyParams, topic, deps);
+    case "spec_review":
+      return handleSpecReview(params as SpecReviewParams, topic, deps);
+    case "spec_review_fix":
+      return handleSpecReviewFix(params as SpecReviewFixParams, topic, deps);
+    case "abort":
+      return handleAbort(params as AbortParams, topic, deps);
     case "replan":
       return handleReplan(params as ReplanParams, topic, deps);
     case "assess":

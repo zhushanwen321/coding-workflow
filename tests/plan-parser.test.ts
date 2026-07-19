@@ -6,7 +6,8 @@
 
 import { describe, expect,it } from "vitest";
 
-import { parseLitePlan } from "../src/plan-parser.js";
+import { parseDevPlan, parseLitePlan } from "../src/plan-parser.js";
+import { CwError } from "../src/types.js";
 
 // ── 测试夹具：合法 plan.json ─────────────────────────────────
 
@@ -18,8 +19,8 @@ function makeValidPlanJson(): Record<string, unknown> {
       {
         id: "W1",
         changes: [
-          { file: "src/app.ts", description: "change A" },
-          { file: "src/app.ts", description: "change B" },
+          { file: "src/app.ts", action: "create", description: "change A" },
+          { file: "src/app.ts", action: "create", description: "change B" },
         ],
         dependsOn: [],
       },
@@ -30,7 +31,7 @@ function makeValidPlanJson(): Record<string, unknown> {
         layer: "mock",
         scenario: "测试场景",
         steps: "执行步骤",
-        expected: { text: "expected output" },
+        expected: { type: "exact", text: "expected output" },
         executor: "agent",
         requiresScreenshot: false,
       },
@@ -46,15 +47,17 @@ describe("parseLitePlan 合法结构（U16）", () => {
     expect(parsed.waves).toHaveLength(1);
     expect(parsed.waves[0]!.id).toBe("W1");
     expect(parsed.waves[0]!.changes).toEqual([
-      { file: "src/app.ts", description: "change A" },
-      { file: "src/app.ts", description: "change B" },
+      { file: "src/app.ts", action: "create", description: "change A" },
+      { file: "src/app.ts", action: "create", description: "change B" },
     ]);
     expect(parsed.waves[0]!.dependsOn).toEqual([]);
 
     expect(parsed.legacyTestCases).toHaveLength(1);
     expect(parsed.legacyTestCases![0]!.id).toBe("E1");
     expect(parsed.legacyTestCases![0]!.layer).toBe("mock");
-    expect(parsed.legacyTestCases![0]!.expected.text).toBe("expected output");
+    const exp1 = parsed.legacyTestCases![0]!.expected;
+    expect(exp1.type).toBe("exact");
+    expect(exp1.type === "exact" && exp1.text).toBe("expected output");
     expect(parsed.legacyTestCases![0]!.requiresScreenshot).toBe(false);
   });
 
@@ -62,14 +65,14 @@ describe("parseLitePlan 合法结构（U16）", () => {
     const json = {
       format: "lite",
       objective: "obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "x" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "x" }], dependsOn: [] }],
       testCases: [
         {
           id: "E1",
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { url: "http://example.com" },
+          expected: { type: "exact", url: "http://example.com" },
           executor: "test-runner",
           requiresScreenshot: true,
           dependsOn: [],
@@ -79,7 +82,9 @@ describe("parseLitePlan 合法结构（U16）", () => {
     const parsed = parseLitePlan(json);
     expect(parsed.legacyTestCases![0]!.layer).toBe("real");
     expect(parsed.legacyTestCases![0]!.requiresScreenshot).toBe(true);
-    expect(parsed.legacyTestCases![0]!.expected.url).toBe("http://example.com");
+    const exp2 = parsed.legacyTestCases![0]!.expected;
+    expect(exp2.type).toBe("exact");
+    expect(exp2.type === "exact" && exp2.url).toBe("http://example.com");
   });
 });
 
@@ -157,8 +162,8 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
     const json = {
       ...makeValidPlanJson(),
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: ["W2"] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "a" }], dependsOn: ["W2"] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "b" }], dependsOn: ["W1"] },
       ],
       testCases: [
         {
@@ -166,7 +171,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -175,7 +180,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -187,14 +192,14 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
   it("wave 自环（W1 dependsOn W1）→ 抛错含 cycle", () => {
     const json = {
       ...makeValidPlanJson(),
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: ["W1"] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "a" }], dependsOn: ["W1"] }],
       testCases: [
         {
           id: "E1",
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -207,9 +212,9 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
     const json = {
       ...makeValidPlanJson(),
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: ["W3"] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"] },
-        { id: "W3", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: ["W2"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "a" }], dependsOn: ["W3"] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "b" }], dependsOn: ["W1"] },
+        { id: "W3", changes: [{ file: "src/app.ts", action: "create", description: "c" }], dependsOn: ["W2"] },
       ],
       testCases: [
         {
@@ -217,7 +222,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -226,7 +231,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -244,7 +249,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out1" },
+          expected: { type: "exact", text: "out1" },
           executor: "agent",
           requiresScreenshot: false,
           dependsOn: ["U2"],
@@ -254,7 +259,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
           dependsOn: ["U1"],
@@ -268,9 +273,9 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
     const json = {
       ...makeValidPlanJson(),
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: [] },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"] },
-        { id: "W3", changes: [{ file: "src/app.ts", description: "c" }], dependsOn: ["W2"] },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "a" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "b" }], dependsOn: ["W1"] },
+        { id: "W3", changes: [{ file: "src/app.ts", action: "create", description: "c" }], dependsOn: ["W2"] },
       ],
       testCases: [
         {
@@ -278,7 +283,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -287,7 +292,7 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -297,10 +302,86 @@ describe("parseLitePlan 环形 dependsOn 检测", () => {
   });
 });
 
+// ── dependsOn 存在性检测（assertKnownDeps）─────────────────────
+
+describe("parseDevPlan dependsOn 存在性检测（assertKnownDeps）", () => {
+  it("dependsOn 指向存在的 wave → 解析成功（正向）", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/b.ts", action: "create", description: "b" }], dependsOn: ["W1"] },
+      ],
+    };
+    expect(() => parseDevPlan(json)).not.toThrow();
+  });
+
+  it("dependsOn 指向不存在的 waveId（WGhost）→ 抛 CwError（负向）", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        {
+          id: "W1",
+          changes: [{ file: "src/a.ts", action: "create", description: "a" }],
+          dependsOn: ["WGhost"],
+        },
+      ],
+    };
+    expect(() => parseDevPlan(json)).toThrow(CwError);
+    expect(() => parseDevPlan(json)).toThrow(/未知 wave id: WGhost/);
+  });
+
+  it("多个 dependsOn 同时含已知/未知 → 抛 CwError 只列未知项", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+        {
+          id: "W2",
+          changes: [{ file: "src/b.ts", action: "create", description: "b" }],
+          dependsOn: ["W1", "Ghost1", "Ghost2"],
+        },
+      ],
+    };
+    expect(() => parseDevPlan(json)).toThrow(/Ghost1, Ghost2/);
+  });
+
+  it("空 dependsOn 列表 → 不触发存在性校验（边界）", () => {
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+      ],
+    };
+    expect(() => parseDevPlan(json)).not.toThrow();
+  });
+
+  it("存在性校验在环形校验之前生效（W1→W2，W2 dependsOn 含未知）", () => {
+    // W2 依赖 WGhost（未知）。即使有环假设，未知校验也会先挡。
+    // 实际无环（WGhost 不存在），但 unknown 校验独立有效。
+    const json = {
+      format: "lite",
+      objective: "test obj",
+      waves: [
+        { id: "W1", changes: [{ file: "src/a.ts", action: "create", description: "a" }], dependsOn: [] },
+        {
+          id: "W2",
+          changes: [{ file: "src/b.ts", action: "create", description: "b" }],
+          dependsOn: ["WGhost"],
+        },
+      ],
+    };
+    expect(() => parseDevPlan(json)).toThrow(/未知 wave id: WGhost/);
+  });
+});
+
 // ── W2: parseDevPlan + parseTestJson 新增测试 ─────────────────
 
-import { parseClarifyJson, parseDevPlan, parseTestJson } from "../src/plan-parser.js";
-import { CwError } from "../src/types.js";
+import { parseClarifyJson, parseTestJson } from "../src/plan-parser.js";
 
 describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
   it("只含 waves 不含 testCases → legacyTestCases undefined", () => {
@@ -308,7 +389,7 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
       format: "lite",
       objective: "test obj",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [], priority: "P0" },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [], priority: "P0" },
       ],
     };
     const parsed = parseDevPlan(json);
@@ -322,14 +403,14 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
     const json = {
       format: "lite",
       objective: "test obj",
-      waves: [{ id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] }],
       testCases: [
         {
           id: "U1",
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "result" },
+          expected: { type: "exact", text: "result" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -345,8 +426,8 @@ describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
       format: "lite",
       objective: "obj",
       waves: [
-        { id: "W1", changes: [{ file: "src/app.ts", description: "a" }], dependsOn: [], priority: "P0" },
-        { id: "W2", changes: [{ file: "src/app.ts", description: "b" }], dependsOn: ["W1"], priority: "P2" },
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "a" }], dependsOn: [], priority: "P0" },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "b" }], dependsOn: ["W1"], priority: "P2" },
       ],
     };
     const parsed = parseDevPlan(json);
@@ -369,7 +450,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "mock",
           scenario: "单测场景",
           steps: "执行单测",
-          expected: { text: "expected-output" },
+          expected: { type: "exact", text: "expected-output" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P0",
@@ -380,7 +461,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "real",
           scenario: "集成场景",
           steps: "执行集成测试",
-          expected: { text: "real-output" },
+          expected: { type: "exact", text: "real-output" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P1",
@@ -441,7 +522,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out" },
+          expected: { type: "exact", text: "out" },
           executor: "vitest",
           requiresScreenshot: false,
           dependsOn: ["U2"],
@@ -451,7 +532,7 @@ describe("W2: parseTestJson（拆分后的 test.json）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "out2" },
+          expected: { type: "exact", text: "out2" },
           executor: "vitest",
           requiresScreenshot: false,
           dependsOn: ["U1"],

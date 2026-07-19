@@ -9,7 +9,7 @@
 | 维度 | 值 | 来源 |
 |---|---|---|
 | 测试框架 | vitest ^3.0.0 | package.json devDependencies |
-| 测试数量 | 444 passed \| 1 skipped（19 文件） | `npm test` 实跑 |
+| 测试数量 | 608 passed \| 1 skipped（29 文件） | `npm test` 实跑 |
 | 覆盖率工具 | 无（未配 c8/istanbul） | package.json 无 coverage 脚本 |
 | Mock 框架 | 零（无 vi.fn / 无 mock 库） | tests/ 全量 grep 无 mock 调用 |
 | 运行命令 | `npm test` → `vitest run` | package.json scripts.test |
@@ -36,6 +36,7 @@
 | `e2e-readonly.test.ts` | e2e | 6 | stats/status/list 只读子命令 |
 | `e2e-init.test.ts` | e2e | 6 | init 基建诊断（空目录/补齐 ready/骨架态/骨架闭环自洽/create 引导接线 ×2） |
 | `e2e-gate-fail.test.ts` | e2e | 3 | gate fail retry / 5 次熔断 / fail 后重试成功 |
+| `expected-multi-mode.test.ts` | 集成 | 27 | expected 多模式（exact/exit_zero/script）：judgeByExpected 分支、tddPlanCheck schema+沙箱、handleTest 执行 |
 
 > 用例数取自 `npm test` 实跑的 per-file 统计；标「—」的文件用例数未逐项核对，以实跑为准。
 
@@ -187,13 +188,21 @@ describe("E<编号><action>: <场景描述>", () => {
 - test 的 caseId：来自 tdd_plan 阶段 test.json 的 `testCase.id`（测试代码自定，如 `E1` / `E2`）
 - assess 的 assessmentId：cw 自增 `AS1` / `AS2`...
 
-### expected.text 值约定
+### expected 值约定
 
-阶段 helper 用 `makeValidTestJson()` 造 test.json，其 `expected.text` 固定值：
-- case `E1` → `expected.text = "expected-output"`
-- case `E2` → `expected.text = "real-output"`
+expected 是判别联合（`type` 字段必填），3 种判定模式：
 
-测 test pass 时 `actual.text` 必须精确匹配（`judgeByExpected` 精确 ===，无 trim/容差）；测 test fail 时传任意不匹配值（如 `"wrong-output"`）。
+| type | 结构 | 判定 | 适用 |
+|---|---|---|---|
+| `exact` | `{ "type": "exact", "text": "..." }`（可选 `url`） | `expected.text` 与 `actual.text` 精确 === | 单元测试断言值 |
+| `exit_zero` | `{ "type": "exit_zero" }` | CW 跑 testRunner，exit 0→pass | 布尔/状态断言、命令整体成功 |
+| `script` | `{ "type": "script", "path": ".cw/judge-E1.sh" }` | CW 跑脚本，exit 0→pass | 复杂判定（正则/JSON/多字段） |
+
+阶段 helper 用 `makeValidTestJson()` 造 test.json，其 `expected` 固定值（exact 模式）：
+- case `E1` → `expected = { "type": "exact", "text": "expected-output" }`
+- case `E2` → `expected = { "type": "exact", "text": "real-output" }`
+
+测 test pass 时 `actual.text` 必须精确匹配（`judgeByExpected` 精确 ===，无 trim/容差）；测 test fail 时传任意不匹配值（如 `"wrong-output"`）。exit_zero/script 模式由 `handleTest`（W3）跑命令/脚本回填 `actual.exitCode`，测试时构造对应 `actual` 即可（见 `tests/expected-multi-mode.test.ts`）。
 
 ### 分支路径覆盖清单
 
@@ -217,11 +226,14 @@ describe("E<编号><action>: <场景描述>", () => {
 > coding-closeout 从 ⑥验收清单提炼：破坏即事故的用例。每条标溯源。
 > 与 NFR.md「验证」字段双向引用。
 
-### RB-1 judgeByExpected 精确匹配  [from: cw-cli-extract]
+### RB-1 judgeByExpected 机器重算  [from: cw-cli-extract]
 
-- **用例来源**：`tests/pure-functions.test.ts` judgeByExpected 测试组
-- **断言**：`expected.text` 与 `actual.text` 必须**精确 ===**，任何 fuzzy / trim / substring 容差都会破坏机器重算的意义（实现见 `src/types.ts:82-113`）
-- **破坏即**：agent 谎报测试结果通过——CW 核心防线（机器重算 test gate）失效
+- **用例来源**：`tests/pure-functions.test.ts` judgeByExpected 测试组 + `tests/expected-multi-mode.test.ts`（exact/exit_zero/script 三模式全覆盖）
+- **断言**：CW engine 按 `expected.type` 机器重算，不信任 agent 声明。三模式都是**确定性机器重算**：
+  - **exact**：`expected.text` 与 `actual.text` 必须**精确 ===**，任何 fuzzy / trim / substring 容差都会破坏机器重算（实现见 `src/types.ts:114-177`）
+  - **exit_zero**：CW 跑 testRunner 命令一次，按 exit code 判定（0→passed，非 0→failed）。exit code 是机器产出，agent 无法谎报
+  - **script**：CW 跑 `expected.path` 脚本，按 exit code 判定。脚本自包含，agent 不参与判定
+- **破坏即**：agent 谎报测试结果通过——CW 核心防线（机器重算 test gate）失效。三模式中任一回退到「信任 agent 声明」即事故
 - **关联约束**：NFR（test gate 机器重算）
 
 ### RB-2 checkLinear 防跳步  [from: cw-cli-extract]

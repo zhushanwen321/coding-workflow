@@ -15,7 +15,16 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import type { AdrSeed, ClarifySeed, TestCaseSeed, TestRunnerConfig, WaveChange, WaveSeed } from "./types.js";
+import type {
+  AdrSeed,
+  ClarifySeed,
+  Expected,
+  SpecSection,
+  TestCaseSeed,
+  TestRunnerConfig,
+  WaveChange,
+  WaveSeed,
+} from "./types.js";
 import { CwError } from "./types.js";
 
 // ── DevPlanSchema（dev-plan.json，只含 waves） ──────────────
@@ -38,6 +47,11 @@ export const DevPlanSchema = Type.Object({
       changes: Type.Array(
         Type.Object({
           file: Type.String(),
+          action: Type.Union([
+            Type.Literal("create"),
+            Type.Literal("modify"),
+            Type.Literal("delete"),
+          ]),
           description: Type.String(),
         }),
       ),
@@ -48,6 +62,36 @@ export const DevPlanSchema = Type.Object({
     }),
   ),
 });
+
+// ── ExpectedSchema（expected 字段判别联合，与 types.ts Expected 同构） ──
+
+/**
+ * expected 字段的 typebox 判别联合 schema（与 types.ts 的 Expected 类型同构）。
+ *
+ * 三种 type 分支，靠 Type.Literal('exact' | 'exit_zero' | 'script') 判别：
+ *   - exact：url/text 可选（至少一个由 gate 层空判据检查兜底，与 schema 解耦）。
+ *   - exit_zero：无判据字段，type 本身即判据。
+ *   - script：path 必填（脚本路径，相对 workspacePath）。
+ *
+ * 缺 type 字段的旧格式（如 `{text:'x'}`）会被 Union 拒绝——AC-7 强制 type 必填。
+ * 存量 fixture 已在 W1 统一加 `type:"exact"`，所以向后兼容不 break。
+ *
+ * 用 Union（而非 Type.Object + Type.Union 的扁平判别）保持与 SpecSectionSchema 一致的写法。
+ */
+const ExpectedSchema = Type.Union([
+  Type.Object({
+    type: Type.Literal("exact"),
+    url: Type.Optional(Type.String()),
+    text: Type.Optional(Type.String()),
+  }),
+  Type.Object({
+    type: Type.Literal("exit_zero"),
+  }),
+  Type.Object({
+    type: Type.Literal("script"),
+    path: Type.String(),
+  }),
+]);
 
 // ── TestJsonSchema（test.json，含 testCases + testRunner） ───
 
@@ -64,10 +108,7 @@ export const TestJsonSchema = Type.Object({
       layer: Type.Union([Type.Literal("mock"), Type.Literal("real")]),
       scenario: Type.String(),
       steps: Type.String(),
-      expected: Type.Object({
-        url: Type.Optional(Type.String()),
-        text: Type.Optional(Type.String()),
-      }),
+      expected: ExpectedSchema,
       executor: Type.String(),
       requiresScreenshot: Type.Boolean(),
       dependsOn: Type.Optional(Type.Array(Type.String())),
@@ -109,6 +150,11 @@ export const LegacyPlanSchema = Type.Object({
       changes: Type.Array(
         Type.Object({
           file: Type.String(),
+          action: Type.Union([
+            Type.Literal("create"),
+            Type.Literal("modify"),
+            Type.Literal("delete"),
+          ]),
           description: Type.String(),
         }),
       ),
@@ -125,10 +171,7 @@ export const LegacyPlanSchema = Type.Object({
         layer: Type.Union([Type.Literal("mock"), Type.Literal("real")]),
         scenario: Type.String(),
         steps: Type.String(),
-        expected: Type.Object({
-          url: Type.Optional(Type.String()),
-          text: Type.Optional(Type.String()),
-        }),
+        expected: ExpectedSchema,
         executor: Type.String(),
         requiresScreenshot: Type.Boolean(),
         dependsOn: Type.Optional(Type.Array(Type.String())),
@@ -236,6 +279,39 @@ function assertAcyclicDeps(items: DepNode[], label: string): void {
   }
 }
 
+// ── dependsOn 存在性校验 ─────────────────────────────────────
+
+/**
+ * assertKnownDeps — 校验每个 wave 的 dependsOn 指向的 waveId 必须在 waves 列表内。
+ *
+ * 与 assertAcyclicDeps 互补：assertAcyclicDeps 只检环（cycle detection），
+ * assertKnownDeps 只检存在性（unknown waveId）。两者都过 = dependsOn 完整校验。
+ *
+ * engine 层（actions.ts handleDev Step 1c）已兜底标 missingDeps，但 plan 阶段挡下
+ * 更早（fail fast）——agent 拼错 waveId 在 cw(plan) 阶段就报错，不必等到 cw(dev)。
+ *
+ * 只对 waves 校验（testCase 的 dependsOn 在 engine 不强制存在性，U21e 类语义
+ * 仅适用于 wave 的拓扑提交约束）。
+ *
+ * throw 模式对称 assertAcyclicDeps：抛 CwError，消息含未知 waveId 清单。
+ */
+function assertKnownDeps(items: DepNode[], label: string): void {
+  if (items.length === 0) return;
+
+  const knownIds = new Set(items.map((it) => it.id));
+  // 同一 wave 可能依赖多个未知 waveId，按 wave 聚合后逐 wave 报错。
+  for (const item of items) {
+    const deps = item.dependsOn ?? [];
+    const unknown = deps.filter((dep) => !knownIds.has(dep));
+    if (unknown.length > 0) {
+      throw new CwError(
+        `${label} ${item.id} dependsOn 指向未知 ${label} id: ${unknown.join(", ")}` +
+          `（必须在 ${label} 列表内）`,
+      );
+    }
+  }
+}
+
 // ── 共用校验 ─────────────────────────────────────────────────
 
 function assertFormat(json: unknown, label: string): void {
@@ -268,7 +344,8 @@ function assertSchema(schema: Schema, json: unknown, label: string): void {
  * parseDevPlan — 解析 dev-plan.json（只含 format + objective + waves）。
  *
  * 向后兼容：如果 json 同时含 testCases 字段（旧版 plan.json），提取到 legacyTestCases。
- * 校验链：assertSafeSize → assertFormat → assertSchema(DevPlanSchema) → extract → assertAcyclicDeps。
+ * 校验链：assertSafeSize → assertFormat → assertSchema(DevPlanSchema) → extract →
+ *         assertAcyclicDeps(waves) → assertKnownDeps(waves)。
  */
 export function parseDevPlan(json: unknown): ParsedDevPlan {
   assertSafeSize(json, "dev-plan");
@@ -276,6 +353,7 @@ export function parseDevPlan(json: unknown): ParsedDevPlan {
   assertSchema(DevPlanSchema, json, "dev-plan");
   const parsed = extractDevPlan(json);
   assertAcyclicDeps(parsed.waves, "wave");
+  assertKnownDeps(parsed.waves, "wave");
   // 旧版兼容：如果同时含 testCases（旧格式），也做环形检测。
   if (parsed.legacyTestCases) {
     assertAcyclicDeps(parsed.legacyTestCases, "testCase");
@@ -297,7 +375,7 @@ function extractDevPlan(json: unknown): ParsedDevPlan {
       layer: "mock" | "real";
       scenario: string;
       steps: string;
-      expected: { url?: string; text?: string };
+      expected: Expected;
       executor: string;
       requiresScreenshot: boolean;
       dependsOn?: string[];
@@ -351,7 +429,7 @@ function extractTestJson(json: unknown): ParsedTestJson {
       layer: "mock" | "real";
       scenario: string;
       steps: string;
-      expected: { url?: string; text?: string };
+      expected: Expected;
       executor: string;
       requiresScreenshot: boolean;
       dependsOn?: string[];
@@ -375,6 +453,166 @@ function extractTestJson(json: unknown): ParsedTestJson {
     })),
     testRunner: obj.testRunner,
   };
+}
+
+// ── ExistenceSchema（existence.json，delete-only shape 的 tdd_plan payload） ─
+
+/**
+ * existence.json 的 typebox schema（delete-only shape 专用）。
+ *
+ * artifacts：产物存在性清单。每个 artifact 声明 path（相对 workspacePath）
+ * + expectedState（present 应存在 / absent 应已删除）。
+ *
+ * 与 TestJsonSchema 平行——tdd_plan 按 topic.taskShape 路由到对应 preDevCheck：
+ *   - full-tdd → tddPlanCheck（test.json schema）
+ *   - delete-only → existence 策略 preDevCheck（existence.json schema，W4 接入）
+ *
+ * 校验层（schema）只验结构；「至少 1 个 artifact」「path 非空」等业务约束
+ * 由 existence 策略的 preDevCheck 在 schema 通过后补判（W4 实现）。
+ */
+export const ExistenceSchema = Type.Object({
+  artifacts: Type.Array(
+    Type.Object({
+      path: Type.String(),
+      expectedState: Type.Union([
+        Type.Literal("present"),
+        Type.Literal("absent"),
+      ]),
+    }),
+  ),
+});
+
+export interface ParsedExistenceJson {
+  artifacts: Array<{ path: string; expectedState: "present" | "absent" }>;
+}
+
+/**
+ * parseExistenceJson — 解析 existence.json（artifacts 清单）。
+ *
+ * 校验链：assertSafeSize → assertSchema(ExistenceSchema)。
+ * 不校验 format（existence.json 不含 format 字段）。
+ * 不校验 artifacts 非空 / path 非空——那些是业务约束，由 existence 策略的
+ * preDevCheck 在 schema 通过后补判（返回 fail + report）。
+ */
+export function parseExistenceJson(json: unknown): ParsedExistenceJson {
+  assertSafeSize(json, "existence.json");
+  assertSchema(ExistenceSchema, json, "existence.json");
+  return json as ParsedExistenceJson;
+}
+
+// ── SpecSectionSchema（clarify 阶段产出的结构化 spec 章节） ─
+
+/**
+ * SpecSection 的 typebox schema，对应 SpecSection 联合类型。
+ *
+ * 用 Type.Union 组合 10 种章节变体，每种靠 type literal 判别：
+ *   - 结构化章节（CW 校验内容）：functionalRequirements / acceptanceCriteria / businessCases /
+ *     decisions / complexity / outOfScope / goals
+ *   - md 章节（CW 只存不校验）：background / constraints
+ *   - 兜底章节（agent 自定义章节名）：section
+ *
+ * 设计依据：对 118 个真实 spec.md 的内容模式统计（见 types.ts SpecSection 注释）。
+ */
+export const SpecSectionSchema = Type.Union([
+  // 结构化章节
+  Type.Object({
+    type: Type.Literal("functionalRequirements"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        title: Type.String(),
+        detail: Type.String(),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("acceptanceCriteria"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        condition: Type.String(),
+        verification: Type.Optional(
+          Type.Union([Type.Literal("unit"), Type.Literal("manual"), Type.Literal("review")]),
+        ),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("businessCases"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        actor: Type.String(),
+        scenario: Type.String(),
+        expectedResult: Type.String(),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("decisions"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        decision: Type.String(),
+        rationale: Type.String(),
+      }),
+    ),
+  }),
+  Type.Object({
+    type: Type.Literal("complexity"),
+    rating: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+    rationale: Type.String(),
+  }),
+  Type.Object({
+    type: Type.Literal("outOfScope"),
+    items: Type.Array(Type.String()),
+  }),
+  Type.Object({
+    type: Type.Literal("goals"),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        goal: Type.String(),
+        successCriteria: Type.String(),
+      }),
+    ),
+  }),
+  // md 章节
+  Type.Object({
+    type: Type.Literal("background"),
+    content: Type.String(),
+  }),
+  Type.Object({
+    type: Type.Literal("constraints"),
+    content: Type.String(),
+  }),
+  // 兜底章节
+  Type.Object({
+    type: Type.Literal("section"),
+    sectionName: Type.String(),
+    content: Type.String(),
+  }),
+]);
+
+// ── parseSpecSections（spec 章节数组入口） ──────────────────
+
+/**
+ * parseSpecSections — 解析 clarifyJson 里的 specSections 数组。
+ *
+ * 校验链：assertSafeSize → 逐元素 assertSchema(SpecSectionSchema)。
+ * 返回 SpecSection[]，由 handler progressive append 到 topic.specSections。
+ *
+ * 入参必须是数组（clarifyJson 顶层 specSections 字段）；非数组/空数组报错。
+ */
+export function parseSpecSections(json: unknown): SpecSection[] {
+  assertSafeSize(json, "specSections");
+  if (!Array.isArray(json)) {
+    throw new CwError("invalid specSections json: not an array");
+  }
+  return json.map((item, i) => {
+    assertSchema(SpecSectionSchema, item, `specSections[${i}]`);
+    return item as SpecSection;
+  });
 }
 
 // ── parseClarifyJson（clarifyJson 入口，支持单条+批量） ──────
@@ -401,6 +639,7 @@ export const ClarifySchema = Type.Object({
     ),
   ),
   recommendation: Type.Optional(Type.String()),
+  specSections: Type.Optional(Type.Array(SpecSectionSchema)),
   presentationPath: Type.Optional(Type.String()),
   answer: Type.Optional(Type.String()),
   adr: Type.Optional(
@@ -420,6 +659,11 @@ export const ClarifySchema = Type.Object({
 
 export interface ParsedClarify {
   clarifySeed: ClarifySeed;
+  /**
+   * clarifyJson 顶层 specSections 字段（可选）。
+   * 不属于 ClarifySeed——挂在 ParsedClarify 上直接返回，由 handler append 到 topic.specSections。
+   */
+  specSections?: SpecSection[];
 }
 
 /**
@@ -452,6 +696,7 @@ function extractClarify(json: unknown): ParsedClarify {
     question: string;
     options?: Array<{ id: string; label: string; tradeoff?: string }>;
     recommendation?: string;
+    specSections?: unknown;
     presentationPath?: string;
     answer?: string;
     adr?: {
@@ -489,7 +734,13 @@ function extractClarify(json: unknown): ParsedClarify {
     clarifySeed.adr = adrSeed;
   }
 
-  return { clarifySeed };
+  // specSections 已被 ClarifySchema 校验过结构，这里走 parseSpecSections 做逐元素
+  // assertSchema + size guard，提取为 SpecSection[]（不属于 ClarifySeed，挂在 ParsedClarify 上）。
+  const result: ParsedClarify = { clarifySeed };
+  if (obj.specSections !== undefined) {
+    result.specSections = parseSpecSections(obj.specSections);
+  }
+  return result;
 }
 
 // ── 向后兼容别名 ─────────────────────────────────────────────

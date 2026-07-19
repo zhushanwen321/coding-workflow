@@ -44,9 +44,15 @@ function makeTopic(overrides: Partial<Topic> = {}): Topic {
     gateHistory: [],
     gatePassed: {},
     clarifyRecords: [],
+    specSections: [],
     adrs: [],
     reviewIssues: [],
     reviewTurn: 0,
+    specHistory: [],
+    specReviewIssues: [],
+    specReviewTurn: 0,
+    planReviewIssues: [],
+    planReviewTurn: 0,
     testFixLog: [],
     testTurn: 0,
     assessments: [],
@@ -138,7 +144,7 @@ describe("setWaveCommitted 幂等更新（U15）", () => {
     const store = makeStore();
     store.insertTopic(makeTopic({ topicId: "cw-wave-test" }));
     store.insertWaves("cw-wave-test", [
-      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", description: "change1" }] },
+      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", action: "create", description: "change1" }] },
     ]);
 
     // 第一次提交
@@ -160,9 +166,9 @@ describe("Wave priority 持久化", () => {
     const store = makeStore();
     store.insertTopic(makeTopic({ topicId: "cw-wave-prio" }));
     store.insertWaves("cw-wave-prio", [
-      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", description: "c1" }], priority: "P0" },
-      { id: "W2", dependsOn: ["W1"], changes: [{ file: "src/app.ts", description: "c2" }], priority: "P2" },
-      { id: "W3", dependsOn: [], changes: [{ file: "src/app.ts", description: "c3" }] }, // 不设 priority
+      { id: "W1", dependsOn: [], changes: [{ file: "src/app.ts", action: "create", description: "c1" }], priority: "P0" },
+      { id: "W2", dependsOn: ["W1"], changes: [{ file: "src/app.ts", action: "create", description: "c2" }], priority: "P2" },
+      { id: "W3", dependsOn: [], changes: [{ file: "src/app.ts", action: "create", description: "c3" }] }, // 不设 priority
     ]);
     const topic = store.loadTopic("cw-wave-prio");
     expect(topic!.waves[0]!.priority).toBe("P0");
@@ -255,26 +261,31 @@ describe("store 补充覆盖", () => {
 // ── DAO: setArtifacts merge 语义 ────────────────────────────
 
 describe("setArtifacts merge 语义", () => {
-  it("先 set reviewPath 再 set retrospectPath → 两者共存（merge 而非覆盖）", () => {
+  it("先 set review 再 set retrospect → 两者共存（merge 而非覆盖，FR-1 嵌套 Artifacts）", () => {
     const store = makeStore();
     store.transaction(() => store.insertTopic(makeTopic()));
 
     store.transaction(() => {
       store.setArtifacts("cw-test-topic", {
-        reviewPath: "/tmp/review.md",
-        reviewAt: "2026-01-01T00:00:00.000Z",
+        review: {
+          path: "/tmp/review.md",
+          at: "2026-01-01T00:00:00.000Z",
+        },
       });
     });
     store.transaction(() => {
       store.setArtifacts("cw-test-topic", {
-        retrospectPath: "/tmp/retrospect.md",
-        retrospectAt: "2026-01-02T00:00:00.000Z",
+        retrospect: {
+          path: "/tmp/retrospect.md",
+          at: "2026-01-02T00:00:00.000Z",
+        },
       });
     });
 
     const topic = store.loadTopic("cw-test-topic");
-    expect(topic!.artifacts?.reviewPath).toBe("/tmp/review.md");
-    expect(topic!.artifacts?.retrospectPath).toBe("/tmp/retrospect.md");
+    // FR-1: Artifacts 改为嵌套结构 { review: {path, at}, retrospect: {path, at} }
+    expect(topic!.artifacts?.review?.path).toBe("/tmp/review.md");
+    expect(topic!.artifacts?.retrospect?.path).toBe("/tmp/retrospect.md");
   });
 });
 
@@ -398,7 +409,7 @@ describe("insertTestCases", () => {
           layer: "mock",
           scenario: "test scenario",
           steps: "run test",
-          expected: { text: "expected result" },
+          expected: { type: "exact", text: "expected result" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -407,7 +418,7 @@ describe("insertTestCases", () => {
           layer: "real",
           scenario: "e2e scenario",
           steps: "spawn cli",
-          expected: { text: "status=closed" },
+          expected: { type: "exact", text: "status=closed" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -429,16 +440,16 @@ describe("insertTestCases", () => {
     store.transaction(() => {
       store.insertTestCases("cw-test-topic", [
         { id: "U1", layer: "mock", scenario: "s", steps: "st",
-          expected: { text: "r" }, executor: "vitest", requiresScreenshot: false },
+          expected: { type: "exact", text: "r" }, executor: "vitest", requiresScreenshot: false },
       ]);
     });
     // 再次插入同 id
     store.transaction(() => {
       store.insertTestCases("cw-test-topic", [
         { id: "U1", layer: "mock", scenario: "s2", steps: "st2",
-          expected: { text: "r2" }, executor: "vitest", requiresScreenshot: false },
+          expected: { type: "exact", text: "r2" }, executor: "vitest", requiresScreenshot: false },
         { id: "U2", layer: "real", scenario: "s", steps: "st",
-          expected: { text: "r" }, executor: "vitest", requiresScreenshot: false },
+          expected: { type: "exact", text: "r" }, executor: "vitest", requiresScreenshot: false },
       ]);
     });
 
@@ -462,7 +473,7 @@ describe("insertTestCases 持久化 priority/redCheck", () => {
           layer: "mock",
           scenario: "core path red check",
           steps: "run test",
-          expected: { text: "expected" },
+          expected: { type: "exact", text: "expected" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P0",
@@ -473,7 +484,7 @@ describe("insertTestCases 持久化 priority/redCheck", () => {
           layer: "real",
           scenario: "important feature no red check",
           steps: "spawn cli",
-          expected: { text: "ok" },
+          expected: { type: "exact", text: "ok" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P1",
@@ -484,7 +495,7 @@ describe("insertTestCases 持久化 priority/redCheck", () => {
           layer: "mock",
           scenario: "enhancement with red check",
           steps: "run test",
-          expected: { text: "enhanced" },
+          expected: { type: "exact", text: "enhanced" },
           executor: "vitest",
           requiresScreenshot: false,
           priority: "P2",
@@ -520,7 +531,7 @@ describe("insertTestCases 持久化 priority/redCheck", () => {
           layer: "mock",
           scenario: "no priority/redCheck",
           steps: "run test",
-          expected: { text: "expected" },
+          expected: { type: "exact", text: "expected" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -546,7 +557,7 @@ describe("insertTestCases 持久化 priority/redCheck", () => {
           layer: "mock" as const,
           scenario: `scenario-${p}`,
           steps: "steps",
-          expected: { text: p },
+          expected: { type: "exact", text: p },
           executor: "vitest",
           requiresScreenshot: false,
           priority: p,
@@ -580,7 +591,7 @@ describe("replaceUnpassedTestCases", () => {
           layer: "mock",
           scenario: "old scenario",
           steps: "old steps",
-          expected: { text: "old expected" },
+          expected: { type: "exact", text: "old expected" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -589,7 +600,7 @@ describe("replaceUnpassedTestCases", () => {
           layer: "mock",
           scenario: "will pass",
           steps: "steps",
-          expected: { text: "ok" },
+          expected: { type: "exact", text: "ok" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -612,7 +623,7 @@ describe("replaceUnpassedTestCases", () => {
           layer: "mock",
           scenario: "new scenario",
           steps: "new steps",
-          expected: { text: "new expected" },
+          expected: { type: "exact", text: "new expected" },
           executor: "vitest",
           requiresScreenshot: false,
         },
@@ -655,9 +666,12 @@ describe("stale-lock 清理", () => {
     const store = makeStore();
     store.transaction(() => store.insertTopic(makeTopic()));
 
-    // 手动写一个 stale lockfile：PID=本进程+1（几乎肯定不存在）+ 当前 ts
+    // 手动写一个 stale lockfile：PID 远超任何系统的 pid_max（linux 4194304 / mac 99999）
+    // → process.kill(pid, 0) 必抛 ESRCH → isProcessAlive 返回 false → 视为 stale。
+    // 旧实现用 process.pid + 1，在 PID 密集环境（CI runner / 本地多进程）可能是活进程，
+    // 导致 isStaleLock 误判为 false → retry 耗尽 → flaky fail。
     const lockPath = dbPath + ".lock";
-    const deadPid = process.pid + 1;
+    const deadPid = 99999999;
     writeFileSync(lockPath, `${deadPid}\n${Date.now()}\n`);
 
     // 新 CwStore 实例开 transaction → 应检测到死进程 PID → 清理 stale lock → 获取锁
@@ -848,8 +862,8 @@ describe("appendReviewIssues", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
 
     const issues: ReviewIssueSubmission[] = [
-      { severity: "must-fix", description: "缺少错误处理", file: "src/app.ts:10" },
-      { severity: "nit", description: "命名拼写" },
+      { severity: "must-fix", description: "缺少错误处理", dimension: "error-handling", ref: "src/app.ts:10" },
+      { severity: "nit", description: "命名拼写", dimension: "design-consistency" },
     ];
     store.transaction(() => store.appendReviewIssues("cw-test-topic", 1, issues));
 
@@ -859,11 +873,14 @@ describe("appendReviewIssues", () => {
     expect(topic!.reviewIssues[0]!.status).toBe("open");
     expect(topic!.reviewIssues[0]!.foundAtTurn).toBe(1);
     expect(topic!.reviewIssues[0]!.severity).toBe("must-fix");
-    expect(topic!.reviewIssues[0]!.file).toBe("src/app.ts:10");
+    // FR-3: ReviewIssue 升级 — dimension 必填，file→ref
+    expect(topic!.reviewIssues[0]!.dimension).toBe("error-handling");
+    expect(topic!.reviewIssues[0]!.ref).toBe("src/app.ts:10");
     expect(topic!.reviewIssues[1]!.id).toBe("R2");
     expect(topic!.reviewIssues[1]!.foundAtTurn).toBe(1);
     expect(topic!.reviewIssues[1]!.severity).toBe("nit");
-    expect(topic!.reviewIssues[1]!.file).toBeUndefined();
+    expect(topic!.reviewIssues[1]!.dimension).toBe("design-consistency");
+    expect(topic!.reviewIssues[1]!.ref).toBeUndefined();
   });
 
   it("多轮追加：第 2 轮追加 1 个 → id 自增到 R3, foundAtTurn=2", () => {
@@ -871,12 +888,12 @@ describe("appendReviewIssues", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "i1" },
+        { severity: "must-fix", description: "i1", dimension: "error-handling" },
       ]),
     );
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 2, [
-        { severity: "should-fix", description: "i2" },
+        { severity: "should-fix", description: "i2", dimension: "error-handling" },
       ]),
     );
 
@@ -891,7 +908,7 @@ describe("appendReviewIssues", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "persist check" },
+        { severity: "must-fix", description: "persist check", dimension: "error-handling" },
       ]),
     );
 
@@ -908,7 +925,7 @@ describe("fixReviewIssue", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "bug" },
+        { severity: "must-fix", description: "bug", dimension: "error-handling" },
       ]),
     );
 
@@ -934,7 +951,7 @@ describe("fixReviewIssue", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "bug" },
+        { severity: "must-fix", description: "bug", dimension: "error-handling" },
       ]),
     );
 
@@ -1057,8 +1074,8 @@ describe("resetReviewLoop / resetTestLoop", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "x" },
-        { severity: "nit", description: "y" },
+        { severity: "must-fix", description: "x", dimension: "error-handling" },
+        { severity: "nit", description: "y", dimension: "design-consistency" },
       ]),
     );
     store.transaction(() => store.incReviewTurn("cw-test-topic"));
@@ -1101,13 +1118,13 @@ describe("resetReviewLoop / resetTestLoop", () => {
     store.transaction(() => store.insertTopic(makeTopic()));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "must-fix", description: "first" },
+        { severity: "must-fix", description: "first", dimension: "error-handling" },
       ]),
     );
     store.transaction(() => store.resetReviewLoop("cw-test-topic"));
     store.transaction(() =>
       store.appendReviewIssues("cw-test-topic", 1, [
-        { severity: "nit", description: "after reset" },
+        { severity: "nit", description: "after reset", dimension: "design-consistency" },
       ]),
     );
 
@@ -1156,5 +1173,190 @@ describe("旧数据向后兼容（issue tracking 字段缺失）", () => {
     expect(topic!.reviewTurn).toBe(0);
     expect(topic!.testFixLog).toEqual([]);
     expect(topic!.testTurn).toBe(0);
+  });
+});
+
+// ── FR-1 / AC-4: Artifacts 旧格式迁移 ──────────────────────────
+
+describe("FR-1: Artifacts 旧格式迁移（AC-4）", () => {
+  it("平铺格式（reviewPath/reviewAt/retrospectPath/retrospectAt）加载后迁移为嵌套", () => {
+    // 直接操作 _cw.json 写入旧格式 artifacts，再 loadTopic 验证迁移。
+    // 参照 store.test.ts 现有 store 构造模式（makeStore + makeTopic）。
+    const store = makeStore();
+    store.transaction(() =>
+      store.insertTopic(makeTopic({ topicId: "cw-test-migrate" })),
+    );
+
+    // 手动写入旧格式 artifacts 到 _cw.json（绕过 store API，模拟旧数据）。
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      topics: Array<Record<string, unknown>>;
+    };
+    const t = raw.topics.find((x) => x.topicId === "cw-test-migrate");
+    t!.artifacts = {
+      reviewPath: "/tmp/old-review.md",
+      reviewAt: "2026-01-01T00:00:00.000Z",
+      retrospectPath: "/tmp/old-retrospect.md",
+      retrospectAt: "2026-01-02T00:00:00.000Z",
+    };
+    writeFileSync(dbPath, JSON.stringify(raw));
+
+    // CwStore 的 fileData 是内存缓存的，手动改 _cw.json 后需新实例重新加载。
+    const reloaded = new CwStore(dbPath);
+    const loaded = reloaded.loadTopic("cw-test-migrate");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.artifacts?.review?.path).toBe("/tmp/old-review.md");
+    expect(loaded!.artifacts?.review?.at).toBe("2026-01-01T00:00:00.000Z");
+    expect(loaded!.artifacts?.retrospect?.path).toBe("/tmp/old-retrospect.md");
+    expect(loaded!.artifacts?.retrospect?.at).toBe("2026-01-02T00:00:00.000Z");
+  });
+
+  it("旧 reviewIssues category/file 迁移为 dimension/ref（FR-3）", () => {
+    // 同理，手动写入旧格式 reviewIssues，loadTopic 验证迁移。
+    const store = makeStore();
+    store.transaction(() =>
+      store.insertTopic(makeTopic({ topicId: "cw-test-migrate-issue" })),
+    );
+
+    const raw = JSON.parse(readFileSync(dbPath, "utf-8")) as {
+      topics: Array<Record<string, unknown>>;
+    };
+    const t = raw.topics.find((x) => x.topicId === "cw-test-migrate-issue");
+    t!.reviewIssues = [
+      {
+        id: "R1",
+        category: "type-safety",
+        severity: "must-fix",
+        description: "test",
+        file: "src/x.ts:42",
+        status: "open",
+        foundAtTurn: 1,
+      },
+    ];
+    writeFileSync(dbPath, JSON.stringify(raw));
+
+    const reloaded = new CwStore(dbPath);
+    const loaded = reloaded.loadTopic("cw-test-migrate-issue");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.reviewIssues[0]!.dimension).toBe("type-safety");
+    expect(loaded!.reviewIssues[0]!.ref).toBe("src/x.ts:42");
+  });
+});
+
+// ── FR-4/5: spec_review / plan_review issue DAO ────────────────
+
+describe("FR-4/5: spec_review/plan_review issue DAO", () => {
+  it("appendSpecReviewIssues 分配 SR 前缀 id + foundAtTurn", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const issues: ReviewIssueSubmission[] = [
+      { severity: "must-fix", description: "spec 缺 FR", dimension: "completeness", ref: "FR-3" },
+      { severity: "should-fix", description: "口径不一致", dimension: "consistency" },
+    ];
+    store.transaction(() => store.appendSpecReviewIssues("cw-test-topic", 1, issues));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.specReviewIssues).toHaveLength(2);
+    expect(topic!.specReviewIssues[0]!.id).toBe("SR1");
+    expect(topic!.specReviewIssues[0]!.status).toBe("open");
+    expect(topic!.specReviewIssues[0]!.foundAtTurn).toBe(1);
+    expect(topic!.specReviewIssues[0]!.dimension).toBe("completeness");
+    expect(topic!.specReviewIssues[0]!.ref).toBe("FR-3");
+    expect(topic!.specReviewIssues[1]!.id).toBe("SR2");
+    expect(topic!.specReviewIssues[1]!.foundAtTurn).toBe(1);
+  });
+
+  it("fixSpecReviewIssue 标记 fixed + 记 resolution", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendSpecReviewIssues("cw-test-topic", 1, [
+        { severity: "must-fix", description: "spec 缺 FR", dimension: "completeness" },
+      ]),
+    );
+
+    store.transaction(() =>
+      store.fixSpecReviewIssue("cw-test-topic", "SR1", {
+        resolution: "补了 FR-3 章节",
+        fixedAtTurn: 2,
+      }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    const issue = topic!.specReviewIssues[0]!;
+    expect(issue.status).toBe("fixed");
+    expect(issue.fix).toBeDefined();
+    expect(issue.fix!.resolution).toBe("补了 FR-3 章节");
+    expect(issue.fix!.fixedAtTurn).toBe(2);
+    // commitHash 可选，spec 修复未传 → undefined
+    expect(issue.fix!.commitHash).toBeUndefined();
+  });
+
+  it("incSpecReviewTurn 递增", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    expect(store.loadTopic("cw-test-topic")!.specReviewTurn).toBe(0);
+    store.transaction(() => store.incSpecReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.specReviewTurn).toBe(1);
+    store.transaction(() => store.incSpecReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.specReviewTurn).toBe(2);
+  });
+
+  it("appendPlanReviewIssues 分配 PR 前缀 id + foundAtTurn", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    const issues: ReviewIssueSubmission[] = [
+      { severity: "must-fix", description: "wave 未覆盖 FR", dimension: "coverage", ref: "W2" },
+      { severity: "nit", description: "架构分层不清", dimension: "architecture" },
+    ];
+    store.transaction(() => store.appendPlanReviewIssues("cw-test-topic", 1, issues));
+
+    const topic = store.loadTopic("cw-test-topic");
+    expect(topic!.planReviewIssues).toHaveLength(2);
+    expect(topic!.planReviewIssues[0]!.id).toBe("PR1");
+    expect(topic!.planReviewIssues[0]!.status).toBe("open");
+    expect(topic!.planReviewIssues[0]!.foundAtTurn).toBe(1);
+    expect(topic!.planReviewIssues[0]!.dimension).toBe("coverage");
+    expect(topic!.planReviewIssues[0]!.ref).toBe("W2");
+    expect(topic!.planReviewIssues[1]!.id).toBe("PR2");
+    expect(topic!.planReviewIssues[1]!.foundAtTurn).toBe(1);
+  });
+
+  it("fixPlanReviewIssue 标记 fixed", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+    store.transaction(() =>
+      store.appendPlanReviewIssues("cw-test-topic", 1, [
+        { severity: "should-fix", description: "wave 缺依赖", dimension: "feasibility" },
+      ]),
+    );
+
+    store.transaction(() =>
+      store.fixPlanReviewIssue("cw-test-topic", "PR1", {
+        commitHash: "abc123",
+        resolution: "补了 dependsOn",
+        fixedAtTurn: 1,
+      }),
+    );
+
+    const topic = store.loadTopic("cw-test-topic");
+    const issue = topic!.planReviewIssues[0]!;
+    expect(issue.status).toBe("fixed");
+    expect(issue.fix!.commitHash).toBe("abc123");
+    expect(issue.fix!.resolution).toBe("补了 dependsOn");
+    expect(issue.fix!.fixedAtTurn).toBe(1);
+  });
+
+  it("incPlanReviewTurn 递增", () => {
+    const store = makeStore();
+    store.transaction(() => store.insertTopic(makeTopic()));
+
+    expect(store.loadTopic("cw-test-topic")!.planReviewTurn).toBe(0);
+    store.transaction(() => store.incPlanReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.planReviewTurn).toBe(1);
+    store.transaction(() => store.incPlanReviewTurn("cw-test-topic"));
+    expect(store.loadTopic("cw-test-topic")!.planReviewTurn).toBe(2);
   });
 });

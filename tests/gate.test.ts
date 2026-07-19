@@ -21,6 +21,7 @@ import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import {
   clarifyCheck,
+  confirmClarifyCheck,
   devCheck,
   GitValidator,
   planCheck,
@@ -31,6 +32,7 @@ import {
 import { CwError, type Topic } from "../src/types.js";
 import { commitFile,setupGitRepo } from "./helpers/git.js";
 import { makeValidClarifyJson, makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
+import { checkLinear as checkLinearExternal } from "../src/state-machine.js";
 
 // ── test.json helper（与 plan-parser.test.ts 的 makeValidTestJson 结构一致） ──
 
@@ -42,7 +44,7 @@ function makeValidTestJson(): unknown {
         layer: "mock",
         scenario: "单测场景",
         steps: "执行单测",
-        expected: { text: "expected-output" },
+        expected: { type: "exact", text: "expected-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -51,7 +53,7 @@ function makeValidTestJson(): unknown {
         layer: "real",
         scenario: "集成场景",
         steps: "执行集成测试",
-        expected: { text: "real-output" },
+        expected: { type: "exact", text: "real-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -79,7 +81,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
     const devPlan = {
       format: "lite",
       objective: "test obj",
-      waves: [{ id: "W1", changes: [{file: "src/app.ts", description: "change1"}], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{file: "src/app.ts", action: "create", description: "change1"}], dependsOn: [] }],
     };
     const result = planCheck(devPlan);
     expect(result.result).toBe("pass");
@@ -105,7 +107,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
   });
 
   it("format 非 lite → gate fail（parseDevPlan 抛错被捕获）", () => {
-    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: [{file: "src/a.ts", description: "a"}], dependsOn: [] }] };
+    const devPlan = { format: "wrong", objective: "obj", waves: [{ id: "W1", changes: [{file: "src/a.ts", action: "create", description: "a"}], dependsOn: [] }] };
     const result = planCheck(devPlan);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("format");
@@ -126,7 +128,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "passed" },
+          expected: { type: "exact", text: "passed" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -135,7 +137,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "ok" },
+          expected: { type: "exact", text: "ok" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -153,7 +155,7 @@ describe("planCheck（W3 改造后只校验 dev-plan waves）", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "具体输出" },
+          expected: { type: "exact", text: "具体输出" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -168,7 +170,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
   it("waves 数量超过阈值 → pass + warning 含 waves 数量", () => {
     const waves = Array.from({ length: 11 }, (_, i) => ({
       id: `W${i + 1}`,
-      changes: [{file: `src/w${i + 1}.ts`, description: `change ${i + 1}`}],
+      changes: [{file: `src/w${i + 1}.ts`, action: "create", description: `change ${i + 1}`}],
       dependsOn: i > 0 ? [`W${i}`] : [],
     }));
     const devPlan = { format: "lite", objective: "big task", waves };
@@ -179,7 +181,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
   });
 
   it("涉及文件数超过阈值 → pass + warning 含文件数", () => {
-    const changes = Array.from({ length: 16 }, (_, i) => ({file: `src/file${i + 1}.ts`, description: "改文件"}));
+    const changes = Array.from({ length: 16 }, (_, i) => ({file: `src/file${i + 1}.ts`, action: "create", description: "改文件"}));
     const devPlan = {
       format: "lite",
       objective: "many files",
@@ -195,7 +197,7 @@ describe("planCheck 范围守门 warning（杠杆 3）", () => {
     const devPlan = {
       format: "lite",
       objective: "small task",
-      waves: [{ id: "W1", changes: [{file: "src/a.ts", description: "修改"}], dependsOn: [] }],
+      waves: [{ id: "W1", changes: [{file: "src/a.ts", action: "create", description: "修改"}], dependsOn: [] }],
     };
     const result = planCheck(devPlan);
     expect(result.result).toBe("pass");
@@ -242,7 +244,7 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
           layer: "mock",
           scenario: "s",
           steps: "st",
-          expected: { text: "具体输出值" },
+          expected: { type: "exact", text: "具体输出值" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -262,7 +264,7 @@ describe("tddPlanCheck 对缺 mock 或 real 层返回 fail", () => {
           layer: "real",
           scenario: "s",
           steps: "st",
-          expected: { text: "具体输出值" },
+          expected: { type: "exact", text: "具体输出值" },
           executor: "agent",
           requiresScreenshot: false,
         },
@@ -283,8 +285,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "passed" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -297,8 +299,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "OK" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "OK" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -310,8 +312,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "success" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -322,8 +324,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "成功" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "成功" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -334,9 +336,9 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s1", steps: "st", expected: { text: "passed" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "mock", scenario: "s2", steps: "st", expected: { text: "返回 { status: 'ok', data: [1,2,3] }" }, executor: "agent", requiresScreenshot: false },
-        { id: "E3", layer: "real", scenario: "s3", steps: "st", expected: { text: "success" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s1", steps: "st", expected: { type: "exact", text: "passed" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "mock", scenario: "s2", steps: "st", expected: { type: "exact", text: "返回 { status: 'ok', data: [1,2,3] }" }, executor: "agent", requiresScreenshot: false },
+        { id: "E3", layer: "real", scenario: "s3", steps: "st", expected: { type: "exact", text: "success" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -351,8 +353,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "status is ok, count=42" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", text: "status is ok, count=42" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -363,8 +365,8 @@ describe("tddPlanCheck 对模糊 expected.text 返回 fail", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { url: "http://localhost:3000" }, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact", url: "http://localhost:3000" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -379,8 +381,8 @@ describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real out" }, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real out" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
@@ -395,14 +397,94 @@ describe("tddPlanCheck 对 expected 空判据返回 fail（杠杆 2）", () => {
     const testJson = {
       testRunner,
       testCases: [
-        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
-        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: {}, executor: "agent", requiresScreenshot: false },
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exact" }, executor: "agent", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact" }, executor: "agent", requiresScreenshot: false },
       ],
     };
     const result = tddPlanCheck(testJson);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("E1");
     expect(result.report).toContain("E2");
+  });
+});
+
+// ── tddPlanCheck expected 多模式回归锚点（topic: cw-2026-07-17-expected-multi-mode） ──
+//
+// expected 判别联合 {type:'exact'} | {type:'exit_zero'} | {type:'script',path}
+// 的 gate 层回归契约。expected-multi-mode.test.ts 已按 AC 粒度详尽覆盖（含非顶层 ..
+// 越界、绝对路径、多 case 组合）；这里补的是**主 gate 测试文件的回归锚点**——
+// 用 gate.test.ts 的一贯风格（单场景、tddPlanCheck 返回值断言）锁住每个新能力的
+// gate 行为，确保未来重构 gate 时这些契约在主测试文件里也有抓手，不会随
+// expected-multi-mode.test.ts 整体删除而失锚。
+
+describe("tddPlanCheck expected 多模式回归锚点", () => {
+  const testRunner = { mode: "nodejs" as const, command: "npx vitest run" };
+
+  it("AC-5: exit_zero 模式无 text → 不触发模糊/空判据检测，pass", () => {
+    // 关键回归：exit_zero 是合法的「无 text」判据，不应被 FUZZY_EXPECTED_RE 或
+    // 「判据缺失」规则挡下。若 tddPlanCheck 的模糊/空判据检查误把 exit_zero 当 exact，
+    // 此测试会 fail（报「判据」或「模糊」）。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "exit_zero" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("pass");
+    expect(result.report).not.toContain("模糊");
+    expect(result.report).not.toContain("判据");
+  });
+
+  it("AC-5: script 模式无 text → 不触发模糊/空判据检测，pass", () => {
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { type: "script", path: "scripts/check.sh" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("pass");
+  });
+
+  it("AC-4a: script.path 顶层 .. 越界 → fail，报告点出 path", () => {
+    // 回归点：沙箱必须用 resolve 而非字符串 startsWith('..')，否则 "foo/../../etc"
+    // 形态会漏过。这里用最直接的 "../../etc/passwd" 锚定顶层越界拒绝行为。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "S1", layer: "mock", scenario: "s", steps: "st", expected: { type: "script", path: "../../etc/passwd" }, executor: "vitest", requiresScreenshot: false },
+        { id: "S2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("fail");
+    expect(result.report.toLowerCase()).toContain("path");
+  });
+
+  it("AC-4a: script.path 合法相对路径 → pass（沙箱不误伤）", () => {
+    // 反面回归：合法的 workspace 内相对路径不应被沙箱挡下。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "S1", layer: "mock", scenario: "s", steps: "st", expected: { type: "script", path: ".cw/check.sh" }, executor: "vitest", requiresScreenshot: false },
+        { id: "S2", layer: "real", scenario: "s", steps: "st", expected: { type: "exact", text: "real-out" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("pass");
+  });
+
+  it("AC-7: expected 不含 type 字段 → fail，报告含 type", () => {
+    // 旧格式 expected:{text:'x'}（无 type）必须被 schema 拒绝。这是判别联合的
+    // 兜底契约：缺 type 不能静默退化为 exact（会让 exit_zero/script 的能力失去门禁）。
+    const result = tddPlanCheck({
+      testRunner,
+      testCases: [
+        { id: "E1", layer: "mock", scenario: "s", steps: "st", expected: { text: "real-out-1" }, executor: "vitest", requiresScreenshot: false },
+        { id: "E2", layer: "real", scenario: "s", steps: "st", expected: { text: "real-out-2" }, executor: "vitest", requiresScreenshot: false },
+      ],
+    });
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("type");
   });
 });
 
@@ -547,16 +629,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -585,16 +673,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -638,16 +732,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -677,16 +777,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -729,9 +835,15 @@ describe("P1: devCheck 文件覆盖校验", () => {
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -772,16 +884,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/store.ts", description: "实现数据持久化"}],
+          changes: [{file: "src/store.ts", action: "modify", description: "实现数据持久化"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -808,16 +926,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: null,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -844,16 +968,22 @@ describe("P1: devCheck 文件覆盖校验", () => {
           id: "W1",
           dependsOn: [],
           committed: initialCommit,
-          changes: [{file: "src/app.ts", description: "加功能"}],
+          changes: [{file: "src/app.ts", action: "create", description: "加功能"}],
         },
       ],
       testCases: [],
       gateHistory: [],
       gatePassed: {},
       clarifyRecords: [],
+      specSections: [],
       adrs: [],
       reviewIssues: [],
       reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
       testFixLog: [],
       testTurn: 0,
       assessments: [],
@@ -955,5 +1085,223 @@ describe("clarifyCheck", () => {
     const result = clarifyCheck(json);
     expect(result.result).toBe("fail");
     expect(result.report).toContain("目录");
+  });
+});
+
+// ── FR-1: confirmClarifyCheck（confirm gate 条件校验） ───────
+
+describe("FR-1: confirmClarifyCheck", () => {
+  it("至少 1 条 resolved clarifyRecord → pass", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "a",
+          question: "q",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+      artifacts: { confirmSpec: { path: "/tmp/spec.md", at: "2026-01-01T00:00:00.000Z" } },
+    };
+    // FR-1: confirm gate 至少 1 条 resolved/skipped + FR-8: confirmSpec 存在
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("pass");
+  });
+
+  it("无 clarifyRecord → fail（防静默跳过）", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("clarifyRecord");
+  });
+
+  it("只有 pending（未 resolved）→ fail", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "a",
+          question: "q",
+          status: "pending",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("fail");
+  });
+
+  it("skipped 也算合法（agent 判断无需澄清）", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "已探索，需求清晰无需澄清",
+          question: "无需澄清",
+          status: "skipped",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+      artifacts: { confirmSpec: { path: "/tmp/spec.md", at: "2026-01-01T00:00:00.000Z" } },
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("pass");
+  });
+
+  it("AC-8: 有 resolved record 但无 confirmSpec（未调 gen-spec）→ fail", () => {
+    const topic: Topic = {
+      topicId: "cw-test",
+      slug: "test",
+      objective: "test",
+      workspacePath: tmpDir,
+      topicDir: join(tmpDir, ".xyz-harness/test"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "created",
+      waves: [],
+      testCases: [],
+      gateHistory: [],
+      gatePassed: {},
+      clarifyRecords: [
+        {
+          id: "CL1",
+          kind: "technical",
+          topic: "t",
+          assessment: "a",
+          question: "q",
+          status: "resolved",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specSections: [],
+      adrs: [],
+      reviewIssues: [],
+      reviewTurn: 0,
+      specHistory: [],
+      specReviewIssues: [],
+      specReviewTurn: 0,
+      planReviewIssues: [],
+      planReviewTurn: 0,
+      testFixLog: [],
+      testTurn: 0,
+      assessments: [],
+      // 无 artifacts.confirmSpec → FR-8 应 gate fail
+    };
+    const result = confirmClarifyCheck(topic);
+    expect(result.result).toBe("fail");
+    expect(result.report).toContain("gen-spec");
+  });
+});
+
+// ── FR-6: planCheck 向后兼容 ──────────────────────────────────
+
+describe("FR-6: planCheck 向后兼容（旧 topic 已 planned）", () => {
+  it("AC-6: status=planned 的旧 topic 再次 plan → 不报 illegal_transition", () => {
+    // FR-6: 旧 topic 已 planned（没有 clarify_confirmed）不应该被新 gate 拦住。
+    // 向后兼容逻辑在 guard（checkLinear）层：plan.expectedStatuses 需含 planned。
+    // 但这里测 planCheck 本身不额外拒绝——planCheck 只验 schema。
+    // 真正的兼容在 TRANSITIONS.plan.expectedStatuses 需含 planned（已过 plan 的旧 topic 重调合法）。
+    const verdict = checkLinearExternal("plan", "planned");
+    expect(verdict.ok).toBe(true);
   });
 });

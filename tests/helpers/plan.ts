@@ -18,7 +18,7 @@ export function makeValidPlanJson(
     format: "lite",
     objective: "test objective",
     waves: [
-      { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+      { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
     ],
     testCases: [
       {
@@ -26,7 +26,7 @@ export function makeValidPlanJson(
         layer: "mock",
         scenario: "单测场景",
         steps: "执行单测",
-        expected: { text: "expected-output" },
+        expected: { type: "exact", text: "expected-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -35,7 +35,7 @@ export function makeValidPlanJson(
         layer: "real",
         scenario: "集成场景",
         steps: "执行集成测试",
-        expected: { text: "real-output" },
+        expected: { type: "exact", text: "real-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -55,7 +55,7 @@ export function makeValidDevPlanJson(
     format: "lite",
     objective: "test objective",
     waves: [
-      { id: "W1", changes: [{ file: "src/app.ts", description: "change1" }], dependsOn: [] },
+      { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
     ],
     ...overrides,
   };
@@ -78,7 +78,7 @@ export function makeValidTestJson(
         layer: "mock",
         scenario: "单测场景",
         steps: "执行单测",
-        expected: { text: "expected-output" },
+        expected: { type: "exact", text: "expected-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },
@@ -87,7 +87,7 @@ export function makeValidTestJson(
         layer: "real",
         scenario: "集成场景",
         steps: "执行集成测试",
-        expected: { text: "real-output" },
+        expected: { type: "exact", text: "real-output" },
         executor: "vitest",
         requiresScreenshot: false,
       },

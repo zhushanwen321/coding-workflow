@@ -19,8 +19,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve as pathResolve, sep as pathSep } from "node:path";
 
 import { parseClarifyJson, type ParsedClarify, type ParsedDevPlan, parseDevPlan, type ParsedTestJson, parseTestJson } from "./plan-parser.js";
 import {
@@ -28,8 +28,9 @@ import {
   CwError,
   type Expected,
   judgeByExpected,
-  type ReviewIssueCategory,
+  type ReviewDimension,
   type ReviewIssueSubmission,
+  type SpecSection,
   type TestCase,
   type TestRunnerConfig,
   type Topic,
@@ -67,6 +68,17 @@ export interface CommitValidation {
    * commit 是 Wave 级验证锚点——共享 commit 让两个 Wave 的验证脱节。
    */
   extraCommitReuse?: string[];
+  /**
+   * dependsOn 中尚未 committed 的 waveId 列表（gate fail，阻断 committed）。
+   * handleDev 拓扑校验填充：wave 的 dependsOn 必须都已 committed，否则该 wave 不写入。
+   * 同批次 cw(dev) 内有效提交的 wave 也算 committed（允许一次调用提交 W1+W2 链式依赖）。
+   */
+  unsatisfiedDeps?: string[];
+  /**
+   * dependsOn 中指向未知 waveId（不在 topic.waves 内）的列表（gate fail）。
+   * plan-parser 只检环不检存在性，这里兜底防 agent 写错 waveId。
+   */
+  missingDeps?: string[];
 }
 
 /** git 可执行文件缺失判定（ENOENT = 基础设施异常，应 throw 而非吞掉）。 */
@@ -190,8 +202,21 @@ export interface PlanCheckResult {
  * 失败路径（parseDevPlan throw）：
  *   - format !== "lite" / 非 object / size 超 1MB / schema 不符 / 环形 dependsOn → fail。
  *   - waves 空数组 → fail（schema 允许空数组，planCheck 额外校验非空）。
+ *
+ * 文件存在性校验（W2，AC-1~4/AC-3.4/AC-3.6/AC-8）：
+ *   - create → file 必须不存在（existsSync 对目录也返回 true，AC-3.4）
+ *   - modify/delete → file 必须存在
+ *   - 越界检查 action 无关（AC-3.6/AC-8）：isPathInsideWorkspace resolve+realpath，
+ *     对不存在路径 ENOENT 回退 lexical（create 的虚构文件也受 .. 越界检查）
+ *
+ * @param workspacePath workspace 绝对路径，用于 changes[].file 的存在性 + 越界校验。
+ *   省略时默认 process.cwd()。handlePlan 应传 topic.workspacePath。
  */
-export function planCheck(planJson: unknown): PlanCheckResult {
+export function planCheck(
+  planJson: unknown,
+  specSections?: SpecSection[],
+  workspacePath: string = process.cwd(),
+): PlanCheckResult {
   try {
     const parsed = parseDevPlan(planJson);
 
@@ -203,7 +228,49 @@ export function planCheck(planJson: unknown): PlanCheckResult {
       };
     }
 
-    return { result: "pass", report: "", ...checkPlanScopeWarning(parsed) };
+    // 文件存在性校验（W2，AC-1~4/AC-3.4/AC-3.6/AC-8）。
+    // 越界检查 action 无关（先于 existsSync）：isPathInsideWorkspace 复用 tdd_plan 的
+    // resolve+realpath 双层校验，ENOENT 回退 lexical（create 的虚构文件不存在也能挡 ..）。
+    const existenceErrors: string[] = [];
+    for (const wave of parsed.waves) {
+      for (const change of wave.changes ?? []) {
+        // 越界检查（AC-3.6/AC-8）：resolve 后必须在 workspace 内（无论 action）。
+        if (!isPathInsideWorkspace(change.file, workspacePath)) {
+          existenceErrors.push(
+            `file 越出 workspace: ${change.file} (action: ${change.action})`,
+          );
+          continue;
+        }
+        const fullPath = pathResolve(workspacePath, change.file);
+        if (change.action === "create") {
+          // create 要求文件不存在（AC-3）。existsSync 对目录也返回 true（AC-3.4）。
+          if (existsSync(fullPath)) {
+            existenceErrors.push(`create 的 file 已存在: ${change.file}`);
+          }
+        } else {
+          // modify/delete 要求文件存在（AC-1/AC-2）。
+          if (!existsSync(fullPath)) {
+            existenceErrors.push(`${change.action} 的 file 不存在: ${change.file}`);
+          }
+        }
+      }
+    }
+    if (existenceErrors.length > 0) {
+      return { result: "fail", report: existenceErrors.join("; ") };
+    }
+
+    // 合并 scope warning + FR 覆盖 warning
+    const warnings: string[] = [];
+    const scopeWarning = checkPlanScopeWarning(parsed);
+    if (scopeWarning.warning) warnings.push(scopeWarning.warning);
+    const frWarning = checkFrCoverage(parsed, specSections);
+    if (frWarning) warnings.push(frWarning);
+
+    return {
+      result: "pass",
+      report: "",
+      ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}),
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { result: "fail", report: msg };
@@ -244,6 +311,81 @@ function checkPlanScopeWarning(
   return { warning: warnings.join("; ") };
 }
 
+/**
+ * checkFrCoverage — plan waves 是否覆盖 spec 的功能需求（warning 不阻断）。
+ *
+ * 宽松匹配：FR 的 id 或 title 出现在任一 wave 的 changes[].description 里 = 覆盖。
+ * 未覆盖的 FR 列入 warning，提示 agent 检查是否有遗漏（可能是有意的缩范围）。
+ *
+ * 无 spec 或 spec 无 FR 时返回 undefined（不触发检查）。
+ */
+export function checkFrCoverage(
+  parsed: ParsedDevPlan,
+  specSections?: SpecSection[],
+): string | undefined {
+  if (!specSections || specSections.length === 0) return undefined;
+
+  // 聚合所有 FR
+  const frs: Array<{ id: string; title: string }> = [];
+  for (const s of specSections) {
+    if (s.type === "functionalRequirements") {
+      for (const fr of s.items) {
+        frs.push({ id: fr.id, title: fr.title });
+      }
+    }
+  }
+  if (frs.length === 0) return undefined;
+
+  // plan 的所有 description 拼成一个搜索池
+  const allDescs = parsed.waves
+    .flatMap((w) => w.changes ?? [])
+    .map((c) => `${c.description} ${c.file}`)
+    .join(" ");
+
+  const unmatched = frs.filter(
+    (fr) => !allDescs.includes(fr.id) && !allDescs.includes(fr.title),
+  );
+
+  if (unmatched.length === 0) return undefined;
+  return `以下 spec FR 可能在 plan 中未覆盖（检查是否有意缩范围）：${unmatched.map((f) => f.id).join(", ")}`;
+}
+
+/**
+ * checkAcMapping — test cases 是否映射 spec 的验收标准（warning 不阻断）。
+ *
+ * 宽松匹配：AC 的 id 出现在任一 testCase 的 scenario 或 steps 里 = 映射。
+ * 未映射的 AC 列入 warning，提示 agent 检查测试是否遗漏验收条件。
+ *
+ * 无 spec 或 spec 无 AC 时返回 undefined（不触发检查）。
+ */
+export function checkAcMapping(
+  parsed: ParsedTestJson,
+  specSections?: SpecSection[],
+): string | undefined {
+  if (!specSections || specSections.length === 0) return undefined;
+
+  // 聚合所有 AC id
+  const acIds: string[] = [];
+  for (const s of specSections) {
+    if (s.type === "acceptanceCriteria") {
+      for (const ac of s.items) {
+        acIds.push(ac.id);
+      }
+    }
+  }
+  if (acIds.length === 0) return undefined;
+
+  // test 的所有 scenario + steps 拼成搜索池
+  const searchText = parsed.testCases
+    .map((tc) => `${tc.scenario} ${tc.steps}`)
+    .join(" ");
+
+  const unmapped = acIds.filter((id) => !searchText.includes(id));
+
+  if (unmapped.length === 0) return undefined;
+  return `以下 spec AC 在 test 中可能未映射（检查是否遗漏验收条件）：${unmapped.join(", ")}`;
+}
+
 // ── tddPlanCheck（调 parseTestJson，校验 testCases） ────────────
 
 export interface TddPlanCheckResult {
@@ -251,6 +393,8 @@ export interface TddPlanCheckResult {
   report: string;
   /** 解析后的 testCases（pass 时供 handler 写入 store） */
   parsed?: ParsedTestJson;
+  /** AC 映射 warning（result=pass 但 AC 可能未全覆盖，不阻断） */
+  warning?: string;
 }
 
 /// P0: 模糊 expected 值正则（不区分大小写，全词匹配）。
@@ -266,10 +410,71 @@ const FUZZY_EXPECTED_RE =
  *   2. testCases 非空
  *   3. mock + real 分层强制（至少各 1 个）—— mock 层验证逻辑正确性，real 层验证集成契约
  *   4. 模糊 expected.text 检测（不能是 passed/ok/success 等结论词）
+ *   5. expected 空/缺 type 判据检查（exact: url+text 都缺；缺 type 字段→友好报错 AC-7）
+ *   6. script.path 沙箱校验（path 必须 resolve 在 workspacePath 内，AC-4a）
  *
  * pass 时返回 parsed，供 handler 写入 store。fail 时 parsed 为 undefined。
+ *
+ * @param workspacePath workspace 绝对路径，用于 script.path 沙箱校验（AC-4a）。
+ *   省略时默认 process.cwd()。handleTddPlan 应传 deps.workspacePath / topic.workspacePath。
  */
-export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
+
+/**
+ * 沙箱校验：判断 relPath resolve 在 workspacePath 后是否仍落在 workspace 内。
+ *
+ * R1（symlink 绕过修复）：先 path.resolve（lexical，挡 .. 和绝对路径），再 realpathSync
+ * 解析 symlink（workspace 内的 symlink 如 .cw/evil.sh -> /etc/passwd，resolve 后仍在前缀内通过
+ * lexical 检查，但真实目标越出 workspace）。
+ *
+ * ENOENT 处理：realpathSync 对不存在的路径抛 ENOENT。tdd_plan 阶段脚本可能还没写——此时
+ * 回退到 lexical resolve 检查（仍能挡 .. 和绝对路径越界），dev 阶段写完文件后 handleTest 会
+ * 再 realpath 校验一次（此时文件已存在，realpath 能解析 symlink）。
+ *
+ * workspace 自身也 realpath：workspace 可能是 symlink（如 macOS /tmp → /private/tmp），
+ * 不 realpath 会导致 workspace 前缀与真实路径前缀不匹配。
+ *
+ * 末尾分隔符：workspacePrefix 末尾补 path.sep，防止 "/foo" 误判 "/foobar" 为前缀。
+ *
+ * @returns true = 在 workspace 内（安全）；false = 越界（含 symlink 绕过）。
+ */
+export function isPathInsideWorkspace(relPath: string, workspacePath: string): boolean {
+  const lexicalResolved = pathResolve(workspacePath, relPath);
+  const lexicalWorkspace = pathResolve(workspacePath);
+  // 先做 lexical 检查（不依赖文件存在，必跑）：挡 .. 越界和绝对路径。
+  const lexicalOk = pathStartsWithWorkspace(lexicalResolved, lexicalWorkspace);
+  if (!lexicalOk) return false;
+
+  // 再做 realpath 检查（解析 symlink）。任一端不存在（ENOENT）则跳过 realpath，保留 lexical 结论。
+  try {
+    const realResolved = realpathSync(lexicalResolved);
+    const realWorkspace = realpathSync(lexicalWorkspace);
+    return pathStartsWithWorkspace(realResolved, realWorkspace);
+  } catch {
+    // 路径不存在（tdd_plan 阶段脚本未写）→ 无法解析 symlink，回退 lexical 检查结论。
+    return lexicalOk;
+  }
+}
+
+/** resolved === workspace 或 resolved 以 workspace + sep 为前缀（边界精确化，防 /foo 匹配 /foobar）。 */
+function pathStartsWithWorkspace(resolved: string, workspace: string): boolean {
+  if (resolved === workspace) return true;
+  const prefix = workspace.endsWith(pathSep) ? workspace : workspace + pathSep;
+  return resolved.startsWith(prefix);
+}
+
+export function tddPlanCheck(
+  testJson: unknown,
+  specSections?: SpecSection[],
+  workspacePath: string = process.cwd(),
+): TddPlanCheckResult {
+  // AC-7: 预扫描 expected 缺 type 字段——typebox Union 失败时的报错是「Expected union value」，
+  // 不含 "type" 字样也无法定位 testCase id。这里在 schema 校验前做一次友好的结构预检，
+  // 报告明确点出 type 必填 + 哪些 testCase 缺。存量 fixture 已统一带 type，不会误伤。
+  const missingTypeResult = checkMissingExpectedType(testJson);
+  if (missingTypeResult) {
+    return missingTypeResult;
+  }
+
   let parsed: ParsedTestJson;
   try {
     parsed = parseTestJson(testJson);
@@ -302,10 +507,10 @@ export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
     };
   }
 
-  // P0: 检查模糊 expected 值
+  // P0: 检查模糊 expected 值（仅 exact 模式有 text 字段；exit_zero/script 无 text）。
   const fuzzyIds: string[] = [];
   for (const tc of parsed.testCases) {
-    if (tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
+    if (tc.expected.type === "exact" && tc.expected.text && FUZZY_EXPECTED_RE.test(tc.expected.text)) {
       fuzzyIds.push(tc.id);
     }
   }
@@ -318,20 +523,52 @@ export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
     };
   }
 
-  // P1: 检查 expected 空判据（url 和 text 都缺 = 无法机器判定）。
+  // P1: 检查 expected 空判据 + script.path 沙箱（按 type 分支）。
+  //   - exact：url 和 text 都缺 = 无法机器判定（空判据）
+  //   - exit_zero：自带判据（type 本身即判据），不检查
+  //   - script：path 缺/空 = 空判据；path 必须在 workspacePath 沙箱内（AC-4a）
   // 无判据的 testCase 到 test 阶段会被 judgeByExpected 判 failed「no judgeable field」，
   // 在 tdd_plan 前置拦截避免浪费整个 dev 周期。
   const noJudgeableIds: string[] = [];
+  const sandboxLeakIds: string[] = [];
   for (const tc of parsed.testCases) {
-    if (tc.expected.url === undefined && tc.expected.text === undefined) {
-      noJudgeableIds.push(tc.id);
+    if (tc.expected.type === "exact") {
+      if (tc.expected.url === undefined && tc.expected.text === undefined) {
+        noJudgeableIds.push(tc.id);
+      }
+    } else if (tc.expected.type === "script") {
+      if (!tc.expected.path || tc.expected.path.length === 0) {
+        noJudgeableIds.push(tc.id);
+        continue;
+      }
+      // AC-4a: path 必须 resolve 在 workspacePath 内。用 path.resolve 而非字符串 startsWith，
+      // 才能抓到 "foo/../../../etc/passwd" 这种非顶层 .. 绕过。
+      // R1（symlink 绕过修复）：再 realpathSync 一次——workspace 内的 symlink（如
+      // .cw/evil.sh -> /etc/passwd）resolve 后仍落在 workspace 前缀内（lexical 通过），
+      // 但 execFileSync 会跟随 symlink 执行/读取真实目标。realpath 把 symlink 解析到真实路径后
+      // 真实路径越出 workspace → 拒绝。
+      //   - realpathSync 对不存在的路径抛 ENOENT：tdd_plan 阶段脚本可能还没写，回退到 lexical
+      //     resolve 检查（至少挡住 .. 和绝对路径越界，dev 阶段写文件后 handleTest 会再 realpath 一次）。
+      //   - workspace 自身也 realpath（workspace 本身可能是 symlink，如 macOS /tmp → /private/tmp）。
+      if (!isPathInsideWorkspace(tc.expected.path, workspacePath)) {
+        sandboxLeakIds.push(tc.id);
+      }
     }
+    // exit_zero 无需检查判据。
+  }
+  if (sandboxLeakIds.length > 0) {
+    return {
+      result: "fail",
+      report:
+        `expected.path 越出 workspace 沙箱（script.path 必须 resolve 在 workspacePath 内，禁止 .. / 绝对路径 / symlink 越界）: ` +
+        `${sandboxLeakIds.join(", ")}。`,
+    };
   }
   if (noJudgeableIds.length > 0) {
     return {
       result: "fail",
       report:
-        `expected 缺少判据字段（url 和 text 至少填一个）: ${noJudgeableIds.join(", ")}。` +
+        `expected 缺少判据字段（exact 需 url/text 至少一个，script 需 path）: ${noJudgeableIds.join(", ")}。` +
         `无判据的 testCase 无法被 CW 机器判定，到 test 阶段会被直接判 failed。`,
     };
   }
@@ -355,7 +592,49 @@ export function tddPlanCheck(testJson: unknown): TddPlanCheckResult {
     }
   }
 
-  return { result: "pass", report: "", parsed };
+  // AC 映射 warning（不阻断）
+  const acWarning = checkAcMapping(parsed, specSections);
+
+  return { result: "pass", report: "", parsed, ...(acWarning ? { warning: acWarning } : {}) };
+}
+
+/**
+ * checkMissingExpectedType — AC-7 友好预检：扫描 raw testJson 的 testCases，
+ * 找出 expected 缺 type 字段的条目。typebox Union 失败报错是「Expected union value」，
+ * 不含 "type" 字样且无法定位 testCase id，所以在这里前置成「expected 缺 type 字段（必填）」
+ * 的明确报错。
+ *
+ * 只做最小结构推断（不重复 schema 全量校验）：找到 testCases 数组 + 每条 expected 对象，
+ * 若 expected 不是对象或无 type 字段则视为缺 type。
+ *
+ * @returns 缺 type 时的 fail result；合法（无缺 type 或结构无法推断）时返回 undefined。
+ */
+function checkMissingExpectedType(testJson: unknown): TddPlanCheckResult | undefined {
+  if (typeof testJson !== "object" || testJson === null) return undefined;
+  const cases = (testJson as { testCases?: unknown }).testCases;
+  if (!Array.isArray(cases)) return undefined;
+
+  const missingIds: string[] = [];
+  for (const tc of cases) {
+    if (typeof tc !== "object" || tc === null) continue;
+    const id = (tc as { id?: unknown }).id;
+    const expected = (tc as { expected?: unknown }).expected;
+    if (expected === undefined || typeof expected !== "object" || expected === null) {
+      // expected 缺失或非对象：也算缺 type（schema 会拒绝，这里友好提示）。
+      if (typeof id === "string") missingIds.push(id);
+      continue;
+    }
+    if (!("type" in expected)) {
+      if (typeof id === "string") missingIds.push(id);
+    }
+  }
+  if (missingIds.length === 0) return undefined;
+  return {
+    result: "fail",
+    report:
+      `expected 缺 type 字段（type 必填，取值 exact | exit_zero | script）: ${missingIds.join(", ")}。` +
+      `旧格式 {url?,text?} 已废弃，请补 type 字段。`,
+  };
 }
 
 // ── redLightCheck（执行测试命令确认红灯） ─────────────────────
@@ -712,23 +991,34 @@ export interface ReviewIssueCheckResult {
 /** severity 合法枚举值集合（reviewIssueCheck 逐元素校验用）。 */
 const REVIEW_SEVERITIES = new Set(["must-fix", "should-fix", "nit"]);
 
-/** category 合法枚举值集合（reviewIssueCheck 逐元素校验用）。 */
-const REVIEW_CATEGORIES = new Set<ReviewIssueCategory>([
+/** dimension 合法枚举值集合（reviewIssueCheck 逐元素校验用）。FR-3: 三阶段共用 12 个维度。 */
+const REVIEW_DIMENSIONS = new Set<ReviewDimension>([
   "type-safety",
   "error-handling",
   "edge-case",
   "test-coverage",
   "plan-completeness",
+  "design-consistency",
+  "completeness",
+  "consistency",
+  "reasonableness",
+  "coverage",
+  "architecture",
+  "feasibility",
 ]);
 
 /**
- * reviewIssueCheck — review issues 的逐元素 schema 校验。
+ * reviewIssueCheck — review/spec_review/plan_review issues 的逐元素 schema 校验。
+ *
+ * FR-3 统一升级后三阶段共用此 check：
+ *   - dimension 必填（不再可选，原 category 可选）——强制 agent 按维度归类发现
+ *   - ref 泛化（原 file 限代码路径，现可为 spec 条目 ID 如 FR-3 / W2）
  *
  * 校验链：
  *   1. 必须是数组
- *   2. 每个元素必须有 severity（枚举值）+ description（非空字符串）
- *   3. file 可选但提供时必须是非空字符串
- *   4. category 可选但提供时必须是枚举值
+ *   2. 每个元素必须有 dimension（枚举值，必填）
+ *   3. severity（枚举值）+ description（非空字符串）
+ *   4. ref 可选但提供时必须是字符串
  *
  * 与 planCheck/tddPlanCheck 的区别：reviewIssueCheck 不用 typebox（issues 结构简单，
  * 手写校验更直白），直接逐字段 typeof + 枚举检查。
@@ -755,6 +1045,14 @@ export function reviewIssueCheck(raw: unknown): ReviewIssueCheckResult {
     }
     const obj = item as Record<string, unknown>;
 
+    // dimension：必填，枚举校验（FR-3: 原 category 可选，现 dimension 必填）。
+    if (!REVIEW_DIMENSIONS.has(obj.dimension as ReviewDimension)) {
+      return {
+        result: "fail",
+        report: `issues[${i}].dimension 无效或缺失: ${JSON.stringify(obj.dimension)}`,
+      };
+    }
+
     // severity：枚举值校验（最关键字段，buildNextAction 用它判 must-fix）。
     if (!REVIEW_SEVERITIES.has(String(obj.severity))) {
       return {
@@ -774,39 +1072,63 @@ export function reviewIssueCheck(raw: unknown): ReviewIssueCheckResult {
       };
     }
 
-    // file：可选，但提供时必须是字符串。
-    if (
-      obj.file !== undefined &&
-      typeof obj.file !== "string"
-    ) {
-      return {
-        result: "fail",
-        report: `issues[${i}].file 必须是字符串`,
-      };
-    }
-
-    // category：可选，但提供时必须是合法枚举值。
-    if (
-      obj.category !== undefined &&
-      !REVIEW_CATEGORIES.has(obj.category as ReviewIssueCategory)
-    ) {
-      return {
-        result: "fail",
-        report: `issues[${i}].category 无效: ${JSON.stringify(obj.category)}`,
-      };
+    // ref：可选，但提供时必须是字符串（原 file 逻辑改名，泛化为代码路径或 spec/plan 条目 ID）。
+    if (obj.ref !== undefined && typeof obj.ref !== "string") {
+      return { result: "fail", report: `issues[${i}].ref 必须是字符串` };
     }
 
     issues.push({
+      dimension: obj.dimension as ReviewDimension,
       severity: obj.severity as ReviewIssueSubmission["severity"],
       description: obj.description,
-      ...(obj.file !== undefined ? { file: obj.file } : {}),
-      ...(obj.category !== undefined
-        ? { category: obj.category as ReviewIssueCategory }
-        : {}),
+      ...(obj.ref !== undefined ? { ref: obj.ref } : {}),
     });
   }
 
   return { result: "pass", report: "", parsed: issues };
+}
+
+// ── confirmClarifyCheck（FR-1: confirm gate 条件校验） ───────
+
+export interface ConfirmClarifyCheckResult {
+  result: "pass" | "fail";
+  report: string;
+}
+
+/**
+ * confirmClarifyCheck — FR-1: confirm_clarify 的 gate 条件。
+ *
+ * 条件：至少 1 条 status 为 resolved 或 skipped 的 clarifyRecord。
+ * 空数组或全 pending → fail（防静默跳过 clarify）。
+ *
+ * 注意：这个 check 只验证"有记录"，不验证记录内容是否真实（CW 是 agent-agnostic 的，
+ * 无法区分 agent 自填还是用户说的）。gate 的价值是强制 agent 至少停下来做一次显式确认。
+ */
+export function confirmClarifyCheck(topic: Topic): ConfirmClarifyCheckResult {
+  const hasResolvedOrSkipped = topic.clarifyRecords.some(
+    (c) => c.status === "resolved" || c.status === "skipped",
+  );
+  if (!hasResolvedOrSkipped) {
+    return {
+      result: "fail",
+      report:
+        "confirm_clarify 需要至少 1 条 resolved 或 skipped 的 clarifyRecord。" +
+        "如果确认无需澄清，先提交一条 skipped 记录（cw clarify 带 status=skipped），再 confirm。",
+    };
+  }
+  // FR-8: 必须先调过 gen-spec（artifacts.confirmSpec 存在）。
+  // gen-spec 改为有写副作用——记 confirmSpec 到 artifacts。confirm gate 校验其存在性，
+  // 堵住 agent 跳过 gen-spec 直接 confirm 的漏洞。
+  const confirmSpec = topic.artifacts?.confirmSpec;
+  if (!confirmSpec) {
+    return {
+      result: "fail",
+      report:
+        "confirm_clarify 前必须先调 cw(gen-spec) 生成确认文档并 open 给用户看。" +
+        "当前 artifacts.confirmSpec 缺失（未调 gen-spec）。",
+    };
+  }
+  return { result: "pass", report: "" };
 }
 
 // ── clarifyCheck（clarify gate，结构校验 + ADR projectPath 文件存在） ──

@@ -68,11 +68,22 @@ const DOC_GROUPS: readonly DocGroup[] = [
   { name: "主配置", candidates: ["AGENTS.md", "CLAUDE.md"], level: "必备", alwaysCurrent: false },
   { name: "README.md", candidates: ["README.md"], level: "必备", alwaysCurrent: false },
   { name: "CONTEXT.md", candidates: ["CONTEXT.md"], level: "必备", alwaysCurrent: false },
+  // G2 词表分组：CONTEXT-MAP.md 存在 → 多 context 模式（monorepo / 多业务域）
+  // 本次只做"检测 + 报告存在"，不做子 context 递归扫描（未来工作）。
+  { name: "CONTEXT-MAP.md", candidates: ["CONTEXT-MAP.md"], level: "可选", alwaysCurrent: false },
   { name: "ARCHITECTURE.md", candidates: ["ARCHITECTURE.md"], level: "推荐", alwaysCurrent: true },
   { name: "PRODUCT.md", candidates: ["PRODUCT.md"], level: "推荐", alwaysCurrent: false },
   { name: "NFR.md", candidates: ["NFR.md"], level: "推荐", alwaysCurrent: true },
   { name: "TEST-STRATEGY.md", candidates: ["TEST-STRATEGY.md"], level: "可选", alwaysCurrent: false },
   { name: "DESIGN-LOG.md", candidates: ["DESIGN-LOG.md"], level: "可选", alwaysCurrent: false },
+  // §6.3 仓库规范来源采集——code-review 的"仓库标准覆盖 baseline"需要知道这些文件在哪。
+  // 检测到就报告存在（InitDocResult），不强制存在；missing 不阻断 ready（level=可选）。
+  // cw 不机器解析内容，只提示 agent"这些文件定义了仓库规范，审查时优先对照"。
+  { name: "CODING_STANDARDS.md", candidates: ["CODING_STANDARDS.md"], level: "可选", alwaysCurrent: false },
+  { name: "CONTRIBUTING.md", candidates: ["CONTRIBUTING.md"], level: "可选", alwaysCurrent: false },
+  // TODO(§6.3): linter 配置文件（.eslintrc* / tsconfig.json / biome.json）需 glob 匹配，
+  // DOC_GROUPS 当前只支持固定文件名（candidates + isFile），不支持 glob。未来扩展 candidates
+  // 为 string | GlobPattern 后再接入。届时 review.ts 的 Standards 轴也能读取 linter 配置位置。
 ];
 
 // ── 骨架判定（ASCII-only 占位符） ─────────────────────────────
@@ -521,19 +532,32 @@ MIT
 领域术语见 CONTEXT.md，在此不重复。
 `,
 
-  "CONTEXT.md": `# 统一语言（Ubiquitous Language）
+  "CONTEXT.md": `# CONTEXT.md — 统一语言（Ubiquitous Language）
 
-> 记录领域术语的统一定义，所有阶段和编码都应使用此处的术语。
+> 本项目的领域术语表。每个概念挑一个权威词，其它叫法列到 _Avoid_。
+> **只放领域概念**，不放实现细节；**只收录本项目独有的概念**，通用编程概念（timeout / error type）不收。
 
 ## 术语表
 
-| 术语 | 定义 | 别名 |
-|------|------|------|
-| {术语} | {精确定义} | {其他叫法，无则留空} |
+| 术语（canonical） | 定义（1-2 句，"它是什么"而非"它做什么"） | _Avoid_（同义词，禁用） | 备注（可选：示例 / 边界说明） |
+|--------------------|------------------------------------------|------------------------|------------------------------|
+| {术语}             | {精确定义}                               | {其他叫法，无则留空}    | {可选}                       |
 
-## 业务边界
+## 示例（参考，实际项目替换为自己的术语）
 
-{系统的职责范围：做什么，不做什么}
+| 术语 | 定义 | _Avoid_ | 备注 |
+|------|------|---------|------|
+| Customer | 付费使用产品的组织或个人 | Account, User, Client | 一个 Customer 可有多个 Subscription |
+| Subscription | Customer 对某个付费计划的持续订阅 | Plan, Membership | 有 active/cancelled/expired 状态 |
+
+## 多 context 场景（monorepo / 多业务域）
+
+如果项目有多个独立的业务域（如 monorepo 的不同 package 服务不同业务），使用多 context 模式：
+
+- 项目根：\`CONTEXT-MAP.md\`（索引，列出所有子 context 及其范围）
+- 每个子 context：自己的 \`CONTEXT.md\`（只覆盖该 context 的术语）
+
+单业务域项目只需要根目录一个 \`CONTEXT.md\`，不需要 CONTEXT-MAP.md。
 `,
 
   "ARCHITECTURE.md": `# 系统架构
@@ -700,6 +724,79 @@ MIT
 | ADR | 标题 | 状态 | 溯源 |
 |-----|------|------|------|
 | ADR-NNN | {一句话} | accepted | [from: {topic}] |
+`,
+
+  "CONTEXT-MAP.md": `# CONTEXT-MAP.md — 多 context 索引（G2 分组模式）
+
+> 仅在多业务域项目（monorepo / 多 context）使用。单业务域项目不需要本文件——
+> 根目录的 CONTEXT.md 即是唯一权威术语表。
+> 本文件是索引：列出所有子 context 及其覆盖范围，不重复术语定义（定义在各子 context 的 CONTEXT.md 里）。
+
+## 子 context 清单
+
+| context 路径 | 覆盖范围 | CONTEXT.md 位置 |
+|--------------|----------|-----------------|
+| {packages/billing} | {计费域术语} | {packages/billing/CONTEXT.md} |
+| {packages/auth} | {认证域术语} | {packages/auth/CONTEXT.md} |
+
+## 分组规则
+
+- 同一术语在不同 context 可有不同定义（context-scoped），互不冲突
+- 跨 context 复用的术语应在每个 context 各自的 CONTEXT.md 重复定义（保持 context 自包含）
+- 新增 context 时更新本索引；废弃 context 时从索引移除并归档其 CONTEXT.md
+`,
+
+  "CODING_STANDARDS.md": `# 编码规范
+
+> 本项目的代码标准真相源。code-review 的 Standards 轴优先读本文件——存在时覆盖 12 smell baseline，
+> 不存在时降级为通用 smell 检查。cw 不解析本文件内容，只提示 agent 审查时对照此规范。
+
+## 通用约定
+
+- {语言版本 / 运行时}
+- {是否 strict（TS strictNullChecks / Rust deny warnings）}
+
+## 命名
+
+- {模块 / 文件 / 变量 / 类型 的命名约定}
+
+## 结构约定
+
+- {函数行数上限 / 圈复杂度上限 / 单文件职责边界}
+
+## 禁止模式
+
+- {反模式清单：any / 隐式 any / 直接抛 unknown / 修改入参 等}
+
+## 例外
+
+- {明确允许的偏离，标理由}
+`,
+
+  "CONTRIBUTING.md": `# 贡献规范
+
+> 本项目对外部/内部贡献者的流程要求。code-review 的 Standards 轴会检测本文件存在——
+> 存在时建议 agent 审查时参考其中的提交/分支/测试约定。
+
+## 提交流程
+
+- {分支策略：feature 分支 / trunk-based}
+- {commit message 格式：Conventional Commits / 自定义}
+- {PR 规模上限：单 PR 改动行数 / 文件数}
+
+## 代码审查
+
+- {审查清单：必查项}
+- {审查者约定：响应时长 / 审查轮数上限}
+
+## 测试要求
+
+- {新功能必须带哪些层的测试}
+- {不可回退基线（见 TEST-STRATEGY.md RB-*）}
+
+## 例外
+
+- {hotfix 流程 / 紧急通道}
 `,
 };
 

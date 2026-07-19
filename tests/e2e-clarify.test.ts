@@ -20,6 +20,8 @@ import {
   makeValidClarifyJson,
   parseStdout,
   runCli,
+  specReviewMdPath,
+  writeSpecReviewMd,
 } from "./helpers/e2e.js";
 import { makeValidDevPlanJson } from "./helpers/plan.js";
 
@@ -72,8 +74,8 @@ describe("E5a: pending clarifyJson（无 answer）→ CL1 pending, nextAction �
 
 // ── E5b: resolved clarifyJson ───────────────────────────────
 
-describe("E5b: resolved clarifyJson（带 answer）→ nextAction 转 plan", () => {
-  it("提交带 answer 的 clarifyJson → resolved，nextAction=plan", () => {
+describe("E5b: resolved clarifyJson（带 answer）→ nextAction 转 confirm_clarify", () => {
+  it("提交带 answer 的 clarifyJson → resolved，nextAction=confirm_clarify", () => {
     const topicId = createTopic("e5b-resolved");
     const result = parseStdout(
       runCli(["clarify", "--topicId", topicId], e, {
@@ -81,8 +83,8 @@ describe("E5b: resolved clarifyJson（带 answer）→ nextAction 转 plan", () 
       }),
     );
     expect(result.status).toBe("created");
-    // 全 resolved → nextAction 推荐进 plan
-    expect((result.nextAction as Record<string, unknown>).action).toBe("plan");
+    // 全 resolved → nextAction 推荐 confirm_clarify（FR-1: plan 前必须 confirm）
+    expect((result.nextAction as Record<string, unknown>).action).toBe("confirm_clarify");
 
     const progress = result.clarifyProgress as Array<{
       id: string;
@@ -127,10 +129,10 @@ describe("E5c: progressive——先 pending 后 resolved，有 pending 时仍 cl
   });
 });
 
-// ── E5d: 全 resolved 后 plan 合法 ───────────────────────────
+// ── E5d: 全 resolved + confirm_clarify 后 plan 合法 ─────────
 
-describe("E5d: 全 resolved 后调 plan → 合法进 planned", () => {
-  it("clarify 全 resolved → plan 成功，status=planned", () => {
+describe("E5d: 全 resolved + confirm_clarify 后调 plan → 合法进 planned", () => {
+  it("clarify 全 resolved → confirm_clarify → plan 成功，status=planned", () => {
     const topicId = createTopic("e5d-then-plan");
 
     // 提交 1 条 resolved clarify
@@ -140,7 +142,26 @@ describe("E5d: 全 resolved 后调 plan → 合法进 planned", () => {
       }),
     );
 
-    // 直接调 plan（clarify gatePassed 不阻断 plan）
+    // FR-1: plan 前必须 confirm_clarify（否则 created → plan 非法）
+    // FR-8: confirm 前必须 gen-spec（confirm gate 校验 confirmSpec 存在）
+    // --no-open：测试环境不弹窗（gen-spec 默认会 open）
+    runCli(["gen-spec", "--topicId", topicId, "--no-open"], e);
+    const confirmResult = parseStdout(
+      runCli(["confirm_clarify", "--topicId", topicId], e),
+    );
+    expect(confirmResult.status).toBe("clarify_confirmed");
+
+    // FR-4: plan 前必须 spec_review（否则 clarify_confirmed → plan 非法）
+    writeSpecReviewMd(e.workspaceDir, "e5d-then-plan");
+    const specReviewResult = parseStdout(
+      runCli(
+        ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, "e5d-then-plan")],
+        e,
+      ),
+    );
+    expect(specReviewResult.status).toBe("spec_reviewed");
+
+    // spec_review 后调 plan 合法
     const planResult = parseStdout(
       runCli(["plan", "--topicId", topicId], e, {
         input: JSON.stringify(makeValidDevPlanJson()),
@@ -156,12 +177,22 @@ describe("E5e: 非法状态——planned 后调 clarify → illegal_transition",
   it("planned 状态下调 clarify → exit≠0, stderr 含 illegal_transition", () => {
     const topicId = createTopic("e5e-illegal");
 
-    // 先走到 planned
+    // 先走到 planned（FR-1: plan 前必须 confirm_clarify → spec_review）
+    runCli(["clarify", "--topicId", topicId], e, {
+      input: JSON.stringify(makeValidClarifyJson({ answer: "已澄清" })),
+    });
+    runCli(["gen-spec", "--topicId", topicId, "--no-open"], e);
+    runCli(["confirm_clarify", "--topicId", topicId], e);
+    writeSpecReviewMd(e.workspaceDir, "e5e-illegal");
+    runCli(
+      ["spec_review", "--topicId", topicId, "--specReviewPath", specReviewMdPath(e.workspaceDir, "e5e-illegal")],
+      e,
+    );
     runCli(["plan", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidDevPlanJson()),
     });
 
-    // planned 后调 clarify（只允许 created）→ guard 拒绝
+    // planned 后调 clarify（只允许 created/clarify_confirmed）→ guard 拒绝
     const result = runCli(["clarify", "--topicId", topicId], e, {
       input: JSON.stringify(makeValidClarifyJson()),
     });

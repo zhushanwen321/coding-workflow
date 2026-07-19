@@ -70,8 +70,8 @@ describe("E6a: review 带 2 条 issues → nextAction=review_fix, R1/R2 open", (
   it("提交 2 条 issues → reviewed, reviewTurn=1, nextAction=review_fix", () => {
     const { topicId } = setupToDeveloped(e, "e6a-issues");
     const result = reviewWithIssues(topicId, [
-      { severity: "must-fix", description: "问题1", file: "src/a.ts" },
-      { severity: "should-fix", description: "问题2" },
+      { dimension: "type-safety", severity: "must-fix", description: "问题1", ref: "src/a.ts" },
+      { dimension: "edge-case", severity: "should-fix", description: "问题2" },
     ]);
 
     expect(result.status).toBe("reviewed");
@@ -89,7 +89,7 @@ describe("E6b: review_fix 修 R1 → R1=fixed, nextAction=review", () => {
   it("提交 review_fix({issueId:R1}) → nextAction=review", () => {
     const { topicId } = setupToDeveloped(e, "e6b-fix");
     reviewWithIssues(topicId, [
-      { severity: "must-fix", description: "问题1" },
+      { dimension: "type-safety", severity: "must-fix", description: "问题1" },
     ]);
 
     const result = reviewFix(topicId, [
@@ -108,7 +108,7 @@ describe("E6c: 完整 loop——review(issues)→fix→review(空)→nextAction=
 
     // review 发现 1 条 issue
     reviewWithIssues(topicId, [
-      { severity: "must-fix", description: "问题1" },
+      { dimension: "type-safety", severity: "must-fix", description: "问题1" },
     ]);
     // review_fix 修掉
     reviewFix(topicId, [
@@ -130,17 +130,17 @@ describe("E6d: 连续 3 轮 review 带 issues → 强制转 test", () => {
     const { topicId } = setupToDeveloped(e, "e6d-limit");
 
     // 第 1 轮：review 带 issues → reviewTurn=1
-    reviewWithIssues(topicId, [{ severity: "must-fix", description: "round1" }]);
+    reviewWithIssues(topicId, [{ dimension: "type-safety", severity: "must-fix", description: "round1" }]);
     // 修（不重新 review，直接开第 2 轮 review）
     reviewFix(topicId, [{ issueId: "R1", commitHash: "abc1234", resolution: "r1" }]);
 
     // 第 2 轮：又发现新 issues → reviewTurn=2
-    reviewWithIssues(topicId, [{ severity: "must-fix", description: "round2" }]);
+    reviewWithIssues(topicId, [{ dimension: "type-safety", severity: "must-fix", description: "round2" }]);
     reviewFix(topicId, [{ issueId: "R2", commitHash: "def5678", resolution: "r2" }]);
 
     // 第 3 轮：又发现新 issues → reviewTurn=3 达上限
     const result = reviewWithIssues(topicId, [
-      { severity: "must-fix", description: "round3" },
+      { dimension: "type-safety", severity: "must-fix", description: "round3" },
     ]);
 
     // 达上限 → 强制进 test（而非 review_fix）
@@ -155,7 +155,7 @@ describe("E6d: 连续 3 轮 review 带 issues → 强制转 test", () => {
 describe("E6e: review_fix 传不存在的 issueId → exit≠0", () => {
   it("issueId R99 不存在 → exit≠0, stderr 含不存在", () => {
     const { topicId } = setupToDeveloped(e, "e6e-illegal");
-    reviewWithIssues(topicId, [{ severity: "must-fix", description: "问题1" }]);
+    reviewWithIssues(topicId, [{ dimension: "type-safety", severity: "must-fix", description: "问题1" }]);
 
     const result = runCli(["review_fix", "--topicId", topicId], e, {
       input: JSON.stringify([
@@ -174,7 +174,8 @@ describe("E6f: review issues schema 校验 → 无效输入 exit≠0", () => {
     const { topicId } = setupToDeveloped(e, "e6f-bad-severity");
     const result = runCli(["review", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { severity: "blocker", description: "问题1" },
+        // FR-3: dimension 必填且先于 severity 校验——给合法 dimension 让 severity 校验先触发。
+        { dimension: "type-safety", severity: "blocker", description: "问题1" },
       ]),
     });
     expect(result.exitCode).not.toBe(0);
@@ -185,7 +186,8 @@ describe("E6f: review issues schema 校验 → 无效输入 exit≠0", () => {
     const { topicId } = setupToDeveloped(e, "e6f-missing-desc");
     const result = runCli(["review", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { severity: "must-fix" },
+        // FR-3: 给合法 dimension + severity，让 description 校验先触发。
+        { dimension: "type-safety", severity: "must-fix" },
       ]),
     });
     expect(result.exitCode).not.toBe(0);
@@ -200,24 +202,25 @@ describe("E6f: review issues schema 校验 → 无效输入 exit≠0", () => {
     expect(result.exitCode).not.toBe(0);
   });
 
-  it("有效 issues（含可选 category）→ 正常通过", () => {
-    const { topicId } = setupToDeveloped(e, "e6f-valid-category");
+  it("有效 issues（含必填 dimension）→ 正常通过", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-valid-dimension");
     const result = reviewWithIssues(topicId, [
-      { severity: "must-fix", description: "问题1", category: "type-safety" },
+      // FR-3: dimension 必填（原 category 可选已废弃）。
+      { dimension: "type-safety", severity: "must-fix", description: "问题1" },
     ]);
     expect(result.status).toBe("reviewed");
     const na = result.nextAction as Record<string, unknown>;
     expect(na.action).toBe("review_fix");
   });
 
-  it("category 不在枚举 → exit≠0, stderr 含 category", () => {
-    const { topicId } = setupToDeveloped(e, "e6f-bad-category");
+  it("dimension 不在枚举 → exit≠0, stderr 含 dimension", () => {
+    const { topicId } = setupToDeveloped(e, "e6f-bad-dimension");
     const result = runCli(["review", "--topicId", topicId], e, {
       input: JSON.stringify([
-        { severity: "must-fix", description: "问题1", category: "unknown" },
+        { dimension: "unknown", severity: "must-fix", description: "问题1" },
       ]),
     });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("category");
+    expect(result.stderr).toContain("dimension");
   });
 });

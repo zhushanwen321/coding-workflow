@@ -10,7 +10,7 @@
 | **CW（Coding Workflow）** | 编码流程编排器：状态机 + 机器检查 gate，强制编码任务走 create → closeout | 本项目的核心 |
 | **Topic** | 一次编码任务的生命周期单元，含 topicId/slug/objective/status/waves/testCases/gateHistory | 状态机的实例 |
 | **Action** | CW 接受的 13 种操作之一（见下表） | 每个对应状态机一条转换规则 |
-| **Status（状态）** | Topic 的生命周期阶段，8 态：created → planned → tdd_inited → developed → reviewed → tested → retrospected → closed | lite 单轨，无 tier 字段 |
+| **Status（状态）** | Topic 的生命周期阶段，8 态：created → planned → pre_dev_verified → developed → reviewed → post_dev_verified → retrospected → closed | lite 单轨，无 tier 字段 |
 | **Gate（机器检查门）** | 每个 action 流转前跑的结构化检查，通过才允许状态流转 | CW 的核心价值 |
 | **gateHistory** | 每次 gate 判定的审计记录（phase + gate 名 + result + report），是评估指标的核心数据源 | append-only |
 | **RuntimeEnv** | 运行环境元数据（agent + llm + cwVersion），create 时注入，评估指标的分组维度 | 不可变 |
@@ -26,12 +26,12 @@
 | `create` | 入口 | created | 建 topic，注入 RuntimeEnv |
 | `clarify` | advisory progressive | created | 澄清需求/技术 spec，记录 ADR（不阻断 plan） |
 | `plan` | 线性 | planned | 提交 dev-plan.json（waves） |
-| `tdd_plan` | 线性 | tdd_inited | 写测试代码（红灯）+ test.json |
+| `tdd_plan` | 线性 | pre_dev_verified | 写测试代码（红灯）+ test.json |
 | `dev` | progressive | developed | 按 Wave 写实现 + commit |
 | `review` | progressive | reviewed | code review，提交 issues（stdin） |
 | `review_fix` | progressive | reviewed | 修复 review 发现的 issue |
-| `test` | progressive | tested | 跑测试，提交 actual，CW 机器重算 |
-| `test_fix` | progressive | tested | 修复 test 失败的 case |
+| `test` | progressive | post_dev_verified | 跑测试，提交 actual，CW 机器重算 |
+| `test_fix` | progressive | post_dev_verified | 修复 test 失败的 case |
 | `retrospect` | 线性 | retrospected | 复盘 + 结构化 retrospectData |
 | `closeout` | 线性 | closed | 归档 topic，写 evidence |
 | `replan` | 旁路 | planned | 修改计划（append-only 约束） |
@@ -42,7 +42,7 @@
 ## 8 个 Status
 
 ```
-created → planned → tdd_inited → developed → reviewed → tested → retrospected → closed
+created → planned → pre_dev_verified → developed → reviewed → post_dev_verified → retrospected → closed
 ```
 
 ## 核心架构概念

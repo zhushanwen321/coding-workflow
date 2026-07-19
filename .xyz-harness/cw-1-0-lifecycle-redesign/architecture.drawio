@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="30.0.4">
+  <diagram name="整体 scope" id="page_overall">
+    <mxGraphModel dx="2000" dy="1400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1600" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="cw 1.0 整体 scope 图（一个通用引擎 + 5 个 ScopeConfig 实例）&#xa;跨层通过 Unit 指针解耦（parentUnitId / childUnitIds / derivedFromId），不通过对象引用" style="text;html=1;align=center;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="2120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- L5 effort -->
+        <mxCell id="L5" value="L5 effort · 跨多 feature 大工作 · Plan, don't do&#xa;UnitStateMachine(L5_EFFORT_CONFIG) · ticket type 分发（research/prototype/grilling/task）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;fontStyle=1;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="100" width="2040" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="L5_inner" value="charting → resolving → ready-to-collapse → collapsed/aborted&#xa;ticket 内部：open → claimed → resolved → graduated（claim 子系统：跨 session mutex）&#xa;fog of war：Not-yet-specified（增量识别机制，L5 密度高）&#xa;collapse 产 N 个 spec draft（derivedFromId 指向 effort）" style="text;html=1;align=left;fontSize=11;fillColor=#ffffff;strokeColor=#9673a6;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="100" y="160" width="2000" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- L4 spec -->
+        <mxCell id="L4" value="L4 spec · 单 feature / PRD · 收敛后的可构建蓝图&#xa;UnitStateMachine(L4_SPEC_CONFIG) · 含 unlock/re-lock（lockVersion 递增）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="320" width="2040" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="L4_inner" value="drafting → reviewing → locked → split → archived&#xa;lock gate 三件套：FR 全覆盖 AC + glossary 术语全定义（强制）+ 无 open review issue&#xa;lockHistory（append-only）+ splitHistory（re-split 标 superseded）+ statusHistory&#xa;split 产 N 个 topic 骨架（derivedFromId 指向 spec）· unlock 后 re-lock 必须重过所有 gate" style="text;html=1;align=left;fontSize=11;fillColor=#ffffff;strokeColor=#6c8ebf;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="100" y="380" width="2000" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- L3 topic -->
+        <mxCell id="L3" value="L3 topic · 单 session 可完成 slice · 执行期 · cw 核心价值&#xa;UnitStateMachine(L3_TOPIC_CONFIG) · taskShape 分发（full-tdd / delete-only / doc-only）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="540" width="2040" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_inner" value="created → planned → pre_dev_verified → developed → reviewed → post_dev_verified → retrospected → closed/aborted&#xa;TDD（预期-实现-验证三段式）+ commit-anchor（git-commit 证据锚）+ judgeByExpected（机器重算）&#xa;append-only（wave committed 不可删 / testCase.passed.expected 不可改）· replan 回退 planned&#xa;topic.childUnitIds = [wave1, wave2, ...] · closeout gate 校验所有 child wave 都是 terminal" style="text;html=1;align=left;fontSize=11;fillColor=#ffffff;strokeColor=#82b366;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="100" y="600" width="2000" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- L3 wave (独立 Unit，嵌套在 topic 下) -->
+        <mxCell id="L3w" value="L3 wave · topic 的 child unit · 递归嵌套验证通过（smoke test ✓）&#xa;UnitStateMachine(L3_WAVE_CONFIG) · 独立状态机，不直接被 topic 调用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5b8c5a;fontSize=13;fontStyle=1;verticalAlign=top;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="760" width="2040" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="L3w_inner" value="planned → committed → reviewed → tested/aborted&#xa;parentUnitId 指向 topic · 通过 store.findChildren(topicId) 查询，不通过对象引用&#xa;commit 锚 commitHash · 独立 review loop · 同一引擎不同 ScopeConfig 实例驱动" style="text;html=1;align=left;fontSize=11;fillColor=#ffffff;strokeColor=#5b8c5a;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="100" y="810" width="2000" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- L2 problem (无状态服务) -->
+        <mxCell id="L2" value="L2 problem · 无状态原子动作 · 不走状态机（无 ScopeConfig）&#xa;research: cited findings · prototype: throwaway branch + verdict" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;fontStyle=1;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="940" width="1000" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="L2_inner" value="research start/resolve（gate: sources-count&gt;0）· invalidate 标 superseded&#xa;prototype start/verdict（gate: verdict 明确）· re-verdict append history" style="text;html=1;align=left;fontSize=11;fillColor=#ffffff;strokeColor=#d79b00;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="100" y="990" width="960" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- L1 decision (横向基底) -->
+        <mxCell id="L1" value="L1 decision · 横向词汇基底 · 被所有层读取 · 无状态服务&#xa;ADR（supersede 链）+ glossary（强制，lock gate 校验）· 决策真值只在一处" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;fontStyle=1;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="940" width="1000" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="L1_inner" value="ADR: accepted → deprecated（supersededBy 指向新 ADR）· 内容永不删&#xa;glossary: current + history[]（revise 时旧定义进 history，新覆盖 current）" style="text;html=1;align=left;fontSize=11;fillColor=#ffffff;strokeColor=#666666;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="990" width="960" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ===== 跨层正向边（左侧绿色）===== -->
+        <mxCell id="p1" value="① collapse&#xa;L5→L4&#xa;effort 折叠成 spec draft (1-N)&#xa;derivedFromId 指针" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#5b8c5a;strokeWidth=3;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L5" target="L4">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="40" y="280" /><mxPoint x="40" y="320" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="p2" value="② split&#xa;L4→L3&#xa;spec 切成 topic 骨架 (N)&#xa;derivedFromId 指针" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#5b8c5a;strokeWidth=3;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L4" target="L3">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="30" y="500" /><mxPoint x="30" y="540" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="p3" value="③ wave 是 topic 的 child unit&#xa;L3 topic → L3 wave&#xa;parentUnitId / childUnitIds 指针" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#5b8c5a;strokeWidth=3;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L3" target="L3w">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="20" y="720" /><mxPoint x="20" y="760" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ===== 层间跳转下沉（橙色虚线）===== -->
+        <mxCell id="p4" value="④ 层间跳转下沉&#xa;L5 ticket type = research/prototype&#xa;→ 触发 L2 收敛 → fold 回 L5 resolve&#xa;⑤ L3 topic 执行遇未解问题 → L2 fold 回" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0;strokeColor=#d79b00;strokeWidth=2;dashed=1;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L5" target="L2">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2160" y="190" /><mxPoint x="2160" y="900" /><mxPoint x="2080" y="900" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ===== 横向沉淀到 L1（灰色点线）===== -->
+        <mxCell id="p5" value="⑥ 任意层 → L1 沉淀（横向）&#xa;L2-L5 决策后 → ADR / glossary&#xa;L1 被所有层读取（词汇基底）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.5;strokeColor=#666666;strokeWidth=2;dashPattern=2 2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L3w" target="L1">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2150" y="830" /><mxPoint x="2150" y="1010" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ===== 跨层逆向 + 影响传播（右侧红框矩阵）===== -->
+        <mxCell id="rev_box" value="跨层逆向 + 影响传播矩阵（5 条 · 全部 append 模式 · 写入时触发标记下游 drifted）" style="swimlane;startSize=30;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1120" width="2040" height="380" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rev1" value="① spec unlock → topic drift&#xa;&#xa;L4 action: cw spec unlock&#xa;  spec.lockVersion++（append lockHistory）&#xa;  spec.status: locked → reviewing&#xa;&#xa;影响传播（写入时触发）：&#xa;  扫描 topic.derivedFromId == spec.id&#xa;  对比 parentLockVersion ≠ spec.lockVersion&#xa;  topic.driftStatus: clean → drifted&#xa;  （append driftLog）&#xa;&#xa;L3 处理 action：&#xa;  acknowledge-drift（填 reason，进 retrospect）&#xa;  rebase-on-spec（新 AC append 为新 wave，旧 committed wave 不删）&#xa;  abort" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="rev_box">
+          <mxGeometry x="20" y="50" width="640" height="310" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rev2" value="② spec supersede → topic + ADR&#xa;&#xa;L4 action: cw spec supersede old new&#xa;  old.status: → deprecated（append statusHistory）&#xa;  old.supersededBy: new.slug&#xa;  old 文件不删&#xa;&#xa;影响传播：&#xa;  所有 topic.derivedFromId == old → drifted&#xa;  所有 related-adr → related-spec-updated&#xa;&#xa;L3 处理 action：同 ①" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="rev_box">
+          <mxGeometry x="680" y="50" width="640" height="310" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rev3" value="③ ADR supersede → 全局扫描&#xa;&#xa;L1 action: cw adr supersede old new&#xa;  old.status: → deprecated&#xa;&#xa;影响传播（查询时递归，不阻塞）：&#xa;  扫描 related-adr == old.id 的所有 unit&#xa;  标 adr-stale warning（guidance 提示）&#xa;  不阻塞 closeout（ADR 是参考性决策）&#xa;&#xa;&#xa;&#xa;&#xa;④ research invalidate → ticket stale&#xa;&#xa;L2 action: cw research invalidate&#xa;  finding.status: → superseded&#xa;  扫描 related-research == slug 的 ticket&#xa;  标 research-stale warning&#xa;  guidance 建议 reopen-ticket" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="rev_box">
+          <mxGeometry x="1340" y="50" width="670" height="310" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rev5" value="⑤ effort reopen-map（设计选择：collapsed 真终态不可 reopen）&#xa;&#xa;matt 原则：collapsed 后发现新 fog = destination redraw = 新 effort&#xa;cw 1.0 照搬：collapsed 不进 reopen 路径&#xa;&#xa;替代路径：&#xa;  cw effort create new-effort --inherits-decisions-from old&#xa;  旧 effort 保持 collapsed（历史完整）&#xa;  新 effort 继承 Decisions-so-far 作为初始 charting&#xa;&#xa;影响传播（旧 effort 的下游 spec）：&#xa;  spec 标 effort-reopened warning（不阻塞，spec 已独立 lock）" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1510" width="2040" height="80" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram name="引擎框架 + 插件包" id="page_engine">
+    <mxGraphModel dx="2400" dy="1800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2800" pageHeight="2200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="cw 1.0 通用引擎框架 + 5 个 ScopeConfig 插件包&#xa;核心：一个 UnitStateMachine&lt;S, A, P&gt; 通用引擎（零 topic 假设）+ 5 个层特定配置（插件）&#xa;机制全部通用，差异只在配置（12 机制全通用论证，零层独有）" style="text;html=1;align=center;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="2720" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 通用引擎核心（中央）============ -->
+        <mxCell id="engine_box" value="通用引擎核心（src/engine/，零 topic 假设）" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=15;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="600" y="120" width="1600" height="580" as="geometry" />
+        </mxCell>
+
+        <mxCell id="engine_unit" value="Unit&lt;S, P&gt;（unit.ts）&#xa;&#xa;id / scope / slug / status&#xa;statusHistory[]（事件日志）&#xa;parentUnitId / childUnitIds（跨层指针）&#xa;derivedFromId（split 时上游）&#xa;parentLockVersion（drift 快照）&#xa;driftStatus / driftLog[]&#xa;lockVersion（L4 unlock 用）&#xa;type（类型分发）&#xa;payload: P（层 frontmatter）&#xa;collections: Record&lt;string, unknown[]&gt;&#xa;  （通用 append/replace/freeze 容器）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;verticalAlign=top;" vertex="1" parent="engine_box">
+          <mxGeometry x="20" y="50" width="360" height="280" as="geometry" />
+        </mxCell>
+
+        <mxCell id="engine_sm" value="UnitStateMachine&lt;S, A, P&gt;&#xa;（state-machine.ts）&#xa;&#xa;dispatch(unit, action, params, opts)&#xa;  1. guard（平移 checkLinear）&#xa;  2. GateRunner.run（统一执行 gate）&#xa;  3. checkFreeze（如启用）&#xa;  4. computeNextStatus（progressive）&#xa;  5. applyProducts（写 collections）&#xa;&#xa;guard / computeNextStatus / isTerminal&#xa;&#xa;深拷贝隔离 + gateHistory append" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;fontStyle=1;" vertex="1" parent="engine_box">
+          <mxGeometry x="400" y="50" width="360" height="280" as="geometry" />
+        </mxCell>
+
+        <mxCell id="engine_gates" value="GateSpec + GateRunner&#xa;（gate.ts）&#xa;&#xa;GateSpec&lt;P&gt; { id, kind, check }&#xa;  kind: coverage | evidence |&#xa;           existence | schema&#xa;&#xa;GateRunner.run&#xa;  短路：第一个 fail 即返回&#xa;  统一 append gateHistory&#xa;  无论 pass/fail 都留痕&#xa;&#xa;cw 0.x 砍掉的抽象，1.0 重建" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;" vertex="1" parent="engine_box">
+          <mxGeometry x="780" y="50" width="360" height="280" as="geometry" />
+        </mxCell>
+
+        <mxCell id="engine_freeze" value="FreezeRule + checkFreeze&#xa;（freeze.ts）&#xa;&#xa;FreezeRule&lt;P&gt; {&#xa;  collection, predicate,&#xa;  immutableFields,&#xa;  violationType }&#xa;&#xa;checkFreeze(oldUnit, newUnit, rules)&#xa;  遍历规则 → 比对元素 → 违规列表&#xa;&#xa;替代 cw 0.x validateAppendOnly&#xa;5 种硬编码违规 → 声明表" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;align=left;verticalAlign=top;" vertex="1" parent="engine_box">
+          <mxGeometry x="1160" y="50" width="400" height="280" as="geometry" />
+        </mxCell>
+
+        <mxCell id="engine_deps" value="EngineDeps（deps.ts，依赖注入）&#xa;store: UnitStore { load, save, findChildren, findByDerivedFrom }  ←  InMemoryStore（原型）/ CwStoreAdapter（迁移后）&#xa;gateRunner: GateRunner  ←  DefaultGateRunner&#xa;clock: Clock  ←  SystemClock" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;align=left;verticalAlign=top;" vertex="1" parent="engine_box">
+          <mxGeometry x="20" y="350" width="1540" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="engine_scope" value="ScopeConfig&lt;S, A, P&gt; 接口（scope-config.ts）—— 引擎接收的配置契约&#xa;&#xa;transitions: Record&lt;A, TransitionRule&lt;S&gt;&gt;    phases: { clarify?, review?, lock?, split? }     loops: Record&lt;name, LoopConfig&gt;     gateRetryLimit: number&#xa;initStatus / terminalStatuses                coverageGates / evidenceGates                  collections: Record&lt;name, CollectionSpec&gt;&#xa;freezeRules: FreezeRule[]                    fogConfig? / typeDispatch? / driftConfig?       actionGates?: Record&lt;A, gateId[]&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;align=left;verticalAlign=top;" vertex="1" parent="engine_box">
+          <mxGeometry x="20" y="450" width="1540" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 5 个插件包（下方）============ -->
+        <mxCell id="plugin_title" value="▼ 5 个 ScopeConfig 插件包（每个包是一个层特定配置实例，注入到通用引擎）" style="text;html=1;align=center;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="730" width="2720" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- L5 effort 插件 -->
+        <mxCell id="pL5" value="L5_EFFORT_CONFIG&#xa;（插件包 1）" style="swimlane;startSize=30;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="780" width="520" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="pL5_body" value="transitions: 4 status × 8 action&#xa;  charting → resolving →&#xa;  ready-to-collapse → collapsed&#xa;&#xa;phases:&#xa;  clarify: per-child + loop&#xa;    （chart ticket + fog）&#xa;  review: per-child + loop&#xa;    （grilling）&#xa;  lock: per-child + loop&#xa;    （一张张 resolve）&#xa;  split: once&#xa;    （collapse → spec draft）&#xa;&#xa;freezeRules:&#xa;  • ticket-resolved&#xa;    （旧 resolution 不可删）&#xa;  • collapsed-frozen&#xa;    （collapsed 后不可 reopen）&#xa;&#xa;collections:&#xa;  • tickets: append&#xa;  • decisionsIdx: append&#xa;  • fog: versioned&#xa;  • outOfScope: append&#xa;&#xa;特色配置:&#xa;  fogConfig: 强（Not-yet-specified&#xa;    + graduate trigger）&#xa;  typeDispatch: 4 ticket type&#xa;    （research/prototype/&#xa;     grilling/task）&#xa;  并发: claim 子系统&#xa;    （parallel 模式 mutex:&#xa;     lock+TTL+heartbeat）" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#9673a6;rounded=1;" vertex="1" parent="pL5">
+          <mxGeometry x="10" y="40" width="495" height="725" as="geometry" />
+        </mxCell>
+
+        <!-- L4 spec 插件 -->
+        <mxCell id="pL4" value="L4_SPEC_CONFIG&#xa;（插件包 2）" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="580" y="780" width="520" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="pL4_body" value="transitions: 5 status × 8 action&#xa;  drafting → reviewing →&#xa;  locked → split → archived&#xa;  + unlock（逆向）/ re-split /&#xa;    supersede（3 个逆向 action）&#xa;&#xa;phases:&#xa;  clarify: unit + once（draft）&#xa;  review: unit + loop&#xa;    （spec_review 多轮）&#xa;  lock: unit + once&#xa;    （spec lock immutable）&#xa;  split: once（→ topic 骨架）&#xa;&#xa;freezeRules:&#xa;  • spec-locked&#xa;    （lock 后所有字段冻结）&#xa;    allowThaw: true（unlock）&#xa;&#xa;coverageGates（lock gate 三件套）:&#xa;  • fr-ac-coverage（硬阻断）&#xa;  • glossary-terms（强制）&#xa;  • no-open-review-issue&#xa;&#xa;collections:&#xa;  • specSections: append/replace&#xa;  • lockHistory: append (versioned)&#xa;  • splitHistory: append&#xa;  • statusHistory: append&#xa;  • reviewIssues: append&#xa;&#xa;特色:&#xa;  re-lock 必须重过所有 gate&#xa;    （机器证据完整性底线）&#xa;  driftConfig: 下游 topic 监听&#xa;    unlock/supersede" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#6c8ebf;rounded=1;" vertex="1" parent="pL4">
+          <mxGeometry x="10" y="40" width="495" height="725" as="geometry" />
+        </mxCell>
+
+        <!-- L3 topic 插件 -->
+        <mxCell id="pL3" value="L3_TOPIC_CONFIG&#xa;（插件包 3 · 原型已落地）" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="780" width="520" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="pL3_body" value="transitions: 8 status × 10 action&#xa;  created → planned →&#xa;  pre_dev_verified → developed →&#xa;  reviewed → post_dev_verified →&#xa;  retrospected → closed/aborted&#xa;  + replan（append-only）/ abort&#xa;&#xa;phases:&#xa;  clarify: unit + once（plan）&#xa;  review: unit + loop（review）&#xa;  lock: per-child + loop（dev）&#xa;  split: undefined&#xa;    （wave 是独立 Unit）&#xa;&#xa;freezeRules（替代 validateAppendOnly）:&#xa;  • wave-committed&#xa;    （committed 不可删/改&#xa;     committed/changes/dependsOn）&#xa;  • test-case-passed&#xa;    （passed.expected 不可改）&#xa;&#xa;evidenceGates:&#xa;  • commit-anchor（git commit hash）&#xa;  • tdd-red-light&#xa;  • judge-expected（机器重算）&#xa;&#xa;collections:&#xa;  • waves: append (protected)&#xa;  • testCases: replace (versioned)&#xa;  • gateHistory: append&#xa;  • evidence: freeze (closeout)&#xa;  • + 6 个 append 集合&#xa;&#xa;loops:&#xa;  review: 3 / test: 5&#xa;gateRetryLimit: 5&#xa;&#xa;特色: TDD（强）+ taskShape 分发" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#82b366;rounded=1;" vertex="1" parent="pL3">
+          <mxGeometry x="10" y="40" width="495" height="725" as="geometry" />
+        </mxCell>
+
+        <!-- L3 wave 插件 -->
+        <mxCell id="pL3w" value="L3_WAVE_CONFIG&#xa;（插件包 4 · 递归嵌套验证）" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#5b8c5a;fontStyle=1;fontSize=12;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1660" y="780" width="520" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="pL3w_body" value="transitions: 5 status × 5 action&#xa;  planned → committed →&#xa;  reviewed → tested/aborted&#xa;&#xa;phases:&#xa;  clarify: undefined&#xa;    （继承 topic plan 设计）&#xa;  review: unit + loop&#xa;  lock: unit + once（commit）&#xa;  split: undefined（叶子）&#xa;&#xa;freezeRules:&#xa;  • wave-committed&#xa;    （commitHash/changes/&#xa;     dependsOn 不可改）&#xa;&#xa;evidenceGates:&#xa;  • commit-anchor&#xa;    （wave 级 commit hash）&#xa;&#xa;collections:&#xa;  • commits: append (protected)&#xa;  • gateHistory: append&#xa;  • reviewIssues: append&#xa;&#xa;loops:&#xa;  review: 2&#xa;&#xa;关键设计（验证通过）：&#xa;  parentUnitId 指向 topic&#xa;  topic.childUnitIds 含 wave id&#xa;  topic 不直接调 wave 状态机&#xa;  只通过 store.findChildren 查询&#xa;  topic closeout gate 校验所有&#xa;  child wave 都是 terminal&#xa;&#xa;同一个 UnitStateMachine 类，&#xa;不同 ScopeConfig 实例驱动" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#5b8c5a;rounded=1;" vertex="1" parent="pL3w">
+          <mxGeometry x="10" y="40" width="495" height="725" as="geometry" />
+        </mxCell>
+
+        <!-- L2/L1 无状态服务（最右）-->
+        <mxCell id="pL2L1" value="L2 + L1 无状态服务&#xa;（不走状态机，无 ScopeConfig）" style="swimlane;startSize=30;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="2200" y="780" width="520" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="pL2L1_body" value="L2 problem（无状态原子动作）&#xa;  research start/resolve&#xa;    gate: sources-count &gt; 0&#xa;    finding: 半永久（落 repo）&#xa;  prototype start/verdict&#xa;    gate: verdict 明确&#xa;    （adopt/reject/needs-more）&#xa;    throwaway branch + verdict.md&#xa;  逆向:&#xa;    research invalidate&#xa;      → 标 superseded（不删）&#xa;      → 触发下游 research-stale&#xa;    prototype re-verdict&#xa;      → verdict.history append&#xa;      → 可 adopt→reject 翻案&#xa;&#xa;L1 decision（横向词汇基底）&#xa;  ADR add/list/show&#xa;    supersede: old → deprecated&#xa;    内容永不删（append history）&#xa;  glossary add/list/check&#xa;    revise: 旧定义 → history[]&#xa;    新定义覆盖 current&#xa;    lock gate 校验术语全定义&#xa;&#xa;关键：决策真值只在一处&#xa;  其他层只 gist + 引用&#xa;  不重复内容（matt 原则机器化）" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#d79b00;rounded=1;" vertex="1" parent="pL2L1">
+          <mxGeometry x="10" y="40" width="495" height="725" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 注入箭头（插件 → 引擎）============ -->
+        <mxCell id="inj1" value="注入&#xa;ScopeConfig" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;strokeColor=#666666;strokeWidth=2;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pL5" target="engine_scope">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="760" />
+              <mxPoint x="300" y="700" />
+              <mxPoint x="700" y="700" />
+              <mxPoint x="700" y="685" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="inj2" value="注入&#xa;ScopeConfig" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=0;entryX=0.35;entryY=1;strokeColor=#666666;strokeWidth=2;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pL4" target="engine_scope">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="840" y="760" />
+              <mxPoint x="840" y="710" />
+              <mxPoint x="1140" y="710" />
+              <mxPoint x="1140" y="685" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="inj3" value="注入&#xa;ScopeConfig&#xa;（已落地）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=0;entryX=0.55;entryY=1;strokeColor=#5b8c5a;strokeWidth=3;dashed=1;fontSize=10;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pL3" target="engine_scope">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1380" y="760" />
+              <mxPoint x="1380" y="710" />
+              <mxPoint x="1560" y="710" />
+              <mxPoint x="1560" y="685" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="inj4" value="注入&#xa;ScopeConfig&#xa;（已落地）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=0;entryX=0.75;entryY=1;strokeColor=#5b8c5a;strokeWidth=3;dashed=1;fontSize=10;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pL3w" target="engine_scope">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1920" y="760" />
+              <mxPoint x="1920" y="710" />
+              <mxPoint x="1980" y="710" />
+              <mxPoint x="1980" y="685" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ============ 底部：12 机制通用论证 ============ -->
+        <mxCell id="mech_box" value="12 机制全通用论证（零层独有 · 决定插件能完全配置化）" style="swimlane;startSize=30;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=14;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1600" width="2680" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="mech_table" value="每一行：一个通用机制 + 不同层如何实例化（差异只在配置参数，不在机制本身）&#xa;&#xa;┌─────────────────┬──────────────────────────┬──────────────────────────┬──────────────────────────┬──────────────────────────┐&#xa;│ 机制            │ L5 effort                │ L4 spec                  │ L3 topic                 │ L3 wave                  │&#xa;├─────────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────┤&#xa;│ ① fog of war    │ 强（Not-yet-specified）  │ 中（openFRs）            │ 弱（replan 加 wave）     │ 无（密度极低）          │&#xa;│ ② claim/mutex   │ 跨 session（file-lock）  │ session 内（state-mach） │ session 内               │ session 内               │&#xa;│ ③ coverage gate │ collapse-ready           │ FR→AC（硬阻断）          │ AC→testCase              │ 无（叶子）               │&#xa;│ ④ evidence gate │ resolution 非空          │ content-hash             │ commit-hash + TDD red    │ commit-hash              │&#xa;│ ⑤ freeze        │ collapsed 真终态         │ spec-locked（allowThaw） │ wave-committed           │ wave-committed           │&#xa;│ ⑥ drift         │ 监听 effort reopen       │ 监听 ADR supersede       │ 监听 spec unlock         │ 监听 topic replan        │&#xa;│ ⑦ typeDispatch  │ 4 ticket type            │ spec type（feature/hf）  │ 3 taskShape              │ 无                       │&#xa;│ ⑧ append-only   │ ticketHistory / fog      │ lockHistory / splitHist  │ waves / testCases        │ commits                  │&#xa;│ ⑨ TDD（3 段式） │ 弱（non-empty）          │ 中（coverage 跨层）      │ 强（machine-recompute）  │ 中（diff-tree）         │&#xa;│ ⑩ commit-anchor │ 无                       │ content-hash             │ git-commit               │ git-commit               │&#xa;│ ⑪ phase 顺序    │ per-child + loop         │ unit + once              │ unit + loop              │ unit + once              │&#xa;│ ⑫ loops         │ grilling loop            │ review loop              │ review×3 / test×5        │ review×2                 │&#xa;└─────────────────┴──────────────────────────┴──────────────────────────┴──────────────────────────┴──────────────────────────┘&#xa;&#xa;结论：所有「L5/L4/L3 独有」判断都是错的——通用机制的复杂实例 / 密度差异 / 配置参数，不是新机制。代码量从「3 套独立状态机」降到「1 套引擎 + 4 个配置」。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#d6b656;rounded=1;" vertex="1" parent="mech_box">
+          <mxGeometry x="10" y="40" width="2655" height="325" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 原型验证证据 ============ -->
+        <mxCell id="evidence" value="原型验证（src/engine/ 7 文件 1252 行 + 11 smoke test 全绿）&#xa;&#xa;✓ 递归嵌套干净：topic↔wave 通过 parentUnitId / childUnitIds 字符串指针解耦，topic 不直接调 wave 状态机内部（smoke test 验证）&#xa;✓ 通用引擎吃下 L3：8 status + 10 action 全用 L3_TOPIC_CONFIG 配置表达，零硬编码 if-else（主链 create→closeout 跑通）&#xa;✓ freeze 抽象成立：FreezeRule 声明表完全替代 cw 0.x validateAppendOnly 5 种硬编码违规（wave_deleted/modified + case_modified 三种违规都正确触发）&#xa;✓ progressive 语义保留：developed 状态下再次 dev，status 不回退（与 cw 0.x computeNextStatus 完全一致）&#xa;✓ gate 短路 + 状态不流转：第一个 gate fail → 后续 gate 不执行 + status 不变 + gateHistory 记 fail" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#5b8c5a;fontSize=12;align=left;verticalAlign=top;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2000" width="2680" height="160" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
