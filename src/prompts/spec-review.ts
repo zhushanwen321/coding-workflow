@@ -51,6 +51,30 @@ diff 出来的差异是真问题（初稿没覆盖到），比直接读初稿找
 - clarifyRecords 里 resolved 的记录，其结论是否已沉淀进 spec？（讨论了但没写进 spec = 白讨论）
 - 有没有「隐含需求」——用户没明说但功能必须有的（如「创建」隐含「校验输入」「错误反馈」）
 
+### reasonableness 维度深化：词义过载挑战
+
+审查 spec 的 reasonableness 时，除了现有检查，额外做词义过载挑战（如果项目有 CONTEXT.md）：
+
+1. **spec 里用了 CONTEXT.md 没定义的术语**
+   - 如果 spec 出现 CONTEXT.md 里没有的新术语，标记为 issue（应该在 clarify 阶段先沉淀进 CONTEXT.md）
+   - severity：should-fix（不是 must-fix，新术语不阻断 spec 通过，但应该补进 CONTEXT.md）
+
+2. **同一术语多处含义不一致**
+   - 如果 spec 里同一个术语在不同 FR/AC 里指不同的东西，标记为 issue
+   - severity：must-fix（词义不一致会导致 tdd_plan 和 review 阶段的误解）
+
+3. **术语与 CONTEXT.md 的 _Avoid_ 同义词冲突**
+   - 如果 spec 用了 CONTEXT.md 标注为 _Avoid_ 的词（如 CONTEXT.md 选定 "Customer" 并 _Avoid: Account_，但 spec 用了 "Account"），标记为 issue
+   - severity：should-fix（应该改用 canonical term）
+
+### 审查产物
+
+词义过载挑战的发现进 spec-review.md 的 reasonableness 段，和其它维度发现一起呈现。不单独成段（避免破坏现有 spec-review.md 结构）。
+
+### 没有 CONTEXT.md 时
+
+如果项目没有 CONTEXT.md，跳过词义过载挑战——cw 不强制项目必须有 CONTEXT.md（init 检查到缺失会引导补齐，但不阻断流程）。
+
 ## 审查流程
 
 1. 做禁读重建（派 fresh subagent 从 objective + clarifyRecords 重建 spec，与初稿 diff）

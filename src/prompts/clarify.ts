@@ -64,6 +64,45 @@ create 之后、plan 之前。把"做什么"弄清楚。本阶段不产出 dev-p
 
 **判据**：如果你能在不问用户的情况下通过读代码/文档得到答案，那是事实，不问。只有"答案不存在于代码里、必须人来决定"的才是决策。
 
+## 读 CONTEXT.md 纪律 + 词义挑战
+
+### 提问前先读 CONTEXT.md
+
+如果项目根目录有 \`CONTEXT.md\`（或 monorepo 场景下的 \`CONTEXT-MAP.md\` + 子 context 的 CONTEXT.md），提问前先读它。
+
+CONTEXT.md 是项目的**统一语言（ubiquitous language）**——定义了领域术语的权威含义。提问时如果用户用词与 CONTEXT.md 冲突，**立即指出**：
+
+> "你的 CONTEXT.md 把 X 定义为 A，但你这里像是 B——到底是哪个？"
+
+### 词义挑战清单（technical 类记录的深化）
+
+用户在 clarify 过程中用模糊/过载词时，主动锐化：
+
+1. **模糊词锐化**：用户说 "account" —— 是 Customer 还是 User？这是两回事，必须选定一个 canonical term
+
+2. **编造 edge-case 场景**：讨论 domain 关系时，主动编造边界场景逼用户精确化概念边界
+   - 例："如果一个 Order 还没付款就取消了，它是 cancelled 还是 expired？这两个状态在你这里是一回事吗？"
+
+3. **代码对照**：用户陈述"某事怎么运作"时，拿代码对照，发现矛盾就暴露出来
+   - 例："你的代码取消整个 Order，但你刚说支持部分取消——哪个对？"
+
+4. **canonical term 选择**：每个概念挑一个最佳词，其它同义词列到 CONTEXT.md 的 _Avoid_ 列
+   - 例：选定 "Customer"（不用 "Account" / "User" / "Client"），在 CONTEXT.md 里标注 _Avoid: Account, User, Client_
+
+### CONTEXT.md 的维护纪律
+
+- **只放领域概念**，不放实现细节（不是 spec、不是草稿本、不是实现决策仓库）
+- **每个概念挑一个最佳词**，其它列 _Avoid_
+- **定义只写"它是什么"**，不写"它做什么"（1-2 句话封顶）
+- **只收录本项目 context 独有的概念**，通用编程概念（timeout / error type / utility pattern）不收
+- clarify 过程中锐化的新术语 → 当场更新 CONTEXT.md（如果文件存在）；如果文件不存在，不主动创建（留给项目自行决定）
+
+### 不做的事
+
+- 不机器验证 CONTEXT.md 内容一致性（cw 不回读检查）
+- 不在 topic 数据里加 glossary 字段（保持项目级单一来源）
+- clarify.ts 已有 ADR 三条件，不重复（cw 的 ADR 规则与 mattpocock 一致）
+
 ## 提问呈现
 
 - 简单问题（有明确选项）→ AskUserQuestion（1-4 选项 + 推荐）

@@ -68,6 +68,9 @@ const DOC_GROUPS: readonly DocGroup[] = [
   { name: "主配置", candidates: ["AGENTS.md", "CLAUDE.md"], level: "必备", alwaysCurrent: false },
   { name: "README.md", candidates: ["README.md"], level: "必备", alwaysCurrent: false },
   { name: "CONTEXT.md", candidates: ["CONTEXT.md"], level: "必备", alwaysCurrent: false },
+  // G2 词表分组：CONTEXT-MAP.md 存在 → 多 context 模式（monorepo / 多业务域）
+  // 本次只做"检测 + 报告存在"，不做子 context 递归扫描（未来工作）。
+  { name: "CONTEXT-MAP.md", candidates: ["CONTEXT-MAP.md"], level: "可选", alwaysCurrent: false },
   { name: "ARCHITECTURE.md", candidates: ["ARCHITECTURE.md"], level: "推荐", alwaysCurrent: true },
   { name: "PRODUCT.md", candidates: ["PRODUCT.md"], level: "推荐", alwaysCurrent: false },
   { name: "NFR.md", candidates: ["NFR.md"], level: "推荐", alwaysCurrent: true },
@@ -521,19 +524,32 @@ MIT
 领域术语见 CONTEXT.md，在此不重复。
 `,
 
-  "CONTEXT.md": `# 统一语言（Ubiquitous Language）
+  "CONTEXT.md": `# CONTEXT.md — 统一语言（Ubiquitous Language）
 
-> 记录领域术语的统一定义，所有阶段和编码都应使用此处的术语。
+> 本项目的领域术语表。每个概念挑一个权威词，其它叫法列到 _Avoid_。
+> **只放领域概念**，不放实现细节；**只收录本项目独有的概念**，通用编程概念（timeout / error type）不收。
 
 ## 术语表
 
-| 术语 | 定义 | 别名 |
-|------|------|------|
-| {术语} | {精确定义} | {其他叫法，无则留空} |
+| 术语（canonical） | 定义（1-2 句，"它是什么"而非"它做什么"） | _Avoid_（同义词，禁用） | 备注（可选：示例 / 边界说明） |
+|--------------------|------------------------------------------|------------------------|------------------------------|
+| {术语}             | {精确定义}                               | {其他叫法，无则留空}    | {可选}                       |
 
-## 业务边界
+## 示例（参考，实际项目替换为自己的术语）
 
-{系统的职责范围：做什么，不做什么}
+| 术语 | 定义 | _Avoid_ | 备注 |
+|------|------|---------|------|
+| Customer | 付费使用产品的组织或个人 | Account, User, Client | 一个 Customer 可有多个 Subscription |
+| Subscription | Customer 对某个付费计划的持续订阅 | Plan, Membership | 有 active/cancelled/expired 状态 |
+
+## 多 context 场景（monorepo / 多业务域）
+
+如果项目有多个独立的业务域（如 monorepo 的不同 package 服务不同业务），使用多 context 模式：
+
+- 项目根：\`CONTEXT-MAP.md\`（索引，列出所有子 context 及其范围）
+- 每个子 context：自己的 \`CONTEXT.md\`（只覆盖该 context 的术语）
+
+单业务域项目只需要根目录一个 \`CONTEXT.md\`，不需要 CONTEXT-MAP.md。
 `,
 
   "ARCHITECTURE.md": `# 系统架构
@@ -700,6 +716,26 @@ MIT
 | ADR | 标题 | 状态 | 溯源 |
 |-----|------|------|------|
 | ADR-NNN | {一句话} | accepted | [from: {topic}] |
+`,
+
+  "CONTEXT-MAP.md": `# CONTEXT-MAP.md — 多 context 索引（G2 分组模式）
+
+> 仅在多业务域项目（monorepo / 多 context）使用。单业务域项目不需要本文件——
+> 根目录的 CONTEXT.md 即是唯一权威术语表。
+> 本文件是索引：列出所有子 context 及其覆盖范围，不重复术语定义（定义在各子 context 的 CONTEXT.md 里）。
+
+## 子 context 清单
+
+| context 路径 | 覆盖范围 | CONTEXT.md 位置 |
+|--------------|----------|-----------------|
+| {packages/billing} | {计费域术语} | {packages/billing/CONTEXT.md} |
+| {packages/auth} | {认证域术语} | {packages/auth/CONTEXT.md} |
+
+## 分组规则
+
+- 同一术语在不同 context 可有不同定义（context-scoped），互不冲突
+- 跨 context 复用的术语应在每个 context 各自的 CONTEXT.md 重复定义（保持 context 自包含）
+- 新增 context 时更新本索引；废弃 context 时从索引移除并归档其 CONTEXT.md
 `,
 };
 

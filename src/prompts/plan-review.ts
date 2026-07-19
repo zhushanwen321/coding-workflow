@@ -42,6 +42,56 @@ diff 出来的差异是真问题，比直接读初稿找漏洞有效得多。
 | architecture（架构合理性） | wave 的拆分是否合理（高内聚低耦合）？dependsOn 依赖链是否正确（无循环、无遗漏前置）？changes 的文件级改动点是否清晰（不混在一坨）？有无应该拆成两个 wave 的巨型 wave？ |
 | feasibility（可行性） | 每个 wave 的 changes 是否可在一个 dev cycle 完成？有无依赖未识别的外部条件（如第三方 API、未就绪的基础设施）？changes 描述是否可执行（模糊的「优化系统」不可执行）？ |
 
+### architecture 维度深化检查
+
+#### 词表（审查时强制使用）
+
+审查 plan 的架构时，使用以下词表描述问题（不用模糊词）：
+
+| 术语 | 含义 | 禁用替代词 |
+|------|------|-----------|
+| **module** | 任何有 interface + implementation 的东西（函数/类/包/Wave 都算） | component / service / unit |
+| **interface** | caller 要正确使用模块所必须知道的一切（类型签名 + invariants + 顺序约束 + 错误模式） | API / signature |
+| **depth** | interface 处的 leverage——caller 学一点接口能驱动多少行为 | （无） |
+| **seam** | 不改原地代码就能改行为的地方（interface 所在位置） | boundary |
+| **adapter** | 在 seam 处满足 interface 的具体物 | （无） |
+| **leverage** | caller 从深度获得的——每学一单位接口获得更多能力 | （无） |
+| **locality** | 维护者从深度获得的——变更集中在一处而非摊到 caller | （无） |
+
+为什么强制词表：consistent language is the whole point——模糊词（component/service/API）会稀释语义，让架构讨论变成各说各话。
+
+#### deletion test（判断 Wave 是否值得存在）
+
+对每个 Wave 问："删掉它会集中复杂度，还是只是移动它？"
+
+- **集中复杂度**（删掉后复杂度在 N 个 caller 里重新冒出来）→ Wave 在赚自己的 keep，值得存在
+- **只是移动**（删掉后复杂度消失，或只是从 Wave 里搬到 caller 里）→ Wave 是 pass-through，考虑合并到 caller 或删除
+
+#### 两 adapter 判据（判断 seam 是否真实）
+
+Wave 引入的 seam（依赖注入点 / 接口抽象）必须有**至少 2 个 adapter**，否则是假 seam：
+
+- 1 个 adapter = 假 seam（纯 indirection，只是加了一层没意义的抽象）
+- 2+ 个 adapter = 真 seam（确实有跨 seam 变化的东西）
+
+例外：如果 plan 里明确写了"未来会加第二个 adapter"（如先支持 Stripe，下个 topic 加 PayPal），可以接受 1 个 adapter，但要在 Wave description 里标注。
+
+### plan 审查 quiz 三问（架构维度）
+
+审完每个 Wave 后，对着三问检查：
+
+1. **粒度对不对？**
+   - 太粗：一个 Wave 改 5+ 文件 / 跨多个不相关功能 → 拆
+   - 太细：一个 Wave 只改几行 / 多个 Wave 强依赖串成一条线 → 合
+
+2. **blocking edges（dependsOn）对不对？**
+   - 每个 Wave 只依赖**真正 gate 它的** Wave（不依赖它也能跑的不该声明依赖）
+   - 检查假依赖：把 dependsOn 里某条删掉，Wave 还能独立跑吗？能就是假依赖
+
+3. **该合并还是再拆？**
+   - 两个 Wave 总是一起 commit / 一起测 / 一起 review → 合并
+   - 一个 Wave 内有"可以先做一半、另一半独立做"的部分 → 拆
+
 ### coverage 的关键校验点
 
 这是三个维度里最易漏的。重点查：
