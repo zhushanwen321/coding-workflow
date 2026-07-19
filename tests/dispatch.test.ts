@@ -369,6 +369,147 @@ describe("dispatch dev（U20-U21）", () => {
     expect(w1Result.validation.extraCommitReuse).toContain("W2");
     expect(w2Result.validation.extraCommitReuse).toContain("W1");
   });
+
+  it("U21c: W2 dependsOn W1，先提交 W2（W1 未 committed）→ W2 拒绝 committed + 标 unsatisfiedDeps", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "u21c", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    // plan 含 W1 + W2（W2 dependsOn W1）—— 链式依赖。
+    const chainPlan = makeValidPlanJson({
+      waves: [
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "change2" }], dependsOn: ["W1"] },
+      ],
+    });
+    dispatch({ action: "plan", topicId, planJson: chainPlan }, deps);
+    passPlanReview(store, topicId);
+    passTddPlanGate(store, topicId);
+
+    // agent 跳过 W1，直接提交 W2（W1 未 committed）—— 拓扑违规。
+    const result = dispatch(
+      {
+        action: "dev",
+        topicId,
+        tasks: [{ waveId: "W2", commitHash: realCommitHash }],
+      },
+      deps,
+    );
+
+    // W2 不应被 committed（拓扑阻断）。
+    const topic = store.loadTopic(topicId);
+    expect(topic!.waves.find((w) => w.id === "W2")!.committed).toBeNull();
+    // W1 也未 committed（本次没传 W1）。
+    expect(topic!.waves.find((w) => w.id === "W1")!.committed).toBeNull();
+
+    // taskResults 标 unsatisfiedDeps + reason。
+    const taskResults = (result as Record<string, unknown>).taskResults as Array<{
+      waveId: string;
+      validation: { valid: boolean; reason?: string; unsatisfiedDeps?: string[] };
+    }>;
+    const w2Result = taskResults.find((t) => t.waveId === "W2")!;
+    expect(w2Result.validation.valid).toBe(false);
+    expect(w2Result.validation.unsatisfiedDeps).toContain("W1");
+    expect(w2Result.validation.reason).toContain("dependency_unsatisfied");
+    expect(w2Result.validation.reason).toContain("W1");
+  });
+
+  it("U21d: 同一批次提交 W1+W2（W2 dependsOn W1）→ 两个都 committed（同批次有效算满足）", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "u21d", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    const chainPlan = makeValidPlanJson({
+      waves: [
+        { id: "W1", changes: [{ file: "src/app.ts", action: "create", description: "change1" }], dependsOn: [] },
+        { id: "W2", changes: [{ file: "src/app.ts", action: "create", description: "change2" }], dependsOn: ["W1"] },
+      ],
+    });
+    dispatch({ action: "plan", topicId, planJson: chainPlan }, deps);
+    passPlanReview(store, topicId);
+    passTddPlanGate(store, topicId);
+
+    // 一次 cw(dev) 同时提交 W1 和 W2（W2 dependsOn W1）—— 同批次 W1 有效算满足 W2 依赖。
+    const result = dispatch(
+      {
+        action: "dev",
+        topicId,
+        tasks: [
+          { waveId: "W1", commitHash: realCommitHash },
+          { waveId: "W2", commitHash: realCommitHash },
+        ],
+      },
+      deps,
+    );
+
+    // 两个 wave 都 committed（拓扑满足，同批次内链式）。
+    const topic = store.loadTopic(topicId);
+    expect(topic!.waves.find((w) => w.id === "W1")!.committed).toBe(realCommitHash);
+    expect(topic!.waves.find((w) => w.id === "W2")!.committed).toBe(realCommitHash);
+
+    const taskResults = (result as Record<string, unknown>).taskResults as Array<{
+      waveId: string;
+      validation: { valid: boolean; unsatisfiedDeps?: string[] };
+    }>;
+    const w2Result = taskResults.find((t) => t.waveId === "W2")!;
+    expect(w2Result.validation.valid).toBe(true);
+    expect(w2Result.validation.unsatisfiedDeps).toBeUndefined();
+  });
+
+  it("U21e: dependsOn 指向未知 waveId → 拒绝 committed + 标 missingDeps", () => {
+    const { deps, store } = makeDeps();
+    const createResult = dispatch(
+      { action: "create", slug: "u21e", objective: "obj", workspacePath: tmpDir },
+      deps,
+    );
+    const topicId = createResult.topicId;
+    confirmClarify(store, topicId);
+    passSpecReview(store, topicId);
+    // W1 dependsOn 不存在的 WGhost（plan-parser 不校验存在性，只检环——这里要兜底）。
+    const ghostPlan = makeValidPlanJson({
+      waves: [
+        {
+          id: "W1",
+          changes: [{ file: "src/app.ts", action: "create", description: "change1" }],
+          dependsOn: ["WGhost"],
+        },
+      ],
+    });
+    dispatch({ action: "plan", topicId, planJson: ghostPlan }, deps);
+    passPlanReview(store, topicId);
+    passTddPlanGate(store, topicId);
+
+    const result = dispatch(
+      {
+        action: "dev",
+        topicId,
+        tasks: [{ waveId: "W1", commitHash: realCommitHash }],
+      },
+      deps,
+    );
+
+    // W1 不应被 committed（依赖指向未知 waveId）。
+    const topic = store.loadTopic(topicId);
+    expect(topic!.waves.find((w) => w.id === "W1")!.committed).toBeNull();
+
+    const taskResults = (result as Record<string, unknown>).taskResults as Array<{
+      waveId: string;
+      validation: { valid: boolean; reason?: string; missingDeps?: string[] };
+    }>;
+    const w1Result = taskResults.find((t) => t.waveId === "W1")!;
+    expect(w1Result.validation.valid).toBe(false);
+    expect(w1Result.validation.missingDeps).toContain("WGhost");
+    expect(w1Result.validation.reason).toContain("dependency_unsatisfied");
+    expect(w1Result.validation.reason).toContain("WGhost");
+  });
 });
 
 // ── U22-U24c: dispatch test ─────────────────────────────────

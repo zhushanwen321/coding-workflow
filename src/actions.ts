@@ -1035,6 +1035,57 @@ export function handleDev(
     }
   }
 
+  // Step 1c: dependsOn 拓扑校验（gate fail，阻断 committed）。
+  // wave 的 dependsOn 必须都已 committed，否则该 wave 视为 invalid 不写入。
+  // 「已 committed」包含两个来源：
+  //   1. topic.waves 里 committed !== null 的 wave（历史批次已落盘）
+  //   2. 本次批次内 commit 校验通过（validation.valid）的 wave（同一 cw(dev) 调用内串行提交）
+  // 第二点的意义：agent 可以一次 cw(dev) 同时提交 W1+W2（W2 dependsOn W1）——
+  // 只要 W1 在本次 commit 校验通过，W2 的依赖就算满足。
+  //
+  // 不存在的 dependsOn waveId（指向未定义 wave）：视为未满足，标 missingDeps。
+  // plan-parser 只检环不检存在性，这里兜底——agent 写错 waveId 会被拓扑校验挡下。
+  const committedSet = new Set<string>();
+  for (const w of topic.waves) {
+    if (w.committed !== null) committedSet.add(w.id);
+  }
+  // 同批次有效 task 的 waveId 也算满足（事务里会一起 committed）。
+  for (const t of taskResults) {
+    if (t.validation.valid) committedSet.add(t.waveId);
+  }
+  const waveIdKnown = new Set(topic.waves.map((w) => w.id));
+  for (const t of taskResults) {
+    const wave = topic.waves.find((w) => w.id === t.waveId);
+    const deps = wave?.dependsOn ?? [];
+    if (deps.length === 0) continue;
+    const unsatisfied: string[] = [];
+    const missing: string[] = [];
+    for (const dep of deps) {
+      if (!waveIdKnown.has(dep)) {
+        missing.push(dep);
+      } else if (!committedSet.has(dep)) {
+        unsatisfied.push(dep);
+      }
+    }
+    if (unsatisfied.length > 0 || missing.length > 0) {
+      // 拓扑不满足：标 invalid，阻断该 wave committed。
+      // 若 commit 本身也无效，保留原 reason（不被拓扑覆盖，commit 校验是更前置的问题）。
+      t.validation.unsatisfiedDeps = unsatisfied;
+      t.validation.missingDeps = missing;
+      if (t.validation.valid) {
+        t.validation.valid = false;
+        const parts: string[] = [];
+        if (unsatisfied.length > 0) {
+          parts.push(`dependsOn 未 committed: ${unsatisfied.join(", ")}`);
+        }
+        if (missing.length > 0) {
+          parts.push(`dependsOn 指向未知 waveId: ${missing.join(", ")}`);
+        }
+        t.validation.reason = `dependency_unsatisfied (${parts.join("; ")})`;
+      }
+    }
+  }
+
   const invalidTasks = taskResults.filter((t) => !t.validation.valid);
 
   // Step 2: 计算流转后状态（progressive：已 developed 则原地停留）。

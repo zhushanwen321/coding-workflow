@@ -68,6 +68,17 @@ export interface CommitValidation {
    * commit 是 Wave 级验证锚点——共享 commit 让两个 Wave 的验证脱节。
    */
   extraCommitReuse?: string[];
+  /**
+   * dependsOn 中尚未 committed 的 waveId 列表（gate fail，阻断 committed）。
+   * handleDev 拓扑校验填充：wave 的 dependsOn 必须都已 committed，否则该 wave 不写入。
+   * 同批次 cw(dev) 内有效提交的 wave 也算 committed（允许一次调用提交 W1+W2 链式依赖）。
+   */
+  unsatisfiedDeps?: string[];
+  /**
+   * dependsOn 中指向未知 waveId（不在 topic.waves 内）的列表（gate fail）。
+   * plan-parser 只检环不检存在性，这里兜底防 agent 写错 waveId。
+   */
+  missingDeps?: string[];
 }
 
 /** git 可执行文件缺失判定（ENOENT = 基础设施异常，应 throw 而非吞掉）。 */
