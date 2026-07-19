@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 
 # CW CLI topic artifacts (delivery documents, per-topic working files)
 .xyz-harness/
+
+# batch-tracer skill 输出（代码分析报告，本地产物不入库）
+.tracers/
