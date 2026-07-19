@@ -58,8 +58,10 @@ import { dispatch } from "./dispatch.js";
 import { GitValidator, reviewIssueCheck } from "./gate.js";
 import { runInit } from "./init.js";
 import { encodeCwd } from "./path-encoding.js";
-import type { TaskShapeId } from "./shapes/types.js";
 import { generateReport, genSpecMd, type ReportDocs } from "./report.js";
+import type { TaskShapeId } from "./shapes/types.js";
+import { getSkill, listSkills, SKILL_NAMES } from "./skills/registry.js";
+import type { SkillReadOutput } from "./skills/types.js";
 import { computeStats, computeStatsAll } from "./stats.js";
 import { CwStore } from "./store.js";
 import {
@@ -1039,6 +1041,31 @@ async function main(argv: string[]): Promise<void> {
   if (action === "init") {
     const result = runInit(workspacePath);
     process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
+    return;
+  }
+
+  // cw skill —— 只读、不进状态机、不需 topic。
+  // 子命令用 parsed._[1]（cw 首个子命令模式）：
+  //   cw skill list            → 列出所有 skill（name/summary/trigger）
+  //   cw skill                 → 默认等同 list（避免空操作）
+  //   cw skill <name>          → 返回该 skill 的完整 body
+  if (action === "skill") {
+    const sub = parsed._[1];
+    if (sub === undefined || sub === "list") {
+      const output = { skills: listSkills() };
+      process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
+      return;
+    }
+    const name = String(sub);
+    const skill = getSkill(name);
+    if (!skill) {
+      process.stderr.write(
+        `错误：skill not found: ${name}. Available: ${SKILL_NAMES.join(", ")}\n`,
+      );
+      process.exit(EXIT_CW_ERROR);
+    }
+    const output: SkillReadOutput = { name: skill.name, body: skill.body };
+    process.stdout.write(JSON.stringify(output, null, JSON_INDENT) + "\n");
     return;
   }
 
