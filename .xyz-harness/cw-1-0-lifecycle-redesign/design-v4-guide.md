@@ -174,6 +174,7 @@ v4 的改进：
 | **verify/test/retrospect 退化成空壳人审**（「请人审方向」一句话）| 必须列具体业务问题 + 字段定义 + 机器 gate（见 §3.7）|
 | **让 cw 判断业务判断的对错**（越界）| cw 只做结构化存储 + guidance 提示 + 结构校验，业务判断由 agent 产出 |
 | **每层定义完全不同的业务判断字段** | 核心字段统一（necessity/sufficiency/tradeoffs/risks），各层差异用 layerSpecific KV |
+| **judgeByExpected 重算 expected**（wave test 从 slice techPlan 契约语义地推导 expected）| cw 是 agent-agnostic 不做业务判断，无法从自由文本 ERR scenario/strategy 推导结构化 expected，违反核心定位。改为 cw 实跑测试验 pass/fail（机器验证的真正价值），expected 由 agent 自填自负责 |
 
 ---
 
@@ -437,16 +438,16 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
 - design-v4-epic.md（v4 二期重构完：顶层概念统一为 4 层×8 步产物名；basedOnParent 单字段替代 usedDecisions + specCoverage；abandonedRefs 结构化字段替代 boolean；ReplanInput 判别联合；含结构化业务判断 verifyJudgment/testJudgment/retrospectData）
 - design-v4-feature.md（v4 二期重构完，和 epic 同构：featurePlan（spec + sliceSplit）；SpecSection 降级为 featurePlan.spec 内部字段；FR/AC/UC 的 status=abandoned + replacedBy 链）
 - design-v4-slice.md（v4 二期重构完，和 epic/feature 同构：slicePlan（techPlan + waveSplit）；TechSection 体系（TC/IF/DM/ERR/TD）；wave 不继承 TD，对齐 feature 不让 slice 继承 SpecDecision）
+- design-v4-wave.md（v4 二期重构完，和 epic/feature/slice 机制同构：wavePlan（testCases）；唯一执行型 scope（execute = dev 写代码，递归出口）；test 机器验证（cw 实跑测试验全 pass，不信任 agent 声明）；plan 状态特化（from 加 verified）；wave 是叶子纯承受者不发起 replan）
 - execute 递归可视化图（~/.agent/diagrams/cw-execute-recursive.svg）
 - **design-v4-guide.md（本指南，已同步 v4 二期概念）**
 
 ### 待完成（按优先级）
 
-1. **design-v4-wave.md**：流程同 epic，重点写 plan = 写测试代码、execute = dev、test = 跑测试、机器验证机制（judgeByExpected）；wave 的业务判断偏测试覆盖（testCases 覆盖所有代码路径吗、边界条件想到没）
-2. **stale 文档**：跨层影响面传播（replan 触发的子孙过期同步）
-3. **claim 文档**：多 agent 并行时的并发互斥
-4. **ADR 文档**：重要决策跨 epic 复用
-5. **research 服务文档**：decision type=research 时调外部查询
+1. **stale 文档**：跨层影响面传播（replan 触发的子孙过期同步）
+2. **claim 文档**：多 agent 并行时的并发互斥
+3. **ADR 文档**：重要决策跨 epic 复用
+4. **research 服务文档**：decision type=research 时调外部查询
 
 ### 历史文档（不要回退到这些）
 
