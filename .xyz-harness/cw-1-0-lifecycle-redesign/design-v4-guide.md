@@ -246,6 +246,13 @@ replan 是这个项目最复杂的机制，必须讲清楚。
 
 纯撤销场景（`replacementContent` 为空）：accept-replan 的语义变成「下游确认不再依赖被废弃项」，下游只能选「确认不再依赖」或「abort」，没有「换新版本」选项。
 
+**跨层规则：投影类 plan 项不被下游 `basedOnParent` 继承**。投影类 plan 项指 **SpecDecision（feature 的 decisions 章节）/ TechDecision（slice 的 TD 章节）**——它们是 Clarification 的 plan 层投影（`sourceClarification` 直接引用 Clarification），跟随 Clarification replan，**不独立持有 status/replacedBy**。如果下游继承了它们，会制造「无法被 replan 作废但又被下游引用」的矛盾：
+
+- feature 的 SpecDecision 不被下游 slice 继承（slice 只继承 Clarification + FR/AC/UC id）
+- slice 的 TechDecision 不被下游 wave 继承（wave 只继承 Clarification + TC/IF/DM/ERR id）
+
+这个规则在 [feature §5.4](./design-v4-feature.md#54-spec-变更走统一-replan) 和 [slice §5.2](./design-v4-slice.md#52-各类型详解--为什么不做强引用-gate) 各自文档里也明说了，本指南作为跨层通用规则集中陈述。
+
 ### 6.3 关键规则
 
 - **replan 不改 status**（原地不动，只加记录 + 在下游 abandonedRefs 追加记录）
@@ -271,6 +278,16 @@ replan 是这个项目最复杂的机制，必须讲清楚。
 ### 6.5 影响面只往下传（DAG 性质）
 
 epic→feature→slice→wave，不反向。跨 epic 影响（全局架构决策）用 ADR，不在 epic replan 内。
+
+**四层的 replan 角色**：
+
+| 层 | replan 角色 | 说明 |
+|---|---|---|
+| **epic** | 纯发起者 | 顶层，`basedOnParent` 永远为空，不会承受上游 replan，只能改自己的 Clarification 标下游 feature |
+| **feature / slice** | 双向 | 既改自己的 plan 项标下游（feature 改 FR/AC/UC 标 slice；slice 改 TC/IF/DM/ERR 标 wave），又被上游标被阻塞（feature 被 epic 改 Clarification 标；slice 被 feature 改 FR/AC/UC 标）|
+| **wave** | 纯承受者 | 叶子，不发起 replan（wave 没有 `childUnitIds`），只承受上游 slice replan 的 abandonedRefs |
+
+feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色」段有详述（[feature §6](./design-v4-feature.md#6-feature-状态机) / [slice §6](./design-v4-slice.md#6-slice-状态机)）。
 
 ---
 
@@ -314,7 +331,7 @@ epic→feature→slice→wave，不反向。跨 epic 影响（全局架构决策
 | `abandoned` | plan 项已废弃（Clarification / FR / AC / UC 的 status 值）|
 | `replacedBy` | 被谁替代（指向新版本 id，沿链查询）|
 | `abandonedRefs` | 下游的废弃引用及处理状态（结构化字段 `AbandonedRef[]`，非 boolean；空数组 = 不阻塞）|
-| `refKind` | 废弃引用的类型（`"clarification"` / `"specItem"`，影响下游 accept 时的决策性质）|
+| `refKind` | 废弃引用的类型（`"clarification"` / `"specItem"` / `"techItem"`，影响下游 accept 时的决策性质）|
 | `resolvedAt` | 废弃引用何时被处理（空 = 未处理、阻塞中；非空 = 已解锁）|
 | `resolvedAction` | 废弃引用怎么处理（`"accept"` / `"abort"`）|
 | `basedOnParent` | 下游引用了父层哪些 plan 项（`string[]`，append-only 历史记录，原 usedDecisions + specCoverage 合并）|
@@ -419,17 +436,17 @@ epic→feature→slice→wave，不反向。跨 epic 影响（全局架构决策
 
 - design-v4-epic.md（v4 二期重构完：顶层概念统一为 4 层×8 步产物名；basedOnParent 单字段替代 usedDecisions + specCoverage；abandonedRefs 结构化字段替代 boolean；ReplanInput 判别联合；含结构化业务判断 verifyJudgment/testJudgment/retrospectData）
 - design-v4-feature.md（v4 二期重构完，和 epic 同构：featurePlan（spec + sliceSplit）；SpecSection 降级为 featurePlan.spec 内部字段；FR/AC/UC 的 status=abandoned + replacedBy 链）
+- design-v4-slice.md（v4 二期重构完，和 epic/feature 同构：slicePlan（techPlan + waveSplit）；TechSection 体系（TC/IF/DM/ERR/TD）；wave 不继承 TD，对齐 feature 不让 slice 继承 SpecDecision）
 - execute 递归可视化图（~/.agent/diagrams/cw-execute-recursive.svg）
 - **design-v4-guide.md（本指南，已同步 v4 二期概念）**
 
 ### 待完成（按优先级）
 
-1. **design-v4-slice.md**：流程同 epic，重点写 plan = 技术方案 + 拆 wave；verify/test/retrospect 业务判断按 §3.7 + slice 特化（技术选型权衡 / 接口契约风险等）
-2. **design-v4-wave.md**：流程同 epic，重点写 plan = 写测试代码、execute = dev、test = 跑测试、机器验证机制（judgeByExpected）；wave 的业务判断偏测试覆盖（testCases 覆盖所有代码路径吗、边界条件想到没）
-3. **stale 文档**：跨层影响面传播（replan 触发的子孙过期同步）
-4. **claim 文档**：多 agent 并行时的并发互斥
-5. **ADR 文档**：重要决策跨 epic 复用
-6. **research 服务文档**：decision type=research 时调外部查询
+1. **design-v4-wave.md**：流程同 epic，重点写 plan = 写测试代码、execute = dev、test = 跑测试、机器验证机制（judgeByExpected）；wave 的业务判断偏测试覆盖（testCases 覆盖所有代码路径吗、边界条件想到没）
+2. **stale 文档**：跨层影响面传播（replan 触发的子孙过期同步）
+3. **claim 文档**：多 agent 并行时的并发互斥
+4. **ADR 文档**：重要决策跨 epic 复用
+5. **research 服务文档**：decision type=research 时调外部查询
 
 ### 历史文档（不要回退到这些）
 

@@ -398,10 +398,11 @@ interface WorkUnit {
 
 interface AbandonedRef {
   refId: string;              // 被废弃的父层 plan 项 id（如 "D2" 或 "FR1"）
-  refKind: "clarification" | "specItem";  // 引用类型——影响下游响应语义，见下方说明
+  refKind: "clarification" | "specItem" | "techItem";  // 引用类型——影响下游响应语义，见下方说明
   // refKind 是对 replacementContent.kind 的粗分类（类型塌缩）：
   //   kind="Clarification" → refKind="clarification"
   //   kind ∈ {FR, AC, UC} → refKind="specItem"
+  //   kind ∈ {TC, IF, DM, ERR}（slice 层扩展）→ refKind="techItem"
   // 粗分类理由：阻塞机制不区分具体 spec 项类型，只区分「上游决策变更 vs 下游范围变更」两种 guidance 语义
   resolvedAt?: string;        // 何时被处理（空 = 未处理，下游阻塞中；非空 = 已处理，解锁）
   resolvedAction?: "accept" | "abort";  // 怎么处理的（accept = 接受新版本/确认不再依赖；abort = 整个下游不要了）
@@ -411,14 +412,15 @@ interface AbandonedRef {
 
 **refKind 的语义差异**（阻塞机制统一，但 guidance 提示不同）：
 
-两种引用废弃后的阻塞/解锁机制完全一样（abandonedRefs 追加 → 阻塞 → accept/abort 解锁），但 **guidance 对 agent 的提示不同**，因为对下游含义不同：
+三种引用废弃后的阻塞/解锁机制完全一样（abandonedRefs 追加 → 阻塞 → accept/abort 解锁），但 **guidance 对 agent 的提示不同**，因为对下游含义不同：
 
 | refKind | 含义 | accept 时 guidance 提示 |
 |---|---|---|
 | `clarification` | 上游的某个澄清结论变了（如 epic 的 D2「用 OAuth」换成「自研」）| "这是上游的产品/架构决策变更，评估新结论对你下游的影响，接受或 abort" |
 | `specItem` | 你负责的某个 spec 项（FR/AC/UC）被改/撤了（如 feature 的 FR1 换成 FR1-v2）| "这是你的工作范围变更——评估新 FR/AC 是否仍属你的职责，接受新版本或 abort" |
+| `techItem` | 你依赖的某个技术方案项（TC/IF/DM/ERR）被改/撤了（如 slice 的 IF1 签名变了）| "这是你的技术依赖变更——评估新接口/数据模型是否影响你的实现，接受新版本或 abort" |
 
-阻塞/解锁的机器机制不区分（都是 abandonedRefs 记录），但 agent 看到不同 refKind 会做不同性质的决策（产品决策 vs 范围决策）。
+阻塞/解锁的机器机制不区分（都是 abandonedRefs 记录），但 agent 看到不同 refKind 会做不同性质的决策（产品决策 / 范围决策 / 技术依赖决策）。
 ```
 
 **派生值**：`basedOnAbandoned` 不再是独立字段，而是 `abandonedRefs.some(r => !r.resolvedAt)` 的派生值（有任一未处理记录 = 阻塞中）。
@@ -936,26 +938,29 @@ interface PlanInput {
   featureSplit: FeatureSplit[];   // 存入 plan.featureSplit
 }
 
-// replan 的输入数据（统一处理 Clarification 和 spec 项的废弃）
-// replan 的输入数据（跨层通用：abandonItems/newItems 用判别联合，各层扩展各层的 kind）
-// epic 层只用 Clarification kind；feature 层还可用 FR/AC/UC/Clarification 四种 kind
+// replan 的输入数据（每层定义自己的判别联合，不是跨层通用）
+// 同构的是 replan 的 4 步机制（作废 + 新增 + 沿链查询 + 强制处理），不是 ReplanInput 的类型集合
+// 各层能 replan 的 plan 项类型不同：
+//   epic 只能 replan Clarification（它的 plan 项只有 Clarification）
+//   feature 能 replan Clarification + FR/AC/UC（spec 项也是 plan 项）
+//   slice 能 replan Clarification + FR/AC/UC + TC/IF/DM/ERR（继承的 + techPlan 项）
+// 所以 ReplanInput 的 ReplacementContent 判别联合各层不同，各层文档定义自己的版本
 interface ReplanInput {
   abandonItems: Array<{           // 要废弃的 plan 项
     id: string;                    // 要废弃的 plan 项 id（如 "D2" / "FR1"）
-    refKind: "clarification" | "specItem";  // 引用类型，记录到下游 abandonedRefs.refKind
+    refKind: "clarification" | "specItem" | "techItem";  // 引用类型，记录到下游 abandonedRefs.refKind
     replacementContent?: ReplacementContent;  // 新内容（cw 自动生成新 id，如 "D2-v2"）。空 = 纯撤销
   }>;
   newItems?: Array<NewItem>;       // 新增的独立 plan 项（不替代任何旧项，纯新增）
 }
 
-// 判别联合——类型安全，TS 能穷尽检查，避免 unknown 占位
-// epic 只用 Clarification 分支；feature 用全部四种分支
+// epic 层的 ReplacementContent 判别联合——epic 只能 replan Clarification
 type ReplacementContent =
-  | { kind: "Clarification"; question: string; resolution?: string; type: "research" | "grilling" }
-  // 以下分支由 feature 文档定义（FR/AC/UC 的字段），epic 层不使用
-  | { kind: "FR"; title: string; detail: string; ac: string[] }
-  | { kind: "AC"; condition: string; verification?: "unit" | "manual" | "review" }
-  | { kind: "UC"; actor: string; scenario: string; expectedResult: string };
+  | { kind: "Clarification"; question: string; resolution?: string; type: "research" | "grilling" };
+
+// feature 层的 ReplacementContent = epic 的 + FR/AC/UC 三种 kind（见 feature 文档附录）
+// slice 层的 ReplacementContent = feature 的 + TC/IF/DM/ERR 四种 kind（见 slice 文档附录）
+// 各层在 epic 这个 base 上扩展自己的 kind 分支，不跨层共享同一个类型定义
 
 type NewItem = ReplacementContent;  // 同样判别联合，新增项的形态和替换项一致
 
