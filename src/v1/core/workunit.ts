@@ -26,7 +26,8 @@ import type { Clarification, FeatureClarification } from "./clarifications.js";
 // ExecuteResult（execute 产物基类 + 子类）
 // ═══════════════════════════════════════════════════════════════
 
-/** model §2.5 — execute 产物的基类（预留扩展）。 */
+/** model §2.5 — execute 产物的基类（预留扩展，当前无共享字段）。 */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface ExecuteResult {
   // 共享部分（暂无）
 }
