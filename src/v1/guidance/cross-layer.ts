@@ -100,15 +100,20 @@ export function computeCrossLayerAfterCloseout(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 从 WorkUnitRecord 安全读 status（默认 "created"）。
+ * 从 WorkUnitRecord 安全读 status。
  *
  * WorkUnitRecord 带 `[key: string]: unknown` 索引签名，status 字段以 unknown 透传。
  * 这里按 ExecutionStatus 收窄（store 序列化的是合法 ExecutionStatus 字符串）。
+ *
+ * 数据损坏时（status 缺失或非 string）throw 而非静默回退——避免 cross-layer 把
+ * 损坏记录误判为「非终态」而给出错误的推进 guidance。
  */
 function readStatus(record: { [key: string]: unknown }): ExecutionStatus {
   const s = record.status;
   if (typeof s === "string") {
     return s as ExecutionStatus;
   }
-  return "created";
+  throw new Error(
+    `数据损坏：WorkUnitRecord "${String(record.id ?? "?")}" 的 status 字段缺失或非 string（got ${typeof s}）`,
+  );
 }

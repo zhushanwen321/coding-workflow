@@ -15,6 +15,12 @@
  *   - `extends WorkUnitItem` → 自动补 `id: string` + `status: "active" | "abandoned"` 字段
  *   - 字段上方 JSDoc 注释 → 作为字段说明附在后面
  *
+ * 边界（已知不支持，core 当前未使用）：
+ *   - 仅支持 `Identifier[]` 数组语法，不支持 `Array<T>` / `Map<K,V>` / `Promise<T>` 等容器类型
+ *   - 不支持泛型 interface（core 全部是声明式无泛型 interface）
+ *   - 不支持交叉类型 `A & B`（core 未使用）
+ *   若 core 未来引入这些写法，需扩展 renderMember 的类型分支
+ *
  * IO 说明：本函数读源文件是构建时/测试时调用（不是运行时 IO）。
  *      sourceFilePath 相对于 cwd（调用方保证指向 src/v1/core/*.ts）。
  */

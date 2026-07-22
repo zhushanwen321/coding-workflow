@@ -77,22 +77,25 @@ export function buildFailureHint(failureCount: number): string {
  *
  * 逻辑（§5.1 末段「failureCount 从 statusHistory 派生，统计同一 action 最近连续 fail 次数」）：
  *   从 statusHistory 尾部倒序扫描，统计 note 含 "gate fail" 的连续记录数。
- *   遇到不含 "gate fail" 的记录（或扫到头）即停止。
+ *   遇到不含 "gate fail" 的记录（或 action 不匹配，或扫到头）即停止。
  *
- * 注：当前版本按 note 文本匹配 "gate fail" 标记。currentAction 参数保留为契约
- *      （未来若按 action 分桶统计连续 fail，无需改签名），本版本不参与匹配。
+ * 按 action 分桶统计：只计数 currentAction 的连续 fail 记录。
+ * 这避免了「跨 action 交替失败」时计数错误累加的问题
+ * （如 design-review fail → test fail → design-review fail 应只算 design-review 的 2 次）。
  *
  * @param statusHistory unit.statusHistory 的浅副本（只读扫描，不 mutate）
- * @param currentAction 当前 action 名（契约保留，本版本不参与匹配）
+ * @param currentAction 当前 action 名（按 action 分桶统计的 key）
  */
 export function deriveFailureCount(
   statusHistory: ReadonlyArray<FailureHistoryEntry>,
-  // 保留参数以稳定签名；按 note 匹配时未使用（见上文）。下划线前缀避免 unused 告警。
-  _currentAction: string,
+  currentAction: string,
 ): number {
   let count = 0;
   for (let i = statusHistory.length - 1; i >= 0; i--) {
     const entry = statusHistory[i];
+    if (entry?.action !== currentAction) {
+      break;
+    }
     const note = entry?.note ?? "";
     if (note.includes("gate fail")) {
       count += 1;
