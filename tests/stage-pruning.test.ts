@@ -13,9 +13,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildNextAction, checkLinear, getDevIncompleteMessage, getTestIncompleteMessage, TRANSITIONS } from "../src/state-machine.js";
-import { getShape } from "../src/shapes/registry.js";
-import type { Topic } from "../src/types.js";
+import { buildNextAction, checkLinear, getDevIncompleteMessage, getTestIncompleteMessage, TRANSITIONS } from "../src/legacy/state-machine.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
+import type { Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

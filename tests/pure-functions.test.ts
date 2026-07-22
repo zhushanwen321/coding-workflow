@@ -14,11 +14,11 @@ import { join } from "node:path";
 
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
-import { fileExistsCheck, GitValidator,testCheck } from "../src/gate.js";
-import { encodeCwd } from "../src/path-encoding.js";
-import { parseLitePlan } from "../src/plan-parser.js";
-import { buildNextAction } from "../src/state-machine.js";
-import { type Action,judgeByExpected, type Topic } from "../src/types.js";
+import { fileExistsCheck, GitValidator,testCheck } from "../src/legacy/gate.js";
+import { encodeCwd } from "../src/legacy/path-encoding.js";
+import { parseLitePlan } from "../src/legacy/plan-parser.js";
+import { buildNextAction } from "../src/legacy/state-machine.js";
+import { type Action,judgeByExpected, type Topic } from "../src/legacy/types.js";
 
 // ── 辅助：构造带 gateHistory 的 topic（熔断测试用） ──────────
 

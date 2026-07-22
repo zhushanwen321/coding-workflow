@@ -27,8 +27,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CwStore } from "../src/store.js";
-import type { Topic } from "../src/types.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具（照 retrospect-migration.test.ts 模式）──────────
 

@@ -3,8 +3,8 @@
   "version": "0.1.4",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",
-  "main": "./dist/types.js",
-  "types": "./dist/types.d.ts",
+  "main": "./dist/legacy/types.js",
+  "types": "./dist/legacy/types.d.ts",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -13,8 +13,8 @@
     "cw": "./dist/cli.js"
   },
   "exports": {
-    ".": "./dist/types.js",
-    "./dispatch": "./dist/dispatch.js"
+    ".": "./dist/legacy/types.js",
+    "./dispatch": "./dist/legacy/dispatch.js"
   },
   "files": [
     "dist",

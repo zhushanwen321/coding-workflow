@@ -14,8 +14,8 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { getSkill, listSkills, SKILL_NAMES } from "../src/skills/registry.js";
-import type { SkillListOutput, SkillReadOutput } from "../src/skills/types.js";
+import { getSkill, listSkills, SKILL_NAMES } from "../src/legacy/skills/registry.js";
+import type { SkillListOutput, SkillReadOutput } from "../src/legacy/skills/types.js";
 import {
   createE2eEnv,
   disposeE2eEnv,

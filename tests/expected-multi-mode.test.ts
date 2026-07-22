@@ -25,11 +25,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { dispatch } from "../src/dispatch.js";
-import { GitValidator, tddPlanCheck } from "../src/gate.js";
-import { CwStore } from "../src/store.js";
-import { type Actual, type Expected, judgeByExpected } from "../src/types.js";
-import { readExitStatus } from "../src/actions.js";
+import { dispatch } from "../src/legacy/dispatch.js";
+import { GitValidator, tddPlanCheck } from "../src/legacy/gate.js";
+import { CwStore } from "../src/legacy/store.js";
+import { type Actual, type Expected, judgeByExpected } from "../src/legacy/types.js";
+import { readExitStatus } from "../src/legacy/actions.js";
 import { setupGitRepo } from "./helpers/git.js";
 
 // ── dispatch 测试基建（与 dispatch.test.ts 同构，零 mock） ──────
@@ -698,7 +698,7 @@ describe("AC-8: judgeByExpected / testCheck 纯函数性（无 child_process）"
   it("src/types.ts judgeByExpected 源码不含 child_process / execFileSync / spawn", () => {
     // 读源文件静态检查：判定逻辑不能直接调子进程。
     // 实现阶段把执行逻辑放到 handleTest，judgeByExpected 保持纯函数。
-    const src = readSrc(join(__dirname, "..", "src", "types.ts"));
+    const src = readSrc(join(__dirname, "..", "src", "legacy", "types.ts"));
     // 取 judgeByExpected 函数体区间粗检（全文不含执行类调用即可，函数体更不可能含）。
     expect(src).not.toContain("child_process");
     expect(src).not.toContain("execFileSync");
@@ -707,7 +707,7 @@ describe("AC-8: judgeByExpected / testCheck 纯函数性（无 child_process）"
   });
 
   it("testCheck 不含 child_process 调用（命令执行只在 handleTest）", () => {
-    const src = readSrc(join(__dirname, "..", "src", "gate.ts"));
+    const src = readSrc(join(__dirname, "..", "src", "legacy", "gate.ts"));
     const testCheckBody = extractFunctionBody(src, "function testCheck");
     expect(testCheckBody).toBeTruthy();
     expect(testCheckBody).not.toContain("execFileSync");
@@ -934,7 +934,7 @@ describe("AC-3 执行: handleTest 执行 script.path 判 exit", () => {
     // 不经 shell 解析。现有 runTestRunner 用 shell:true（用于 nodejs/python/java testRunner），
     // 但 AC-10 要求新增的 exit_zero/script 执行路径不经 shell——静态断言 handleTest 函数体内不含 shell:true。
     // （行为层面，script.path 含 '$(exit 1)' 这种 shell 注入串经 shell 会被先解析；不经 shell 则按字面路径。）
-    const actionsSrc = readSrc(join(__dirname, "..", "src", "actions.ts"));
+    const actionsSrc = readSrc(join(__dirname, "..", "src", "legacy", "actions.ts"));
     const handleTestBody = extractFunctionBody(actionsSrc, "function handleTest");
     expect(handleTestBody).toBeTruthy();
     // handleTest 新增的 exit_zero/script 执行路径必须不经 shell。

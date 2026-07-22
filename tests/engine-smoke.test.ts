@@ -19,7 +19,6 @@ import {
   DefaultGateRunner,
   alwaysPassGate,
   alwaysFailGate,
-  type GateSpec,
 } from "../src/engine/gate.js";
 import { InMemoryStore, SystemClock, type EngineDeps } from "../src/engine/deps.js";
 import {

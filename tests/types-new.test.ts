@@ -26,7 +26,7 @@ import type {
   TestRunnerMode,
   Topic,
   Wave,
-} from "../src/types.js";
+} from "../src/legacy/types.js";
 
 describe("W1: 新增类型定义", () => {
   describe("Priority", () => {

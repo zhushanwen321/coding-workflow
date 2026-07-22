@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { Status } from "../src/types.js";
-import { TRANSITIONS } from "../src/state-machine.js";
+import type { Status } from "../src/legacy/types.js";
+import { TRANSITIONS } from "../src/legacy/state-machine.js";
 
 describe("步骤 5：状态重命名（tdd_inited→pre_dev_verified, tested→post_dev_verified）", () => {
   it("Status union 含 pre_dev_verified", () => {

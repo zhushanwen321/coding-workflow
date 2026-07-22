@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ExistenceVerificationStrategy } from "../src/shapes/existence-strategy.js";
-import type { Topic } from "../src/types.js";
+import { ExistenceVerificationStrategy } from "../src/legacy/shapes/existence-strategy.js";
+import type { Topic } from "../src/legacy/types.js";
 
 function makeTopicWithVerifiedArtifacts(): Topic {
   return {

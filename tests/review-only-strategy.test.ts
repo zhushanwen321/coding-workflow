@@ -17,8 +17,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getShape } from "../src/shapes/registry.js";
-import type { Topic } from "../src/types.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
+import type { Topic } from "../src/legacy/types.js";
 
 // 占位 topic——review-only 不读任何字段，空对象强转即可。
 const emptyTopic = {} as Topic;

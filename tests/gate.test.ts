@@ -28,11 +28,11 @@ import {
   redLightCheck,
   runTestRunner,
   tddPlanCheck,
-} from "../src/gate.js";
-import { CwError, type Topic } from "../src/types.js";
+} from "../src/legacy/gate.js";
+import { CwError, type Topic } from "../src/legacy/types.js";
 import { commitFile,setupGitRepo } from "./helpers/git.js";
 import { makeValidClarifyJson, makeValidPlanJson as makePlanJson } from "./helpers/plan.js";
-import { checkLinear as checkLinearExternal } from "../src/state-machine.js";
+import { checkLinear as checkLinearExternal } from "../src/legacy/state-machine.js";
 
 // ── test.json helper（与 plan-parser.test.ts 的 makeValidTestJson 结构一致） ──
 

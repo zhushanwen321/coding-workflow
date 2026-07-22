@@ -29,8 +29,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Topic, TestCase, TestRunnerConfig } from "../src/types.js";
-import { getShape } from "../src/shapes/registry.js";
+import type { Topic, TestCase, TestRunnerConfig } from "../src/legacy/types.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

@@ -20,13 +20,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getShape } from "../src/shapes/registry.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
 import type {
   TaskShape,
   TaskShapeId,
   ReviewStagePolicy,
   VerificationStrategy,
-} from "../src/shapes/types.js";
+} from "../src/legacy/shapes/types.js";
 
 // ── AC-1: TaskShapeId 字面量联合含 "full-tdd"（编译期类型约束锚点） ──
 

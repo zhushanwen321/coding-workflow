@@ -23,8 +23,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { getShape } from "../src/shapes/registry.js";
-import type { Topic } from "../src/types.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
+import type { Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

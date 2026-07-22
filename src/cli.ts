@@ -53,17 +53,17 @@ import {
   type TddPlanParams,
   type TestFixParams,
   type TestParams,
-} from "./actions.js";
-import { dispatch } from "./dispatch.js";
-import { GitValidator, reviewIssueCheck } from "./gate.js";
-import { runInit } from "./init.js";
-import { encodeCwd } from "./path-encoding.js";
-import { generateReport, genSpecMd, type ReportDocs } from "./report.js";
-import type { TaskShapeId } from "./shapes/types.js";
-import { getSkill, listSkills, SKILL_NAMES } from "./skills/registry.js";
-import type { SkillReadOutput } from "./skills/types.js";
-import { computeStats, computeStatsAll } from "./stats.js";
-import { CwStore } from "./store.js";
+} from "./legacy/actions.js";
+import { dispatch } from "./legacy/dispatch.js";
+import { GitValidator, reviewIssueCheck } from "./legacy/gate.js";
+import { runInit } from "./legacy/init.js";
+import { encodeCwd } from "./legacy/path-encoding.js";
+import { generateReport, genSpecMd, type ReportDocs } from "./legacy/report.js";
+import type { TaskShapeId } from "./legacy/shapes/types.js";
+import { getSkill, listSkills, SKILL_NAMES } from "./legacy/skills/registry.js";
+import type { SkillReadOutput } from "./legacy/skills/types.js";
+import { computeStats, computeStatsAll } from "./legacy/stats.js";
+import { CwStore } from "./legacy/store.js";
 import {
   type Action,
   type ActionDeps,
@@ -73,7 +73,7 @@ import {
   type RuntimeEnv,
   type Status,
   type Topic,
-} from "./types.js";
+} from "./legacy/types.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
