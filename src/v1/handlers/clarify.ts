@@ -9,7 +9,7 @@
  * 不变量：clarify 无 gate（只 append），guard 已在 dispatch 层做过。
  */
 import type { ExecutionUnit } from "../core/workunit.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
 import type { ActionResult, ClarifyInput,V1Deps } from "./types.js";
 
 /**
@@ -35,5 +35,6 @@ export function handleClarify(
     unitId: unit.id,
     status: unit.status,
     ok: true,
+    nextAction: buildNextAction(unit, "clarify"),
   };
 }

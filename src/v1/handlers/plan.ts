@@ -10,7 +10,7 @@
  * 不变量：plan 无独立 gate（testCases 结构在 design-review 阶段才验，见 design-review.ts）。
  */
 import type { ExecutionUnit } from "../core/workunit.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
 import type { ActionResult, PlanInput,V1Deps } from "./types.js";
 
 /**
@@ -42,5 +42,6 @@ export function handlePlan(
     unitId: unit.id,
     status: unit.status,
     ok: true,
+    nextAction: buildNextAction(unit, "plan"),
   };
 }

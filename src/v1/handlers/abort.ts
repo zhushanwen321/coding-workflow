@@ -18,7 +18,7 @@ import type { ExecutionStatus, StatusChange } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
-import { saveUnit } from "./internal.js";
+import { buildNextAction, saveUnit } from "./internal.js";
 import type { AbortInput,ActionResult, V1Deps } from "./types.js";
 
 /**
@@ -55,6 +55,7 @@ export function handleAbort(
     unitId: unit.id,
     status: unit.status,
     ok: true,
+    nextAction: buildNextAction(unit, "abort"),
   };
 }
 

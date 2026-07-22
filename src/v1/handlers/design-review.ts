@@ -21,7 +21,13 @@ import {
   testCasesHaveExpected,
   testCasesNonEmpty,
 } from "../rules/gates/design-review.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import {
+  appendFailRecord,
+  buildFailureNextAction,
+  buildNextAction,
+  saveUnit,
+  transitionStatus,
+} from "./internal.js";
 import type { ActionResult, DesignReviewInput,V1Deps } from "./types.js";
 
 /**
@@ -48,15 +54,24 @@ export function handleDesignReview(
     designReviewRisksPresent(input.designReviewJudgment),
   ];
 
-  // 短路：任一 fail → 不改 status、不 save、不写 judgment
+  // 短路：任一 fail → 不改 status、不写 judgment，但 append fail 记录 + 异常 guidance
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {
+    const reason = failed.map((g) => g.report).join("; ");
+    appendFailRecord(deps, unit, "design-review", reason);
+    const { nextAction, failureCount } = buildFailureNextAction(
+      unit,
+      "design-review",
+      reason,
+    );
     return {
       unitId: unit.id,
       status: unit.status,
       gateResults,
       ok: false,
-      error: `design-review gate failed: ${failed.map((g) => g.report).join("; ")}`,
+      error: `design-review gate failed: ${reason}`,
+      nextAction,
+      failureCount,
     };
   }
 
@@ -70,5 +85,6 @@ export function handleDesignReview(
     status: unit.status,
     gateResults,
     ok: true,
+    nextAction: buildNextAction(unit, "design-review"),
   };
 }

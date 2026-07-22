@@ -10,7 +10,7 @@
  */
 import type { ExecutionUnit } from "../core/workunit.js";
 import { createWave } from "../core/workunit.js";
-import { saveUnit } from "./internal.js";
+import { buildNextAction, saveUnit } from "./internal.js";
 import type { ActionResult, CreateInput,V1Deps } from "./types.js";
 
 /**
@@ -37,5 +37,6 @@ export function handleCreate(
     status: unit.status,
     ok: true,
     unit,
+    nextAction: buildNextAction(unit, "create"),
   };
 }

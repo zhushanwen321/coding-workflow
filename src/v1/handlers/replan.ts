@@ -26,7 +26,13 @@ import type {
 import type { ExecutionUnit } from "../core/workunit.js";
 import { checkFreeze } from "../rules/freeze.js";
 import { computeImpact } from "../rules/replan.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import {
+  appendFailRecord,
+  buildFailureNextAction,
+  buildNextAction,
+  saveUnit,
+  transitionStatus,
+} from "./internal.js";
 import type { ActionResult, ReplanInput,V1Deps } from "./types.js";
 
 /**
@@ -62,14 +68,19 @@ export function handleReplan(
   // ── checkFreeze：验 abandoned 条目核心字段未被改/未删 ──
   const freezeViolations = checkFreeze(before, unit);
 
-  // 短路：有 violation → 不 save、不改 statusHistory
+  // 短路：有 violation → 不 save、不改 status，但 append fail 记录 + 异常 guidance
   if (freezeViolations.length > 0) {
+    const reason = freezeViolations.map((v) => v.reason).join("; ");
+    appendFailRecord(deps, unit, "replan", reason);
+    const { nextAction, failureCount } = buildFailureNextAction(unit, "replan", reason);
     return {
       unitId: unit.id,
       status: unit.status,
       ok: false,
-      error: `replan freeze violated: ${freezeViolations.map((v) => v.reason).join("; ")}`,
+      error: `replan freeze violated: ${reason}`,
       freezeViolations,
+      nextAction,
+      failureCount,
     };
   }
 
@@ -90,5 +101,6 @@ export function handleReplan(
     status: unit.status,
     ok: true,
     replanImpact,
+    nextAction: buildNextAction(unit, "replan"),
   };
 }

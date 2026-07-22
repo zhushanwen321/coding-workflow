@@ -14,7 +14,7 @@
  * 不变量：execute 不跑 gate（commit 存在性在 test gate 验，避免 executing 状态因 commit 无效卡死）。
  */
 import type { ExecutionUnit } from "../core/workunit.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
 import type { ActionResult, ExecuteInput,V1Deps } from "./types.js";
 
 /**
@@ -49,5 +49,6 @@ export function handleExecute(
     unitId: unit.id,
     status: unit.status,
     ok: true,
+    nextAction: buildNextAction(unit, "execute"),
   };
 }

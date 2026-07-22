@@ -23,7 +23,13 @@ import {
   testReferencesDesignReview,
   testsAllPass,
 } from "../rules/gates/test.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import {
+  appendFailRecord,
+  buildFailureNextAction,
+  buildNextAction,
+  saveUnit,
+  transitionStatus,
+} from "./internal.js";
 import type { ActionResult, TestInput,V1Deps } from "./types.js";
 
 /**
@@ -49,15 +55,20 @@ export function handleTest(
     testReferencesDesignReview(input.testJudgment, unit.designReviewJudgment),
   ];
 
-  // 短路：任一 fail → 不改 status、不 save、不写产物
+  // 短路：任一 fail → 不改 status、不写产物，但 append fail 记录 + 异常 guidance
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {
+    const reason = failed.map((g) => g.report).join("; ");
+    appendFailRecord(deps, unit, "test", reason);
+    const { nextAction, failureCount } = buildFailureNextAction(unit, "test", reason);
     return {
       unitId: unit.id,
       status: unit.status,
       gateResults,
       ok: false,
-      error: `test gate failed: ${failed.map((g) => g.report).join("; ")}`,
+      error: `test gate failed: ${reason}`,
+      nextAction,
+      failureCount,
     };
   }
 
@@ -72,5 +83,6 @@ export function handleTest(
     status: unit.status,
     gateResults,
     ok: true,
+    nextAction: buildNextAction(unit, "test"),
   };
 }

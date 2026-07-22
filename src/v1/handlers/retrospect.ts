@@ -19,7 +19,13 @@ import {
   lessonsLearnedNonEmpty,
   retrospectCoversJudgments,
 } from "../rules/gates/retrospect.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import {
+  appendFailRecord,
+  buildFailureNextAction,
+  buildNextAction,
+  saveUnit,
+  transitionStatus,
+} from "./internal.js";
 import type { ActionResult, RetrospectInput,V1Deps } from "./types.js";
 
 /**
@@ -40,15 +46,20 @@ export function handleRetrospect(
     retrospectCoversJudgments(input.retrospectData, unit.designReviewJudgment),
   ];
 
-  // 短路：任一 fail → 不改 status、不 save、不写 retrospectData
+  // 短路：任一 fail → 不改 status、不写 retrospectData，但 append fail 记录 + 异常 guidance
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {
+    const reason = failed.map((g) => g.report).join("; ");
+    appendFailRecord(deps, unit, "retrospect", reason);
+    const { nextAction, failureCount } = buildFailureNextAction(unit, "retrospect", reason);
     return {
       unitId: unit.id,
       status: unit.status,
       gateResults,
       ok: false,
-      error: `retrospect gate failed: ${failed.map((g) => g.report).join("; ")}`,
+      error: `retrospect gate failed: ${reason}`,
+      nextAction,
+      failureCount,
     };
   }
 
@@ -62,5 +73,6 @@ export function handleRetrospect(
     status: unit.status,
     gateResults,
     ok: true,
+    nextAction: buildNextAction(unit, "retrospect"),
   };
 }

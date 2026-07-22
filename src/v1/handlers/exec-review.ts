@@ -20,7 +20,13 @@ import {
   execReviewOverallVerdictNonEmpty,
   execReviewReadabilityNonEmpty,
 } from "../rules/gates/exec-review.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import {
+  appendFailRecord,
+  buildFailureNextAction,
+  buildNextAction,
+  saveUnit,
+  transitionStatus,
+} from "./internal.js";
 import type { ActionResult, ExecReviewInput,V1Deps } from "./types.js";
 
 /**
@@ -43,15 +49,20 @@ export function handleExecReview(
     execReviewFollowupActionsWhenNeeded(input.execReviewJudgment),
   ];
 
-  // 短路：任一 fail → 不改 status、不 save、不写 judgment
+  // 短路：任一 fail → 不改 status、不写 judgment，但 append fail 记录 + 异常 guidance
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {
+    const reason = failed.map((g) => g.report).join("; ");
+    appendFailRecord(deps, unit, "exec-review", reason);
+    const { nextAction, failureCount } = buildFailureNextAction(unit, "exec-review", reason);
     return {
       unitId: unit.id,
       status: unit.status,
       gateResults,
       ok: false,
-      error: `exec-review gate failed: ${failed.map((g) => g.report).join("; ")}`,
+      error: `exec-review gate failed: ${reason}`,
+      nextAction,
+      failureCount,
     };
   }
 
@@ -65,5 +76,6 @@ export function handleExecReview(
     status: unit.status,
     gateResults,
     ok: true,
+    nextAction: buildNextAction(unit, "exec-review"),
   };
 }

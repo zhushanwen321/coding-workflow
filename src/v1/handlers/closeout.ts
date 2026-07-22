@@ -16,8 +16,15 @@
  * drift 短路语义：closeout 是终态转换（→ closed 不可逆），drift 即交付物不一致，不允许冻结。
  */
 import type { ExecutionUnit } from "../core/workunit.js";
+import { computeCrossLayerAfterCloseout } from "../guidance/index.js";
 import type { GateResult } from "../rules/gates/types.js";
-import { saveUnit,transitionStatus } from "./internal.js";
+import {
+  appendFailRecord,
+  buildFailureNextAction,
+  buildNextAction,
+  saveUnit,
+  transitionStatus,
+} from "./internal.js";
 import type { ActionResult, CloseoutInput,V1Deps } from "./types.js";
 
 /**
@@ -65,14 +72,19 @@ export function handleCloseout(
     },
   ];
 
-  // 短路：有 drift → 不冻结、不改 status、不 save
+  // 短路：有 drift → 不冻结、不改 status，但 append fail 记录 + 异常 guidance
   if (driftReports.length > 0) {
+    const reason = driftReports.join("; ");
+    appendFailRecord(deps, unit, "closeout", reason);
+    const { nextAction, failureCount } = buildFailureNextAction(unit, "closeout", reason);
     return {
       unitId: unit.id,
       status: unit.status,
       gateResults,
       ok: false,
-      error: `closeout drift check failed: ${driftReports.join("; ")}`,
+      error: `closeout drift check failed: ${reason}`,
+      nextAction,
+      failureCount,
     };
   }
 
@@ -81,10 +93,19 @@ export function handleCloseout(
   transitionStatus(unit, "closeout", unit.evidence.frozenAt);
 
   saveUnit(deps, unit);
+
+  // closeout 后回溯父单元（wave 是叶子，closeout 后按 §7.3 算 crossLayer）。
+  const crossLayer = computeCrossLayerAfterCloseout({
+    store: deps.store,
+    unitId: unit.id,
+    parentUnitId: unit.parentUnitId,
+  });
+
   return {
     unitId: unit.id,
     status: unit.status,
     gateResults,
     ok: true,
+    nextAction: buildNextAction(unit, "closeout", { crossLayer }),
   };
 }
