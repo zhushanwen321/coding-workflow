@@ -48,6 +48,13 @@ v4 的改进：
 - replan 改为「不改 status + 加决策变更记录 + 标子孙过期 + 强制处理」
 - **v4 后期纠正**：verify/test/retrospect 加结构化业务判断（`verifyJudgment`/`testJudgment`/`retrospectData`）。早期版本误读了「诚实区分机器 vs 人」原则，把业务判断整个踢出流程，导致这三步退化成结构检查空壳。纠正后：cw 定义存储结构 + guidance 提示 + 结构校验，agent 产出判断内容（见 §3.7）
 - **v4 二期纠正**（2026-07-20）：顶层概念统一为「4 层×8 步产物名」（Clarification/SpecSection/FR-AC 降级为 plan 内部字段）；下游引用上游统一为 `basedOnParent` 单字段（原 usedDecisions + specCoverage 合并）；废弃词用 abandoned（原 obsolete），跟踪标记用 `abandonedRefs` 结构化字段（原 boolean，含 refKind/resolvedAt/resolvedAction）；ReplanInput 用判别联合保证类型安全（FR/AC/UC/Clarification 四种 kind）；replan 步骤从 3 步改为 4 步（明确「纯撤销场景」+「沿 replacedBy 链查询不重写 basedOnParent」）
+- **v4 三期纠正**（2026-07-21）：WorkUnit 数据结构抽象化 + plan 内部统一
+  - 引入 `WorkUnitItem` 代码层基础类型（id + status + replacedBy），所有支持 replan 追踪的条目（Clarification / FR / AC / UC / 各层 plan item）继承它
+  - 引入 `Plan` 基类（含 `split: Split[]`），所有层 plan 继承；epic/feature 直接用基类，slice/wave 扩展各自字段；WavePlan 的 split 字段冗余但保留换取 WorkUnit.plan 结构全兼容
+  - 三种 Split（FeatureSplit/SliceSplit/WaveSplit）统一为 `Split`（原 handoff §3.5 用户指出的问题）
+  - Clarification 的 status 从三值（`"open"` / `"resolved"` / `"abandoned"`）简为两值（`"active"` / `"abandoned"`），消除 resolution 空/非空与 status open/resolved 的冗余
+  - slice/wave plan 内部字段扁平化：slice plan 不再套 techPlan 子容器（直接是 `techChoices` / `interfaces` / `dataModels` / `errorSpecs` / `decisions`）；wave plan 新增 `tasks` / `files` / `contracts`（调研显示 plan.md 里 100%/83%/50% 出现）
+  - 命名规则：类型名带层前缀全称（`SliceTechChoice` / `WaveTestCase`），字段名不带前缀（`techChoices` / `testCases`）
 
 ---
 
@@ -82,8 +89,8 @@ v4 的改进：
 
 ### 3.4 简单词汇
 
-**字段名用英文**（代码层）：abandoned / replacedBy / abandonedRefs / basedOnParent / staleLog / progressive
-**叙述用中文大白话**（文档层）：已废弃 / 被替代 / 废弃引用及处理状态 / 引用了父层哪些 plan 项 / 废弃同步日志 / 可多次调用
+**字段名用英文**（代码层）：abandoned / replacedBy / abandonedRefs / basedOnParent / progressive
+**叙述用中文大白话**（文档层）：已废弃 / 被替代 / 废弃引用及处理状态 / 引用了父层哪些 plan 项 / 可多次调用
 
 **禁用词清单**：fog / charting / collapse / lock / supersede / drift / cascade / acknowledge / dispatch / payload（除 EpicPayload 类名）
 
@@ -92,6 +99,8 @@ v4 的改进：
 ### 3.5 不引入用不到的概念
 
 每个概念都要问「现在真的需要吗？」不需要就不加。
+
+**代码层抽象不是领域概念**：`WorkUnitItem`（id + status + replacedBy）和 `Plan`（split: Split[]）是代码层 DRY 复用（所有支持 replan 的条目共享一套字段定义；所有层 plan 共享一个基类），不是领域概念。它们不进词表叙述，只在各层文档附录的接口定义里出现。领域概念仍然是 WorkUnit / scope / step / action / status / Clarification / plan / split 等。
 
 **已砍掉的概念**（等真正需要时再加）：
 - 临时 wave（throwaway）：prototype/task 触发的临时执行单元——简化为「决策记录只两种 type」
@@ -107,7 +116,7 @@ v4 的改进：
 - **下游引用记录**：下游 WorkUnit 的 `basedOnParent` 是 append-only 历史记录，**永不重写**——cw 不动 basedOnParent，只在下游的 `abandonedRefs` **追加**一条未处理记录（含 `refKind` / `resolvedAt` / `resolvedAction`）
 - **accept-replan**：只在 `abandonedRefs` 对应记录追加 `resolvedAt` + `resolvedAction: "accept"`，`basedOnParent` 原样保留（历史 id 不换）
 - **abort 不删数据**：状态改 aborted，代码留 git（cw 不管仓库）；连带销毁所有非终态子孙（`alsoAbortsChildren`）
-- **已 closeout 的子孙**：不追加 `abandonedRefs`（那是阻塞用的，对已终态无意义），只走 `staleLog` 日志，不阻塞不强制处理（历史就是历史）
+- **已 closeout 的子孙**：cw 静默忽略（closeout 是真终态不可逆，历史就是历史，不追加 abandonedRefs、不记日志、不通知）。如果真要跟进上游新决策，由后续新 WorkUnit 引用上游新版本重新做
 
 ### 3.7 verify/test/retrospect 是结构化业务判断，不是空壳人审
 
@@ -175,6 +184,10 @@ v4 的改进：
 | **让 cw 判断业务判断的对错**（越界）| cw 只做结构化存储 + guidance 提示 + 结构校验，业务判断由 agent 产出 |
 | **每层定义完全不同的业务判断字段** | 核心字段统一（necessity/sufficiency/tradeoffs/risks），各层差异用 layerSpecific KV |
 | **judgeByExpected 重算 expected**（wave test 从 slice techPlan 契约语义地推导 expected）| cw 是 agent-agnostic 不做业务判断，无法从自由文本 ERR scenario/strategy 推导结构化 expected，违反核心定位。改为 cw 实跑测试验 pass/fail（机器验证的真正价值），expected 由 agent 自填自负责 |
+| **`FeatureSplit` / `SliceSplit` / `WaveSplit` 三种同构类型**（v4 三期否决）| 统一为 `Split`。原 handoff §3.5 用户指出：WorkUnit 是统一结构，split 不应每层一个类型。Split 字段名也统一为 `split`（不带层前缀，靠所在 Plan 类型判别）|
+| **slice plan 套 `techPlan` 子容器**（v4 三期否决）| 扁平化，slice plan 直接展开 `techChoices` / `interfaces` / `dataModels` / `errorSpecs` / `decisions`。子容器是多余包装——把 5 种结构化条目塞进 `techPlan: TechSection[]` 判别联合，既不便于 TS 类型收敛也不便于字段直查 |
+| **Clarification 的 status 三值**（`"open"` / `"resolved"` / `"abandoned"`，v4 三期否决）| 简化为两值（`"active"` / `"abandoned"`）。open/resolved 和 resolution 空/非空冗余——`all-decisions-resolved` gate 本来就检查 resolution 非空，status 再区分 open/resolved 是两套表达同一件事 |
+| **`featurePlan` 作为 feature 层 plan 产物名**（v4 三期否决）| feature 直接用 `Plan` 基类（只含 `split`）。feature 的 spec 在 clarification 里（`feature.clarification.spec`）不在 plan 里，feature plan 不需要独立子类型 |
 
 ---
 
@@ -215,12 +228,16 @@ created / clarifying / planning / verified / executing / tested / retrospected /
 
 | scope | plan 内容 | execute 含义 | verify 业务判断 | test 含义 |
 |---|---|---|---|---|
-| epic | 拆 feature（`epicPlan.featureSplit`）| 启动 feature 层 | feature 拆分 MECE / 方向必要性 / 风险 | feature 全完成后，对照 verifyJudgment 逐条验收 |
-| feature | 写需求 spec（`featurePlan.spec`：SpecSection 集合）+ 拆 slice（`featurePlan.sliceSplit`）| 启动 slice 层 | spec MECE / AC 可验收性 / slice 拆分合理性 | slice 全完成后，对照 verifyJudgment 逐条验收 |
-| slice | 技术方案 + 拆 wave | 启动 wave 层 | 技术选型权衡 / 接口契约风险 | wave 全完成后，对照 verifyJudgment 逐条验收 |
-| wave | 写测试代码 | **dev 写代码** | （测试覆盖判断，详见 wave 文档）| **跑测试**（机器验证）|
+| epic | `Plan.split`（拆 feature）| 启动 feature 层 | feature 拆分 MECE / 方向必要性 / 风险 | feature 全完成后，对照 verifyJudgment 逐条验收 |
+| feature | `Plan.split`（拆 slice）+ clarification.spec（FR/AC/UC）| 启动 slice 层 | spec MECE / AC 可验收性 / slice 拆分合理性 | slice 全完成后，对照 verifyJudgment 逐条验收 |
+| slice | `SlicePlan`（继承 Plan）: `split`（拆 wave）+ `techChoices` / `interfaces` / `dataModels` / `errorSpecs` / `decisions` | 启动 wave 层 | 技术选型权衡 / 接口契约风险 | wave 全完成后，对照 verifyJudgment 逐条验收 |
+| wave | `WavePlan`（继承 Plan）: `testCases` + `tasks` + `files` + `contracts`（`split` 字段冗余但保留，wave 是叶子不拆下一层）| **dev 写代码** | （测试覆盖判断，详见 wave 文档）| **跑测试**（机器验证）|
 
-> **顶层概念只两个维度**：4 层 × 8 步产物名（`epicPlan` / `featurePlan` / `slicePlan` / `wavePlan`）。Clarification / SpecSection / FR-AC 这些降级为各层 plan 的**内部字段**，不作为顶层概念暴露。
+> **feature 的边界（v4 三期明确）**：feature 的 spec 在 clarification 里（`feature.clarification.spec`），**不在 plan 里**。feature plan 直接用 `Plan` 基类，只含 `split`（拆 slice）。
+>
+> **顶层概念只两个维度**：4 层 × 8 步产物名（epic/feature 直接用 `Plan` 基类，slice/wave 用继承 `Plan` 的 `SlicePlan` / `WavePlan`）。Clarification / FR-AC / 各层 plan 内部条目降级为 plan 的**内部字段**，不作为顶层概念暴露。
+>
+> **`Plan` 基类与 `WorkUnitItem` 是代码层抽象，不是领域概念**：`Plan`（含 `split: Split[]`）是所有层 plan 的基类，`WorkUnitItem`（id + status + replacedBy）是所有支持 replan 的条目的基类。它们只在各层文档附录的接口定义里出现，不进词表，叙述层不单独讨论。
 >
 > **下游引用上游统一为 `basedOnParent` 单字段**：feature 的 `basedOnParent` 引用 epic 的 Clarification id；slice 的 `basedOnParent` 引用 feature 的 Clarification + FR/AC/UC id。机制统一，不区分 usedDecisions / specCoverage 两套字段。
 >
@@ -241,16 +258,18 @@ replan 是这个项目最复杂的机制，必须讲清楚。
 1. **作废指定 plan 项**（append-only）：旧项 `status=abandoned` + `replacedBy` 指向新版本（如 D2→D2-v2）。plan 项可以是 Clarification（epic 层）或 FR/AC/UC（feature 层），机制统一
 2. **新增新版本（如有 replacementContent）**：如果 `abandonItems` 指定了 `replacementContent`，cw 自动生成新 id（如 D2-v2）追加为新版本。**空 = 纯撤销**（只作废不替换）
 3. **查影响面 + 追加记录**（不重写 basedOnParent）：cw 沿 `replacedBy` 链查询「子树里 `basedOnParent` 含被废弃项 id 的 WorkUnit」，在它们的 `abandonedRefs` **追加**一条未处理记录（`{refId, refKind, resolvedAt: undefined}`）。**append-only：cw 只追加记录，不动 basedOnParent**
-4. **标 stale + 强制处理**：`abandonedRefs` 中有未处理记录的下游，**阻塞所有改状态 action**（只读查询不阻塞），必须二选一：
+4. **强制处理**：`abandonedRefs` 中有未处理记录的下游，**阻塞所有改状态 action**（只读查询不阻塞），必须二选一：
    - **accept-replan（接受新版本 / 确认不再依赖）**：cw 在 `abandonedRefs` 对应记录追加 `resolvedAt` + `resolvedAction: "accept"`，`basedOnParent` 原样保留（历史 id 不换）；查询当前生效引用时 cw 沿 replacedBy 链走到最新版本
    - **abort（整个不要了）**：连带销毁子孙（`alsoAbortsChildren`），在新版本下重建
 
 纯撤销场景（`replacementContent` 为空）：accept-replan 的语义变成「下游确认不再依赖被废弃项」，下游只能选「确认不再依赖」或「abort」，没有「换新版本」选项。
 
-**跨层规则：投影类 plan 项不被下游 `basedOnParent` 继承**。投影类 plan 项指 **SpecDecision（feature 的 decisions 章节）/ TechDecision（slice 的 TD 章节）**——它们是 Clarification 的 plan 层投影（`sourceClarification` 直接引用 Clarification），跟随 Clarification replan，**不独立持有 status/replacedBy**。如果下游继承了它们，会制造「无法被 replan 作废但又被下游引用」的矛盾：
+**跨层规则：投影类 plan 项不被下游 `basedOnParent` 继承**。投影类 plan 项指 **Decision**（feature 的 decisions 章节 / slice 的 decisions 字段）——它是 Clarification 的 plan 层投影（`sourceClarification` 直接引用 Clarification，id 直接对齐 Clarification 的 id 如 D3），跟随 Clarification replan，**不独立持有 status/replacedBy**。如果下游继承了 Decision，会制造「无法被 replan 作废但又被下游引用」的矛盾：
 
-- feature 的 SpecDecision 不被下游 slice 继承（slice 只继承 Clarification + FR/AC/UC id）
-- slice 的 TechDecision 不被下游 wave 继承（wave 只继承 Clarification + TC/IF/DM/ERR id）
+- feature 的 Decision 不被下游 slice 继承（slice 只继承 Clarification + FR/AC/UC id）
+- slice 的 Decision 不被下游 wave 继承（wave 只继承 Clarification + TC/IF/DM/ERR id）
+
+> **v4 三期命名统一**：原 feature 的 `SpecDecision` / slice 的 `TechDecision` / `SliceDecision` 三个名字统一为 `Decision`（跨层共享类型，feature 和 slice 都用 Decision）。Decision 的 id 直接对齐 Clarification（如 D3），不再是 TD1/TD2 等独立编号。
 
 这个规则在 [feature §5.4](./design-v4-feature.md#54-spec-变更走统一-replan) 和 [slice §5.2](./design-v4-slice.md#52-各类型详解--为什么不做强引用-gate) 各自文档里也明说了，本指南作为跨层通用规则集中陈述。
 
@@ -261,7 +280,7 @@ replan 是这个项目最复杂的机制，必须讲清楚。
 - **accept-replan 不动 basedOnParent**（append-only）：只在 `abandonedRefs` 对应记录追加 `resolvedAt` + `resolvedAction: "accept"`，历史引用 id 原样保留
 - **abandonedRefs 是结构化字段，不是 boolean**：一条记录含 `refId` / `refKind` / `resolvedAt` / `resolvedAction`，cw 能精确知道「哪几个已处理、哪几个没处理」（boolean 做不到这点，所以用结构化字段）
 - **abort 连带销毁所有非终态子孙**（父挂子没法活）
-- **已 closeout 的子孙**：不追加 `abandonedRefs`（那是阻塞用的），只走 `staleLog`（只记不阻塞）
+- **已 closeout 的子孙**：cw 静默忽略（不追加 abandonedRefs、不记日志、不通知），历史就是历史。真要跟进上游新决策由后续新 WorkUnit 重新做
 - **代码不删**（cw 不管 git，commit 留 git，新 feature 可参考）
 
 ### 6.4 多次 replan（D2→D2-v2→D2-v3）影响面查询
@@ -309,17 +328,21 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
      · retrospect：列出如何对照 verifyJudgment 复盘判断错误 + lessonsLearned 必填 gate
      · **禁止**写成「请人审 X」一句话了事——必须列具体业务问题清单
 6. X 状态机（9 状态流转图）
-7. 这一层的关键概念（epic=Clarification，feature=SpecSection（作为 `featurePlan.spec` 内部字段），slice=技术方案，wave=testCases）
+7. 这一层的关键概念（epic=Clarification；feature=clarification.spec 条目（FR/AC/UC）；slice=slice plan 的条目（SliceTechChoice / SliceInterface / SliceDataModel / SliceErrorSpec / Decision）；wave=wave plan 的条目（WaveTestCase / WaveTask / WaveFile / WaveContract））
 8. 命令一览（§8.0 命令约定直接引用，只写本层命令列表）
 9. execute 递归（直接引用 epic，可省略）
 10. 后续文档（更新）
 11. 设计原则（继承 epic 的 15 条，补充本层特有）
-附录：接口（含 verifyJudgment/testJudgment 字段，类型引用 epic 不重复定义）
+附录：接口（含 verifyJudgment/testJudgment 字段，类型引用 epic 不重复定义；plan 内部条目继承 `WorkUnitItem`，plan 产物继承 `Plan` 基类）
 ```
 
-**重点**：每步详解要给具体例子（feature 的 `featurePlan.spec` SpecSection 长咋样、wave 的 testCase 长咋样），不要空讲。**verify/test/retrospect 不能写成空壳**——必须有具体的业务问题清单 + 字段定义 + gate，不能只写「请人审」。
+**重点**：每步详解要给具体例子（feature 的 clarification.spec 条目 FR/AC/UC 长咋样、wave 的 WaveTestCase 长咋样），不要空讲。**verify/test/retrospect 不能写成空壳**——必须有具体的业务问题清单 + 字段定义 + gate，不能只写「请人审」。
 
-**v4 二期概念体系提醒**：新文档（slice/wave）写时遵循「4 层×8 步产物名」顶层体系（`slicePlan` / `wavePlan`），Clarification/SpecSection/FR-AC 作为 plan 内部字段，不再作为顶层概念。下游引用上游统一用 `basedOnParent` 单字段，废弃跟踪用 `abandonedRefs` 结构化字段（含 `refKind` / `resolvedAt` / `resolvedAction`）。
+**v4 概念体系提醒**（三期最新）：
+- **顶层概念只两个维度**：4 层 × 8 步产物名。epic/feature 直接用 `Plan` 基类，slice/wave 用继承 `Plan` 的 `SlicePlan` / `WavePlan`（命名规则见 §8.4）。Clarification / FR-AC / 各层 plan 内部条目都是 plan 的内部字段，不作为顶层概念暴露
+- **代码层抽象 `WorkUnitItem` + `Plan` 不是领域概念**：写文档时不要把它们当领域概念讨论，只在附录接口定义里出现（见 §3.5、§8.4）
+- **下游引用上游统一用 `basedOnParent` 单字段**，废弃跟踪用 `abandonedRefs` 结构化字段（含 `refKind` / `resolvedAt` / `resolvedAction`）
+- **Clarification 的 status 是两值**（`active` / `abandoned`），不是三值——resolution 空/非空已能表达「想清楚没」，status 再开/resolved 是冗余
 
 ---
 
@@ -329,20 +352,22 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
 
 | 字段 | 含义 |
 |---|---|
-| `abandoned` | plan 项已废弃（Clarification / FR / AC / UC 的 status 值）|
-| `replacedBy` | 被谁替代（指向新版本 id，沿链查询）|
+| `active` / `abandoned` | plan 项的 status 值（`WorkUnitItem` 共享字段，所有支持 replan 的条目都有；active=生效中，abandoned=已废弃）。v4 三期从原三值（open/resolved/abandoned）简化为两值，消除「resolution 空/非空」与「status open/resolved」的冗余 |
+| `replacedBy` | 被谁替代（指向新版本 id，沿链查询；`WorkUnitItem` 共享字段）|
 | `abandonedRefs` | 下游的废弃引用及处理状态（结构化字段 `AbandonedRef[]`，非 boolean；空数组 = 不阻塞）|
 | `refKind` | 废弃引用的类型（`"clarification"` / `"specItem"` / `"techItem"`，影响下游 accept 时的决策性质）|
 | `resolvedAt` | 废弃引用何时被处理（空 = 未处理、阻塞中；非空 = 已解锁）|
 | `resolvedAction` | 废弃引用怎么处理（`"accept"` / `"abort"`）|
 | `basedOnParent` | 下游引用了父层哪些 plan 项（`string[]`，append-only 历史记录，原 usedDecisions + specCoverage 合并）|
-| `staleLog` | 废弃同步日志（只对已 closeout 下游，不阻塞不强制处理）|
 | `alsoAbortsChildren` | abort 连带销毁子 |
 | `progressive` | 可多次调用 |
-| `resolution` | 决策的答案 |
-| `clarifications` | Clarification 列表（clarify 阶段产物，原 decisionRecords）|
-| `featurePlan` | feature 层 plan 产物（含 `spec` + `sliceSplit`）|
-| `spec` | feature 需求 spec（SpecSection 集合，`featurePlan.spec` 内部字段）|
+| `resolution` | 决策的答案（空 = 还没想清楚，对应 Clarification 的 `status: "active"`）|
+| `clarifications` | Clarification 列表（clarify 阶段产物，原 decisionRecords）。**形态不对称**：epic/slice/wave 是 `clarifications: Clarification[]` 数组；feature 有 `spec` 子结构所以是容器对象 `clarification: { clarifications, spec }`——读取时 feature 走 `workUnit.clarification.clarifications`，其他层走 `workUnit.clarifications` |
+| `split` | 拆到下一层的清单（所有层 plan 共享字段，原 `featureSplit` / `sliceSplit` / `waveSplit` 统一）。字段名不带层前缀，靠所在 Plan 类型判别语义 |
+| `WorkUnitItem` | 代码层基础类型（id + status + replacedBy），所有支持 replan 追踪的条目继承。**不进词表叙述**，是代码层 DRY 复用不是领域概念，只在各层文档附录出现 |
+| `Plan` | plan 产物的基类（含 `split: Split[]`），所有层 plan 继承。epic/feature 直接用基类；`SlicePlan` / `WavePlan` 扩展各自字段。WavePlan 的 split 冗余但保留换结构兼容。**不进词表叙述**，同 `WorkUnitItem` |
+| `SlicePlan` | slice 层 plan 产物（继承 `Plan`）: `split`（拆 wave）+ `techChoices` / `interfaces` / `dataModels` / `errorSpecs` / `decisions`（扁平字段，v4 三期去掉原 `techPlan` 子容器包装）|
+| `WavePlan` | wave 层 plan 产物（继承 `Plan`）: `testCases` + `tasks` + `files` + `contracts`（v4 三期新增后三项，调研显示 plan.md 里 100%/83%/50% 出现）。`split` 字段冗余但保留（wave 是叶子不拆下一层，保留只为 Plan 结构全兼容）|
 | `abandonItems` | replan 输入：要废弃的 plan 项（含 `id` / `refKind` / `replacementContent?`）|
 | `replacementContent` | replan 输入：替换项的新内容（判别联合，`kind` 区分 Clarification/FR/AC/UC；空 = 纯撤销）|
 | `NewItem` | replan 输入：新增的独立 plan 项（与 `ReplacementContent` 同判别联合形态）|
@@ -364,7 +389,6 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
 | acknowledge 变更 | 接受新版本 |
 | dispatch 命令 | 处理命令 |
 | 输入 payload | 输入数据 |
-| 标 stale | 在 abandonedRefs 追加记录 |
 | 换 id（把 basedOnParent 的旧 id 改成新 id）| 沿 replacedBy 链查询，basedOnParent 不动（append-only）|
 | verify 阶段「请人审方向」 | 列出该层该回答的业务问题（必要性/MECE/权衡/风险），让 agent 填 verifyJudgment |
 | test 阶段「集成验证」 | 逐条对照 verifyJudgment 验收（必要性兑现了吗、每个风险实际表现、每个妥协代价）|
@@ -379,6 +403,18 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
 - **DAG**（有向无环图）
 - **HITL**（需要真人）
 - **AFK**（agent 独自完成）
+
+### 8.4 命名规则（v4 三期确立）
+
+v4 三期重构确立了 plan 内部条目的命名规则，新写/改各层文档时严格遵守：
+
+| 规则 | 说明 |
+|---|---|
+| **类型名带层前缀全称** | slice/wave 的 plan 内部条目类型名带层前缀（`SliceTechChoice` / `SliceInterface` / `SliceDataModel` / `SliceErrorSpec` / `WaveTestCase` / `WaveTask` / `WaveFile` / `WaveContract`），避免跨层类型重名。**例外：`Decision` 跨层共享不加前缀**（feature 的 `clarification.spec` 和 slice 的 `slicePlan.decisions` 都用 Decision，v4 三期统一）。feature 的条目（FR/AC/UC）不加前缀（只在 feature 层出现，不会跨层重名）|
+| **字段名不带层前缀** | plan 内部字段名不带层前缀（`techChoices` / `interfaces` / `dataModels` / `errorSpecs` / `decisions` / `testCases` / `tasks` / `files` / `contracts`），靠所在 Plan 类型（SlicePlan / WavePlan）判别语义 |
+| **`Plan` 是基类** | 所有层 plan 继承 `Plan` 基类（含 `split: Split[]`）；epic/feature 直接用基类；`SlicePlan` / `WavePlan` 扩展各自字段；WavePlan 的 split 冗余但保留换结构兼容 |
+| **`WorkUnitItem` 是代码层基础** | 所有支持 replan 的条目继承 `WorkUnitItem`（id + status + replacedBy）；**不进词表**（是代码层 DRY 不是领域概念）；进各层文档附录的接口定义 |
+| **投影类不继承 `WorkUnitItem`** | `Decision`（跨层共享类型，投影 Clarification）不独立持有 status/replacedBy，跟随 Clarification replan。id 直接对齐 Clarification（如 D3），不再独立编号（v4 三期统一：原 feature 的 SpecDecision / slice 的 TechDecision / SliceDecision 三名合并为 Decision）|
 
 ---
 
@@ -431,23 +467,22 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
 
 ---
 
-## 11. 当前进度（2026-07-20）
+## 11. 当前进度（2026-07-21）
 
 ### 已完成
 
-- design-v4-epic.md（v4 二期重构完：顶层概念统一为 4 层×8 步产物名；basedOnParent 单字段替代 usedDecisions + specCoverage；abandonedRefs 结构化字段替代 boolean；ReplanInput 判别联合；含结构化业务判断 verifyJudgment/testJudgment/retrospectData）
-- design-v4-feature.md（v4 二期重构完，和 epic 同构：featurePlan（spec + sliceSplit）；SpecSection 降级为 featurePlan.spec 内部字段；FR/AC/UC 的 status=abandoned + replacedBy 链）
-- design-v4-slice.md（v4 二期重构完，和 epic/feature 同构：slicePlan（techPlan + waveSplit）；TechSection 体系（TC/IF/DM/ERR/TD）；wave 不继承 TD，对齐 feature 不让 slice 继承 SpecDecision）
-- design-v4-wave.md（v4 二期重构完，和 epic/feature/slice 机制同构：wavePlan（testCases）；唯一执行型 scope（execute = dev 写代码，递归出口）；test 机器验证（cw 实跑测试验全 pass，不信任 agent 声明）；plan 状态特化（from 加 verified）；wave 是叶子纯承受者不发起 replan）
+- design-v4-epic.md（v4 三期重构完：二期内容（顶层概念统一为 4 层×8 步产物名；basedOnParent 单字段替代 usedDecisions + specCoverage；abandonedRefs 结构化字段替代 boolean；ReplanInput 判别联合；含结构化业务判断 verifyJudgment/testJudgment/retrospectData）+ epic plan 改用 `Plan` 基类（`epicPlan.featureSplit` → `Plan.split`）+ Clarification extends WorkUnitItem + status 简为两值）
+- design-v4-feature.md（v4 三期重构完：二期内容（和 epic 同构）+ 删 `featurePlan`（feature 直接用 `Plan` 基类）+ spec 从 `featurePlan.spec` 迁到 `feature.clarification.spec`（feature 的 clarification 是 `{clarifications, spec}` 容器对象，其他层是 `clarifications` 数组）+ `featureSplit`/`sliceSplit` 统一为 `split` + FR/AC/UC 继承 WorkUnitItem + Clarification status 简为两值）
+- design-v4-slice.md（v4 三期重构完：二期内容（和 epic/feature 同构）+ `slicePlan` 改为继承 `Plan` + 去掉 `techPlan` 子容器，扁平化为 `techChoices`/`interfaces`/`dataModels`/`errorSpecs`/`decisions` + `waveSplit` 统一为 `split` + TechSection 5 类改名为 `SliceTechChoice`/`SliceInterface`/`SliceDataModel`/`SliceErrorSpec` + 各类继承 `WorkUnitItem` + 投影类统一为 `Decision`）
+- design-v4-wave.md（v4 三期重构完：二期内容（和 epic/feature/slice 机制同构）+ `wavePlan` 改为继承 `Plan`（`split` 冗余但保留）+ TestCase 改名 `WaveTestCase` + 新增 `WaveTask`/`WaveFile`/`WaveContract` 三类条目 + 各类继承 `WorkUnitItem`）
 - execute 递归可视化图（~/.agent/diagrams/cw-execute-recursive.svg）
-- **design-v4-guide.md（本指南，已同步 v4 二期概念）**
+- **design-v4-guide.md（v4 三期重构完：WorkUnitItem + Plan 基类 + Split 统一 + Clarification status 简化 + slice/wave plan 扁平化 + wave 新增 tasks/files/contracts + 命名规则确立 + Decision 跨层统一）**
 
 ### 待完成（按优先级）
 
-1. **stale 文档**：跨层影响面传播（replan 触发的子孙过期同步）
-2. **claim 文档**：多 agent 并行时的并发互斥
-3. **ADR 文档**：重要决策跨 epic 复用
-4. **research 服务文档**：decision type=research 时调外部查询
+1. **claim 文档**：多 agent 并行时的并发互斥
+2. **ADR 文档**：重要决策跨 epic 复用
+3. **research 服务文档**：decision type=research 时调外部查询
 
 ### 历史文档（不要回退到这些）
 
@@ -466,6 +501,8 @@ feature / slice 的双向角色在各自文档 §6 末尾「双向 replan 角色
 6. **拿不准的设计，先问用户**，不要自己猜。用户喜欢被问具体问题，不喜欢看 agent 自己绕圈子
 7. **用户偏好**：大白话、具体例子、简洁、不要为了完整而堆砌概念、诚实承认局限
 8. **概念冲突时以 epic/feature 为准**：本指南是元文档，会随重构演进。如果指南遇到旧概念（如 `DecisionRecord` / `usedDecisions` / `obsolete` / `basedOnAbandoned: boolean`）而 epic/feature 用新概念（`Clarification` / `basedOnParent` / `abandoned` / `abandonedRefs` 结构化字段），**以 epic/feature 文档为准**。
+9. **代码层 vs 领域层分层**（v4 三期明确）：`WorkUnitItem`（id + status + replacedBy）和 `Plan`（split: Split[]）是代码层基础类型（DRY 复用），**不是领域概念**。写文档时不要把它们当领域概念讨论，只在附录接口定义里出现（见 §3.5、§8.4）。领域概念仍然是 WorkUnit / scope / step / action / status / Clarification / plan / split 等。
+10. **plan 内部命名规则**（v4 三期确立，见 §8.4）：类型名带层前缀全称（`SliceTechChoice` / `WaveTestCase`），字段名不带前缀（`techChoices` / `testCases`）。Split 统一（不再有 `FeatureSplit` / `SliceSplit` / `WaveSplit`）。Clarification status 是两值（`active` / `abandoned`，不是三值）。
 
 ---
 
