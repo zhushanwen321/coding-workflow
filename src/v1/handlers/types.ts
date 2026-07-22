@@ -66,6 +66,8 @@ export interface V1Deps {
  * - ok=false：gate / freeze 校验失败（status 不改、不 save，带 gateResults / freezeViolations 诊断）
  * - replanImpact：仅 replan handler 填（影响面计算结果）
  * - freezeViolations：仅 replan handler 填（append-only 违反）
+ * - failureCount：同一 action 连续 fail 次数（从 statusHistory 派生，递进提示用）
+ * - nextAction：下一步导航（ok=true 填正常 guidance，ok=false 填异常 guidance）
  */
 export interface ActionResult {
   /** 操作后的 WorkUnit id。 */
@@ -82,19 +84,77 @@ export interface ActionResult {
   replanImpact?: ReplanImpact;
   /** freeze 违规（仅 replan handler 返回）。 */
   freezeViolations?: FreezeViolation[];
+  /** 同一 action 连续 fail 次数（从 statusHistory 派生，跨 session 不重置）。 */
+  failureCount?: number;
+  /** 下一步导航（含 guidance + 结构化字段）。 */
+  nextAction?: V1NextAction;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// V1NextAction（下一步导航结构）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * v5 guidance 系统的下一步导航结构。
+ *
+ * 设计来源：design-v5-cli-and-guidance.md §8。
+ *
+ * - action：下一步 action（同层）；undefined 时按三步路由（见注释）
+ * - guidance：纯文本（正常三段式 / 异常四段式），agent 优先读这个
+ * - unitPath / crossLayer / itemProgress / evidenceProgress：结构化进度字段，供程序化读取
+ */
+export interface V1NextAction {
+  /**
+   * 下一步 action（同层）。
+   * undefined 时的路由（按序）：
+   *   1. crossLayer 非空 → 下一个 unitId = crossLayer.targetUnitId，action 按 kind 推断
+   *   2. crossLayer 空 + status 终态 → 流程结束（无 parent 孤立单元 closeout 后落此分支）
+   *   3. crossLayer 计算失败 → 兜底 cw tree --unitId <当前> 自查
+   */
+  action?: string;
+  /** guidance 纯文本（正常三段式：位置/下一步/schema+约束；异常四段式：位置/问题/怎么修/递进提示）。 */
+  guidance: string;
+  /** 当前 unit 在树里的位置。 */
+  unitPath: {
+    layer: "epic" | "feature" | "slice" | "wave";
+    unitId: string;
+    /** 无 parent 的孤立单元为空（§1.3，任何层都可无 parent）。 */
+    parentUnitId?: string;
+    /** 无 parent 时 = 自身。 */
+    rootUnitId: string;
+  };
+  /** 跨层建议（execute 下沉 / closeout 回溯时填）。 */
+  crossLayer?: {
+    kind: "descend" | "sibling" | "ascend";
+    targetLayer?: "epic" | "feature" | "slice" | "wave";
+    targetUnitId?: string;
+    reason: string;
+  };
+  /** plan 条目进度。 */
+  itemProgress?: Array<{ id: string; status: string }>;
+  /** wave 专属：evidence 填充状态。 */
+  evidenceProgress?: {
+    commitHash: boolean;
+    changedFiles: boolean;
+    testRunResult: boolean;
+    frozen: boolean;
+  };
+  /** 当前状态下同样合法的可选 action（旁路选项）。 */
+  alternatives?: Array<{ action: string; guidance: string }>;
 }
 
 // ═══════════════════════════════════════════════════════════════
 // 各 handler 的 Input 类型
 // ═══════════════════════════════════════════════════════════════
 
-/** create handler 参数（入口 action，不接收已有 unit）。 */
+/** create handler 参数（入口 action，不接收已有 unit）。parent 全可选（每层独立起步，§1.3）。 */
 export interface CreateInput {
   slug: string;
   objective: string;
-  parentUnitId: string;
-  /** 引用父层哪些条目 id（创建时快照，影响面计算基础）。 */
-  basedOnParent: string[];
+  /** 父单元 id（可选——任何层都能无 parent 独立起步）。 */
+  parentUnitId?: string;
+  /** 引用父层哪些条目 id（创建时快照，影响面计算基础）。无 parent 时为空数组。 */
+  basedOnParent?: string[];
 }
 
 /** clarify handler 输入（progressive append clarifications）。 */

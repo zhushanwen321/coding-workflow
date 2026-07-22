@@ -125,8 +125,10 @@ export interface ExecutionUnit extends WorkUnitBase {
 export function createWave(args: {
   slug: string;
   objective: string;
-  parentUnitId: string;
-  basedOnParent: string[];
+  /** 父单元 id（可选——任何层都能无 parent 独立起步，§1.3）。 */
+  parentUnitId?: string;
+  /** 引用父层哪些条目 id（可选，无 parent 时为空数组）。 */
+  basedOnParent?: string[];
   createdAt?: string;
 }): ExecutionUnit {
   const now = args.createdAt ?? new Date().toISOString();
@@ -140,7 +142,7 @@ export function createWave(args: {
     statusHistory: [
       { at: now, action: "create", to: "created" },
     ],
-    basedOnParent: [...args.basedOnParent],
+    basedOnParent: args.basedOnParent ? [...args.basedOnParent] : [],
     abandonedRefs: [],
     objective: args.objective,
     // 产物初始化为空态（各 handler 逐步填充）
