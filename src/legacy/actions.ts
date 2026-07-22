@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- actions 是 7 个 action handler 合并单文件（0.x 迁移代码），拆分是独立 topic。 */
 /**
  * actions — 7 个 action handler 合并单文件（lite 单轨极简版）。
  *

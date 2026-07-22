@@ -25,11 +25,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { readExitStatus } from "../src/legacy/actions.js";
 import { dispatch } from "../src/legacy/dispatch.js";
 import { GitValidator, tddPlanCheck } from "../src/legacy/gate.js";
 import { CwStore } from "../src/legacy/store.js";
 import { type Actual, type Expected, judgeByExpected } from "../src/legacy/types.js";
-import { readExitStatus } from "../src/legacy/actions.js";
 import { setupGitRepo } from "./helpers/git.js";
 
 // ── dispatch 测试基建（与 dispatch.test.ts 同构，零 mock） ──────

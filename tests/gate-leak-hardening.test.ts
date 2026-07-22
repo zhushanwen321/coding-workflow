@@ -22,11 +22,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { dispatch } from "../src/legacy/dispatch.js";
-import { CwError } from "../src/legacy/types.js";
 import { GitValidator } from "../src/legacy/gate.js";
-import { CwStore } from "../src/legacy/store.js";
 import { buildNextAction, REVIEW_TURN_LIMIT, TEST_TURN_LIMIT } from "../src/legacy/state-machine.js";
+import { CwStore } from "../src/legacy/store.js";
 import type { ActionDeps, Topic } from "../src/legacy/types.js";
+import { CwError } from "../src/legacy/types.js";
 import { setupGitRepo } from "./helpers/git.js";
 import { makeValidDevPlanJson } from "./helpers/plan.js";
 

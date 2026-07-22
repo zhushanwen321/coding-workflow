@@ -13,16 +13,16 @@
  * - replan：replan 影响面计算（computeImpact）
  */
 // 状态机（wave 附录 A §9）
-export {
-  WAVE_TRANSITIONS,
-  guardWave,
-  nextWaveStatus,
-  isWaveTerminal,
-} from "./state-machine.js";
 export type {
+  GuardVerdict,
   WaveAction,
   WaveTransition,
-  GuardVerdict,
+} from "./state-machine.js";
+export {
+  guardWave,
+  isWaveTerminal,
+  nextWaveStatus,
+  WAVE_TRANSITIONS,
 } from "./state-machine.js";
 
 // gate 共享类型
@@ -30,29 +30,29 @@ export type { GateResult } from "./gates/types.js";
 
 // design-review 阶段 gate（wave 附录 A §11 / §2.7）
 export {
-  testCasesNonEmpty,
-  testCasesHaveExpected,
-  designReviewNecessityNonEmpty,
-  designReviewSufficiencyComplete,
   designReviewAlternativesNonEmpty,
-  designReviewTradeoffsPresent,
+  designReviewNecessityNonEmpty,
   designReviewRisksPresent,
+  designReviewSufficiencyComplete,
+  designReviewTradeoffsPresent,
+  testCasesHaveExpected,
+  testCasesNonEmpty,
 } from "./gates/design-review.js";
 
 // test 阶段 gate（wave 附录 A §11 / §5.5）
+export type { GitValidator } from "./gates/test.js";
 export {
   commitExists,
-  testsAllPass,
   testReferencesDesignReview,
+  testsAllPass,
 } from "./gates/test.js";
-export type { GitValidator } from "./gates/test.js";
 
 // exec-review 阶段 gate（wave 附录 A §11 / §6.4）
 export {
-  execReviewReadabilityNonEmpty,
   execReviewArchitectureNonEmpty,
-  execReviewOverallVerdictNonEmpty,
   execReviewFollowupActionsWhenNeeded,
+  execReviewOverallVerdictNonEmpty,
+  execReviewReadabilityNonEmpty,
 } from "./gates/exec-review.js";
 
 // retrospect 阶段 gate（wave 附录 A §11 / §7.3）
@@ -62,9 +62,9 @@ export {
 } from "./gates/retrospect.js";
 
 // freeze（replan 时 append-only 校验）
-export { checkFreeze } from "./freeze.js";
 export type { FreezeViolation } from "./freeze.js";
+export { checkFreeze } from "./freeze.js";
 
 // replan 影响面计算
-export { computeImpact } from "./replan.js";
 export type { ReplanImpact } from "./replan.js";
+export { computeImpact } from "./replan.js";

@@ -27,6 +27,9 @@ import type {
   Topic,
 } from "./types.js";
 
+/** coverage 低于此阈值视为不达标（拉低跨 topic 均值 / 触发关注标记）。 */
+const COVERAGE_FLAG_THRESHOLD = 0.5;
+
 // ── 复杂度 ──────────────────────────────────────────────────
 
 export type ComplexityLevel = "simple" | "medium" | "complex";
@@ -165,7 +168,7 @@ function computeEfficiency(topic: Topic): Efficiency {
   const coverageFlag =
     topic.evidence?.coverage !== undefined &&
     topic.evidence.coverageApplicable !== false &&
-    topic.evidence.coverage < 0.5;
+    topic.evidence.coverage < COVERAGE_FLAG_THRESHOLD;
 
   return {
     firstTryPass,

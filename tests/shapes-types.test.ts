@@ -22,9 +22,9 @@ import { describe, expect, it } from "vitest";
 
 import { getShape } from "../src/legacy/shapes/registry.js";
 import type {
+  ReviewStagePolicy,
   TaskShape,
   TaskShapeId,
-  ReviewStagePolicy,
   VerificationStrategy,
 } from "../src/legacy/shapes/types.js";
 

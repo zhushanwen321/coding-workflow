@@ -19,11 +19,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { dispatch } from "../src/legacy/dispatch.js";
-import { CwStore } from "../src/legacy/store.js";
 import { GitValidator } from "../src/legacy/gate.js";
-import { setupGitRepo } from "./helpers/git.js";
-import type { ActionDeps } from "../src/legacy/types.js";
 import type { ExistenceArtifact } from "../src/legacy/shapes/types.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { ActionDeps } from "../src/legacy/types.js";
+import { setupGitRepo } from "./helpers/git.js";
 
 let tmpDir: string;
 let dbPath: string;

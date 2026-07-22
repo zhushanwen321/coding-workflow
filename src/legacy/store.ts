@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- CwStore 是 4 集合 DAO + 事务 + 文件锁 + 旧格式迁移的持久化层（0.x 迁移代码），拆分是独立 topic。 */
 /**
  * CwStore — JSON 文件持久化层（lite 单轨极简版）。
  *
@@ -35,6 +36,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
+import type { ExistenceArtifact,TaskShapeId } from "./shapes/types.js";
 import type {
   Action,
   AdrRecord,
@@ -68,7 +70,6 @@ import type {
   WaveSeed,
 } from "./types.js";
 import { CwError } from "./types.js";
-import type { TaskShapeId, ExistenceArtifact } from "./shapes/types.js";
 
 const JSON_INDENT = 2;
 
@@ -119,6 +120,8 @@ function migrateChanges(
     }));
   }
   // 旧格式：元素是 string
+  // 双重断言必要：typeof changes[0] 收窄不了 changes 的联合数组类型，TS 仍认为是 WaveChange[]|string[]。
+  // eslint-disable-next-line taste/no-unsafe-cast
   return (changes as unknown as string[]).map((s) => {
     LEGACY_PATH_RE.lastIndex = 0;
     const m = s.match(LEGACY_PATH_RE);
@@ -550,12 +553,16 @@ export class CwStore {
     // [HISTORICAL] FR-1: Artifacts 旧格式迁移（平铺 → 嵌套）。
     if (topic.artifacts) {
       topic.artifacts = this.migrateArtifacts(
+        // 双重断言必要：磁盘旧格式 artifacts 结构未知，需以 Record 透传给迁移函数重排。
+        // eslint-disable-next-line taste/no-unsafe-cast
         topic.artifacts as unknown as Record<string, unknown>,
       );
     }
     // [HISTORICAL] FR-3: ReviewIssue 旧数据迁移 category→dimension, file→ref。
     if (topic.reviewIssues) {
       for (const issue of topic.reviewIssues) {
+        // 双重断言必要：旧磁盘数据可能含已删字段（category/file），需 Record 透传给迁移重命名为 dimension/ref。
+        // eslint-disable-next-line taste/no-unsafe-cast
         const raw = issue as unknown as Record<string, unknown>;
         if ("category" in raw && !("dimension" in raw)) {
           (issue as { dimension: ReviewDimension }).dimension =
@@ -569,6 +576,8 @@ export class CwStore {
     // [HISTORICAL] FR-4: processIssues 旧 string[] → ProcessIssue[] 迁移。
     if (topic.retrospectData?.processIssues) {
       topic.retrospectData.processIssues = this.migrateProcessIssues(
+        // 双重断言必要：磁盘旧格式可能是 string[] 或 ProcessIssue[]，TS 无法从结构区分，需透传给迁移函数判定。
+        // eslint-disable-next-line taste/no-unsafe-cast
         topic.retrospectData.processIssues as unknown as
           | ProcessIssue[]
           | string[],
@@ -597,6 +606,8 @@ export class CwStore {
       const topic = this.assembleTopicFromData(record, record.topicId, data);
       if (topic.retrospectData?.processIssues) {
         topic.retrospectData.processIssues = this.migrateProcessIssues(
+          // 双重断言必要：磁盘旧格式可能是 string[] 或 ProcessIssue[]，TS 无法从结构区分，需透传给迁移函数判定。
+          // eslint-disable-next-line taste/no-unsafe-cast
           topic.retrospectData.processIssues as unknown as
             | ProcessIssue[]
             | string[],

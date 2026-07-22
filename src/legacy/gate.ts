@@ -610,15 +610,17 @@ export function tddPlanCheck(
  * @returns 缺 type 时的 fail result；合法（无缺 type 或结构无法推断）时返回 undefined。
  */
 function checkMissingExpectedType(testJson: unknown): TddPlanCheckResult | undefined {
-  if (typeof testJson !== "object" || testJson === null) return undefined;
-  const cases = (testJson as { testCases?: unknown }).testCases;
+  if (typeof testJson !== "object" || testJson === null || !("testCases" in testJson)) {
+    return undefined;
+  }
+  const cases = testJson.testCases;
   if (!Array.isArray(cases)) return undefined;
 
   const missingIds: string[] = [];
   for (const tc of cases) {
     if (typeof tc !== "object" || tc === null) continue;
-    const id = (tc as { id?: unknown }).id;
-    const expected = (tc as { expected?: unknown }).expected;
+    const id = "id" in tc ? tc.id : undefined;
+    const expected = "expected" in tc ? tc.expected : undefined;
     if (expected === undefined || typeof expected !== "object" || expected === null) {
       // expected 缺失或非对象：也算缺 type（schema 会拒绝，这里友好提示）。
       if (typeof id === "string") missingIds.push(id);

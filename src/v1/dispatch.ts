@@ -13,24 +13,16 @@
  *
  * 关键约束：guard fail 和 unit not found 抛错（不可恢复），gate fail 返回结果（可 retry）。
  */
-import { guardWave, type WaveAction } from "./rules/state-machine.js";
 import type { ExecutionUnit } from "./core/workunit.js";
-import type { V1Store } from "./store/v1-store.js";
-import type { WorkUnitRecord } from "./store/schema.js";
 import {
   type AbortInput,
+  type ActionResult,
   type ClarifyInput,
   type CloseoutInput,
   type CreateInput,
   type DesignReviewInput,
   type ExecReviewInput,
   type ExecuteInput,
-  type PlanInput,
-  type ReplanInput,
-  type RetrospectInput,
-  type TestInput,
-  type ActionResult,
-  type V1Deps,
   handleAbort,
   handleClarify,
   handleCloseout,
@@ -42,7 +34,15 @@ import {
   handleReplan,
   handleRetrospect,
   handleTest,
+  type PlanInput,
+  type ReplanInput,
+  type RetrospectInput,
+  type TestInput,
+  type V1Deps,
 } from "./handlers/index.js";
+import { guardWave, type WaveAction } from "./rules/state-machine.js";
+import type { WorkUnitRecord } from "./store/schema.js";
+import type { V1Store } from "./store/v1-store.js";
 
 // ── V1Error（guard 拒绝 / unit not found，走 exit 1）──
 
@@ -154,5 +154,7 @@ function loadExecutionUnit(store: V1Store, unitId: string): ExecutionUnit | null
   const record: WorkUnitRecord | null = store.load(unitId);
   if (!record) return null;
   // WorkUnitRecord 直接序列化了 ExecutionUnit 的全部字段，结构一致。
+  // 双重断言必要：WorkUnitRecord 的索引签名 `[key: string]: unknown` 与 ExecutionUnit 的强类型字段结构不兼容，无法直接断言。
+  // eslint-disable-next-line taste/no-unsafe-cast
   return record as unknown as ExecutionUnit;
 }

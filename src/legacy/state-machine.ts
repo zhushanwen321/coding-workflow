@@ -1,3 +1,4 @@
+/* eslint-disable max-lines-per-function -- buildNextAction 是按 status/action 的状态分派中枢（0.x 迁移代码），拆分是独立 topic。 */
 /**
  * CW 状态机（lite 单轨极简版）：声明式转换表 + 单重 guard + nextAction 组装 + gate 熔断。
  *
@@ -22,7 +23,7 @@ import { buildReviewPrompt, CLARIFY_PROMPT, CONFIRM_CLARIFY_PROMPT, DEV_PLAN_PRO
 // 构成循环依赖：ESM live binding 在函数调用时延迟解析（tdd-strategy 只在函数内调 actions，
 // registry 顶层 new TddVerificationStrategy() 构造函数不触达 actions），运行时安全。
 import { getShape } from "./shapes/registry.js";
-import type { TaskShapeId, ReviewStage } from "./shapes/types.js";
+import type { ReviewStage,TaskShapeId } from "./shapes/types.js";
 import { computeRetrospectDerived } from "./stats.js";
 import type {
   Action,
@@ -48,6 +49,15 @@ export const REVIEW_TURN_LIMIT = 3;
 export const TEST_TURN_LIMIT = 5;
 const SPEC_REVIEW_TURN_LIMIT = 2;
 const PLAN_REVIEW_TURN_LIMIT = 2;
+
+/** firstTryPassRate 展示精度（toFixed 2 位小数）。 */
+const RATE_PRECISION = 2;
+/** review/test 达到此轮数后，nextAction 提前引导 bug 诊断方法论（下一轮即将 overLimit）。 */
+const DIAGNOSE_HINT_TURN = 2;
+/** 分数 → 百分比（coveragePct = passedCount/total * 100）。 */
+const PERCENT = 100;
+/** coverage 低于此百分比视为极低，补告警建议人工审查（而非带极低 coverage 进 closeout）。 */
+const LOW_COVERAGE_THRESHOLD = 50;
 
 /**
  * 从 gateHistory 尾部向前数给定 phase 的连续 fail 次数。
@@ -555,7 +565,7 @@ export function buildDerivedSummary(topic: Topic): string {
   }
   if (d.firstTryPassRate < 1) {
     anomalies.push(
-      `firstTryPassRate=${d.firstTryPassRate.toFixed(2)}（首次通过率未满，反思哪个 phase 首次失败）`,
+      `firstTryPassRate=${d.firstTryPassRate.toFixed(RATE_PRECISION)}（首次通过率未满，反思哪个 phase 首次失败）`,
     );
   }
   const anomalyNote =
@@ -570,7 +580,7 @@ export function buildDerivedSummary(topic: Topic): string {
     `  devRetryCount = ${d.devRetryCount}\n` +
     `  testRetryCount = ${d.testRetryCount}\n` +
     `  redLightConfirmed = ${d.redLightConfirmed}\n` +
-    `  firstTryPassRate = ${d.firstTryPassRate.toFixed(2)}${anomalyNote}`
+    `  firstTryPassRate = ${d.firstTryPassRate.toFixed(RATE_PRECISION)}${anomalyNote}`
   );
 }
 
@@ -925,7 +935,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       );
       // turn>=2 且未 overLimit：提前引导 bug 诊断方法论（下一轮 turn=3 就 overLimit 强制前推）。
       const diagnoseHint =
-        !overLimit && turn >= 2
+        !overLimit && turn >= DIAGNOSE_HINT_TURN
           ? buildDiagnoseHint("review_fix", turn, REVIEW_TURN_LIMIT)
           : "";
       return {
@@ -960,12 +970,12 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
         // retrospect 正是"复盘为什么没过 + 记录 knownRisks"的场所。
         const passedCount = topic.testCases.filter((c) => c.status === "passed").length;
         const coveragePct = topic.testCases.length > 0
-          ? Math.round((passedCount / topic.testCases.length) * 100)
+          ? Math.round((passedCount / topic.testCases.length) * PERCENT)
           : 0;
         // 逃生阀可被 test_fix 刷满 testTurn 但无 case 真正 passed（coverage=0%），此时补告警。
         // review-only 无 coverage 概念（coverageLabel undefined）→ 跳过低覆盖率告警。
         const lowCoverageWarning =
-          testWording.coverageLabel !== undefined && coveragePct < 50
+          testWording.coverageLabel !== undefined && coveragePct < LOW_COVERAGE_THRESHOLD
             ? `\n⚠️ 当前${testWording.coverageLabel}=${coveragePct}%（${passedCount}/${topic.testCases.length}），建议 ask_user 人工审查或调 cw(replan) 重新评估，而非带极低${testWording.coverageLabel}进 closeout。`
             : "";
         return {
@@ -998,7 +1008,7 @@ export function buildNextAction(action: Action, topic: Topic): NextAction {
       // 无 !overLimit 守卫——test_fix 自身无 overLimit 分支（test 的 overLimit 在 test case 接管），
       // turn=2/3/...都会引导，直到 test case 的 overLimit 接管。
       const diagnoseHint =
-        turn >= 2 ? buildDiagnoseHint("test_fix", turn, TEST_TURN_LIMIT) : "";
+        turn >= DIAGNOSE_HINT_TURN ? buildDiagnoseHint("test_fix", turn, TEST_TURN_LIMIT) : "";
       return {
         action: "test",
         guidance: `test_fix 完成（第 ${turn} 轮）。下一步：重新跑全部 testCase，调 cw(test) 提交 actual/screenshotPath。\n\n${EXECUTE_PROMPT}${diagnoseHint}`,

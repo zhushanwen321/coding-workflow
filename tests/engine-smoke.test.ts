@@ -9,32 +9,33 @@
  *
  * 测试用 UnitStateMachine + InMemoryStore + DefaultGateRunner + stub gate（不接 cw 0.x）。
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach,describe, expect, it } from "vitest";
+
+import {
+  L3_TOPIC_CONFIG,
+  type L3TopicAction,
+  type L3TopicPayload,
+  type L3TopicStatus,
+  type L3TopicTestCaseItem,
+  type L3TopicWaveItem,
+} from "../src/engine/configs/l3-topic.js";
+import {
+  L3_WAVE_CONFIG,
+  type L3WaveAction,
+  type L3WavePayload,
+  type L3WaveStatus,
+} from "../src/engine/configs/l3-wave.js";
+import { type EngineDeps,InMemoryStore, SystemClock } from "../src/engine/deps.js";
+import {
+  alwaysFailGate,
+  alwaysPassGate,
+  DefaultGateRunner,
+} from "../src/engine/gate.js";
+import { UnitStateMachine } from "../src/engine/state-machine.js";
 import {
   createUnit,
   type Unit,
 } from "../src/engine/unit.js";
-import { UnitStateMachine } from "../src/engine/state-machine.js";
-import {
-  DefaultGateRunner,
-  alwaysPassGate,
-  alwaysFailGate,
-} from "../src/engine/gate.js";
-import { InMemoryStore, SystemClock, type EngineDeps } from "../src/engine/deps.js";
-import {
-  L3_TOPIC_CONFIG,
-  type L3TopicStatus,
-  type L3TopicAction,
-  type L3TopicPayload,
-  type L3TopicWaveItem,
-  type L3TopicTestCaseItem,
-} from "../src/engine/configs/l3-topic.js";
-import {
-  L3_WAVE_CONFIG,
-  type L3WaveStatus,
-  type L3WaveAction,
-  type L3WavePayload,
-} from "../src/engine/configs/l3-wave.js";
 
 /** 构造测试用的引擎依赖。 */
 function makeDeps(): EngineDeps {

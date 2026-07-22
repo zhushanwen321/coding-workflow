@@ -13,21 +13,21 @@
  * 不变量：transitionStatus / saveUnit / appendFailRecord 是纯编排（IO 仅经 deps）；guidance 填充
  *      读 core 源文件生成 schema（构建期/运行期均可，内部按 action 缓存，每 action 仅读一次）。
  */
-import type { ExecutionUnit } from "../core/workunit.js";
 import type { ExecutionStatus } from "../core/status.js";
+import type { ExecutionUnit } from "../core/workunit.js";
 import {
-  buildFailureHint,
-  deriveFailureCount,
-  buildPrefix,
-  buildNormalGuidance,
   buildFailureGuidance,
+  buildFailureHint,
+  buildNormalGuidance,
+  buildPrefix,
+  deriveFailureCount,
   injectSchema,
   WAVE_STAGE_TEMPLATES,
 } from "../guidance/index.js";
 import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
-import type { V1NextAction, V1Deps } from "./types.js";
+import type { V1Deps,V1NextAction } from "./types.js";
 
 /**
  * 流转 unit status：算 next → append StatusChange → 更新 unit.status。

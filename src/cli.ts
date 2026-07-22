@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable max-lines, max-lines-per-function -- cli.ts 是 argv 分派中枢，按 action 构造参数；拆分是独立 topic（progressive CLI 重构）。 */
 /**
  * cli.ts — CW CLI 入口（agent 唯一入口点）。
  *
@@ -214,8 +215,11 @@ function openInDefaultApp(filePath: string): void {
     } else {
       spawn("xdg-open", [filePath], { detached: true, stdio: "ignore" }).unref();
     }
-  } catch {
-    // open 失败不阻断——路径已返回，调用方可手动 open。
+    // open 失败不阻断主流程：路径已通过 stdout JSON 返回，调用方可手动 open。
+    // 仅向 stderr 记日志以便排查（绝不写 stdout——stdout 是 agent 机器可读 JSON）。
+    // eslint-disable-next-line taste/no-silent-catch -- 尽力而为的 GUI 触发器，失败应静默而非中断 CLI
+  } catch (err) {
+    console.error(`openInDefaultApp: failed to open ${filePath}`, err);
   }
 }
 
@@ -264,6 +268,16 @@ export function resolveEnvJsonPath(workspacePath: string, cwHome?: string): stri
   return join(home, encoded, ENV_JSON_NAME);
 }
 
+/** 类型守卫：对象含字符串 version 字段（替代 `as { version?: unknown }` 全可选结构断言）。 */
+function hasStringVersion(obj: unknown): obj is { version: string } {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "version" in obj &&
+    typeof obj.version === "string"
+  );
+}
+
 /**
  * getCwVersion — 从 package.json 自动读取 cw-cli 版本号。
  *
@@ -278,8 +292,8 @@ export function getCwVersion(): string {
       "..",
       "package.json",
     );
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : "unknown";
+    const pkg: unknown = JSON.parse(readFileSync(pkgPath, "utf8"));
+    return hasStringVersion(pkg) ? pkg.version : "unknown";
   } catch {
     return "unknown";
   }
@@ -317,8 +331,11 @@ export function resolveRuntimeEnv(
       const envParsed = JSON.parse(raw) as EnvJsonFile;
       if (typeof envParsed.agent === "string") envFile.agent = envParsed.agent;
       if (typeof envParsed.llm === "string") envFile.llm = envParsed.llm;
-    } catch {
-      // env.json 损坏 → 静默回退默认值，不阻断 create
+      // env.json 损坏 → 回退默认值，不阻断 create。
+      // 仅向 stderr 记日志（绝不写 stdout——stdout 是 agent 机器可读 JSON）。
+      // eslint-disable-next-line taste/no-silent-catch -- 配置文件损坏应优雅回退默认值，而非中断 create
+    } catch (err) {
+      console.error(`resolveRuntimeEnv: env.json at ${envJsonPath} unreadable, falling back to defaults`, err);
     }
   }
 

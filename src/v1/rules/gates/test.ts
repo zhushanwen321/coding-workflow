@@ -12,7 +12,7 @@
  * - 测试运行结果：gate 不跑测试，testRunResult 由调用方注入（cw 在 handlers 层实跑后传入）。
  */
 import type { TestRunResult } from "../../core/evidence.js";
-import type { TestJudgment, DesignReviewJudgment } from "../../core/judgments.js";
+import type { DesignReviewJudgment,TestJudgment } from "../../core/judgments.js";
 import type { WaveTestCase } from "../../core/plan.js";
 import type { ExecutionUnit } from "../../core/workunit.js";
 import type { GateResult } from "./types.js";

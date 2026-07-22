@@ -11,10 +11,10 @@
  */
 
 import type {
-  Topic,
   ReviewDimension,
   TestCaseSeed,
   TestRunnerConfig,
+  Topic,
 } from "../types.js";
 
 /**

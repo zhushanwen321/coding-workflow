@@ -17,6 +17,9 @@ import type { GateResult } from "./types.js";
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/exec-review.js"`
 export type { GateResult };
 
+/** score 合法上限（与 ExecReviewJudgment 的 1|2|3|4|5 联合类型对齐）。 */
+const MAX_SCORE = 5;
+
 // ═══════════════════════════════════════════════════════════════
 // readability / architecture / overallVerdict 非空（必填字段）
 // ═══════════════════════════════════════════════════════════════
@@ -38,7 +41,7 @@ export function execReviewReadabilityNonEmpty(
       report: "exec-review-readability-non-empty: readability.score 缺失",
     };
   }
-  if (score < 1 || score > 5) {
+  if (score < 1 || score > MAX_SCORE) {
     return {
       passed: false,
       report: `exec-review-readability-non-empty: readability.score=${score} 超出 1-5 范围`,
@@ -65,7 +68,7 @@ export function execReviewArchitectureNonEmpty(
       report: "exec-review-architecture-non-empty: architecture.score 缺失",
     };
   }
-  if (score < 1 || score > 5) {
+  if (score < 1 || score > MAX_SCORE) {
     return {
       passed: false,
       report: `exec-review-architecture-non-empty: architecture.score=${score} 超出 1-5 范围`,

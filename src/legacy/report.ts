@@ -9,8 +9,23 @@
  * 文档（review.md / retrospect.md）用 <details> 默认折叠，可展开。
  */
 
-import type { AdrRecord, ClarifyRecord, SpecSection, SpecVersion, Topic } from "./types.js";
 import type { StatsOutput } from "./stats.js";
+import type { AdrRecord, ClarifyRecord, SpecSection, SpecVersion, Topic } from "./types.js";
+
+// ── 渲染常量 ────────────────────────────────────────────────
+
+/** markdown 标题层级到 HTML 的偏移（# lvl1 → <h3>，避免抢报告主标题）。 */
+const HEADING_OFFSET = 2;
+/** 日期/时间分量补零宽度（mm/dd/hh/mi 均为两位）。 */
+const PAD_WIDTH = 2;
+/** 毫秒/分钟（duration 单位换算）。 */
+const MS_PER_MINUTE = 60000;
+/** 分钟/小时（duration 单位换算）。 */
+const MIN_PER_HOUR = 60;
+/** first-try-pass 达标阈值（>= 视为 dot-pass，否则 dot-warn）。 */
+const FTP_PASS_THRESHOLD = 0.8;
+/** 分数 → 百分比（ftpRate * 100）。 */
+const PERCENT = 100;
 
 // ── gen-spec（FR-1: 生成确认 md） ────────────────────────────
 
@@ -161,7 +176,7 @@ function mdToHtml(md: string): string {
         inList = false;
       }
       const lvl = h[1].length;
-      out.push(`<h${lvl + 2}>${h[2]}</h${lvl + 2}>`); // h3-h6，不抢报告主标题
+      out.push(`<h${lvl + HEADING_OFFSET}>${h[2]}</h${lvl + HEADING_OFFSET}>`); // h3-h6，不抢报告主标题
       continue;
     }
 
@@ -203,10 +218,10 @@ function mdToHtml(md: string): string {
 function formatTime(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(PAD_WIDTH, "0");
+  const dd = String(d.getDate()).padStart(PAD_WIDTH, "0");
+  const hh = String(d.getHours()).padStart(PAD_WIDTH, "0");
+  const mi = String(d.getMinutes()).padStart(PAD_WIDTH, "0");
   return `${mm}-${dd} ${hh}:${mi}`;
 }
 
@@ -214,9 +229,9 @@ function duration(created: string, closed: string): string {
   if (!created || !closed) return "—";
   const diff = new Date(closed).getTime() - new Date(created).getTime();
   if (diff < 0) return "—";
-  const mins = Math.round(diff / 60000);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  const mins = Math.round(diff / MS_PER_MINUTE);
+  if (mins < MIN_PER_HOUR) return `${mins}m`;
+  return `${Math.floor(mins / MIN_PER_HOUR)}h ${mins % MIN_PER_HOUR}m`;
 }
 
 // ── 各模块渲染 ──────────────────────────────────────────────
@@ -252,8 +267,8 @@ function renderOverview(topic: Topic, stats: StatsOutput): string {
   pills.push(pill("dot-info", `${topic.testCases.length} test cases`));
   pills.push(
     pill(
-      ftpRate >= 0.8 ? "dot-pass" : "dot-warn",
-      `${Math.round(ftpRate * 100)}% first-try pass`,
+      ftpRate >= FTP_PASS_THRESHOLD ? "dot-pass" : "dot-warn",
+      `${Math.round(ftpRate * PERCENT)}% first-try pass`,
     ),
   );
   if (eff.totalGateFails > 0) {

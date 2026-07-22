@@ -32,8 +32,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { tddPlanCheck } from "../src/legacy/gate.js";
-import type { Topic } from "../src/legacy/types.js";
 import { getShape } from "../src/legacy/shapes/registry.js";
+import type { Topic } from "../src/legacy/types.js";
 import { makeValidTestJson } from "./helpers/plan.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────

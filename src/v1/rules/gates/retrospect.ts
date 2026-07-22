@@ -12,7 +12,7 @@
  *
  * 不变量：rules 层零 IO。所有 gate 接收已加载的 RetrospectData / DesignReviewJudgment，返回 GateResult。
  */
-import type { RetrospectData, DesignReviewJudgment } from "../../core/judgments.js";
+import type { DesignReviewJudgment,RetrospectData } from "../../core/judgments.js";
 import type { GateResult } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/retrospect.js"`

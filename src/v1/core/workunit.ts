@@ -3,24 +3,24 @@
  *
  * 来源：v5 model §1.4（WorkUnit 顶层接口）、§5.3（通用字段）、§2.5（ExecuteResult）。
  */
-import type {
-  PlanningStatus,
-  ExecutionStatus,
-  StatusChange,
-  AbandonedRef,
-} from "./status.js";
-import type { Plan, WavePlan } from "./plan.js";
+import type { Clarification, FeatureClarification } from "./clarifications.js";
 import type {
   Evidence,
   WaveEvidence,
 } from "./evidence.js";
 import type {
   DesignReviewJudgment,
-  TestJudgment,
   ExecReviewJudgment,
   RetrospectData,
+  TestJudgment,
 } from "./judgments.js";
-import type { Clarification, FeatureClarification } from "./clarifications.js";
+import type { Plan, WavePlan } from "./plan.js";
+import type {
+  AbandonedRef,
+  ExecutionStatus,
+  PlanningStatus,
+  StatusChange,
+} from "./status.js";
 
 // ═══════════════════════════════════════════════════════════════
 // ExecuteResult（execute 产物基类 + 子类）

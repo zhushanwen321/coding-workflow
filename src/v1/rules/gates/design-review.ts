@@ -10,8 +10,8 @@
  * 不变量：rules 层零 IO。所有 gate 接收已加载的数据（ExecutionUnit / DesignReviewJudgment），
  *      返回统一的 GateResult { passed, report }。
  */
-import type { ExecutionUnit } from "../../core/workunit.js";
 import type { DesignReviewJudgment } from "../../core/judgments.js";
+import type { ExecutionUnit } from "../../core/workunit.js";
 import type { GateResult } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/design-review.js"`

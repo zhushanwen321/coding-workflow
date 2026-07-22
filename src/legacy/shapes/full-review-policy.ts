@@ -8,8 +8,8 @@
  * 这里只列 review 阶段（代码审查）的维度，用于事后盲区统计。
  */
 
-import type { ReviewStagePolicy, ReviewStage } from "./types.js";
 import type { ReviewDimension } from "../types.js";
+import type { ReviewStage,ReviewStagePolicy } from "./types.js";
 
 export class FullReviewPolicy implements ReviewStagePolicy {
   readonly id = "full-review";

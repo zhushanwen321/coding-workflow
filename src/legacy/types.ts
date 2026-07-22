@@ -17,8 +17,8 @@
  */
 
 import type { GitValidator } from "./gate.js";
+import type { ExistenceArtifact,TaskShapeId } from "./shapes/types.js";
 import type { CwStore } from "./store.js";
-import type { TaskShapeId, ExistenceArtifact } from "./shapes/types.js";
 
 // ── 状态机值对象 ────────────────────────────────────────────
 

@@ -14,8 +14,8 @@
  *   - gateRunner ← 原型用 DefaultGateRunner，迁移后接 cw 0.x gate.ts 具名函数
  *   - now ← Date.now / new Date().toISOString()
  */
-import type { Unit } from "./unit.js";
 import type { GateRunner } from "./gate.js";
+import type { Unit } from "./unit.js";
 
 /**
  * Unit store 接口 —— 引擎对持久化层的抽象。

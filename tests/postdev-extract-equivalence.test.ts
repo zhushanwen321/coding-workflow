@@ -23,14 +23,14 @@
  *   - script 用真实可执行脚本文件（shebang + chmod）
  */
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync,mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Topic, TestCase, TestRunnerConfig } from "../src/legacy/types.js";
 import { getShape } from "../src/legacy/shapes/registry.js";
+import type { TestCase, TestRunnerConfig,Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

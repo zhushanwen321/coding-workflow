@@ -200,8 +200,9 @@ function extractArtifacts(
     ): a is { path: string; expectedState: "present" | "absent" } =>
       typeof a === "object" &&
       a !== null &&
-      typeof (a as { path?: unknown }).path === "string" &&
-      (((a as { expectedState?: unknown }).expectedState === "present") ||
-        ((a as { expectedState?: unknown }).expectedState === "absent")),
+      "path" in a &&
+      typeof a.path === "string" &&
+      "expectedState" in a &&
+      (a.expectedState === "present" || a.expectedState === "absent"),
   );
 }

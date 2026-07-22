@@ -14,8 +14,8 @@
 
 import { DIAGNOSING_BUGS_SKILL } from "./diagnosing-bugs.js";
 import { IMPROVE_CODEBASE_ARCHITECTURE_SKILL } from "./improve-codebase-architecture.js";
-import { WAYFINDER_SKILL } from "./wayfinder.js";
 import type { SkillEntry, SkillListEntry, SkillName } from "./types.js";
+import { WAYFINDER_SKILL } from "./wayfinder.js";
 
 /**
  * skill 注册表。单一数据源——SKILL_NAMES / listSkills / getSkill 全部从它派生。

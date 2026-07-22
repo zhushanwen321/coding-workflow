@@ -26,17 +26,17 @@ export type {
 
 // dispatch 入口类型
 export type { V1Params } from "./dispatch.js";
-export { V1Error, dispatch } from "./dispatch.js";
+export { dispatch,V1Error } from "./dispatch.js";
 
 // store（外部构造 V1Deps 时需要 V1Store）
+export type { V1JsonFile,WorkUnitRecord } from "./store/schema.js";
 export { V1Store } from "./store/v1-store.js";
-export type { WorkUnitRecord, V1JsonFile } from "./store/schema.js";
 
 // rules（外部测试 / 组合 gate 时需要）
+export type { GuardVerdict,WaveAction } from "./rules/state-machine.js";
 export {
   guardWave,
-  nextWaveStatus,
   isWaveTerminal,
+  nextWaveStatus,
   WAVE_TRANSITIONS,
 } from "./rules/state-machine.js";
-export type { WaveAction, GuardVerdict } from "./rules/state-machine.js";

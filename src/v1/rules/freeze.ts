@@ -14,13 +14,13 @@
  *
  * 不变量：rules 层零 IO。纯函数对比 before/after。
  */
-import type { ExecutionUnit } from "../core/workunit.js";
 import type {
-  WaveTestCase,
-  WaveTask,
-  WaveFile,
   WaveContract,
+  WaveFile,
+  WaveTask,
+  WaveTestCase,
 } from "../core/plan.js";
+import type { ExecutionUnit } from "../core/workunit.js";
 
 // ═══════════════════════════════════════════════════════════════
 // FreezeViolation

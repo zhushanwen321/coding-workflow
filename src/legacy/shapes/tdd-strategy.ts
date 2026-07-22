@@ -17,13 +17,12 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
-import type {
-  ApplyPreDevResultStore,
-  VerificationStrategy,
-  GateResult,
-  VerifyResult,
-  Violation,
-} from "./types.js";
+import {
+  type AppendOnlyViolation,
+  readExitStatus,
+  validateAppendOnly,
+} from "../actions.js";
+import { isPathInsideWorkspace, runTestRunner, tddPlanCheck, testCheck } from "../gate.js";
 import type {
   Actual,
   TestCaseSeed,
@@ -31,12 +30,13 @@ import type {
   Topic,
   WaveSeed,
 } from "../types.js";
-import { isPathInsideWorkspace, runTestRunner, tddPlanCheck, testCheck } from "../gate.js";
-import {
-  readExitStatus,
-  validateAppendOnly,
-  type AppendOnlyViolation,
-} from "../actions.js";
+import type {
+  ApplyPreDevResultStore,
+  GateResult,
+  VerificationStrategy,
+  VerifyResult,
+  Violation,
+} from "./types.js";
 
 /** exit_zero / script 模式 CW 自动执行的结果（exact 模式不在此表，沿用 agent actual）。 */
 type AutoExecResult = { actual: Actual } | { error: string };
