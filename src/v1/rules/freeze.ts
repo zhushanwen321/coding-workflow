@@ -199,6 +199,17 @@ function collectViolations<T extends { id: string; status: "active" | "abandoned
       continue;
     }
 
+    // 情况 1b：status 被翻转（abandoned → active，"复活"废弃条目）
+    if (afterItem.status !== "abandoned") {
+      violations.push({
+        type: "wave_modified_abandoned",
+        itemId: beforeItem.id,
+        field: "status",
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的 status 被改为 "${afterItem.status}"（违反 append-only：abandoned 条目不可复活）`,
+      });
+      continue;
+    }
+
     // 情况 2：核心字段被改
     const changedField = coreChangedFn(beforeItem, afterItem);
     if (changedField) {

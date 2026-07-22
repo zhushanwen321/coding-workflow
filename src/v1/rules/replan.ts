@@ -53,6 +53,12 @@ export interface ReplanImpact {
  * 2. 计算 pendingRebuild：abandonedIds 中，没有任何 preserved unit 的 basedOnParent 引用它的条目 id
  *    （即「失去承接」——被废弃且没有保留的 unit 再承接的条目，提示 agent 重建）
  *
+ * [WAVE-ONLY STUB] model §5.6.2 Step 2 的级联规则要求「父标记受影响 → 所有子孙级联受影响」。
+ * 当前实现只做单层 basedOnParent × abandonedIds 命中判定，不含 parent→child 级联传播。
+ * wave 是叶子（无 childUnitIds），影响面恒空，此简化当前无害。
+ * 上接 slice/feature/epic 层时需补：首批命中后，把 parent 在 aborted 里的 unit 也加入 aborted，
+ * 迭代到不动点（实现多层级联传播）。
+ *
  * @param allUnits 所有相关 unit（含自身 + 子孙；由 handlers 层负责收集传入）
  * @param abandonedIds 本次废弃的条目 id（WorkUnitItem.id，来自上游 spec 条目）
  */

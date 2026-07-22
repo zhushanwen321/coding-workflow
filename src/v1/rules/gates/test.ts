@@ -13,6 +13,8 @@
  */
 import type { TestRunResult } from "../../core/evidence.js";
 import type { TestJudgment, DesignReviewJudgment } from "../../core/judgments.js";
+import type { WaveTestCase } from "../../core/plan.js";
+import type { ExecutionUnit } from "../../core/workunit.js";
 import type { GateResult } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/test.js"`
@@ -164,5 +166,55 @@ export function testReferencesDesignReview(
   return {
     passed: true,
     report: `test-references-design-review: tradeoffs(${designReviewJudgment.tradeoffs.length})/risks(${designReviewJudgment.risks.length}) 全覆盖`,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// test-cases-executed（wave §5.5 / 附录 A line 1244）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * wave §5.5 / 附录 A `test-cases-executed` — 所有 WaveTestCase 都被执行了。
+ *
+ * 两层校验：
+ * - **非 manual 类**：testRunResult 有执行记录（passedCount + failedCount 覆盖非 manual 数量）
+ * - **manual 类**：在 testJudgment.sufficiencyMet.note 有验收记录（manual 测试不机器跑，走退化验证，wave §5.3/§5.8）
+ *
+ * manual 类 WaveTestCase 的验收记录归宿在 testJudgment.sufficiencyMet.note（wave §5.8 line 533）。
+ */
+export function testCasesExecuted(
+  unit: ExecutionUnit,
+  testRunResult: TestRunResult | undefined,
+  testJudgment: TestJudgment,
+): GateResult {
+  const testCases: WaveTestCase[] = unit.plan.testCases;
+  const nonManual = testCases.filter((tc) => tc.type !== "manual");
+  const manual = testCases.filter((tc) => tc.type === "manual");
+
+  // 非 manual 类：验 testRunResult 有足够执行记录
+  const executedCount = testRunResult
+    ? testRunResult.passedCount + testRunResult.failedCount
+    : 0;
+  if (nonManual.length > 0 && executedCount < nonManual.length) {
+    return {
+      passed: false,
+      report: `test-cases-executed: 非 manual 测试用例 ${nonManual.length} 个，但 testRunResult 只记录了 ${executedCount} 次执行`,
+    };
+  }
+
+  // manual 类：验 sufficiencyMet.note 有验收记录
+  if (manual.length > 0) {
+    const note = testJudgment.sufficiencyMet.note;
+    if (!note || note.trim() === "") {
+      return {
+        passed: false,
+        report: `test-cases-executed: 有 ${manual.length} 个 manual 类 WaveTestCase，但 testJudgment.sufficiencyMet.note 为空（manual 测试验收记录归宿，wave §5.8）`,
+      };
+    }
+  }
+
+  return {
+    passed: true,
+    report: `test-cases-executed: 非 manual(${nonManual.length}) 全执行 + manual(${manual.length}) 有验收记录`,
   };
 }

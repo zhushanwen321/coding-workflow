@@ -63,6 +63,11 @@ export function handleAbort(
  *
  * 子孙 record 来自 store（扁平结构），直接读写 record 的 status / statusHistory 字段并 save。
  * 已是终态（closed/aborted）的子孙跳过（不可逆，无需重复 abort）。
+ *
+ * [WAVE-ONLY STUB] model §5.6.2 Step 3 要求级联 abort 时在受影响子孙的 abandonedRefs 追加
+ * { workUnitItemId, abandonedAt }。wave 是叶子（无子孙），此路径当前不会触发。
+ * 上接 slice 层时需补：cascadeAbortChildren 接收 abandonedIds 参数，对每个被 abort 的 child
+ * 追加对应的 abandonedRefs 记录。
  */
 function cascadeAbortChildren(
   parentId: string,

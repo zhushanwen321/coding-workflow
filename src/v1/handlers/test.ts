@@ -19,6 +19,7 @@
 import type { ExecutionUnit } from "../core/workunit.js";
 import {
   commitExists,
+  testCasesExecuted,
   testReferencesDesignReview,
   testsAllPass,
 } from "../rules/gates/test.js";
@@ -40,10 +41,11 @@ export function handleTest(
   // ── 跑测试（IO 通过 deps 注入）──
   const testRunResult = deps.testRunner.run(unit);
 
-  // ── 跑 3 个 gate ──
+  // ── 跑 4 个 gate ──
   const gateResults = [
     commitExists(unit.executeResult.commitHash, deps.gitValidator),
     testsAllPass(testRunResult),
+    testCasesExecuted(unit, testRunResult, input.testJudgment),
     testReferencesDesignReview(input.testJudgment, unit.designReviewJudgment),
   ];
 
