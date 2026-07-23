@@ -72,7 +72,11 @@ export interface PlanningEvidence extends Evidence {
 export interface ChildDeliveryRecord {
   splitSlug: string;
   childUnitId: string;
-  childStatus: "closed" | "aborted";
+  /**
+   * child 最终状态。slice execute 创建 child wave 时为 "pending"（未到终态），
+   * child 进入终态（closed/aborted）时定型为对应值（model §4.1 授权的中间态实现自由度）。
+   */
+  childStatus: "pending" | "closed" | "aborted";
   childEvidenceSummary?: string;
 }
 

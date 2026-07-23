@@ -6,15 +6,17 @@
 import type { Clarification, FeatureClarification } from "./clarifications.js";
 import type {
   Evidence,
+  PlanningEvidence,
   WaveEvidence,
 } from "./evidence.js";
 import type {
   DesignReviewJudgment,
   ExecReviewJudgment,
+  PlanningRetrospectData,
   RetrospectData,
   TestJudgment,
 } from "./judgments.js";
-import type { Plan, WavePlan } from "./plan.js";
+import type { Plan, SlicePlan, WavePlan } from "./plan.js";
 import type {
   AbandonedRef,
   ExecutionStatus,
@@ -79,7 +81,9 @@ export interface WorkUnitBase {
 
 /**
  * model §1.4 — PlanningUnit（epic/feature/slice）。
- * 本 topic 不实现 PlanningUnit 流程，但接口预留（避免后续改 core）。
+ *
+ * 通用接口保持宽松（plan: Plan 基类、evidence: Evidence 基类），各具体层
+ *（如 Slice）通过 extends 收窄为自己的 plan/evidence/retrospectData 子类型。
  */
 export interface PlanningUnit extends WorkUnitBase {
   scope: "epic" | "feature" | "slice";
@@ -90,6 +94,22 @@ export interface PlanningUnit extends WorkUnitBase {
   executeResult: PlanningExecuteResult;
   retrospectData: RetrospectData;
   evidence: Evidence;
+}
+
+/**
+ * model §1.4 / slice 附录 A — slice（PlanningUnit 的具体实现）。
+ *
+ * 收窄字段类型：plan: SlicePlan / evidence: PlanningEvidence /
+ * clarifications: Clarification[] / retrospectData: PlanningRetrospectData。
+ */
+export interface Slice extends PlanningUnit {
+  scope: "slice";
+  status: PlanningStatus;
+  clarifications: Clarification[];
+  plan: SlicePlan;
+  executeResult: PlanningExecuteResult;
+  retrospectData: PlanningRetrospectData;
+  evidence: PlanningEvidence;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -190,5 +210,58 @@ function emptyExecReviewJudgment(): ExecReviewJudgment {
     readability: { score: 1 },
     architecture: { score: 1 },
     overallVerdict: "pass",
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// createSlice 工厂（slice 层入口）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 创建 slice（PlanningUnit）实例。
+ *
+ * 初始化通用字段 + statusHistory 首条（create 事件）。
+ * 产物字段（plan/judgments/evidence）初始化为空态，各 slice handler 逐步填充。
+ */
+export function createSlice(args: {
+  slug: string;
+  objective: string;
+  /** 父单元 id（可选——任何层都能无 parent 独立起步，§1.3）。 */
+  parentUnitId?: string;
+  /** 引用父层哪些条目 id（可选，无 parent 时为空数组）。 */
+  basedOnParent?: string[];
+  createdAt?: string;
+}): Slice {
+  const now = args.createdAt ?? new Date().toISOString();
+  const id = `slice:${args.slug}`;
+  return {
+    id,
+    scope: "slice",
+    slug: args.slug,
+    parentUnitId: args.parentUnitId,
+    status: "created",
+    statusHistory: [
+      { at: now, action: "create", to: "created" },
+    ],
+    basedOnParent: args.basedOnParent ? [...args.basedOnParent] : [],
+    abandonedRefs: [],
+    objective: args.objective,
+    // 产物初始化为空态（各 slice handler 逐步填充）
+    clarifications: [],
+    plan: { split: [], techChoices: [], interfaces: [], dataModels: [], errorSpecs: [], decisions: [] },
+    designReviewJudgment: emptyDesignReviewJudgment(),
+    executeResult: { childUnitIds: [] },
+    retrospectData: {
+      reviewedItems: [],
+      lessonsLearned: "",
+      deliveryVerdict: "failed",
+      childUnitIdsEvidence: [],
+      splitFulfillment: [],
+    },
+    evidence: {
+      generatedAt: "",
+      artifacts: [],
+      childDelivery: [],
+    },
   };
 }

@@ -53,6 +53,22 @@ export interface WaveDesignReviewLayerSpecific {
   tddRedReadinessNote?: string;
 }
 
+/** slice §3 — slice 的 designReviewJudgment.layerSpecific 具名 interface（6 字段，都是人审判断）。 */
+export interface SliceDesignReviewLayerSpecific {
+  /** 每个 SliceTechChoice 的选型理由是否充分。 */
+  techChoiceRationale: string;
+  /** 接口契约设计是否合理（输入/输出/错误码/副作用）。 */
+  interfaceContractNote: string;
+  /** 数据模型合理性（有无冲突、归一化、不变量）。 */
+  dataModelSoundness: string;
+  /** 错误覆盖完整性（每个 IF 的错误路径都有 ERR 吗）。 */
+  errorCoverage: string;
+  /** 技术方案是否可测（依赖注入、mock 点）。 */
+  testabilityNote: string;
+  /** 跨 wave 的接口契约是否对得上。 */
+  crossWaveContractNote: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // TestJudgment（test 阶段产物，仅 ExecutionUnit）
 // ═══════════════════════════════════════════════════════════════
