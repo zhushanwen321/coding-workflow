@@ -69,6 +69,28 @@ export interface SliceDesignReviewLayerSpecific {
   crossWaveContractNote: string;
 }
 
+/**
+ * feature §4.2 — feature 的 designReviewJudgment.layerSpecific 具名 interface（6 字段，都是人审判断）。
+ *
+ * 注意：DesignReviewJudgment.layerSpecific 基类类型当前硬编码为 WaveDesignReviewLayerSpecific
+ *（已知坑4，slice 也同样如此）。本 interface 作为 feature 层运行时约定，feature handler
+ * 用 `as unknown as` 绕过基类类型（与 slice 当前做法一致）。
+ */
+export interface FeatureDesignReviewLayerSpecific {
+  /** spec 的 MECE 整体结论。 */
+  specMeceNote: string;
+  /** 为什么这么拆 slice。 */
+  sliceSplitRationale: string;
+  /** AC 是否真的可验收。 */
+  acVerifiabilityNote: string;
+  /** spec 各字段的一致性自检。 */
+  consistencyNote: string;
+  /** FR-AC 强引用的合理性自检。 */
+  frAcCoverageNote: string;
+  /** inheritedItemIds 是否覆盖了应兑现的 FR/AC。 */
+  sliceSpecCoverageNote: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // TestJudgment（test 阶段产物，仅 ExecutionUnit）
 // ═══════════════════════════════════════════════════════════════

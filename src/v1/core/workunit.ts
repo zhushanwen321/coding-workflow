@@ -112,6 +112,24 @@ export interface Slice extends PlanningUnit {
   evidence: PlanningEvidence;
 }
 
+/**
+ * model §1.4 / feature 附录 A §1 — feature（PlanningUnit 的具体实现）。
+ *
+ * 收窄字段类型：plan: Plan 基类（只 split）/ evidence: PlanningEvidence /
+ * clarifications: FeatureClarification（容器对象，非数组）/ retrospectData: PlanningRetrospectData。
+ * 与 slice 相比：feature 的 clarify 产物形态不对称（容器对象含 spec），
+ * plan 只用 Plan 基类（feature 不产技术方案，只拆 slice）。
+ */
+export interface Feature extends PlanningUnit {
+  scope: "feature";
+  status: PlanningStatus;
+  clarifications: FeatureClarification;
+  plan: Plan;
+  executeResult: PlanningExecuteResult;
+  retrospectData: PlanningRetrospectData;
+  evidence: PlanningEvidence;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ExecutionUnit（wave）— 本 topic 核心实现目标
 // ═══════════════════════════════════════════════════════════════
@@ -249,6 +267,71 @@ export function createSlice(args: {
     // 产物初始化为空态（各 slice handler 逐步填充）
     clarifications: [],
     plan: { split: [], techChoices: [], interfaces: [], dataModels: [], errorSpecs: [], decisions: [] },
+    designReviewJudgment: emptyDesignReviewJudgment(),
+    executeResult: { childUnitIds: [] },
+    retrospectData: {
+      reviewedItems: [],
+      lessonsLearned: "",
+      deliveryVerdict: "failed",
+      childUnitIdsEvidence: [],
+      splitFulfillment: [],
+    },
+    evidence: {
+      generatedAt: "",
+      artifacts: [],
+      childDelivery: [],
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// createFeature 工厂（feature 层入口）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 创建 feature（PlanningUnit）实例。
+ *
+ * 初始化通用字段 + statusHistory 首条（create 事件）。
+ * 产物字段初始化为空态，各 feature handler 逐步填充。与 createSlice 的区别：
+ * - clarifications 是 FeatureClarification 容器对象（含空 spec），不是数组。
+ * - plan 只用 Plan 基类（feature 不产技术方案，只拆 slice，无 techChoices 等）。
+ * - evidence/retrospectData/executeResult 与 slice 同型（PlanningUnit 共享）。
+ */
+export function createFeature(args: {
+  slug: string;
+  objective: string;
+  /** 父单元 id（可选——任何层都能无 parent 独立起步，§1.3）。 */
+  parentUnitId?: string;
+  /** 引用父层哪些条目 id（可选，无 parent 时为空数组）。 */
+  basedOnParent?: string[];
+  createdAt?: string;
+}): Feature {
+  const now = args.createdAt ?? new Date().toISOString();
+  const id = `feature:${args.slug}`;
+  return {
+    id,
+    scope: "feature",
+    slug: args.slug,
+    parentUnitId: args.parentUnitId,
+    status: "created",
+    statusHistory: [
+      { at: now, action: "create", to: "created" },
+    ],
+    basedOnParent: args.basedOnParent ? [...args.basedOnParent] : [],
+    abandonedRefs: [],
+    objective: args.objective,
+    // 产物初始化为空态（各 feature handler 逐步填充）
+    clarifications: {
+      clarifications: [],
+      spec: {
+        functionalRequirements: [],
+        acceptanceCriteria: [],
+        businessCases: [],
+        decisions: [],
+        outOfScope: [],
+      },
+    },
+    plan: { split: [] },
     designReviewJudgment: emptyDesignReviewJudgment(),
     executeResult: { childUnitIds: [] },
     retrospectData: {

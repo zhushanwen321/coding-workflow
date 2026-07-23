@@ -12,6 +12,7 @@
 import type {
   Clarification,
   Decision,
+  FeatureSpec,
 } from "../core/clarifications.js";
 import type { TestRunResult } from "../core/evidence.js";
 import type { ArtifactRef } from "../core/evidence.js";
@@ -273,3 +274,39 @@ export interface PlanSliceInput {
 export interface RetrospectSliceInput {
   retrospectData: PlanningRetrospectData;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// feature 层 handler 的 Input 类型
+// ═══════════════════════════════════════════════════════════════
+//
+// 复用原则（同 slice）：feature 与其他层产物形态相同的阶段直接复用通用 Input
+//（DesignReviewInput / CloseoutInput / ReplanInput / AbortInput），只声明 feature 真正
+// 不同的（FeatureClarifyInput / PlanFeatureInput）。feature execute 不接收 input（按
+// split 自动创建 child slice），故无 ExecuteFeatureInput。retrospect 直接复用
+// RetrospectSliceInput（都是 PlanningRetrospectData），导出类型别名保持命名对称。
+
+/**
+ * feature clarify handler 输入（容器对象，形态不对称）。
+ *
+ * 与通用 ClarifyInput 完全不同：feature 的 clarify 产物是 FeatureClarification 容器
+ *（{ clarifications, spec }），不是裸数组。
+ */
+export interface FeatureClarifyInput {
+  clarifications: Clarification[];
+  spec: FeatureSpec;
+}
+
+/**
+ * feature plan handler 输入（Plan 基类，只 split）。
+ *
+ * 与 slice 的 PlanSliceInput 完全不同：feature 不产技术方案，plan 只拆 slice 清单。
+ */
+export interface PlanFeatureInput {
+  split: Split[];
+}
+
+/**
+ * feature retrospect handler 输入——与 RetrospectSliceInput 同型（PlanningRetrospectData）。
+ * 导出类型别名保持命名对称，不额外定义结构。
+ */
+export type RetrospectFeatureInput = RetrospectSliceInput;

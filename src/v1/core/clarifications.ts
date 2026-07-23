@@ -2,7 +2,7 @@
  * v1 Clarification + Decision（领域模型，零依赖）。
  *
  * 来源：v5 model §5.9（Clarification）、§5.10（Decision）。
- * FeatureClarification/FeatureSpec 类型预留（本 topic 不实现 feature 层）。
+ * FeatureClarification/FeatureSpec 类型（feature 层 clarify 产物，见 workunit.ts 的 createFeature）。
  */
 import type { WorkUnitItem } from "./plan.js";
 
@@ -59,29 +59,45 @@ export interface FeatureClarification {
 }
 
 /**
- * model §6 — feature 的需求规格（FR/AC/UC）。
- * FR/AC/UC 只在 feature 层产生（model §1.3.1）。本 topic 预留类型。
+ * model §6 / feature 附录 A §3 — feature 的需求规格（FR/AC/UC + Decision + 辅助字段）。
+ * FR/AC/UC 只在 feature 层产生（model §1.3.1）。
  */
 export interface FeatureSpec {
+  // 结构化条目（继承 WorkUnitItem）
   functionalRequirements: FunctionalRequirement[];
   acceptanceCriteria: AcceptanceCriterion[];
   businessCases: BusinessCase[];
+
+  // 投影条目（不继承 WorkUnitItem，跟随 Clarification）
+  decisions: Decision[];
+
+  // 规格辅助字段（非 id 化）
+  outOfScope: string[];
+  goals?: string[];
+  /** model §6 枚举，便于跨 feature 统计/排序。 */
+  complexity?: "low" | "medium" | "high" | "unknown";
+
+  // md 章节
+  background?: string;
+  constraints?: string;
 }
 
-/** model §5.7 — 功能需求（extends WorkUnitItem）。 */
+/** model §5.7 — 功能需求（extends WorkUnitItem，独立 replan）。 */
 export interface FunctionalRequirement extends WorkUnitItem {
   title: string;
   detail: string;
+  /** 强引用 AC id（让 FR-AC 覆盖可机器验，v5 feature §2.2）。 */
+  ac: string[];
 }
 
-/** model §5.7 — 验收标准（extends WorkUnitItem）。 */
+/** model §5.7 — 验收标准（extends WorkUnitItem，独立 replan）。 */
 export interface AcceptanceCriterion extends WorkUnitItem {
   condition: string;
-  /** 验证方式（沿用 cw 0.x 命名，不改名）。 */
-  verification: "unit" | "manual" | "review";
+  /** 验证方式（可选，沿用 cw 0.x 命名，不改名）。 */
+  verification?: "unit" | "manual" | "review";
 }
 
-/** model §5.7 — 业务用例（extends WorkUnitItem）。 */
+/** model §5.7 — 业务用例（extends WorkUnitItem，独立 replan）。 */
 export interface BusinessCase extends WorkUnitItem {
   actor: string;
   scenario: string;

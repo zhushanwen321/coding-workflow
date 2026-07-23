@@ -57,6 +57,8 @@ import {
   handleRetrospectSlice,
 } from "./handlers/slice/index.js";
 import type {
+  FeatureClarifyInput,
+  PlanFeatureInput,
   PlanSliceInput,
   RetrospectSliceInput,
 } from "./handlers/types.js";
@@ -99,18 +101,20 @@ function assertUnreachable(_: never): never {
 /**
  * dispatch 入参的联合类型。每个 action 对应一个 { action, unitId?, input }。
  *
- * action 名 wave/slice 共用（create/clarify/plan/.../abort），input 按层不同：
- * - plan：wave 用 PlanInput、slice 用 PlanSliceInput（产物形态完全不同，§plan handler 注释）。
- * - retrospect：wave 用 RetrospectInput、slice 用 RetrospectSliceInput（PlanningRetrospectData 比 RetrospectData 宽）。
- * - 其余 action（clarify/design-review/execute/test/exec-review/closeout/replan/abort）
- *   wave/slice 共用同一 Input（见 handlers/types.ts 复用说明）。
- *   其中 test/exec-review 是 wave 专属，slice dispatch 收到时抛 illegal_transition。
- * - create：input.layer 决定建 wave 还是 slice（默认 'wave'，向后兼容）。
+ * action 名 wave/slice/feature 共用（create/clarify/plan/.../abort），input 按层不同：
+ * - plan：wave 用 PlanInput、slice 用 PlanSliceInput、feature 用 PlanFeatureInput（三者产物形态完全不同）。
+ * - retrospect：wave 用 RetrospectInput、slice/feature 共用 RetrospectSliceInput
+ *   （PlanningRetrospectData 比 RetrospectData 宽；feature 与 slice retrospectData 同型）。
+ * - clarify：wave/slice 共用 ClarifyInput（裸数组），feature 用 FeatureClarifyInput（容器对象，含 spec）。
+ * - 其余 action（design-review/execute/test/exec-review/closeout/replan/abort）
+ *   各层共用同一 Input（见 handlers/types.ts 复用说明）。
+ *   其中 test/exec-review 是 wave 专属，slice/feature dispatch 收到时抛 illegal_transition。
+ * - create：input.layer 决定建哪个层（默认 'wave'，向后兼容；feature 在后续 dispatch wave 接入）。
  */
 export type V1Params =
   | { action: "create"; input: CreateInput }
-  | { action: "clarify"; unitId: string; input: ClarifyInput }
-  | { action: "plan"; unitId: string; input: PlanInput | PlanSliceInput }
+  | { action: "clarify"; unitId: string; input: ClarifyInput | FeatureClarifyInput }
+  | { action: "plan"; unitId: string; input: PlanInput | PlanSliceInput | PlanFeatureInput }
   | { action: "design-review"; unitId: string; input: DesignReviewInput }
   | { action: "execute"; unitId: string; input: ExecuteInput }
   | { action: "test"; unitId: string; input: TestInput }
