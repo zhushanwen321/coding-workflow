@@ -18,7 +18,18 @@
  *
  * 关键约束：guard fail 和 unit not found 抛错（不可恢复），gate fail 返回结果（可 retry）。
  */
-import type { ExecutionUnit, Slice } from "./core/workunit.js";
+import type { ExecutionUnit, Feature, Slice } from "./core/workunit.js";
+import {
+  handleAbortFeature,
+  handleClarifyFeature,
+  handleCloseoutFeature,
+  handleCreateFeature,
+  handleDesignReviewFeature,
+  handleExecuteFeature,
+  handlePlanFeature,
+  handleReplanFeature,
+  handleRetrospectFeature,
+} from "./handlers/feature/index.js";
 import {
   type AbortInput,
   type ActionResult,
@@ -60,6 +71,7 @@ import type {
   FeatureClarifyInput,
   PlanFeatureInput,
   PlanSliceInput,
+  RetrospectFeatureInput,
   RetrospectSliceInput,
 } from "./handlers/types.js";
 import {
@@ -157,10 +169,13 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
     if (layer === "slice") {
       return handleCreateSlice(params.input, deps);
     }
+    if (layer === "feature") {
+      return handleCreateFeature(params.input, deps);
+    }
     return handleCreate(params.input, deps);
   }
 
-  // 非 create：params 已收窄为 V1ParamsExcludingCreate。loadWorkUnit（按 scope 返回 ExecutionUnit | Slice）。null → throw。
+  // 非 create：params 已收窄为 V1ParamsExcludingCreate。loadWorkUnit（按 scope 返回 ExecutionUnit | Slice | Feature）。null → throw。
   const unit = loadWorkUnit(deps.store, params.unitId);
   if (!unit) {
     throw new V1Error("unit_not_found", `unit not found: ${params.unitId}`);
@@ -175,19 +190,22 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
     return dispatchWave(unit, params, deps);
   }
 
-  // slice 分支（unit.scope === "slice"）。
+  // PlanningUnit 分支（unit.scope === "slice" | "feature"）。
   // test/exec-review 是 wave 专属（PlanningUnit 不跑代码测试 / 不做 exec-review），不在 PlanningAction
   // 联合里。guardPlanning 查 PLANNING_TRANSITIONS 表会拿到 undefined（表里无此键）导致崩溃，
-  // 故先拦截这两个 action，抛 illegal_transition（与 dispatchSlice 内部的 case 防御语义一致）。
+  // 故先拦截这两个 action，抛 illegal_transition（与 dispatchSlice/dispatchFeature 内部的 case 防御语义一致）。
   if (params.action === "test" || params.action === "exec-review") {
     throw new V1Error(
       "illegal_transition",
-      `slice has no ${params.action} action (only wave/ExecutionUnit does)`,
+      `PlanningUnit (slice/feature) has no ${params.action} action (only wave/ExecutionUnit does)`,
     );
   }
   const verdict = guardPlanning(params.action as PlanningAction, unit.status);
   if (!verdict.ok) {
     throw new V1Error(verdict.code, verdict.reason);
+  }
+  if (unit.scope === "feature") {
+    return dispatchFeature(unit, params, deps);
   }
   return dispatchSlice(unit, params, deps);
 }
@@ -300,6 +318,73 @@ function dispatchSlice(
   }
 }
 
+// ── dispatchFeature（feature/PlanningUnit 的 action 分派）──
+
+/**
+ * feature（PlanningUnit）的 action 分派——9 个 feature handler 的 switch。
+ *
+ * 调用前调用方须已通过 guardPlanning。本函数只做 handler 路由。
+ *
+ * feature 与 slice 同属 PlanningUnit，流程结构一致（9 步无 test/exec-review），但 handler 实现不同
+ *（feature clarify 产物是容器对象、plan 只拆 slice、execute 下沉到 slice 而非 wave）。故照抄
+ * dispatchSlice 结构，路由到 feature 版 handler。
+ *
+ * feature 无 test / exec-review（同 slice）——收到这两个 action 抛 illegal_transition（双重防御，
+ * 与 dispatch 主入口的拦截语义一致）。
+ *
+ * params 作为判别式联合整体传入——switch(params.action) 时 TS 自动按 tag 收窄 params.input
+ * 到对应分支的具体 Input 类型。create 分支已在 dispatch 提前 return。
+ *
+ * @param unit    Feature
+ * @param params  V1Params（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
+ * @param deps    V1Deps
+ */
+function dispatchFeature(
+  unit: Feature,
+  params: V1ParamsExcludingCreate,
+  deps: V1Deps,
+): ActionResult {
+  switch (params.action) {
+    case "clarify":
+      // feature clarify 用 FeatureClarifyInput（容器对象，含 spec）。
+      return handleClarifyFeature(unit, params.input as FeatureClarifyInput, deps);
+    case "plan":
+      // 进 dispatchFeature 必是 feature，其 plan input 必是 PlanFeatureInput（显式断言，同 dispatchSlice）。
+      return handlePlanFeature(unit, params.input as PlanFeatureInput, deps);
+    case "design-review":
+      return handleDesignReviewFeature(unit, params.input, deps);
+    case "execute":
+      // feature execute 不接收 input（按 plan.split 自动创建 child slice），忽略 params.input。
+      return handleExecuteFeature(unit, deps);
+    case "retrospect":
+      // 进 dispatchFeature 必是 feature，retrospect input 必是 RetrospectFeatureInput
+      //（= RetrospectSliceInput 别名，都是 PlanningRetrospectData）。
+      return handleRetrospectFeature(
+        unit,
+        params.input as RetrospectFeatureInput,
+        deps,
+      );
+    case "closeout":
+      return handleCloseoutFeature(unit, params.input, deps);
+    case "replan":
+      return handleReplanFeature(unit, params.input, deps);
+    case "abort":
+      return handleAbortFeature(unit, params.input, deps);
+    case "test":
+    case "exec-review":
+      // feature（PlanningUnit）不跑代码测试、不做 exec-review——这两个 action 是 wave 专属。
+      throw new V1Error(
+        "illegal_transition",
+        `feature has no ${params.action} action (only wave/ExecutionUnit does)`,
+      );
+    default: {
+      // create 已在 dispatch 提前 return；planning 7 主流程 + 2 旁路 + test/exec-review 已全覆盖。
+      // switch 穷尽 → 此分支不可达（params 在此被 narrow 成 never）。
+      assertUnreachable(params);
+    }
+  }
+}
+
 // ── 辅助：从 store 加载 WorkUnit（按 scope 返回 ExecutionUnit | Slice）──
 
 /**
@@ -320,15 +405,15 @@ export function getUnitScope(store: V1Store, unitId: string): string | null {
  * 从 store 加载 WorkUnitRecord 并按 record.scope 返回 ExecutionUnit | Slice。
  *
  * WorkUnitRecord 是 `[key: string]: unknown` 的透传记录，store 不解释字段。这里按 scope
- * 判别层类型并转为 ExecutionUnit（scope='wave'）或 Slice（scope='slice'）。其他 scope
- *（epic/feature 未实现）抛 unsupported_scope。
+ * 判别层类型并转为 ExecutionUnit（scope='wave'）/ Slice（scope='slice'）/ Feature（scope='feature'）。
+ * 其他 scope（epic 未实现）抛 unsupported_scope。
  *
- * @returns ExecutionUnit | Slice | null（unitId 不存在时 null）
+ * @returns ExecutionUnit | Slice | Feature | null（unitId 不存在时 null）
  */
 function loadWorkUnit(
   store: V1Store,
   unitId: string,
-): ExecutionUnit | Slice | null {
+): ExecutionUnit | Slice | Feature | null {
   const record: WorkUnitRecord | null = store.load(unitId);
   if (!record) return null;
   if (record.scope === "wave") {
@@ -340,8 +425,12 @@ function loadWorkUnit(
     // eslint-disable-next-line taste/no-unsafe-cast
     return record as unknown as Slice;
   }
+  if (record.scope === "feature") {
+    // eslint-disable-next-line taste/no-unsafe-cast
+    return record as unknown as Feature;
+  }
   throw new V1Error(
     "unsupported_scope",
-    `unsupported scope: ${record.scope} (only wave/slice implemented)`,
+    `unsupported scope: ${record.scope} (only wave/slice/feature implemented)`,
   );
 }

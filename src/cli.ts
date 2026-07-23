@@ -969,11 +969,12 @@ function buildV1Params(
         `v1 create 的 layer "${layer}" 非法，合法值: ${[...V1_CREATE_LAYERS].join("/")}）`,
       );
     }
-    // slice 已实现（PlanningUnit），feature/epic 仍拒绝。
-    // dispatch 按 input.layer 路由（layer='slice' → handleCreateSlice，默认 wave → handleCreate）。
-    if (layer !== "wave" && layer !== "slice") {
+    // slice/feature 已实现（PlanningUnit），epic 仍拒绝。
+    // dispatch 按 input.layer 路由（layer='slice' → handleCreateSlice，layer='feature' →
+    // handleCreateFeature，默认 wave → handleCreate）。
+    if (layer !== "wave" && layer !== "slice" && layer !== "feature") {
       throw new CwError(
-        `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice 层`,
+        `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice/feature 层`,
       );
     }
     const slug = typeof parsed.slug === "string" ? parsed.slug : undefined;

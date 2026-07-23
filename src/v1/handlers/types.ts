@@ -170,10 +170,10 @@ export interface CreateInput {
   /** 引用父层哪些条目 id（创建时快照，影响面计算基础）。无 parent 时为空数组。 */
   basedOnParent?: string[];
   /**
-   * 创建哪个层。默认 'wave'（向后兼容）。dispatch 按 layer 决定调 createWave 还是 createSlice。
-   * 取值范围暂限 'wave'|'slice'（epic/feature 未实现）。
+   * 创建哪个层。默认 'wave'（向后兼容）。dispatch 按 layer 决定调 createWave / createSlice / createFeature。
+   * 取值范围暂限 'wave'|'slice'|'feature'（epic 未实现）。
    */
-  layer?: "wave" | "slice";
+  layer?: "wave" | "slice" | "feature";
 }
 
 /** clarify handler 输入（progressive append clarifications）。 */
