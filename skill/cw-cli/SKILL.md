@@ -157,6 +157,16 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 ## 失败模式
 
+### input 顶层包裹错误（plan 等）
+各 action 的 `--input` JSON 顶层结构因 action 和 **layer** 而异，**不要自作主张加包裹 key**：
+- `plan`（wave）：顶层直接是 `{split,testCases,tasks,files,contracts}`（**不是** `{plan:{...}}`）
+- `plan`（slice）：`{split,techChoices,interfaces,dataModels,errorSpecs,decisions?}`（与 wave 的 plan input **完全不同**，按 layer 区分；dispatch 按 unit.scope 路由到对应 handler）
+- `clarify`：`{clarifications:[...]}`
+- `design-review`：`{designReviewJudgment:{...}}`
+- `execute`（wave）：`{commitHash,...}`；`execute`（slice）：无 input（按 plan.split 自动创建 child wave，忽略 input）
+- `retrospect`（wave）：`{retrospectData:{...}}`；`retrospect`（slice）：`{retrospectData:{...}}`（但 retrospectData 是 PlanningRetrospectData，含 deliveryVerdict/childUnitIdsEvidence/splitFulfillment，比 wave 宽）
+cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/v1/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.v1/<encodedCwd>/_v1.json` 的 workUnits[0].plan 确认实际存储结构。
+
 ### illegal_transition（跳阶段）
 调了状态机不允许的 action → V1Error（exit 1）。看 `cw v1 status --unitId <id>` 确认当前 status，按 nextAction 重来。
 
