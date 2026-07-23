@@ -15,12 +15,16 @@
  * 不变量：rules 层零 IO。纯函数对比 before/after。
  */
 import type {
+  SliceDataModel,
+  SliceErrorSpec,
+  SliceInterface,
+  SliceTechChoice,
   WaveContract,
   WaveFile,
   WaveTask,
   WaveTestCase,
 } from "../core/plan.js";
-import type { ExecutionUnit } from "../core/workunit.js";
+import type { ExecutionUnit, Slice } from "../core/workunit.js";
 
 // ═══════════════════════════════════════════════════════════════
 // FreezeViolation
@@ -34,7 +38,11 @@ import type { ExecutionUnit } from "../core/workunit.js";
  */
 export interface FreezeViolation {
   /** 违反类型。 */
-  type: "wave_deleted_abandoned" | "wave_modified_abandoned";
+  type:
+    | "wave_deleted_abandoned"
+    | "wave_modified_abandoned"
+    | "slice_deleted_abandoned"
+    | "slice_modified_abandoned";
   /** 涉及的条目 id。 */
   itemId: string;
   /** 被改的字段（modified 类型必填，deleted 类型无）。 */
@@ -215,6 +223,183 @@ function collectViolations<T extends { id: string; status: "active" | "abandoned
     if (changedField) {
       violations.push({
         type: "wave_modified_abandoned",
+        itemId: beforeItem.id,
+        field: changedField,
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的核心字段 "${changedField}" 被改（违反 append-only：abandoned 条目应冻结）`,
+      });
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// slice checkFreezePlanning（SlicePlan 条目 append-only 校验）
+// ═══════════════════════════════════════════════════════════════
+// 来源：design-v5-slice.md §6（slice replan：废弃条目 status=abandoned，append-only 保历史）、
+//      design-v5-model.md §5.6（abort + appendOnly 机制）。
+// 与 wave checkFreeze 同构，只是校验 SlicePlan 的 4 类条目（techChoices/interfaces/dataModels/errorSpecs）。
+// 注：SlicePlan.decisions 不继承 WorkUnitItem（跟随 Clarification replan，不逐项废弃），不在此校验。
+
+/**
+ * 判定 SliceTechChoice 是否核心字段被改。
+ * 核心字段：choice（选定方案本体）+ alternatives（考虑过的候选）+ rationale（选型理由）。
+ * area 是分类标签，改了不计 violation（次要描述字段）。
+ */
+function sliceTechChoiceCoreChanged(
+  before: SliceTechChoice,
+  after: SliceTechChoice,
+): string | undefined {
+  if (before.choice !== after.choice) return "choice";
+  if (!arrayEqual(before.alternatives, after.alternatives)) return "alternatives";
+  if (before.rationale !== after.rationale) return "rationale";
+  return undefined;
+}
+
+/**
+ * 判定 SliceInterface 是否核心字段被改。
+ * 核心字段：signature（函数/路由签名）+ contract（输入约束/返回结构/错误码/副作用描述）。
+ * name 是标识，改了不计 violation（次要）。
+ */
+function sliceInterfaceCoreChanged(
+  before: SliceInterface,
+  after: SliceInterface,
+): string | undefined {
+  if (before.signature !== after.signature) return "signature";
+  if (before.contract !== after.contract) return "contract";
+  return undefined;
+}
+
+/**
+ * 判定 SliceDataModel 是否核心字段被改。
+ * 核心字段：definition（具体定义，按 format 解读）。
+ * name/format/notes 改了不计 violation（次要描述字段）。
+ */
+function sliceDataModelCoreChanged(
+  before: SliceDataModel,
+  after: SliceDataModel,
+): string | undefined {
+  if (before.definition !== after.definition) return "definition";
+  return undefined;
+}
+
+/**
+ * 判定 SliceErrorSpec 是否核心字段被改。
+ * 核心字段：scenario（错误触发场景）+ strategy（处理策略）。
+ * interfaceId/httpStatus/errorCode 改了不计 violation（关联与编码，次要）。
+ */
+function sliceErrorSpecCoreChanged(
+  before: SliceErrorSpec,
+  after: SliceErrorSpec,
+): string | undefined {
+  if (before.scenario !== after.scenario) return "scenario";
+  if (before.strategy !== after.strategy) return "strategy";
+  return undefined;
+}
+
+/**
+ * 对比 before/after 的 SlicePlan，校验 abandoned 条目的 append-only 不变量。
+ *
+ * 校验逻辑同 checkFreeze（对 status="abandoned" 的条目）：
+ * 1. **被删除**（before 有 after 无）→ violation type="slice_deleted_abandoned"
+ * 2. **核心字段被改**（如 techChoice.choice / interface.signature / dataModel.definition / errorSpec.scenario+strategy）
+ *    → violation type="slice_modified_abandoned"
+ * 3. status="active" 的条目可改（无 violation，plan progressive / 新增都允许）
+ *
+ * @param before replan 前的 Slice
+ * @param after  replan 后的 Slice
+ * @returns 违反列表（空数组 = 无违反，append-only 不变量保持）
+ */
+export function checkFreezePlanning(
+  before: Slice,
+  after: Slice,
+): FreezeViolation[] {
+  const violations: FreezeViolation[] = [];
+  const beforePlan = before.plan;
+  const afterPlan = after.plan;
+
+  // 逐类校验 4 种 SlicePlan 条目
+  collectSliceViolations(
+    "techChoices",
+    beforePlan.techChoices,
+    afterPlan.techChoices,
+    sliceTechChoiceCoreChanged,
+    violations,
+  );
+  collectSliceViolations(
+    "interfaces",
+    beforePlan.interfaces,
+    afterPlan.interfaces,
+    sliceInterfaceCoreChanged,
+    violations,
+  );
+  collectSliceViolations(
+    "dataModels",
+    beforePlan.dataModels,
+    afterPlan.dataModels,
+    sliceDataModelCoreChanged,
+    violations,
+  );
+  collectSliceViolations(
+    "errorSpecs",
+    beforePlan.errorSpecs,
+    afterPlan.errorSpecs,
+    sliceErrorSpecCoreChanged,
+    violations,
+  );
+
+  return violations;
+}
+
+/**
+ * 对单类 SlicePlan 条目收集 append-only 违反（与 wave collectViolations 同构）。
+ *
+ * @param kind 条目类别名（用于 report 诊断）
+ * @param beforeItems before 侧该类条目数组
+ * @param afterItems after 侧该类条目数组
+ * @param coreChangedFn 判定该类条目核心字段是否被改的函数
+ */
+function collectSliceViolations<
+  T extends { id: string; status: "active" | "abandoned" },
+>(
+  kind: "techChoices" | "interfaces" | "dataModels" | "errorSpecs",
+  beforeItems: T[],
+  afterItems: T[],
+  coreChangedFn: (before: T, after: T) => string | undefined,
+  violations: FreezeViolation[],
+): void {
+  const afterById = new Map(afterItems.map((it) => [it.id, it] as const));
+
+  for (const beforeItem of beforeItems) {
+    // 只校验 abandoned 条目（active 条目可改）
+    if (beforeItem.status !== "abandoned") continue;
+
+    const afterItem = afterById.get(beforeItem.id);
+
+    // 情况 1：被删除（before 有 after 无）
+    if (!afterItem) {
+      violations.push({
+        type: "slice_deleted_abandoned",
+        itemId: beforeItem.id,
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 被物理删除（违反 append-only：应保留 status=abandoned）`,
+      });
+      continue;
+    }
+
+    // 情况 1b：status 被翻转（abandoned → active，"复活"废弃条目）
+    if (afterItem.status !== "abandoned") {
+      violations.push({
+        type: "slice_modified_abandoned",
+        itemId: beforeItem.id,
+        field: "status",
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的 status 被改为 "${afterItem.status}"（违反 append-only：abandoned 条目不可复活）`,
+      });
+      continue;
+    }
+
+    // 情况 2：核心字段被改
+    const changedField = coreChangedFn(beforeItem, afterItem);
+    if (changedField) {
+      violations.push({
+        type: "slice_modified_abandoned",
         itemId: beforeItem.id,
         field: changedField,
         reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的核心字段 "${changedField}" 被改（违反 append-only：abandoned 条目应冻结）`,

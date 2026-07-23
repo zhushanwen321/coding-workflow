@@ -12,7 +12,7 @@
  *
  * 不变量：rules 层零 IO，guard 只做查表（不读 git / 不跑测试）。
  */
-import type { ExecutionStatus } from "../core/status.js";
+import type { ExecutionStatus, PlanningStatus } from "../core/status.js";
 
 // ═══════════════════════════════════════════════════════════════
 // WaveAction（model §3.3 action 列表）
@@ -232,4 +232,199 @@ const WAVE_TERMINAL_STATUSES: ReadonlySet<ExecutionStatus> = new Set<ExecutionSt
  */
 export function isWaveTerminal(status: ExecutionStatus): boolean {
   return WAVE_TERMINAL_STATUSES.has(status);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PlanningAction（model §3.3 action 列表）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * PlanningUnit（epic/feature/slice）的全部 action：
+ * - 7 个主流程：create / clarify / plan / design-review / execute / retrospect / closeout
+ *   （无 wave 的 test / exec-review——PlanningUnit 不跑代码测试 / 不做 exec-review）
+ * - 2 个旁路：abort（→ aborted）/ replan（原地，不改 status）
+ *
+ * 来源：model §3.3。
+ */
+export type PlanningAction =
+  | "create"
+  | "clarify"
+  | "plan"
+  | "design-review"
+  | "execute"
+  | "retrospect"
+  | "closeout"
+  | "abort"
+  | "replan";
+
+// ═══════════════════════════════════════════════════════════════
+// PLANNING_TRANSITIONS（model §3.1 / §3.3 / §3.4）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 单条 transition 定义（与 WaveTransition 同构，status 类型为 PlanningStatus）。
+ *
+ * 字段语义同 WaveTransition：
+ * - `from`：允许触发该 action 的当前 status 集合（create 为空数组，表示从无到有）
+ * - `to`：触发后的目标 status；`undefined` 表示原地不动（replan 旁路）
+ * - `progressive`：可选，true 表示「progressive action」——若 current 已是 `to`，允许原地再次触发
+ */
+export interface PlanningTransition {
+  from: PlanningStatus[];
+  to: PlanningStatus | undefined;
+  progressive?: boolean;
+}
+
+/**
+ * model §3.1（8 状态）/ §3.3（action 列表）/ §3.4（PlanningUnit 不复用 wave 特化）。
+ *
+ * 关键设计决策（D1）——PlanningUnit vs ExecutionUnit 的差异：
+ * - **主流程少两步**：PlanningUnit 没有 test / exec-review（不产代码、不做代码品味审查）。
+ *   故 `retrospect.from = ['executing']`（wave 是 `['exec-reviewed']`）。
+ * - **`plan.from` 含 `design-reviewed`**：replan 后必须回 planning 重走 design-review
+ *   （对齐 wave §8.3 语义，但 PlanningUnit 的 replan 不在执行后触发，见下）。
+ * - **`replan.from` 不含 retrospected**：model §3.4 明确「PlanningUnit 的 replan
+ *   不在执行后触发——PlanningUnit 没有 execute 产代码这一步，retrospect 发现
+ *   的问题走重建下层而非 replan 本层」。故 replan 只允许在 design-reviewed / executing
+ *   两个状态触发（execute 创建下层 wave 后、retrospect 之前发现技术方案要改）。
+ * - `replan.to = undefined`（旁路不改 status，同 wave）。
+ */
+export const PLANNING_TRANSITIONS: Record<PlanningAction, PlanningTransition> = {
+  create: { from: [], to: "created" },
+  clarify: {
+    from: ["created", "clarifying"],
+    to: "clarifying",
+    progressive: true,
+  },
+  // plan.from 含 design-reviewed：replan 后回 planning 重走 design-review（对齐 wave 语义）
+  plan: {
+    from: ["clarifying", "planning", "design-reviewed"],
+    to: "planning",
+    progressive: true,
+  },
+  "design-review": {
+    from: ["planning", "design-reviewed"],
+    to: "design-reviewed",
+    progressive: true,
+  },
+  execute: { from: ["design-reviewed"], to: "executing" },
+  // slice 无 test/exec-review：retrospect 直接从 executing 进入
+  retrospect: { from: ["executing"], to: "retrospected" },
+  closeout: { from: ["retrospected"], to: "closed" },
+  abort: {
+    from: [
+      "created",
+      "clarifying",
+      "planning",
+      "design-reviewed",
+      "executing",
+      "retrospected",
+    ],
+    to: "aborted",
+  },
+  // D1：PlanningUnit replan 不在执行后触发（retrospected 之后走重建下层）。
+  // 只允许在 design-reviewed / executing 触发（技术方案要改但还没进 retrospect）。
+  replan: {
+    from: ["design-reviewed", "executing"],
+    to: undefined /* 原地 */,
+    progressive: true,
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// guardPlanning（查表校验）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 校验「当前 status 是否允许触发某 PlanningAction」（查 PLANNING_TRANSITIONS 表）。
+ *
+ * 规则同 guardWave：
+ * - create-like action（from 为空数组）：允许 status=undefined（从无到有），非 undefined 则 illegal。
+ * - 其余 action：status 必须在 transition.from 列表里，否则 illegal_transition。
+ *
+ * @param action 待校验的 action
+ * @param status 当前 status（create 时为 undefined）
+ */
+export function guardPlanning(
+  action: PlanningAction,
+  status: PlanningStatus | undefined,
+): GuardVerdict {
+  const transition = PLANNING_TRANSITIONS[action];
+  // create-like：from 为空，允许 status=undefined
+  if (transition.from.length === 0) {
+    if (status === undefined) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      code: "illegal_transition",
+      reason: `action "${action}" creates a new unit (from=[]), but status is already "${status}"`,
+    };
+  }
+  // 其余 action：status 必须在 from 里
+  if (status === undefined) {
+    return {
+      ok: false,
+      code: "illegal_transition",
+      reason: `action "${action}" requires an existing status (from=${JSON.stringify(transition.from)}), but status is undefined`,
+    };
+  }
+  if (!transition.from.includes(status)) {
+    return {
+      ok: false,
+      code: "illegal_transition",
+      reason: `action "${action}" not allowed from status "${status}" (allowed: ${JSON.stringify(transition.from)})`,
+    };
+  }
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// nextPlanningStatus（progressive + replan bypass 语义）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 计算触发某 PlanningAction 后的新 status。
+ *
+ * 语义同 nextWaveStatus（model §4.4.1 + PLANNING_TRANSITIONS）：
+ * - `to` 为 undefined（replan 旁路）：返回 current 不变
+ * - `progressive` 且 current 已是 `to`：返回 current 不变
+ * - 其余：返回 `to`
+ *
+ * @param action 触发的 action
+ * @param current 当前 status（replan 旁路 / progressive 原地时返回它）
+ */
+export function nextPlanningStatus(
+  action: PlanningAction,
+  current: PlanningStatus,
+): PlanningStatus {
+  const transition = PLANNING_TRANSITIONS[action];
+  // replan bypass：to=undefined → 原地不动
+  if (transition.to === undefined) {
+    return current;
+  }
+  // progressive 语义：progressive 且 current 已是 to → 原地
+  if (transition.progressive && current === transition.to) {
+    return current;
+  }
+  return transition.to;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// isPlanningTerminal
+// ═══════════════════════════════════════════════════════════════
+
+/** PlanningUnit 的终态 status 集合（model §3.1：closed / aborted 不可逆）。 */
+const PLANNING_TERMINAL_STATUSES: ReadonlySet<PlanningStatus> = new Set<PlanningStatus>([
+  "closed",
+  "aborted",
+]);
+
+/**
+ * 判定 status 是否为 PlanningUnit 终态（closed / aborted）。
+ *
+ * 终态不可逆——closeout → closed、abort → aborted 后不再有任何合法 transition。
+ */
+export function isPlanningTerminal(status: PlanningStatus): boolean {
+  return PLANNING_TERMINAL_STATUSES.has(status);
 }

@@ -25,6 +25,18 @@ export {
   WAVE_TRANSITIONS,
 } from "./state-machine.js";
 
+// 状态机（model §3.1/§3.3/§3.4 — PlanningUnit/slice）
+export type {
+  PlanningAction,
+  PlanningTransition,
+} from "./state-machine.js";
+export {
+  guardPlanning,
+  isPlanningTerminal,
+  nextPlanningStatus,
+  PLANNING_TRANSITIONS,
+} from "./state-machine.js";
+
 // gate 共享类型
 export type { GateResult } from "./gates/types.js";
 
@@ -37,6 +49,15 @@ export {
   designReviewTradeoffsPresent,
   testCasesHaveExpected,
   testCasesNonEmpty,
+} from "./gates/design-review.js";
+
+// design-review 阶段 gate（slice 附录 A §11 / slice §5.5）
+export {
+  layerSpecificNonEmpty,
+  runSliceDesignReviewGates,
+  splitDagValid,
+  splitNonEmpty,
+  techChoiceNonEmpty,
 } from "./gates/design-review.js";
 
 // test 阶段 gate（wave 附录 A §11 / §5.5）
@@ -61,10 +82,23 @@ export {
   retrospectCoversJudgments,
 } from "./gates/retrospect.js";
 
+// retrospect 阶段 gate（slice 附录 A §11 / slice §5.5）
+export {
+  allWavesClosed,
+  reviewedItemsCoverDesignReview,
+  runSliceRetrospectGates,
+  sliceLessonsLearnedNonEmpty,
+  splitFulfillmentCoversPlan,
+} from "./gates/retrospect.js";
+
 // freeze（replan 时 append-only 校验）
 export type { FreezeViolation } from "./freeze.js";
-export { checkFreeze } from "./freeze.js";
+export { checkFreeze, checkFreezePlanning } from "./freeze.js";
 
 // replan 影响面计算
-export type { ReplanImpact } from "./replan.js";
-export { computeImpact } from "./replan.js";
+export type {
+  ChildrenLoader,
+  ComputeImpactCascadeParams,
+  ReplanImpact,
+} from "./replan.js";
+export { computeImpact, computeImpactCascade } from "./replan.js";
