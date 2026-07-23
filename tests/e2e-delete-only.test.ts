@@ -37,9 +37,9 @@ import {
   disposeE2eEnv,
   type E2eEnv,
   parseStdout,
+  reviewMdPath,
   runCli,
   setupToPlanReviewed,
-  reviewMdPath,
 } from "./helpers/e2e.js";
 
 let e: E2eEnv;

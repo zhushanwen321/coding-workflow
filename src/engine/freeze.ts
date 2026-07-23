@@ -17,8 +17,8 @@
  * checkFreeze 函数遍历所有 FreezeRule，比对 old/new unit，返回所有违规。
  * 这是 cw 0.x VerificationStrategy.replanGuard 的通用化。
  */
-import type { Unit } from "./unit.js";
 import type { FreezeRule } from "./scope-config.js";
+import type { Unit } from "./unit.js";
 
 /**
  * freeze 违规 —— 与 cw 0.x Violation（shapes/types.ts:93）和 AppendOnlyViolation 对齐。

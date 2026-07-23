@@ -15,10 +15,10 @@ import { join } from "node:path";
 
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
-import { dispatch, GuardError } from "../src/dispatch.js";
-import { GitValidator } from "../src/gate.js";
-import { CwStore } from "../src/store.js";
-import type { ActionDeps, Expected } from "../src/types.js";
+import { dispatch, GuardError } from "../src/legacy/dispatch.js";
+import { GitValidator } from "../src/legacy/gate.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { ActionDeps, Expected } from "../src/legacy/types.js";
 import { setupGitRepo } from "./helpers/git.js";
 import {
   makeValidClarifyJson,

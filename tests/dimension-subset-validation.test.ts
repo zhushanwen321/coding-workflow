@@ -22,10 +22,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { handleReview } from "../src/actions.js";
-import { GitValidator } from "../src/gate.js";
-import { CwStore } from "../src/store.js";
-import type { ActionDeps, ReviewIssueSubmission, Topic } from "../src/types.js";
+import { handleReview } from "../src/legacy/actions.js";
+import { GitValidator } from "../src/legacy/gate.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { ActionDeps, ReviewIssueSubmission, Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

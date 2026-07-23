@@ -27,10 +27,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { dispatch } from "../src/dispatch.js";
-import { GitValidator, planCheck } from "../src/gate.js";
-import { CwStore } from "../src/store.js";
-import type { ActionDeps } from "../src/types.js";
+import { dispatch } from "../src/legacy/dispatch.js";
+import { GitValidator, planCheck } from "../src/legacy/gate.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { ActionDeps } from "../src/legacy/types.js";
 import { commitFile,setupGitRepo } from "./helpers/git.js";
 
 // ── fixture 构造（changes 带 action——W1 起 action 是 WaveChange 必填字段） ──
@@ -546,15 +546,15 @@ describe("AC-9/AC-9a: fixture 默认 create 契合虚构路径（迁移后全量
 describe("planCheck workspacePath 默认 process.cwd()（W2 第3参省略时）", () => {
   it("省略 workspacePath → 用 process.cwd() 做存在性校验", () => {
     // W2 契约：workspacePath 省略时默认 process.cwd()。
-    // 这条测试锚定"省略时用 cwd"——src/gate.ts 文件在 cwd 下存在（相对 repo 根），
-    // modify src/gate.ts 应 pass；modify 一个肯定不存在的虚构路径应 fail。
+    // 这条测试锚定"省略时用 cwd"——src/legacy/gate.ts 文件在 cwd 下存在（相对 repo 根），
+    // modify src/legacy/gate.ts 应 pass；modify 一个肯定不存在的虚构路径应 fail。
     const r = planCheck(
-      plan([ch("src/gate.ts", "modify")]),
+      plan([ch("src/legacy/gate.ts", "modify")]),
       undefined,
       // 显式传 undefined 触发默认值 process.cwd()（W2 第3参默认值契约）。
       undefined,
     );
-    // src/gate.ts 在 repo 根（process.cwd()）下存在 → modify pass。
+    // src/legacy/gate.ts 在 repo 根（process.cwd()）下存在 → modify pass。
     expect(r.result).toBe("pass");
   });
 });

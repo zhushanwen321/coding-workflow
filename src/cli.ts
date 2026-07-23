@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable max-lines, max-lines-per-function -- cli.ts 是 argv 分派中枢，按 action 构造参数；拆分是独立 topic（progressive CLI 重构）。 */
 /**
  * cli.ts — CW CLI 入口（agent 唯一入口点）。
  *
@@ -24,7 +25,7 @@
  *   - resolveDbPath 从 protocol.ts 搬到本文件（protocol.ts 整个烫掉）。
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -53,17 +54,17 @@ import {
   type TddPlanParams,
   type TestFixParams,
   type TestParams,
-} from "./actions.js";
-import { dispatch } from "./dispatch.js";
-import { GitValidator, reviewIssueCheck } from "./gate.js";
-import { runInit } from "./init.js";
-import { encodeCwd } from "./path-encoding.js";
-import { generateReport, genSpecMd, type ReportDocs } from "./report.js";
-import type { TaskShapeId } from "./shapes/types.js";
-import { getSkill, listSkills, SKILL_NAMES } from "./skills/registry.js";
-import type { SkillReadOutput } from "./skills/types.js";
-import { computeStats, computeStatsAll } from "./stats.js";
-import { CwStore } from "./store.js";
+} from "./legacy/actions.js";
+import { dispatch } from "./legacy/dispatch.js";
+import { GitValidator, reviewIssueCheck } from "./legacy/gate.js";
+import { runInit } from "./legacy/init.js";
+import { encodeCwd } from "./legacy/path-encoding.js";
+import { generateReport, genSpecMd, type ReportDocs } from "./legacy/report.js";
+import type { TaskShapeId } from "./legacy/shapes/types.js";
+import { getSkill, listSkills, SKILL_NAMES } from "./legacy/skills/registry.js";
+import type { SkillReadOutput } from "./legacy/skills/types.js";
+import { computeStats, computeStatsAll } from "./legacy/stats.js";
+import { CwStore } from "./legacy/store.js";
 import {
   type Action,
   type ActionDeps,
@@ -73,7 +74,30 @@ import {
   type RuntimeEnv,
   type Status,
   type Topic,
-} from "./types.js";
+} from "./legacy/types.js";
+import type { TestRunResult } from "./v1/core/evidence.js";
+import type { ExecutionUnit } from "./v1/core/workunit.js";
+import type {
+  AbortInput,
+  ActionResult as V1ActionResult,
+  ClarifyInput,
+  CloseoutInput,
+  CreateInput,
+  DesignReviewInput,
+  ExecReviewInput,
+  ExecuteInput,
+  PlanInput,
+  ReplanInput,
+  RetrospectInput,
+  TestInput,
+  V1Deps,
+} from "./v1/handlers/index.js";
+import {
+  dispatch as v1Dispatch,
+  V1Error,
+  type V1Params,
+  V1Store,
+} from "./v1/index.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
@@ -122,6 +146,36 @@ const VALID_DISPATCH_ACTIONS: Action[] = [
 // 故从 READONLY_QUERIES 移出，改为与 init 同级的直接处理块（不经 dispatch 状态机）。
 const READONLY_QUERIES = new Set(["status", "list", "stats", "report"]);
 
+// ── v1 命令常量 ──────────────────────────────────────────────
+//
+// v1 命令形态：`cw v1 <action> [layer] --flags`。与 0.x 命令（不带 v1 前缀）并存，
+// 两套互不干扰（v1 走 src/v1/dispatch.ts，0.x 走 src/legacy/dispatch.ts）。
+//
+// create 需要 layer 参数（wave/slice/feature/epic），其他 action 靠 --unitId 路由。
+
+/** v1 create 接受的层（目前 v1 dispatch 只实现 wave 流程，其余层接口预留）。 */
+const V1_CREATE_LAYERS = new Set(["wave", "slice", "feature", "epic"]);
+
+/**
+ * v1 推进 action（create 之外）。
+ * 这些 action 靠 --unitId 路由，input 通过 --input / stdin 传 JSON。
+ */
+const V1_ADVANCE_ACTIONS = new Set([
+  "clarify",
+  "plan",
+  "design-review",
+  "execute",
+  "test",
+  "exec-review",
+  "retrospect",
+  "closeout",
+  "replan",
+  "abort",
+]);
+
+/** v1 合法 action 总集（create + 10 个推进 action）。 */
+const V1_VALID_ACTIONS = new Set(["create", ...V1_ADVANCE_ACTIONS]);
+
 // ── 跨平台「用系统默认应用打开文件」 ──────────────────────────
 
 /**
@@ -161,8 +215,11 @@ function openInDefaultApp(filePath: string): void {
     } else {
       spawn("xdg-open", [filePath], { detached: true, stdio: "ignore" }).unref();
     }
-  } catch {
-    // open 失败不阻断——路径已返回，调用方可手动 open。
+    // open 失败不阻断主流程：路径已通过 stdout JSON 返回，调用方可手动 open。
+    // 仅向 stderr 记日志以便排查（绝不写 stdout——stdout 是 agent 机器可读 JSON）。
+    // eslint-disable-next-line taste/no-silent-catch -- 尽力而为的 GUI 触发器，失败应静默而非中断 CLI
+  } catch (err) {
+    console.error(`openInDefaultApp: failed to open ${filePath}`, err);
   }
 }
 
@@ -211,6 +268,16 @@ export function resolveEnvJsonPath(workspacePath: string, cwHome?: string): stri
   return join(home, encoded, ENV_JSON_NAME);
 }
 
+/** 类型守卫：对象含字符串 version 字段（替代 `as { version?: unknown }` 全可选结构断言）。 */
+function hasStringVersion(obj: unknown): obj is { version: string } {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "version" in obj &&
+    typeof obj.version === "string"
+  );
+}
+
 /**
  * getCwVersion — 从 package.json 自动读取 cw-cli 版本号。
  *
@@ -225,8 +292,8 @@ export function getCwVersion(): string {
       "..",
       "package.json",
     );
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : "unknown";
+    const pkg: unknown = JSON.parse(readFileSync(pkgPath, "utf8"));
+    return hasStringVersion(pkg) ? pkg.version : "unknown";
   } catch {
     return "unknown";
   }
@@ -264,8 +331,11 @@ export function resolveRuntimeEnv(
       const envParsed = JSON.parse(raw) as EnvJsonFile;
       if (typeof envParsed.agent === "string") envFile.agent = envParsed.agent;
       if (typeof envParsed.llm === "string") envFile.llm = envParsed.llm;
-    } catch {
-      // env.json 损坏 → 静默回退默认值，不阻断 create
+      // env.json 损坏 → 回退默认值，不阻断 create。
+      // 仅向 stderr 记日志（绝不写 stdout——stdout 是 agent 机器可读 JSON）。
+      // eslint-disable-next-line taste/no-silent-catch -- 配置文件损坏应优雅回退默认值，而非中断 create
+    } catch (err) {
+      console.error(`resolveRuntimeEnv: env.json at ${envJsonPath} unreadable, falling back to defaults`, err);
     }
   }
 
@@ -794,6 +864,403 @@ function constructActionDeps(
   return { store, git, workspacePath };
 }
 
+// ── v1 命令辅助（参数构造 / deps 装配 / 子命令分发） ─────────
+//
+// v1 与 0.x 完全独立：独立的 params 联合（V1Params）、独立的 deps 接口（V1Deps）、
+// 独立的 dispatch（src/v1/dispatch.ts）、独立的 store（_v1.json，路径由 getV1JsonPath 算）。
+// 本节三个纯函数把 argv → V1Params、构造 V1Deps、跑 dispatch 并打印结果。
+// main 里 `argv[2] === "v1"` 时整体路由到 runV1，不触碰 0.x 代码路径。
+
+/**
+ * readV1Input — 读取 v1 推进 action 的 input payload。
+ *
+ * 通道（与 0.x 的 readJsonPayload 类似但 v1 用 `--input` flag）：
+ *   - `--input @file.json` → 读文件内容 JSON.parse
+ *   - `--input -` 或无 --input → 从 stdin 读
+ *
+ * stdin 为空且未指定 file → throw（exit 1）。超大文件 → throw。
+ *
+ * @returns 解析后的 input 对象（调用方按 action cast 成对应 Input 类型）
+ */
+function readV1Input(
+  inputFlag: string | undefined,
+  stdinData: string,
+  isStdinTTY: boolean,
+): unknown {
+  // --input @file.json（@ 前缀可选，是「从文件读」的约定标记）/ --input <相对|绝对路径>
+  // --input - 表示从 stdin 读。
+  if (inputFlag !== undefined && inputFlag !== "-") {
+    // 去掉开头的 @ 前缀（设计文档的 --input @file.json 约定，@ 纯标记，非路径一部分）。
+    const flagged = inputFlag.startsWith("@")
+      ? inputFlag.slice(1)
+      : inputFlag;
+    const filePath = resolve(flagged);
+    if (!existsSync(filePath)) {
+      throw new CwError(`v1 --input 文件不存在: ${filePath}`);
+    }
+    const stat = statSync(filePath);
+    if (stat.size > MAX_FILE_SIZE_BYTES) {
+      throw new CwError(
+        `v1 --input 文件大小 ${(stat.size / BYTES_PER_MB).toFixed(1)}MB 超过限制 ${MAX_FILE_SIZE_BYTES / BYTES_PER_MB}MB`,
+      );
+    }
+    const raw = readFileSync(filePath, "utf-8");
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      throw new CwError(
+        `v1 --input JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  // stdin：非 TTY 且有内容
+  const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
+  if (!hasStdin) {
+    throw new CwError(
+      "v1 推进 action 需要 --input @file.json 或 stdin 传 JSON（stdin 为空）",
+    );
+  }
+  try {
+    return JSON.parse(stdinData);
+  } catch (e) {
+    throw new CwError(
+      `v1 stdin JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
+/**
+ * buildV1Params — 把 v1 子命令的 flags 构造成 V1Params 联合。
+ *
+ *   - create：layer 必填（wave/slice/feature/epic）+ --slug + --objective 必填，
+ *     可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
+ *     注意：v1 dispatch 目前只实现 wave 流程，layer 非 wave 会明确报错（避免误用）。
+ *   - 推进 action：--unitId 必填；--commitHash 仅 execute 用（其余靠 --input/stdin）。
+ *   - replan/abort 的 input 也可用专门的 flag 构造（--abandonedIds/--note/--reason），
+ *     作为 --input/stdin 的便捷替代。
+ *
+ * @param v1Action  v1 action 名（create/clarify/.../abort）
+ * @param layer     仅 create 用（argv[4]）
+ * @param parsed    minimist 解析结果
+ * @param stdinData 已读 stdin
+ * @param isStdinTTY stdin 是否 TTY
+ */
+function buildV1Params(
+  v1Action: string,
+  layer: string | undefined,
+  parsed: ParsedArgs,
+  stdinData: string,
+  isStdinTTY: boolean,
+): V1Params {
+  if (v1Action === "create") {
+    if (layer === undefined) {
+      throw new CwError(
+        `v1 create 需要指定 layer（${[...V1_CREATE_LAYERS].join("/")}）`,
+      );
+    }
+    if (!V1_CREATE_LAYERS.has(layer)) {
+      throw new CwError(
+        `v1 create 的 layer "${layer}" 非法，合法值: ${[...V1_CREATE_LAYERS].join("/")}）`,
+      );
+    }
+    // W8: v1 dispatch 当前只实现 wave 流程（core workunit.createWave 只产 wave）。
+    // 其他层（slice/feature/epic）的 PlanningUnit 流程尚未实现，明确拒绝以免误导。
+    if (layer !== "wave") {
+      throw new CwError(
+        `v1 create ${layer} 尚未实现，当前 v1 只支持 wave 层`,
+      );
+    }
+    const slug = typeof parsed.slug === "string" ? parsed.slug : undefined;
+    const objective =
+      typeof parsed.objective === "string" ? parsed.objective : undefined;
+    if (!slug) throw new CwError("v1 create 需要 --slug");
+    if (!objective) throw new CwError("v1 create 需要 --objective");
+    const input: CreateInput = { slug, objective };
+    const parent = flag(parsed, "parent");
+    if (parent !== undefined) input.parentUnitId = parent;
+    const basedOnParentRaw = flag(parsed, "basedOnParent");
+    if (basedOnParentRaw !== undefined) {
+      input.basedOnParent = parseJsonArg(
+        "basedOnParent",
+        basedOnParentRaw,
+      ) as string[];
+    }
+    return { action: "create", input };
+  }
+
+  // 推进 action：--unitId 必填
+  const unitId = flag(parsed, "unitId");
+  if (!unitId) throw new CwError(`v1 ${v1Action} 需要 --unitId`);
+
+  switch (v1Action) {
+    case "clarify":
+      return {
+        action: "clarify",
+        unitId,
+        input: readV1Input(
+          flag(parsed, "input"),
+          stdinData,
+          isStdinTTY,
+        ) as ClarifyInput,
+      };
+    case "plan":
+      return {
+        action: "plan",
+        unitId,
+        input: readV1Input(flag(parsed, "input"), stdinData, isStdinTTY) as PlanInput,
+      };
+    case "design-review":
+      return {
+        action: "design-review",
+        unitId,
+        input: readV1Input(
+          flag(parsed, "input"),
+          stdinData,
+          isStdinTTY,
+        ) as DesignReviewInput,
+      };
+    case "execute": {
+      // execute 用 --commitHash（必填）+ 可选 --input/stdin（带 changedFiles）
+      const commitHash = flag(parsed, "commitHash");
+      if (!commitHash) throw new CwError("v1 execute 需要 --commitHash");
+      const input: ExecuteInput = { commitHash };
+      // execute 允许 --input 传 { changedFiles: [...] }，非 TTY stdin 有内容时也接受
+      const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
+      const inputFlag = flag(parsed, "input");
+      if (inputFlag !== undefined || hasStdin) {
+        const extra = readV1Input(inputFlag, stdinData, isStdinTTY) as Record<
+          string,
+          unknown
+        >;
+        if (Array.isArray(extra.changedFiles)) {
+          input.changedFiles = extra.changedFiles as string[];
+        }
+      }
+      return { action: "execute", unitId, input };
+    }
+    case "test":
+      return {
+        action: "test",
+        unitId,
+        input: readV1Input(flag(parsed, "input"), stdinData, isStdinTTY) as TestInput,
+      };
+    case "exec-review":
+      return {
+        action: "exec-review",
+        unitId,
+        input: readV1Input(
+          flag(parsed, "input"),
+          stdinData,
+          isStdinTTY,
+        ) as ExecReviewInput,
+      };
+    case "retrospect":
+      return {
+        action: "retrospect",
+        unitId,
+        input: readV1Input(
+          flag(parsed, "input"),
+          stdinData,
+          isStdinTTY,
+        ) as RetrospectInput,
+      };
+    case "closeout":
+      return {
+        action: "closeout",
+        unitId,
+        input: readV1Input(
+          flag(parsed, "input"),
+          stdinData,
+          isStdinTTY,
+        ) as CloseoutInput,
+      };
+    case "replan": {
+      // replan 优先用 --abandonedIds + --note；缺省从 --input/stdin 读
+      const abandonedIdsRaw = flag(parsed, "abandonedIds");
+      const note = flag(parsed, "note");
+      if (abandonedIdsRaw !== undefined && note !== undefined) {
+        const input: ReplanInput = {
+          abandonedIds: parseJsonArg("abandonedIds", abandonedIdsRaw) as string[],
+          note,
+        };
+        return { action: "replan", unitId, input };
+      }
+      return {
+        action: "replan",
+        unitId,
+        input: readV1Input(flag(parsed, "input"), stdinData, isStdinTTY) as ReplanInput,
+      };
+    }
+    case "abort": {
+      // abort 可选 --reason，或从 --input/stdin 读 { reason }
+      const reason = flag(parsed, "reason");
+      if (reason !== undefined) {
+        const input: AbortInput = { reason };
+        return { action: "abort", unitId, input };
+      }
+      const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
+      const inputFlag = flag(parsed, "input");
+      if (inputFlag !== undefined || hasStdin) {
+        const extra = readV1Input(inputFlag, stdinData, isStdinTTY) as Record<
+          string,
+          unknown
+        >;
+        const input: AbortInput = {};
+        if (typeof extra.reason === "string") input.reason = extra.reason;
+        return { action: "abort", unitId, input };
+      }
+      // abort 无 input 也合法（reason 可选）
+      return { action: "abort", unitId, input: {} };
+    }
+    default: {
+      // 上层已校验 V1_VALID_ACTIONS，此处不可达（v1Action 是 string，无法穷尽校验）。
+      throw new CwError(`v1 unknown action: ${v1Action}`);
+    }
+  }
+}
+
+/**
+ * constructV1Deps — 组装 v1 dispatch 所需的 V1Deps。
+ *
+ *   - store：V1Store，绑定 cwd（getV1JsonPath 用 V1_HOME + encodeCwd(cwd) 定位 _v1.json）
+ *   - gitValidator：用 git cat-file 验 commit hash 真实存在（绑定 workspacePath）
+ *   - testRunner：跑 `vitest run` 子进程，聚合 exit code + stdout 解析 passed/failed
+ *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
+ *   - clock：new Date().toISOString()
+ *
+ * testRunner 设计：在 workspacePath 下跑 `npx vitest run`，exit 0 视为全过。
+ * vitest 输出的 passed/failed 行用正则解析；解析失败时退化为「exit 0 → passed」。
+ */
+function constructV1Deps(workspacePath: string): V1Deps {
+  const store = new V1Store(workspacePath);
+  const gitValidator = {
+    exists: (hash: string): boolean => {
+      // 与 0.x GitValidator 同语义：git cat-file -e <hash>^{commit} 成功即存在。
+      // ENOENT（git 未装）抛错；其他失败（非 repo / hash 不存在）视为 false。
+      try {
+        const r = spawnSync("git", ["cat-file", "-e", `${hash}^{commit}`], {
+          cwd: workspacePath,
+          encoding: "utf8",
+          stdio: "ignore",
+        });
+        return r.status === 0;
+      } catch (e) {
+        if (isENOENT(e)) throw e;
+        return false;
+      }
+    },
+  };
+  const testRunner = {
+    run: (unit: ExecutionUnit): TestRunResult => {
+      // 在 workspacePath 下跑 vitest run；exit 0 视为通过。
+      // 用 spawnSync 同步阻塞，超时 120s（防 agent 误配死循环测试卡死 CLI）。
+      const r = spawnSync("npx", ["vitest", "run"], {
+        cwd: workspacePath,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 120000,
+      });
+      const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+      const passed = r.status === 0;
+      // 尝试从 vitest 输出解析通过/失败计数（容错：解析不到就用 0 占位）。
+      let passedCount = 0;
+      let failedCount = 0;
+      const passMatch = out.match(/(\d+)\s+passed/);
+      const failMatch = out.match(/(\d+)\s+failed/);
+      if (passMatch) passedCount = Number(passMatch[1]);
+      if (failMatch) failedCount = Number(failMatch[1]);
+      void unit; // testRunner 接口要求传 unit，当前实现不依赖 unit 内容。
+      return { passed, passedCount, failedCount };
+    },
+  };
+  const fileExists = {
+    exists: (ref: string): boolean => {
+      // ref 可能是绝对路径 / 相对路径 / URL。本地路径用 existsSync，URL 一律视为存在（不阻塞 closeout）。
+      if (/^https?:\/\//i.test(ref)) return true;
+      return existsSync(isAbsolute(ref) ? ref : resolve(workspacePath, ref));
+    },
+  };
+  const clock = { now: (): string => new Date().toISOString() };
+  return { store, gitValidator, testRunner, fileExists, clock };
+}
+
+/** spawn 抛 ENOENT（git/npx 未安装）判定——基础设施异常，应抛出而非静默吞。 */
+function isENOENT(e: unknown): boolean {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    String((e as { code: unknown }).code) === "ENOENT"
+  );
+}
+
+/**
+ * runV1 — v1 子命令整体处理（main 里 argv[2]==="v1" 时调用）。
+ *
+ * 流程：
+ *   1. argv 解析：v1Action = argv[3]，layer = argv[4]（仅 create）
+ *   2. action 合法性校验（V1_VALID_ACTIONS）
+ *   3. create 之外读 stdin（--input / stdin 传 JSON）
+ *   4. buildV1Params 构造 V1Params（参数校验在此层）
+ *   5. constructV1Deps（store + git + testRunner + fileExists + clock）
+ *   6. v1Dispatch + 序列化 ActionResult → stdout
+ *
+ * 错误语义：V1Error / CwError → stderr + exit 1；其他 → exit 2（由 main 的 catch 兜）。
+ *
+ * @param argv  完整 process.argv
+ * @param workspacePath  当前工作目录（store/git/testRunner 都绑它）
+ */
+async function runV1(
+  argv: string[],
+  workspacePath: string,
+): Promise<void> {
+  // argv 位置语义：[0]=node, [1]=脚本, [2]="v1", [3]=v1Action, [4]=layer（仅 create），[5+]=flags。
+  // flags 用 minimist 解析（从 action 起切，让 --xxx 被正确识别；位置参数 action/layer 落入 _）。
+  const ARGV_V1_ACTION = ARGV_USER_PARAMS_START + 1; // argv[3]
+  const ARGV_V1_LAYER_OFFSET = 2;
+  const ARGV_V1_LAYER = ARGV_USER_PARAMS_START + ARGV_V1_LAYER_OFFSET; // argv[4]
+  const parsed = minimist(argv.slice(ARGV_V1_ACTION)) as ParsedArgs;
+  // 直接从原始 argv 取位置参数（minimist 的 _ 里也有，但原始 argv 更直观、不被 flag 解析干扰）。
+  const v1ActionRaw = argv[ARGV_V1_ACTION];
+  const layer = argv[ARGV_V1_LAYER];
+
+  if (v1ActionRaw === undefined) {
+    process.stderr.write(
+      `错误：v1 需要指定 action。用法：cw v1 <action> [layer] [options]\n`,
+    );
+    process.exit(EXIT_CW_ERROR);
+  }
+  const v1Action = String(v1ActionRaw);
+
+  if (!V1_VALID_ACTIONS.has(v1Action)) {
+    process.stderr.write(
+      `错误：未知 v1 action "${v1Action}"。合法: ${[...V1_VALID_ACTIONS].join(", ")}\n`,
+    );
+    process.exit(EXIT_CW_ERROR);
+  }
+
+  // 推进 action 读 stdin（create 不读 stdin）。
+  const stdinData = v1Action === "create" ? "" : await readStdin();
+  const isStdinTTY = process.stdin.isTTY === true;
+
+  // 构造 V1Params（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
+  const params = buildV1Params(
+    v1Action,
+    layer,
+    parsed,
+    stdinData,
+    isStdinTTY,
+  );
+
+  // 构造 V1Deps + 调 v1Dispatch。
+  const deps = constructV1Deps(workspacePath);
+  const result: V1ActionResult = v1Dispatch(params, deps);
+
+  // 序列化 ActionResult → stdout JSON。
+  process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
+}
+
 // ── status / list 只读查询（不经 dispatch） ──────────────────
 
 /** status 子命令的序列化输出（plan.md §CLI 协议：topicId/status/gatePassed/waves/testCases）。 */
@@ -882,7 +1349,10 @@ export function handleList(store: CwStore): ListEntry[] {
  *   - exit 2 = 内部异常（未预期的错误）
  */
 export function mapExitCode(err: Error): number {
-  return err instanceof CwError ? EXIT_CW_ERROR : EXIT_INTERNAL_ERROR;
+  // CwError（0.x 预期错误）+ V1Error（v1 guard fail / unit not found）都映射 exit 1。
+  return err instanceof CwError || err instanceof V1Error
+    ? EXIT_CW_ERROR
+    : EXIT_INTERNAL_ERROR;
 }
 
 // ── main ─────────────────────────────────────────────────────
@@ -901,6 +1371,15 @@ async function main(argv: string[]): Promise<void> {
   // workspacePath 解析（所有子命令共用）。
   const workspacePath =
     typeof parsed.workspace === "string" ? parsed.workspace : process.cwd();
+
+  // ── v1 命令分支（`cw v1 <action> ...`）──
+  // 与 0.x 完全独立：走 src/v1/dispatch.ts，store 用 _v1.json（V1_HOME 定位）。
+  // 在此整体短路，不触碰下方任何 0.x 代码路径（向后兼容）。
+  if (action === "v1") {
+    await runV1(argv, workspacePath);
+    return;
+  }
+
   const dbPath = resolveDbPath(workspacePath, process.env.CW_HOME);
 
   // status/list/stats 是只读查询，绕过 dispatch（不触发状态变更、不写 gateHistory）。

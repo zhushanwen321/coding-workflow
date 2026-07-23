@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
-import { CwStore } from "../src/store.js";
+import { CwStore } from "../src/legacy/store.js";
 import type {
   AdrSeed,
   ClarifySeed,
@@ -19,7 +19,7 @@ import type {
   ReviewIssueSubmission,
   TestFixEntry,
   Topic,
-} from "../src/types.js";
+} from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

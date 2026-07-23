@@ -14,8 +14,8 @@ import {
   computeNextStatus,
   guard,
   TRANSITIONS,
-} from "../src/state-machine.js";
-import type { Status,Topic } from "../src/types.js";
+} from "../src/legacy/state-machine.js";
+import type { Status,Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 
