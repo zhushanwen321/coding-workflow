@@ -8,6 +8,7 @@
 export * from "./core/index.js";
 
 // handlers 共享类型（V1Deps / ActionResult / 各 Input）
+// wave/slice 共用 Input + 各层专属 Input（PlanSliceInput/RetrospectSliceInput）
 export type {
   AbortInput,
   ActionResult,
@@ -18,8 +19,10 @@ export type {
   ExecReviewInput,
   ExecuteInput,
   PlanInput,
+  PlanSliceInput,
   ReplanInput,
   RetrospectInput,
+  RetrospectSliceInput,
   TestInput,
   V1Deps,
 } from "./handlers/index.js";
@@ -33,10 +36,15 @@ export type { V1JsonFile,WorkUnitRecord } from "./store/schema.js";
 export { V1Store } from "./store/v1-store.js";
 
 // rules（外部测试 / 组合 gate 时需要）
-export type { GuardVerdict,WaveAction } from "./rules/state-machine.js";
+// wave + slice（PlanningUnit）两层状态机对称导出
+export type { GuardVerdict, PlanningAction, WaveAction } from "./rules/state-machine.js";
 export {
+  guardPlanning,
   guardWave,
+  isPlanningTerminal,
   isWaveTerminal,
+  nextPlanningStatus,
   nextWaveStatus,
+  PLANNING_TRANSITIONS,
   WAVE_TRANSITIONS,
 } from "./rules/state-machine.js";
