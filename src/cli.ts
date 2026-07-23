@@ -933,9 +933,9 @@ function readV1Input(
 /**
  * buildV1Params — 把 v1 子命令的 flags 构造成 V1Params 联合。
  *
- *   - create：layer 必填（wave/slice/feature/epic）+ --slug + --objective 必填，
+ *   - create：layer 必填（wave/slice，feature/epic 未实现）+ --slug + --objective 必填，
  *     可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
- *     注意：v1 dispatch 目前只实现 wave 流程，layer 非 wave 会明确报错（避免误用）。
+ *     dispatch 按 layer 路由（wave → handleCreate，slice → handleCreateSlice）。
  *   - 推进 action：--unitId 必填；--commitHash 仅 execute 用（其余靠 --input/stdin）。
  *   - replan/abort 的 input 也可用专门的 flag 构造（--abandonedIds/--note/--reason），
  *     作为 --input/stdin 的便捷替代。
@@ -964,11 +964,11 @@ function buildV1Params(
         `v1 create 的 layer "${layer}" 非法，合法值: ${[...V1_CREATE_LAYERS].join("/")}）`,
       );
     }
-    // W8: v1 dispatch 当前只实现 wave 流程（core workunit.createWave 只产 wave）。
-    // 其他层（slice/feature/epic）的 PlanningUnit 流程尚未实现，明确拒绝以免误导。
-    if (layer !== "wave") {
+    // slice 已实现（PlanningUnit），feature/epic 仍拒绝。
+    // dispatch 按 input.layer 路由（layer='slice' → handleCreateSlice，默认 wave → handleCreate）。
+    if (layer !== "wave" && layer !== "slice") {
       throw new CwError(
-        `v1 create ${layer} 尚未实现，当前 v1 只支持 wave 层`,
+        `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice 层`,
       );
     }
     const slug = typeof parsed.slug === "string" ? parsed.slug : undefined;
@@ -976,7 +976,7 @@ function buildV1Params(
       typeof parsed.objective === "string" ? parsed.objective : undefined;
     if (!slug) throw new CwError("v1 create 需要 --slug");
     if (!objective) throw new CwError("v1 create 需要 --objective");
-    const input: CreateInput = { slug, objective };
+    const input: CreateInput = { slug, objective, layer };
     const parent = flag(parsed, "parent");
     if (parent !== undefined) input.parentUnitId = parent;
     const basedOnParentRaw = flag(parsed, "basedOnParent");
@@ -1120,19 +1120,55 @@ function buildV1Params(
   }
 }
 
+/** cw.config.json 的结构（仅支持 testRunner 配置）。 */
+interface CwConfig {
+  testRunner?: {
+    command?: string;
+    cwd?: string;
+  };
+}
+
+/**
+ * loadCwConfig — 读取项目根目录的 cw.config.json。
+ *
+ * 文件不存在返回 undefined（静默 fallback）。
+ * JSON 解析失败打印警告返回 undefined（不阻塞 CLI）。
+ */
+function loadCwConfig(workspacePath: string): CwConfig | undefined {
+  const configPath = resolve(workspacePath, "cw.config.json");
+  if (!existsSync(configPath)) return undefined;
+  try {
+    const raw = readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const config: CwConfig = {};
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj.testRunner === "object" && obj.testRunner !== null) {
+      const tr = obj.testRunner as Record<string, unknown>;
+      config.testRunner = {};
+      if (typeof tr.command === "string") config.testRunner.command = tr.command;
+      if (typeof tr.cwd === "string") config.testRunner.cwd = tr.cwd;
+    }
+    return config;
+  } catch (err) {
+    console.error(`loadCwConfig: cw.config.json at ${configPath} unreadable, ignoring`, err);
+    return undefined;
+  }
+}
+
 /**
  * constructV1Deps — 组装 v1 dispatch 所需的 V1Deps。
  *
  *   - store：V1Store，绑定 cwd（getV1JsonPath 用 V1_HOME + encodeCwd(cwd) 定位 _v1.json）
  *   - gitValidator：用 git cat-file 验 commit hash 真实存在（绑定 workspacePath）
- *   - testRunner：跑 `vitest run` 子进程，聚合 exit code + stdout 解析 passed/failed
+ *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
  *   - clock：new Date().toISOString()
  *
- * testRunner 设计：在 workspacePath 下跑 `npx vitest run`，exit 0 视为全过。
- * vitest 输出的 passed/failed 行用正则解析；解析失败时退化为「exit 0 → passed」。
+ * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
+ * 命令默认 `npx vitest run`，可通过 cw.config.json 的 testRunner.command 覆盖。
  */
-function constructV1Deps(workspacePath: string): V1Deps {
+function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
   const store = new V1Store(workspacePath);
   const gitValidator = {
     exists: (hash: string): boolean => {
@@ -1151,19 +1187,30 @@ function constructV1Deps(workspacePath: string): V1Deps {
       }
     },
   };
+  // testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath
+  const config = loadCwConfig(workspacePath);
+  const resolvedTestCwd = testCwd
+    ?? config?.testRunner?.cwd
+    ?? undefined;
+  const runnerCwd = resolvedTestCwd
+    ? (isAbsolute(resolvedTestCwd) ? resolvedTestCwd : resolve(workspacePath, resolvedTestCwd))
+    : workspacePath;
+  const runnerCommand = config?.testRunner?.command ?? "npx vitest run";
+  const [runnerCmd, ...runnerArgs] = runnerCommand.split(/\s+/);
+
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
-      // 在 workspacePath 下跑 vitest run；exit 0 视为通过。
+      // 在 runnerCwd 下跑测试命令；exit 0 视为通过。
       // 用 spawnSync 同步阻塞，超时 120s（防 agent 误配死循环测试卡死 CLI）。
-      const r = spawnSync("npx", ["vitest", "run"], {
-        cwd: workspacePath,
+      const r = spawnSync(runnerCmd, runnerArgs, {
+        cwd: runnerCwd,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 120000,
       });
       const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
       const passed = r.status === 0;
-      // 尝试从 vitest 输出解析通过/失败计数（容错：解析不到就用 0 占位）。
+      // 尝试从测试输出解析通过/失败计数（容错：解析不到就用 0 占位）。
       let passedCount = 0;
       let failedCount = 0;
       const passMatch = out.match(/(\d+)\s+passed/);
@@ -1254,7 +1301,8 @@ async function runV1(
   );
 
   // 构造 V1Deps + 调 v1Dispatch。
-  const deps = constructV1Deps(workspacePath);
+  const testCwd = flag(parsed, "testCwd");
+  const deps = constructV1Deps(workspacePath, testCwd);
   const result: V1ActionResult = v1Dispatch(params, deps);
 
   // 序列化 ActionResult → stdout JSON。

@@ -13,6 +13,21 @@ import { createWave } from "../core/workunit.js";
 import { buildNextAction, saveUnit } from "./internal.js";
 import type { ActionResult, CreateInput,V1Deps } from "./types.js";
 
+/** testRunner 配置提示（create 时提前告知 monorepo 用户）。 */
+const TEST_RUNNER_HINT = `
+
+## testRunner 配置（可选）
+如果测试目录不在仓库根（如 monorepo 子包），在项目根目录创建 cw.config.json：
+  {
+    "testRunner": {
+      "command": "npx vitest run",  // 可选，默认 npx vitest run
+      "cwd": "packages/renderer"    // 相对于项目根目录
+    }
+  }
+或使用 --testCwd 参数临时覆盖（优先级高于 config）：
+  cw v1 test --unitId <id> --testCwd packages/renderer
+配置后 cw 会在指定目录跑测试，解决 monorepo alias 等问题。`;
+
 /**
  * 执行 create action。
  *
@@ -32,11 +47,14 @@ export function handleCreate(
     createdAt: deps.clock.now(),
   });
   saveUnit(deps, unit);
+  const nextAction = buildNextAction(unit, "create");
+  // create 时追加 testRunner 配置提示（monorepo 用户提前配置，避免 test 阶段卡住）
+  nextAction.guidance += TEST_RUNNER_HINT;
   return {
     unitId: unit.id,
     status: unit.status,
     ok: true,
     unit,
-    nextAction: buildNextAction(unit, "create"),
+    nextAction,
   };
 }

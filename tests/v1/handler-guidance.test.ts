@@ -154,7 +154,7 @@ function advanceTo(
 // ═══════════════════════════════════════════════════════════════
 
 describe("W7: ok=true handler guidance（三段式非空）", () => {
-  it("create → nextAction.guidance 非空 + action=clarify + 含位置段", () => {
+  it("create → nextAction.guidance 非空 + action=clarify + 含位置段 + 含 testRunner 配置提示", () => {
     const r = dispatch(
       {
         action: "create",
@@ -175,6 +175,10 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("[wave:wave:g-create]");
     expect(r.nextAction!.guidance).toContain("## 下一步");
     expect(r.nextAction!.guidance).toContain("cw clarify --unitId wave:g-create");
+    // create 时追加 testRunner 配置提示
+    expect(r.nextAction!.guidance).toContain("## testRunner 配置（可选）");
+    expect(r.nextAction!.guidance).toContain("cw.config.json");
+    expect(r.nextAction!.guidance).toContain("--testCwd");
   });
 
   it("clarify → nextAction.guidance 非空 + action=plan + 含 schema 段", () => {
@@ -554,5 +558,50 @@ describe("W7: abort guidance（流程结束）", () => {
     expect(r.nextAction!.guidance).toContain("已结束");
     // 终态无下一步命令
     expect(r.nextAction!.guidance).not.toContain("cw ");
+  });
+});
+
+describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）", () => {
+  it("testsAllPass 失败 → guidance 含 cw.config.json / --testCwd 提示", () => {
+    // 构造 testRunner 返回失败的 deps
+    const failEnv = createV1Env();
+    failEnv.deps.testRunner = {
+      run: () => ({ passed: false, passedCount: 0, failedCount: 5 }),
+    };
+    const unitId = "wave:g-test-fail";
+    dispatch(
+      {
+        action: "create",
+        input: { slug: "g-test-fail", objective: "o", parentUnitId: "slice:p", basedOnParent: [] },
+      },
+      failEnv.deps,
+    );
+    // 推进到 executing
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
+    dispatch(
+      { action: "plan", unitId, input: { testCases: [makeValidTestCase()], tasks: [makeValidTask()], files: [makeValidFile()], contracts: [makeValidContract()] } },
+      failEnv.deps,
+    );
+    dispatch(
+      { action: "design-review", unitId, input: { designReviewJudgment: makeValidDesignReviewJudgment() } },
+      failEnv.deps,
+    );
+    dispatch(
+      { action: "execute", unitId, input: { commitHash: "deadbeef", changedFiles: ["src/x.ts"] } },
+      failEnv.deps,
+    );
+    // test action 会因 testRunner 失败而 gate fail
+    const r = dispatch(
+      { action: "test", unitId, input: { testJudgment: makeValidTestJudgment() } },
+      failEnv.deps,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.nextAction).toBeDefined();
+    expect(r.nextAction!.guidance).toContain("## 问题");
+    expect(r.nextAction!.guidance).toContain("tests-all-pass");
+    // 验证配置提示
+    expect(r.nextAction!.guidance).toContain("cw.config.json");
+    expect(r.nextAction!.guidance).toContain("--testCwd");
+    failEnv.cleanup();
   });
 });

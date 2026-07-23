@@ -44,6 +44,14 @@ export function handleTest(
   input: TestInput,
   deps: V1Deps,
 ): ActionResult {
+  // testRunner 仅 wave test handler 需要（slice 无 test 阶段），V1Deps 声明为可选。
+  // wave test handler 一定有 testRunner（dispatch 为 wave action 构造 deps 时必填），断言非空。
+  if (!deps.testRunner) {
+    throw new Error(
+      "wave test handler requires deps.testRunner (slice actions do not)",
+    );
+  }
+
   // ── 跑测试（IO 通过 deps 注入）──
   const testRunResult = deps.testRunner.run(unit);
 
@@ -58,7 +66,18 @@ export function handleTest(
   // 短路：任一 fail → 不改 status、不写产物，但 append fail 记录 + 异常 guidance
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {
-    const reason = failed.map((g) => g.report).join("; ");
+    let reason = failed.map((g) => g.report).join("; ");
+    // testsAllPass 失败时追加排查提示
+    const testsFailed = failed.some((g) => g.report.startsWith("tests-all-pass:"));
+    if (testsFailed) {
+      const hint = testRunResult.failedCount > 20
+        ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是 monorepo 测试目录问题。排查：
+1. 确认测试命令在正确目录跑：在项目根目录创建 cw.config.json 配置 testRunner.cwd
+2. 或使用 --testCwd 临时指定：cw v1 test --unitId ${unit.id} --testCwd <测试目录>
+3. 配置后可在正确目录手动跑测试验证：cd <测试目录> && npx vitest run`
+        : "\n\n如果测试目录不在仓库根，请在项目根目录创建 cw.config.json 配置 testRunner.cwd，或使用 --testCwd 参数";
+      reason += hint;
+    }
     appendFailRecord(deps, unit, "test", reason);
     const { nextAction, failureCount } = buildFailureNextAction(unit, "test", reason);
     return {
