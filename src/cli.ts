@@ -94,6 +94,7 @@ import type {
 } from "./v1/handlers/index.js";
 import {
   dispatch as v1Dispatch,
+  getUnitScope,
   V1Error,
   type V1Params,
   V1Store,
@@ -936,7 +937,8 @@ function readV1Input(
  *   - create：layer 必填（wave/slice，feature/epic 未实现）+ --slug + --objective 必填，
  *     可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
  *     dispatch 按 layer 路由（wave → handleCreate，slice → handleCreateSlice）。
- *   - 推进 action：--unitId 必填；--commitHash 仅 execute 用（其余靠 --input/stdin）。
+ *   - 推进 action：--unitId 必填；--commitHash 仅 wave execute 用（slice/PlanningUnit
+ *     execute 不接收 input，input 传空对象，dispatchSlice 忽略）；其余靠 --input/stdin。
  *   - replan/abort 的 input 也可用专门的 flag 构造（--abandonedIds/--note/--reason），
  *     作为 --input/stdin 的便捷替代。
  *
@@ -945,6 +947,8 @@ function readV1Input(
  * @param parsed    minimist 解析结果
  * @param stdinData 已读 stdin
  * @param isStdinTTY stdin 是否 TTY
+ * @param scope     unit 的 scope（wave/slice/feature/epic），仅 execute 用以区分参数构造；
+ *                  unit 不存在时 null（execute 会走 unit_not_found 错误路径）
  */
 function buildV1Params(
   v1Action: string,
@@ -952,6 +956,7 @@ function buildV1Params(
   parsed: ParsedArgs,
   stdinData: string,
   isStdinTTY: boolean,
+  scope: string | null,
 ): V1Params {
   if (v1Action === "create") {
     if (layer === undefined) {
@@ -1021,7 +1026,21 @@ function buildV1Params(
         ) as DesignReviewInput,
       };
     case "execute": {
-      // execute 用 --commitHash（必填）+ 可选 --input/stdin（带 changedFiles）
+      // execute 按 scope 区分参数构造：
+      // - wave（ExecutionUnit）：需 --commitHash（记录代码提交）+ 可选 --input/stdin（带 changedFiles）。
+      // - slice 及其他 PlanningUnit（feature/epic）：不接收 input（dispatchSlice 里 handleExecuteSlice
+      //   忽略 params.input，按 plan.split 自动创建 child wave），input 传空对象。
+      //   V1Params 联合的 execute 分支类型是 ExecuteInput（commitHash 必填），slice 场景无 commitHash，
+      //   显式断言绕过类型检查（与 slice-dispatch-e2e.test.ts 的 input:{} + as unknown 同语义）。
+      if (scope === "slice") {
+        return {
+          action: "execute",
+          unitId,
+          // eslint-disable-next-line taste/no-unsafe-cast
+          input: {} as unknown as ExecuteInput,
+        };
+      }
+      // wave（含 unit 不存在 / scope=null 的兼容路径，后续 dispatch 抛 unit_not_found）
       const commitHash = flag(parsed, "commitHash");
       if (!commitHash) throw new CwError("v1 execute 需要 --commitHash");
       const input: ExecuteInput = { commitHash };
@@ -1292,12 +1311,17 @@ async function runV1(
   const isStdinTTY = process.stdin.isTTY === true;
 
   // 构造 V1Params（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
+  // 非 create action 先读 unit scope（wave 需 --commitHash，slice 不需要）。
+  // store 用与 constructV1Deps 相同的 V1Store 实例化（绑 workspacePath，读 _v1.json）。
+  const scope =
+    v1Action === "create" ? null : getUnitScope(new V1Store(workspacePath), flag(parsed, "unitId") ?? "");
   const params = buildV1Params(
     v1Action,
     layer,
     parsed,
     stdinData,
     isStdinTTY,
+    scope,
   );
 
   // 构造 V1Deps + 调 v1Dispatch。

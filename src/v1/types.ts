@@ -29,7 +29,7 @@ export type {
 
 // dispatch 入口类型
 export type { V1Params } from "./dispatch.js";
-export { dispatch,V1Error } from "./dispatch.js";
+export { dispatch,getUnitScope,V1Error } from "./dispatch.js";
 
 // store（外部构造 V1Deps 时需要 V1Store）
 export type { V1JsonFile,WorkUnitRecord } from "./store/schema.js";

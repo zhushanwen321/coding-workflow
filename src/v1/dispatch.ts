@@ -299,6 +299,20 @@ function dispatchSlice(
 // ── 辅助：从 store 加载 WorkUnit（按 scope 返回 ExecutionUnit | Slice）──
 
 /**
+ * 读取 unit 的 scope（wave/slice/feature/epic）。
+ *
+ * CLI 层按 scope 区分 execute 参数构造（wave 需 --commitHash，slice 不需要）。
+ * 仅读 record.scope，不解释层类型（不抛 unsupported_scope——feature/epic 的 scope
+ * 也正常返回，由调用方决定如何处理）。loadWorkUnit 的 scope 读取复用此函数。
+ *
+ * @returns scope 字符串；unit 不存在时 null
+ */
+export function getUnitScope(store: V1Store, unitId: string): string | null {
+  const record = store.load(unitId);
+  return record ? record.scope : null;
+}
+
+/**
  * 从 store 加载 WorkUnitRecord 并按 record.scope 返回 ExecutionUnit | Slice。
  *
  * WorkUnitRecord 是 `[key: string]: unknown` 的透传记录，store 不解释字段。这里按 scope

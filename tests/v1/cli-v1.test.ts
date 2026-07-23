@@ -30,6 +30,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { setupGitRepo } from "../helpers/git.js";
+import {
+  makeValidSliceDesignReviewJudgment,
+  makeValidSlicePlan,
+} from "./helpers/slice-env.js";
 
 // ── 路径常量 ────────────────────────────────────────────────
 
@@ -438,6 +442,90 @@ describe("W8: 0.x 命令与 v1 并存（向后兼容）", () => {
     >;
     expect(Array.isArray(v1Data.workUnits)).toBe(true);
     expect(v1Data.topics).toBeUndefined(); // 0.x 的字段不在 v1 store
+  });
+});
+
+describe("W8: cw v1 execute slice（无 --commitHash，按 plan.split 创建 child wave）", () => {
+  it("slice create→clarify→plan→design-review→execute（无 commitHash）→ status=executing + childUnitIds", () => {
+    // slice execute 不需 --commitHash（wave 才需），CLI 需按 scope 区分。
+    // 1. create slice
+    const created = parseStdout(
+      runV1Cli(
+        ["v1", "create", "slice", "--slug", "cli-slice-exec", "--objective", "o"],
+        e,
+      ),
+    );
+    expect(created.ok).toBe(true);
+    const unitId = created.unitId as string;
+    expect(unitId).toMatch(/^slice:/);
+
+    // 2. clarify
+    const clarifyInput = join(e.workspaceDir, "slice-clarify.json");
+    writeFileSync(
+      clarifyInput,
+      JSON.stringify({
+        clarifications: [
+          { id: "Q1", status: "active", question: "token 存哪", resolution: "httpOnly cookie", type: "grilling" },
+        ],
+      }),
+    );
+    const clarified = parseStdout(
+      runV1Cli(["v1", "clarify", "--unitId", unitId, "--input", `@${clarifyInput}`], e),
+    );
+    expect(clarified.status).toBe("clarifying");
+
+    // 3. plan（合法 SlicePlan）
+    const planInput = join(e.workspaceDir, "slice-plan.json");
+    writeFileSync(planInput, JSON.stringify(makeValidSlicePlan()));
+    const planned = parseStdout(
+      runV1Cli(["v1", "plan", "--unitId", unitId, "--input", `@${planInput}`], e),
+    );
+    expect(planned.status).toBe("planning");
+
+    // 4. design-review（过 gate → design-reviewed）
+    const drInput = join(e.workspaceDir, "slice-dr.json");
+    writeFileSync(
+      drInput,
+      JSON.stringify({ designReviewJudgment: makeValidSliceDesignReviewJudgment() }),
+    );
+    const dr = parseStdout(
+      runV1Cli(["v1", "design-review", "--unitId", unitId, "--input", `@${drInput}`], e),
+    );
+    expect(dr.status).toBe("design-reviewed");
+
+    // 5. execute（slice，不传 --commitHash）——核心修复验证点
+    const executed = parseStdout(
+      runV1Cli(["v1", "execute", "--unitId", unitId], e),
+    );
+    expect(executed.ok).toBe(true);
+    expect(executed.status).toBe("executing");
+    // crossLayer.descend 指向第一个 child wave（execute handler 创建后填入 nextAction）
+    const nextAction = executed.nextAction as { crossLayer?: { kind?: string; targetLayer?: string; targetUnitId?: string } };
+    expect(nextAction.crossLayer).toBeDefined();
+    expect(nextAction.crossLayer!.kind).toBe("descend");
+    expect(nextAction.crossLayer!.targetLayer).toBe("wave");
+    expect(typeof nextAction.crossLayer!.targetUnitId).toBe("string");
+    // 落盘验证：slice 的 executeResult.childUnitIds 非空
+    const v1Json = findV1Json(e.v1Home);
+    expect(v1Json).not.toBeNull();
+    const data = JSON.parse(readV1Json(v1Json!)) as {
+      workUnits: Array<{ id: string; executeResult?: { childUnitIds?: string[] } }>;
+    };
+    const persisted = data.workUnits.find((u) => u.id === unitId);
+    expect(persisted).toBeDefined();
+    expect(persisted!.executeResult!.childUnitIds!.length).toBeGreaterThan(0);
+    expect(persisted!.executeResult!.childUnitIds!).toContain(nextAction.crossLayer!.targetUnitId);
+  });
+
+  it("wave execute 仍要求 --commitHash（slice 修复不影响 wave）", () => {
+    const created = parseStdout(
+      runV1Cli(["v1", "create", "wave", "--slug", "w8-wave-exec", "--objective", "o"], e),
+    );
+    const unitId = created.unitId as string;
+    // wave execute 不传 --commitHash → exit 1
+    const result = runV1Cli(["v1", "execute", "--unitId", unitId], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--commitHash");
   });
 });
 
