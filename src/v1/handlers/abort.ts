@@ -19,7 +19,8 @@ import type { ExecutionUnit } from "../core/workunit.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import { buildNextAction, saveUnit } from "./internal.js";
-import type { AbortInput,ActionResult, V1Deps } from "./types.js";
+import { rollupChildDelivery } from "./rollup.js";
+import type { AbortInput, ActionResult, V1Deps } from "./types.js";
 
 /**
  * 执行 abort action（级联）。
@@ -51,6 +52,15 @@ export function handleAbort(
   unit.status = next;
 
   saveUnit(deps, unit);
+
+  // child wave abort 完成（status→aborted）→ rollup 到 parent PlanningUnit 的 childDelivery。
+  // 仅 rollup 主 abort unit；被级联 abort 的子孙不单独 rollup——cascadeAbortChildren 直接操作 record
+  // （不经 handler），wave 是叶子通常无子孙，该路径不触发。接 slice 层后若 wave 作为 slice 的 child
+  // 被级联，需在 cascadeAbortChildren 内补 rollup（见该函数 [WAVE-ONLY STUB] 注释）。
+  if (unit.parentUnitId) {
+    rollupChildDelivery(deps, unit.id);
+  }
+
   return {
     unitId: unit.id,
     status: unit.status,

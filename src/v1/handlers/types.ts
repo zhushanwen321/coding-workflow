@@ -11,22 +11,29 @@
  */
 import type {
   Clarification,
+  Decision,
 } from "../core/clarifications.js";
 import type { TestRunResult } from "../core/evidence.js";
 import type { ArtifactRef } from "../core/evidence.js";
 import type {
   DesignReviewJudgment,
   ExecReviewJudgment,
+  PlanningRetrospectData,
   RetrospectData,
   TestJudgment,
 } from "../core/judgments.js";
 import type {
+  SliceDataModel,
+  SliceErrorSpec,
+  SliceInterface,
+  SliceTechChoice,
+  Split,
   WaveContract,
   WaveFile,
   WaveTask,
   WaveTestCase,
 } from "../core/plan.js";
-import type { ExecutionStatus } from "../core/status.js";
+import type { WorkUnitStatus } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import type { FreezeViolation } from "../rules/freeze.js";
 import type { GateResult } from "../rules/gates/types.js";
@@ -42,14 +49,15 @@ import type { V1Store } from "../store/v1-store.js";
  *
  * - store：JSON 持久化（load / save / loadAll / findChildren）
  * - gitValidator：验 commit hash 是否真实存在（test gate 用）
- * - testRunner：跑测试套件返回结果（test handler 用）
+ * - testRunner：跑测试套件返回结果（wave 的 test handler 用，slice 无此阶段故可选）
  * - fileExists：验 artifacts[].ref 指向的文件是否存在（closeout drift 检查用）
  * - clock：提供 ISO 8601 时间戳（statusHistory.at / evidence.generatedAt / frozenAt / abandonedAt）
  */
 export interface V1Deps {
   store: V1Store;
   gitValidator: { exists: (hash: string) => boolean };
-  testRunner: { run: (unit: ExecutionUnit) => TestRunResult };
+  /** 跑测试套件返回结果。仅 wave 的 test handler 需要——slice handler 不跑测试，故可选。 wave test handler 使用时做 non-null 断言（slice 不触达）。 */
+  testRunner?: { run: (unit: ExecutionUnit) => TestRunResult };
   /** 验给定 ref（文件路径 / URL）是否存在，用于 closeout 的 artifacts drift 检查。 */
   fileExists: { exists: (ref: string) => boolean };
   clock: { now: () => string };
@@ -72,8 +80,13 @@ export interface V1Deps {
 export interface ActionResult {
   /** 操作后的 WorkUnit id。 */
   unitId: string;
-  /** 操作后的 status。 */
-  status: ExecutionStatus;
+  /**
+   * 操作后的 status。
+   *
+   * wave handler 返回 ExecutionStatus、slice handler 返回 PlanningStatus；
+   * WorkUnitStatus 是两者的联合（core/status.ts），统一容器。
+   */
+  status: WorkUnitStatus;
   /** gate 校验结果（如果有跑 gate）。 */
   gateResults?: GateResult[];
   /** 是否成功。 */
@@ -155,6 +168,11 @@ export interface CreateInput {
   parentUnitId?: string;
   /** 引用父层哪些条目 id（创建时快照，影响面计算基础）。无 parent 时为空数组。 */
   basedOnParent?: string[];
+  /**
+   * 创建哪个层。默认 'wave'（向后兼容）。dispatch 按 layer 决定调 createWave 还是 createSlice。
+   * 取值范围暂限 'wave'|'slice'（epic/feature 未实现）。
+   */
+  layer?: "wave" | "slice";
 }
 
 /** clarify handler 输入（progressive append clarifications）。 */
@@ -217,4 +235,41 @@ export interface ReplanInput {
 export interface AbortInput {
   /** abort 原因（写 statusHistory.note）。 */
   reason?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// slice 层 handler 的 Input 类型
+// ═══════════════════════════════════════════════════════════════
+//
+// 复用原则：slice 与 wave 产物形态相同的阶段直接复用 wave Input（ClarifyInput /
+// DesignReviewInput / CloseoutInput / ReplanInput / AbortInput），只声明 slice 真正
+// 不同的（PlanSliceInput / RetrospectSliceInput）。slice execute 不接收 input（按
+// split 自动创建 child wave），故无 ExecuteSliceInput。
+
+/**
+ * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
+ *
+ * 与 wave 的 PlanInput 完全不同：wave 写 testCases/tasks/files/contracts，
+ * slice 写技术方案（techChoices/interfaces/dataModels/errorSpecs）+ split（拆 wave 清单）。
+ *
+ * decisions 可选——不传时由 handler 从本层 Clarification 投影（model §5.10）。
+ */
+export interface PlanSliceInput {
+  techChoices: SliceTechChoice[];
+  interfaces: SliceInterface[];
+  dataModels: SliceDataModel[];
+  errorSpecs: SliceErrorSpec[];
+  split: Split[];
+  /** 技术决策（投影自本层 Clarification）。可选——不传由 handler 投影。 */
+  decisions?: Decision[];
+}
+
+/**
+ * slice retrospect handler 输入。
+ *
+ * slice 的 retrospectData 是 PlanningRetrospectData（含 deliveryVerdict / childUnitIdsEvidence /
+ * splitFulfillment，验收子 wave 交付），比 wave 的 RetrospectData 宽，无法复用 RetrospectInput。
+ */
+export interface RetrospectSliceInput {
+  retrospectData: PlanningRetrospectData;
 }

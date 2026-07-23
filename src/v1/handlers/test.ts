@@ -70,7 +70,9 @@ export function handleTest(
     // testsAllPass 失败时追加排查提示
     const testsFailed = failed.some((g) => g.report.startsWith("tests-all-pass:"));
     if (testsFailed) {
-      const hint = testRunResult.failedCount > 20
+      // 失败数超过此阈值提示 monorepo 测试目录问题（失败过多通常是跑错了目录）
+      const MONOREPO_FAIL_HINT_THRESHOLD = 20;
+      const hint = testRunResult.failedCount > MONOREPO_FAIL_HINT_THRESHOLD
         ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是 monorepo 测试目录问题。排查：
 1. 确认测试命令在正确目录跑：在项目根目录创建 cw.config.json 配置 testRunner.cwd
 2. 或使用 --testCwd 临时指定：cw v1 test --unitId ${unit.id} --testCwd <测试目录>

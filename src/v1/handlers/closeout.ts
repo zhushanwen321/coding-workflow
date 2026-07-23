@@ -25,7 +25,8 @@ import {
   saveUnit,
   transitionStatus,
 } from "./internal.js";
-import type { ActionResult, CloseoutInput,V1Deps } from "./types.js";
+import { rollupChildDelivery } from "./rollup.js";
+import type { ActionResult, CloseoutInput, V1Deps } from "./types.js";
 
 /**
  * 执行 closeout action。
@@ -93,6 +94,13 @@ export function handleCloseout(
   transitionStatus(unit, "closeout", unit.evidence.frozenAt);
 
   saveUnit(deps, unit);
+
+  // child wave closeout 完成（status→closed）→ rollup 到 parent PlanningUnit 的 childDelivery。
+  // rollupChildDelivery 内部判断 parent 是否 PlanningUnit / 是否已冻结，非 PlanningUnit parent 静默跳过，
+  // 故有 parentUnitId 即调用（无 parent 的独立 wave parentUnitId 为空，不进此分支）。
+  if (unit.parentUnitId) {
+    rollupChildDelivery(deps, unit.id);
+  }
 
   // closeout 后回溯父单元（wave 是叶子，closeout 后按 §7.3 算 crossLayer）。
   const crossLayer = computeCrossLayerAfterCloseout({

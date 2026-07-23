@@ -33,8 +33,10 @@ export type {
   ExecReviewInput,
   ExecuteInput,
   PlanInput,
+  PlanSliceInput,
   ReplanInput,
   RetrospectInput,
+  RetrospectSliceInput,
   TestInput,
   V1Deps,
 } from "./types.js";
@@ -51,3 +53,6 @@ export { handlePlan } from "./plan.js";
 export { handleReplan } from "./replan.js";
 export { handleRetrospect } from "./retrospect.js";
 export { handleTest } from "./test.js";
+
+// rollup 辅助（child wave 状态变更回写 parent PlanningUnit 的 childDelivery）
+export { rollupChildDelivery } from "./rollup.js";
