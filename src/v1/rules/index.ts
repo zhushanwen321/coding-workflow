@@ -60,6 +60,17 @@ export {
   techChoiceNonEmpty,
 } from "./gates/design-review.js";
 
+// design-review 阶段 gate（feature 附录 A / feature §4.3）
+export {
+  acNonEmpty,
+  acReachableFromFr,
+  featureLayerSpecificNonEmpty,
+  featureSplitDagValid,
+  featureSplitNonEmpty,
+  frAcCoverage,
+  runFeatureDesignReviewGates,
+} from "./gates/design-review.js";
+
 // test 阶段 gate（wave 附录 A §11 / §5.5）
 export type { GitValidator } from "./gates/test.js";
 export {
