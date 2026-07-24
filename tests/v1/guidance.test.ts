@@ -382,6 +382,7 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
   const guidance = buildNormalGuidance({
     prefix: "[wave:auth-w1] 状态：clarified｜父单元：slice:auth-login",
     nextAction: "plan",
+    goal: WAVE_PLAN_TEMPLATE.goal,
     command: "cw plan --unitId wave:auth-w1 --input @plan.json",
     schemaText: '{ "testCases": [...] }',
     templateText: WAVE_PLAN_TEMPLATE.constraint,
@@ -418,6 +419,7 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
     const g = buildNormalGuidance({
       prefix: "[wave:x] 状态：s",
       nextAction: "clarify",
+      goal: "澄清需求",
       command: "cw clarify --unitId wave:x",
       schemaText: "{}",
       templateText: "",
@@ -496,7 +498,7 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
 describe("templates/wave: 关键约束", () => {
   it("plan 模板含冻结契约关键约束（§4.1）", () => {
     expect(WAVE_PLAN_TEMPLATE.constraint).toBe(
-      "关键约束：testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan。",
+      "关键约束：testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan；如需扫较多代码/资料，考虑派专门做代码探索方向的 subagent 隔离上下文。",
     );
     expect(WAVE_PLAN_TEMPLATE.goal).toContain("执行计划");
   });
