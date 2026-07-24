@@ -10,9 +10,12 @@
  * 不变量：本文件只声明类型，零运行时代码。各 handler 文件 import 类型后实现。
  */
 import type {
+  AcceptanceCriterion,
+  BusinessCase,
   Clarification,
   Decision,
   FeatureSpec,
+  FunctionalRequirement,
 } from "../core/clarifications.js";
 import type { TestRunResult } from "../core/evidence.js";
 import type { ArtifactRef } from "../core/evidence.js";
@@ -53,6 +56,7 @@ import type { V1Store } from "../store/v1-store.js";
  * - testRunner：跑测试套件返回结果（wave 的 test handler 用，slice 无此阶段故可选）
  * - fileExists：验 artifacts[].ref 指向的文件是否存在（closeout drift 检查用）
  * - clock：提供 ISO 8601 时间戳（statusHistory.at / evidence.generatedAt / frozenAt / abandonedAt）
+ * - workspacePath：仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）
  */
 export interface V1Deps {
   store: V1Store;
@@ -61,6 +65,8 @@ export interface V1Deps {
   testRunner?: { run: (unit: ExecutionUnit) => TestRunResult };
   /** 验给定 ref（文件路径 / URL）是否存在，用于 closeout 的 artifacts drift 检查。 */
   fileExists: { exists: (ref: string) => boolean };
+  /** 仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）。 */
+  workspacePath: string;
   clock: { now: () => string };
 }
 
@@ -197,7 +203,10 @@ export interface DesignReviewInput {
 /** execute handler 输入。 */
 export interface ExecuteInput {
   commitHash: string;
-  /** 本次改动的文件清单（从 commit 提取；可留空数组让后续填）。 */
+  /**
+   * @deprecated §4.4 changedFiles 由 cw 从 commit 提取，agent 无需传入。
+   * 保留字段仅为向后兼容，execute handler 不再读它（传入将被忽略）。
+   */
   changedFiles?: string[];
 }
 
@@ -228,6 +237,18 @@ export interface CloseoutInput {
 export interface ReplanInput {
   /** 本次废弃的 WavePlan 条目 id（testCases/tasks/files/contracts 的 WorkUnitItem.id）。 */
   abandonedIds: string[];
+  /**
+   * 新增的 spec 条目（仅 feature 层消费）。
+   *
+   * 用于「FR1 拆成 FR1a+FR1b」场景：abandonedIds 废弃 FR1，addedSpecItems 追加 FR1a/FR1b（active）。
+   * slice/epic replan 不消费此字段，类型兼容留空即可。
+   * handler 强制 status='active'，id 由 agent 传入且不得与现有条目 id 冲突（冲突抛 V1Error）。
+   */
+  addedSpecItems?: {
+    functionalRequirements?: FunctionalRequirement[];
+    acceptanceCriteria?: AcceptanceCriterion[];
+    businessCases?: BusinessCase[];
+  };
   /** replan 原因（写 statusHistory.note）。 */
   note: string;
 }

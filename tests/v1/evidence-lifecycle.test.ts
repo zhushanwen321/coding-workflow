@@ -20,6 +20,7 @@ import { handleRetrospect } from "../../src/v1/handlers/retrospect.js";
 import { handleTest } from "../../src/v1/handlers/test.js";
 import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
 import {
+  commitWithFiles,
   createV1Env,
   makeValidContract,
   makeValidDesignReviewJudgment,
@@ -75,29 +76,38 @@ function loadUnit(id: string): ExecutionUnit {
 }
 
 describe("U16: evidence 客观部分（execute + test 填充）", () => {
-  it("handleExecute 后 evidence.commitHash + changedFiles + generatedAt 填充", () => {
+  it("handleExecute 后 evidence.commitHash + changedFiles + generatedAt 填充（changedFiles 从 commit 提取）", () => {
     const before = advanceToDesignReviewed("ev-execute");
     expect(before.status).toBe("design-reviewed");
 
+    // 造一个含变更文件的 git commit（验证 §4.4：cw 从 commit 提取 changedFiles）
+    const commitHash = commitWithFiles(env, {
+      "src/foo.ts": "export const foo = 1;",
+      "tests/foo.test.ts": "test('foo', () => {});",
+    });
+
     const unit = loadUnit(before.id);
-    handleExecute(unit, {
-      commitHash: "abc123",
-      changedFiles: ["src/foo.ts", "tests/foo.test.ts"],
-    }, env.deps);
+    handleExecute(unit, { commitHash }, env.deps);
 
     const after = loadUnit(unit.id);
     expect(after.status).toBe("executing");
-    expect(after.evidence.commitHash).toBe("abc123");
-    expect(after.evidence.changedFiles).toEqual(["src/foo.ts", "tests/foo.test.ts"]);
+    expect(after.evidence.commitHash).toBe(commitHash);
+    // changedFiles 从 commit 提取（相对仓库根路径）
+    expect(after.evidence.changedFiles).toEqual(
+      expect.arrayContaining(["src/foo.ts", "tests/foo.test.ts"]),
+    );
+    expect(after.evidence.extractionNote).toBeUndefined();
     expect(after.evidence.generatedAt).toBe(STUB_NOW);
-    expect(after.executeResult.commitHash).toBe("abc123");
+    expect(after.executeResult.commitHash).toBe(commitHash);
   });
 
-  it("handleExecute 不传 changedFiles → changedFiles 默认空数组", () => {
+  it("handleExecute commit 不在 git 仓库 → changedFiles 空数组 + extractionNote", () => {
     const unit = advanceToDesignReviewed("ev-execute2");
+    // cwd 不是 git 仓库，commit 提取失败但不阻断 execute
     handleExecute(unit, { commitHash: "abc" }, env.deps);
     const after = loadUnit(unit.id);
     expect(after.evidence.changedFiles).toEqual([]);
+    expect(after.evidence.extractionNote).toBeDefined();
   });
 
   it("handleTest 后 evidence.testRunResult 填充", () => {

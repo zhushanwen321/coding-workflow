@@ -104,6 +104,8 @@ export {
 // retrospect 阶段 gate（slice 附录 A §11 / slice §5.5）
 export {
   allWavesClosed,
+  childUnitEvidenceComplete,
+  deliveryVerdictNonEmpty,
   reviewedItemsCoverDesignReview,
   runSliceRetrospectGates,
   sliceLessonsLearnedNonEmpty,

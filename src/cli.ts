@@ -95,6 +95,9 @@ import type {
 import {
   dispatch as v1Dispatch,
   getUnitScope,
+  renderList,
+  renderStatus,
+  renderTree,
   V1Error,
   type V1Params,
   V1Store,
@@ -176,6 +179,9 @@ const V1_ADVANCE_ACTIONS = new Set([
 
 /** v1 合法 action 总集（create + 10 个推进 action）。 */
 const V1_VALID_ACTIONS = new Set(["create", ...V1_ADVANCE_ACTIONS]);
+
+/** v1 只读查询命令（tree/status/list）——不经 dispatch、不写 store。 */
+const V1_READONLY_QUERIES = new Set(["tree", "status", "list"]);
 
 // ── 跨平台「用系统默认应用打开文件」 ──────────────────────────
 
@@ -1249,7 +1255,7 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
     },
   };
   const clock = { now: (): string => new Date().toISOString() };
-  return { store, gitValidator, testRunner, fileExists, clock };
+  return { store, gitValidator, testRunner, fileExists, workspacePath, clock };
 }
 
 /** spawn 抛 ENOENT（git/npx 未安装）判定——基础设施异常，应抛出而非静默吞。 */
@@ -1300,6 +1306,13 @@ async function runV1(
   }
   const v1Action = String(v1ActionRaw);
 
+  // ── readonly 查询分支（tree/status/list）──
+  // 不经 dispatch、不写 store、不读 stdin。只 new V1Store 读数据 + render + console.log + 早返回。
+  if (V1_READONLY_QUERIES.has(v1Action)) {
+    await runV1Readonly(v1Action, parsed, workspacePath);
+    return;
+  }
+
   if (!V1_VALID_ACTIONS.has(v1Action)) {
     process.stderr.write(
       `错误：未知 v1 action "${v1Action}"。合法: ${[...V1_VALID_ACTIONS].join(", ")}\n`,
@@ -1332,6 +1345,70 @@ async function runV1(
 
   // 序列化 ActionResult → stdout JSON。
   process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
+}
+
+// ── v1 只读查询（tree/status/list） ──────────────────────────
+
+/**
+ * runV1Readonly — v1 只读查询命令处理（tree/status/list）。
+ *
+ * 与 advance action 的根本区别：
+ *   - 不调 dispatch、不写 store、不 append statusHistory
+ *   - 只 new V1Store 读 _v1.json + 调 render 函数 + console.log
+ *   - 参数错误（如 status 缺 --unitId、tree/status 指定不存在的 unit）→ throw CwError → main catch → exit 1
+ *
+ * 输出是纯文本（tree/列表）或 JSON（status），不走 ActionResult 序列化。
+ */
+async function runV1Readonly(
+  action: string,
+  parsed: ParsedArgs,
+  workspacePath: string,
+): Promise<void> {
+  const store = new V1Store(workspacePath);
+
+  if (action === "tree") {
+    // --unitId 可选；缺省取第一个无 parentUnitId 的 root unit。
+    const unitId = flag(parsed, "unitId");
+    const rootUnitId = unitId ?? findFirstRootUnitId(store);
+    if (rootUnitId === null) {
+      // 库为空且未显式指定 --unitId：提示而非输出 "unit not found"。
+      process.stdout.write("(no units in store)\n");
+      return;
+    }
+    process.stdout.write(renderTree(rootUnitId, store));
+    return;
+  }
+
+  if (action === "status") {
+    const unitId = flag(parsed, "unitId");
+    if (!unitId) {
+      throw new CwError("status 需要 --unitId");
+    }
+    const unit = store.load(unitId);
+    if (unit === null) {
+      throw new CwError(`unit not found: ${unitId}`);
+    }
+    process.stdout.write(renderStatus(unit));
+    return;
+  }
+
+  // action === "list"
+  const layer = flag(parsed, "layer");
+  const units = store.loadAll();
+  process.stdout.write(renderList(units, layer));
+}
+
+/**
+ * 找第一个 root unit（parentUnitId 为空/undefined 的 unit）。
+ *
+ * tree 缺省根的解析规则：顶层 unit 通常无 parent。多个 root 时取 store 里的第一个
+ *（loadAll 的顺序即 _v1.json 里 workUnits 数组顺序，创建先后序）。
+ * 无任何 unit 时返回 null。
+ */
+function findFirstRootUnitId(store: V1Store): string | null {
+  const units = store.loadAll();
+  const root = units.find((u) => u.parentUnitId === undefined || u.parentUnitId === "");
+  return root?.id ?? null;
 }
 
 // ── status / list 只读查询（不经 dispatch） ──────────────────

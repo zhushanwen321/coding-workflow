@@ -189,7 +189,7 @@ function getSchemaText(action: string): string {
  */
 const FLAT_INPUT_HINT: Readonly<Record<string, string>> = {
   create: "{ slug: string, objective: string, parentUnitId?: string, basedOnParent?: string[] }",
-  execute: "{ commitHash: string, changedFiles?: string[] }",
+  execute: "{ commitHash: string }（changedFiles 已废弃，cw 从 commit 自动提取）",
   replan: "{ abandonedIds: string[], note: string }",
   abort: "{ reason?: string }",
 };

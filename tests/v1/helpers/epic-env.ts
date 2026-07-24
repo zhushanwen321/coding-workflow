@@ -149,13 +149,22 @@ export function makeValidEpicDesignReviewJudgment(): DesignReviewJudgment {
 }
 
 /**
- * 合法的 PlanningRetrospectData（epic 版，过 epic retrospect 4 gate）。
+ * 合法的 PlanningRetrospectData（epic 版，过 epic retrospect 6 gate）。
  *
  * reviewedItems 覆盖 necessity/sufficiency/alternatives/TF1/RK1（对应 makeValidEpicDesignReviewJudgment）。
  * splitFulfillment 覆盖 makeValidEpicPlan 的 split slug "f1"。
- * childUnitIdsEvidence 指向 child feature（feature:test-epic::f1）。
+ * childUnitIdsEvidence 默认指向 child feature（feature:test-epic::f1）。
+ *
+ * 可选参数（advance helper 推进完 child feature 后从 store 读真实 id/slug 传入）：
+ * - childUnitIds：传则按真实 childUnitIds 构造 childUnitIdsEvidence；不传用默认 "feature:test-epic::f1"
+ * - splitSlugs：传则按真实 plan.split slug 构造 splitFulfillment；不传用默认 "f1"
  */
-export function makeValidEpicRetrospectData(): PlanningRetrospectData {
+export function makeValidEpicRetrospectData(
+  childUnitIds?: string[],
+  splitSlugs?: string[],
+): PlanningRetrospectData {
+  const ids = childUnitIds ?? ["feature:test-epic::f1"];
+  const slugs = splitSlugs ?? ["f1"];
   return {
     reviewedItems: [
       { itemId: "necessity", outcome: "fulfilled" },
@@ -166,13 +175,29 @@ export function makeValidEpicRetrospectData(): PlanningRetrospectData {
     ],
     lessonsLearned: "epic split gave features clear contract, minimal rework",
     deliveryVerdict: "delivered",
-    childUnitIdsEvidence: [
-      { childId: "feature:test-epic::f1", status: "closed" },
-    ],
-    splitFulfillment: [
-      { splitSlug: "f1", verdict: "delivered" },
-    ],
+    childUnitIdsEvidence: ids.map((id) => ({ childId: id, status: "closed" as const })),
+    splitFulfillment: slugs.map((slug) => ({ splitSlug: slug, verdict: "delivered" as const })),
   };
+}
+
+/**
+ * 从 store 读 epic 的真实 childUnitIds + plan.split slugs，构造过全部 gate 的 epic PlanningRetrospectData。
+ *
+ * e2e / state-machine 测试做 epic retrospect 前用这个，避免 childUnitIdsEvidence
+ * 与动态生成的 child feature id 不匹配导致 childUnitEvidenceComplete gate fail。
+ */
+export function makeEpicRetrospectDataFromStore(
+  deps: V1Deps,
+  unitId: string,
+): PlanningRetrospectData {
+  const record = deps.store.load(unitId) as unknown as {
+    executeResult: { childUnitIds: string[] };
+    plan: { split: { slug: string }[] };
+  };
+  return makeValidEpicRetrospectData(
+    record.executeResult.childUnitIds,
+    record.plan.split.map((s) => s.slug),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -305,6 +330,7 @@ export function advanceChildFeaturesToClosed(deps: V1Deps, epicId: string): stri
     // 推进 child feature 的 child slice 到 closed（内联 feature-env.advanceChildSlicesToClosed 逻辑）
     const featureRecord = deps.store.load(childId) as unknown as {
       executeResult: { childUnitIds: string[] };
+      plan: { split: { slug: string }[] };
     };
     for (const sliceId of featureRecord.executeResult.childUnitIds) {
       advanceFeatureChildSliceToClosed(deps, sliceId);
@@ -314,7 +340,12 @@ export function advanceChildFeaturesToClosed(deps: V1Deps, epicId: string): stri
       {
         action: "retrospect",
         unitId: childId,
-        input: { retrospectData: makeValidFeatureRetrospectData() },
+        input: {
+          retrospectData: makeValidFeatureRetrospectData(
+            featureRecord.executeResult.childUnitIds,
+            featureRecord.plan.split.map((s) => s.slug),
+          ),
+        },
       },
       deps,
     );
@@ -379,6 +410,7 @@ function advanceFeatureChildSliceToClosed(deps: V1Deps, sliceId: string): void {
   // 推进 child slice 的 child wave 到 closed
   const sliceRecord = deps.store.load(sliceId) as unknown as {
     executeResult: { childUnitIds: string[] };
+    plan: { split: { slug: string }[] };
   };
   for (const waveId of sliceRecord.executeResult.childUnitIds) {
     advanceWaveToClosed(deps, waveId);
@@ -387,7 +419,12 @@ function advanceFeatureChildSliceToClosed(deps: V1Deps, sliceId: string): void {
     {
       action: "retrospect",
       unitId: sliceId,
-      input: { retrospectData: makeValidPlanningRetrospectData() },
+      input: {
+        retrospectData: makeValidPlanningRetrospectData(
+          sliceRecord.executeResult.childUnitIds,
+          sliceRecord.plan.split.map((s) => s.slug),
+        ),
+      },
     },
     deps,
   );

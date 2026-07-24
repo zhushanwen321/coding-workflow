@@ -14,8 +14,10 @@
  */
 import type {
   DesignReviewJudgment,
+  ExecReviewJudgment,
   PlanningRetrospectData,
   RetrospectData,
+  TestJudgment,
 } from "../../core/judgments.js";
 import type { Split } from "../../core/plan.js";
 import type { Slice } from "../../core/workunit.js";
@@ -67,13 +69,16 @@ export function lessonsLearnedNonEmpty(
  *   { "necessity", "sufficiency", "alternatives" } ∪ { tradeoff.id... } ∪ { risk.id... }
  *
  * 注意（wave §7.3 人审边界）：机器只验「每项都有记录」，验不了 outcome 对错 / note 深度。
- * 完整语义应覆盖 designReviewJudgment + testJudgment + execReviewJudgment 三处，
- * 但本 gate 按 spec 简化只覆盖 designReviewJudgment 的核心项（testJudgment / execReviewJudgment
- * 的对照项可由 handlers 层组合调用或后续扩展）。
+ *
+ * 对照三处判断（wave 附录 A §7.1）：reviewedItems 应覆盖 designReviewJudgment + testJudgment
+ * + execReviewJudgment 的所有结构化判断项。testJudgment / execReviewJudgment 为可选
+ *（仅 ExecutionUnit 拥有；PlanningUnit 不调用本 gate，而用 reviewedItemsCoverDesignReview）。
  */
 export function retrospectCoversJudgments(
   retrospectData: RetrospectData,
   designReviewJudgment: DesignReviewJudgment,
+  testJudgment?: TestJudgment,
+  execReviewJudgment?: ExecReviewJudgment,
 ): GateResult {
   // 构造期望被覆盖的 itemId 集合（ref 约定：裸字段→字段名，数组元素→元素 id）
   const expected = new Set<string>();
@@ -85,6 +90,38 @@ export function retrospectCoversJudgments(
   }
   for (const r of designReviewJudgment.risks) {
     expected.add(r.id);
+  }
+
+  // testJudgment 对照项（wave 附录 A §5）：sufficiencyMet / alternatives 裸字段名 +
+  // tradeoffCostRealized[].tradeoffRef + riskOutcome[].riskRef（这些 ref 本就指向 designReviewJudgment
+  // 的 tradeoff/risk id，与上面合并去重，确保验收侧显式覆盖）。
+  if (testJudgment) {
+    expected.add("necessityMet");
+    expected.add("sufficiencyMet");
+    expected.add("alternativesReconsidered");
+    for (const tc of testJudgment.tradeoffCostRealized) {
+      expected.add(tc.tradeoffRef);
+    }
+    for (const ro of testJudgment.riskOutcome) {
+      expected.add(ro.riskRef);
+    }
+  }
+
+  // execReviewJudgment 对照项（wave 附录 A §6）：readability / architecture 裸字段名 +
+  // codeSmells.items 各项 + followupActions[].description。
+  if (execReviewJudgment) {
+    expected.add("readability");
+    expected.add("architecture");
+    if (execReviewJudgment.codeSmells) {
+      for (const item of execReviewJudgment.codeSmells.items) {
+        expected.add(`codeSmell:${item}`);
+      }
+    }
+    if (execReviewJudgment.followupActions) {
+      for (const fa of execReviewJudgment.followupActions) {
+        expected.add(`followup:${fa.description}`);
+      }
+    }
   }
 
   // reviewedItems 实际覆盖的 itemId 集合
@@ -101,7 +138,7 @@ export function retrospectCoversJudgments(
   if (missing.length > 0) {
     return {
       passed: false,
-      report: `retrospect-covers-judgments: reviewedItems 未覆盖 designReviewJudgment 核心项（缺失: ${missing.join(", ")}）`,
+      report: `retrospect-covers-judgments: reviewedItems 未覆盖核心判断项（缺失: ${missing.join(", ")}）`,
     };
   }
   return {
@@ -243,7 +280,52 @@ export function sliceLessonsLearnedNonEmpty(
 }
 
 /**
- * 跑 slice retrospect 全部 4 个 gate（slice §5.5 SLICE_RETROSPECT_GATES）。
+ * PlanningUnit §5.5 `child-unit-evidence-complete` — childUnitIdsEvidence 覆盖 executeResult.childUnitIds。
+ *
+ * 防止 agent 漏验某些子单元：每个 execute 出来的 childUnitId 必须在 retrospectData.childUnitIdsEvidence
+ * 里有对应记录（带 closeout 证据摘要）。
+ */
+export function childUnitEvidenceComplete(
+  childUnitIdsEvidence: PlanningRetrospectData["childUnitIdsEvidence"],
+  expectedChildUnitIds: ReadonlyArray<string>,
+): GateResult {
+  const covered = new Set(childUnitIdsEvidence.map((e) => e.childId));
+  const missing = expectedChildUnitIds.filter((id) => !covered.has(id));
+  if (missing.length > 0) {
+    return {
+      passed: false,
+      report: `child-unit-evidence-complete: ${missing.length} 个 childUnit 未在 childUnitIdsEvidence 覆盖（缺失: ${missing.join(", ")}）`,
+    };
+  }
+  return {
+    passed: true,
+    report: `child-unit-evidence-complete: 全部 ${expectedChildUnitIds.length} 个 childUnitId 都被 childUnitIdsEvidence 覆盖`,
+  };
+}
+
+/**
+ * PlanningUnit §5.5 `delivery-verdict-non-empty` — PlanningRetrospectData.deliveryVerdict 非空。
+ *
+ * deliveryVerdict 是枚举（delivered/partial/failed），类型上已禁 undefined，但本 gate 作为显式机器检查
+ * 防御运行时被置空（handler 解析输入容错）。
+ */
+export function deliveryVerdictNonEmpty(
+  deliveryVerdict: "delivered" | "partial" | "failed" | undefined,
+): GateResult {
+  if (!deliveryVerdict) {
+    return {
+      passed: false,
+      report: "delivery-verdict-non-empty: deliveryVerdict 为空",
+    };
+  }
+  return {
+    passed: true,
+    report: `delivery-verdict-non-empty: deliveryVerdict=${deliveryVerdict}`,
+  };
+}
+
+/**
+ * 跑 slice retrospect 全部 6 个 gate（slice §5.5 SLICE_RETROSPECT_GATES）。
  *
  * childStatuses 由 handler 从 store.findChildren 查询后注入（rules 层零 IO）。
  *
@@ -259,5 +341,7 @@ export function runSliceRetrospectGates(
     sliceLessonsLearnedNonEmpty(unit.retrospectData),
     reviewedItemsCoverDesignReview(unit.retrospectData, unit.designReviewJudgment),
     splitFulfillmentCoversPlan(unit.retrospectData, unit.plan.split),
+    childUnitEvidenceComplete(unit.retrospectData.childUnitIdsEvidence, unit.executeResult.childUnitIds),
+    deliveryVerdictNonEmpty(unit.retrospectData.deliveryVerdict),
   ];
 }

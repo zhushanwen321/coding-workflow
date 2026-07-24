@@ -43,7 +43,7 @@ export function handleRetrospect(
   // ── 跑 2 个 gate ──
   const gateResults = [
     lessonsLearnedNonEmpty(input.retrospectData),
-    retrospectCoversJudgments(input.retrospectData, unit.designReviewJudgment),
+    retrospectCoversJudgments(input.retrospectData, unit.designReviewJudgment, unit.testJudgment, unit.execReviewJudgment),
   ];
 
   // 短路：任一 fail → 不改 status、不写 retrospectData，但 append fail 记录 + 异常 guidance

@@ -35,6 +35,9 @@ export { dispatch,getUnitScope,V1Error } from "./dispatch.js";
 export type { V1JsonFile,WorkUnitRecord } from "./store/schema.js";
 export { V1Store } from "./store/v1-store.js";
 
+// readonly 查询渲染（tree/status/list 只读命令用）
+export { renderList,renderStatus, renderTree } from "./readonly/index.js";
+
 // rules（外部测试 / 组合 gate 时需要）
 // wave + slice（PlanningUnit）两层状态机对称导出
 export type { GuardVerdict, PlanningAction, WaveAction } from "./rules/state-machine.js";

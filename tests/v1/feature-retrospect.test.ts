@@ -194,12 +194,12 @@ describe("runFeatureRetrospectGates: splitFulfillmentCoversPlan", () => {
 // runFeatureRetrospectGates 聚合
 // ═══════════════════════════════════════════════════════════════
 
-describe("runFeatureRetrospectGates 聚合（4 个 gate）", () => {
-  it("合法 retrospectData + child 全 closed → 4 个 gate 全 pass", () => {
+describe("runFeatureRetrospectGates 聚合（6 个 gate）", () => {
+  it("合法 retrospectData + child 全 closed → 6 个 gate 全 pass", () => {
     const unit = featureForRetrospect();
     unit.retrospectData = makeValidFeatureRetrospectDataForSplits(["s1", "s2"]);
     const results = runFeatureRetrospectGates(unit, ["closed", "closed"]);
-    expect(results).toHaveLength(4);
+    expect(results).toHaveLength(6);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
@@ -213,6 +213,7 @@ describe("runFeatureRetrospectGates 聚合（4 个 gate）", () => {
       splitFulfillment: [],
     };
     const failed = runFeatureRetrospectGates(unit, ["created"]).filter((r) => !r.passed);
+    // 原 4 个 gate fail；新增 childUnitEvidenceComplete（childUnitIds 空 → pass）+ deliveryVerdictNonEmpty（"failed" → pass）
     expect(failed).toHaveLength(4);
   });
 });
@@ -244,11 +245,20 @@ describe("dispatch 集成：child slice 未全 close → retrospect ok=false 不
 
   it("child slice 全 closed → retrospect ok=true 流转到 retrospected", () => {
     const unitId = setupFeatureWithClosedSlices(env.deps, "retro-ok");
+    const feature = env.store.load(unitId) as unknown as {
+      executeResult: { childUnitIds: string[] };
+      plan: { split: { slug: string }[] };
+    };
     const result = dispatch(
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidFeatureRetrospectData() },
+        input: {
+          retrospectData: makeValidFeatureRetrospectData(
+            feature.executeResult.childUnitIds,
+            feature.plan.split.map((s) => s.slug),
+          ),
+        },
       },
       env.deps,
     );

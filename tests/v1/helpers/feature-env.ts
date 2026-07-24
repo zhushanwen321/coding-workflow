@@ -225,12 +225,22 @@ export function makeValidFeatureDesignReviewJudgment(): DesignReviewJudgment {
 }
 
 /**
- * 合法的 PlanningRetrospectData（feature 版，过 feature retrospect 4 gate）。
+ * 合法的 PlanningRetrospectData（feature 版，过 feature retrospect 6 gate）。
  *
  * reviewedItems 覆盖 necessity/sufficiency/alternatives/TF1/RK1（对应 makeValidFeatureDesignReviewJudgment）。
  * splitFulfillment 覆盖 makeValidFeaturePlan 的 split slug "s1"。
+ * childUnitIdsEvidence 默认指向 child slice（slice:test-feature::s1）。
+ *
+ * 可选参数（advance helper 推进完 child slice 后从 store 读真实 id/slug 传入）：
+ * - childUnitIds：传则按真实 childUnitIds 构造 childUnitIdsEvidence；不传用默认 "slice:test-feature::s1"
+ * - splitSlugs：传则按真实 plan.split slug 构造 splitFulfillment；不传用默认 "s1"
  */
-export function makeValidFeatureRetrospectData(): PlanningRetrospectData {
+export function makeValidFeatureRetrospectData(
+  childUnitIds?: string[],
+  splitSlugs?: string[],
+): PlanningRetrospectData {
+  const ids = childUnitIds ?? ["slice:test-feature::s1"];
+  const slugs = splitSlugs ?? ["s1"];
   return {
     reviewedItems: [
       { itemId: "necessity", outcome: "fulfilled" },
@@ -241,13 +251,29 @@ export function makeValidFeatureRetrospectData(): PlanningRetrospectData {
     ],
     lessonsLearned: "feature spec gave slice clear contract, minimal rework",
     deliveryVerdict: "delivered",
-    childUnitIdsEvidence: [
-      { childId: "slice:test-feature::s1", status: "closed" },
-    ],
-    splitFulfillment: [
-      { splitSlug: "s1", verdict: "delivered" },
-    ],
+    childUnitIdsEvidence: ids.map((id) => ({ childId: id, status: "closed" as const })),
+    splitFulfillment: slugs.map((slug) => ({ splitSlug: slug, verdict: "delivered" as const })),
   };
+}
+
+/**
+ * 从 store 读 feature 的真实 childUnitIds + plan.split slugs，构造过全部 gate 的 feature PlanningRetrospectData。
+ *
+ * e2e / state-machine 测试做 feature retrospect 前用这个，避免 childUnitIdsEvidence
+ * 与动态生成的 child slice id 不匹配导致 childUnitEvidenceComplete gate fail。
+ */
+export function makeFeatureRetrospectDataFromStore(
+  deps: V1Deps,
+  unitId: string,
+): PlanningRetrospectData {
+  const record = deps.store.load(unitId) as unknown as {
+    executeResult: { childUnitIds: string[] };
+    plan: { split: { slug: string }[] };
+  };
+  return makeValidFeatureRetrospectData(
+    record.executeResult.childUnitIds,
+    record.plan.split.map((s) => s.slug),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -376,6 +402,7 @@ export function advanceChildSlicesToClosed(deps: V1Deps, featureId: string): str
     // 推进 child slice 的 child wave 到 closed
     const sliceRecord = deps.store.load(childId) as unknown as {
       executeResult: { childUnitIds: string[] };
+      plan: { split: { slug: string }[] };
     };
     for (const waveId of sliceRecord.executeResult.childUnitIds) {
       advanceWaveToClosed(deps, waveId);
@@ -384,7 +411,12 @@ export function advanceChildSlicesToClosed(deps: V1Deps, featureId: string): str
       {
         action: "retrospect",
         unitId: childId,
-        input: { retrospectData: makeValidPlanningRetrospectData() },
+        input: {
+          retrospectData: makeValidPlanningRetrospectData(
+            sliceRecord.executeResult.childUnitIds,
+            sliceRecord.plan.split.map((s) => s.slug),
+          ),
+        },
       },
       deps,
     );

@@ -7,22 +7,24 @@
  *
  * 职责：
  * 1. 记录 commitHash 到 executeResult（真实存在性校验在 test gate 做，execute 只记录非空）
- * 2. 填 evidence 客观部分：commitHash + changedFiles（从 input 注入，或留空数组）
+ * 2. 填 evidence 客观部分：commitHash + changedFiles（cw 从 commit 提取，§4.4 客观字段，不靠 agent 声明）
  * 3. 填 evidence.generatedAt（首次生成时间；若已填则保留，不覆盖——progressive 场景）
  * 4. status 流转（design-reviewed → executing）→ save
  *
  * 不变量：execute 不跑 gate（commit 存在性在 test gate 验，避免 executing 状态因 commit 无效卡死）。
  */
+import type { WaveEvidence } from "../core/evidence.js";
+import { extractChangedFiles } from "../core/git.js";
 import type { ExecutionUnit } from "../core/workunit.js";
-import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
-import type { ActionResult, ExecuteInput,V1Deps } from "./types.js";
+import { buildNextAction, saveUnit, transitionStatus } from "./internal.js";
+import type { ActionResult, ExecuteInput, V1Deps } from "./types.js";
 
 /**
  * 执行 execute action。
  *
  * @param unit 已加载的 ExecutionUnit（status = design-reviewed）
- * @param input commitHash + changedFiles（可选）
- * @param deps 依赖注入（store / clock）
+ * @param input commitHash（changedFiles 已废弃，cw 从 commit 提取）
+ * @param deps 依赖注入（store / clock / workspacePath）
  */
 export function handleExecute(
   unit: ExecutionUnit,
@@ -35,7 +37,16 @@ export function handleExecute(
   // 填 evidence 客观部分
   const at = deps.clock.now();
   unit.evidence.commitHash = input.commitHash;
-  unit.evidence.changedFiles = input.changedFiles ?? [];
+  // changedFiles 由 cw 从 commit 提取（§4.4 客观字段，不靠 agent 声明；input.changedFiles 已废弃将被忽略）
+  const { changedFiles, note: extractNote } = extractChangedFiles(
+    deps.workspacePath,
+    input.commitHash,
+  );
+  unit.evidence.changedFiles = changedFiles;
+  if (extractNote) {
+    // 提取失败记入 evidence 供人审（不阻断 execute——commit 存在性由 test gate commitExists 兜底）
+    (unit.evidence as WaveEvidence).extractionNote = extractNote;
+  }
   // generatedAt 首次生成时间（已填则保留，不覆盖——progressive 场景下 execute 可能重跑）
   if (!unit.evidence.generatedAt) {
     unit.evidence.generatedAt = at;

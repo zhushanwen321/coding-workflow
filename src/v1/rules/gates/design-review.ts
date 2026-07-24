@@ -10,11 +10,13 @@
  * 不变量：rules 层零 IO。所有 gate 接收已加载的数据（ExecutionUnit / DesignReviewJudgment），
  *      返回统一的 GateResult { passed, report }。
  */
+import type { Clarification } from "../../core/clarifications.js";
 import type {
   DesignReviewJudgment,
   EpicDesignReviewLayerSpecific,
   FeatureDesignReviewLayerSpecific,
   SliceDesignReviewLayerSpecific,
+  WaveDesignReviewLayerSpecific,
 } from "../../core/judgments.js";
 import type { Split } from "../../core/plan.js";
 import type { Epic, ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
@@ -62,6 +64,42 @@ export function testCasesHaveExpected(unit: ExecutionUnit): GateResult {
   return {
     passed: true,
     report: `test-cases-have-expected: 全部 ${unit.plan.testCases.length} 条 testCases 的 expected 非空`,
+  };
+}
+
+/**
+ * design-v5-wave §3 `wave-layer-specific-non-empty` — wave 的 4 个 layerSpecific 字段非空。
+ *
+ * 与 slice/feature/epic 的 layerSpecificNonEmpty 同构（machine gate 只验非空，不验内容质量）。
+ * 4 个字段都是可选 string：undefined 或 trim 空都算未填。layerSpecific 可能 undefined（空态），需 guard。
+ */
+export function waveLayerSpecificNonEmpty(
+  layerSpecific: WaveDesignReviewLayerSpecific | undefined,
+): GateResult {
+  if (!layerSpecific) {
+    return {
+      passed: false,
+      report: "wave-layer-specific-non-empty: layerSpecific 缺失",
+    };
+  }
+  const fields: ReadonlyArray<[string, string | undefined]> = [
+    ["testCaseCoverageNote", layerSpecific.testCaseCoverageNote],
+    ["boundaryConditionNote", layerSpecific.boundaryConditionNote],
+    ["mockStrategyNote", layerSpecific.mockStrategyNote],
+    ["tddRedReadinessNote", layerSpecific.tddRedReadinessNote],
+  ];
+  const empty = fields
+    .filter(([, v]) => !v || v.trim() === "")
+    .map(([k]) => k);
+  if (empty.length > 0) {
+    return {
+      passed: false,
+      report: `wave-layer-specific-non-empty: ${empty.length} 个字段为空（${empty.join(", ")}）`,
+    };
+  }
+  return {
+    passed: true,
+    report: "wave-layer-specific-non-empty: 4 个 layerSpecific 字段都非空",
   };
 }
 
@@ -175,6 +213,63 @@ export function designReviewRisksPresent(
   return {
     passed: true,
     report: `design-review-risks-present: risks 有 ${judgment.risks.length} 条`,
+  };
+}
+
+/**
+ * design-v5-epic §2.4 `all-decisions-resolved` — 所有 clarifications[].resolution 非空。
+ *
+ * progressive 完成度判据：resolution 空 = 还没答的 clarification，带它进 design-review
+ * 等于带未决决策进审查。机器必须拦（防 agent 跳过 clarification 直接 design-review）。
+ *
+ * epic/slice/feature 三层共用（feature 的 clarifications 是 FeatureClarification 容器，
+ * 调用方取内层 clarifications 数组传入）。
+ */
+export function allDecisionsResolved(
+  clarifications: ReadonlyArray<Clarification>,
+): GateResult {
+  const unresolved = clarifications.filter(
+    (c) => !c.resolution || c.resolution.trim() === "",
+  );
+  if (unresolved.length > 0) {
+    return {
+      passed: false,
+      report: `all-decisions-resolved: ${unresolved.length} 个 clarification 未解决（ids: ${unresolved.map((c) => c.id).join(", ")}）`,
+    };
+  }
+  return {
+    passed: true,
+    report: "all-decisions-resolved: 所有 clarification 已解决",
+  };
+}
+
+/**
+ * design-v5-epic §2.4 `inherited-item-ids-valid` — 每个 split.inheritedItemIds 的 id 在当前 unit 可继承条目集里存在。
+ *
+ * 防笔误/孤儿引用：inheritedItemIds 是 replan 影响面查询的基础（execute 时写入子层 basedOnParent），
+ * 引用了不存在的 id 会导致后续 replan 查询失准。validIds 由调用方（各层 runner）构造——
+ * 把该层所有合法的「可被 inheritedItemIds 引用的条目 id」收集进 Set。
+ */
+export function inheritedItemIdsValid(
+  splits: ReadonlyArray<Split>,
+  validIds: ReadonlySet<string>,
+): GateResult {
+  const orphans: string[] = [];
+  for (const s of splits) {
+    for (const id of s.inheritedItemIds ?? []) {
+      if (!validIds.has(id)) orphans.push(id);
+    }
+  }
+  if (orphans.length > 0) {
+    const unique = [...new Set(orphans)];
+    return {
+      passed: false,
+      report: `inherited-item-ids-valid: split.inheritedItemIds 引用了不存在的 id（orphans: ${unique.join(", ")}）`,
+    };
+  }
+  return {
+    passed: true,
+    report: "inherited-item-ids-valid: split.inheritedItemIds 引用全部有效",
   };
 }
 
@@ -354,19 +449,33 @@ export function layerSpecificNonEmpty(unit: Slice): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 slice design-review 全部 9 个 gate（slice §5.5 SLICE_DESIGN_REVIEW_GATES）。
+ * 跑 slice design-review 全部 11 个 gate（slice §5.5 SLICE_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：结构完整性（3）→ 业务判断非空（5，复用 wave 的 judgment gate）
- * → layerSpecific 非空（1）。返回全部 GateResult，调用方按 passed 过滤 mustFix。
+ * 顺序对应附录清单：结构完整性（3）→ 决策已解决 + inheritedItemIds 有效（2）
+ * → 业务判断非空（5，复用 wave 的 judgment gate）→ layerSpecific 非空（1）。
+ * 返回全部 GateResult，调用方按 passed 过滤 mustFix。
+ *
+ * inheritedItemIdsValid 的 validIds：当前 unit 所有可被 inheritedItemIds 引用的条目 id——
+ * slice 的 techChoices/interfaces/dataModels/errorSpecs/decisions/clarifications 的 id。
  *
  * @param unit 待校验的 Slice
  */
 export function runSliceDesignReviewGates(unit: Slice): GateResult[] {
   const judgment = unit.designReviewJudgment;
+  const plan = unit.plan;
+  const validIds = new Set<string>();
+  for (const tc of plan.techChoices) validIds.add(tc.id);
+  for (const it of plan.interfaces) validIds.add(it.id);
+  for (const dm of plan.dataModels) validIds.add(dm.id);
+  for (const es of plan.errorSpecs) validIds.add(es.id);
+  for (const d of plan.decisions) validIds.add(d.id);
+  for (const c of unit.clarifications) validIds.add(c.id);
   return [
     techChoiceNonEmpty(unit),
     splitNonEmpty(unit),
     splitDagValid(unit),
+    allDecisionsResolved(unit.clarifications),
+    inheritedItemIdsValid(plan.split, validIds),
     designReviewNecessityNonEmpty(judgment),
     designReviewSufficiencyComplete(judgment),
     designReviewAlternativesNonEmpty(judgment),
@@ -549,23 +658,35 @@ export function featureLayerSpecificNonEmpty(unit: Feature): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 feature design-review 全部 10 个 gate（feature §4.3 FEATURE_DESIGN_REVIEW_GATES）。
+ * 跑 feature design-review 全部 13 个 gate（feature §4.3 FEATURE_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：FR-AC 强引用（3）→ split 结构完整性（2）→ 业务判断非空（5，复用
- * wave/slice 共用的 judgment gate）→ layerSpecific 非空（1）。
+ * 顺序对应附录清单：FR-AC 强引用（3）→ split 结构完整性（2）→ 决策已解决 + inheritedItemIds 有效（2）
+ * → 业务判断非空（5，复用 wave/slice 共用的 judgment gate）→ layerSpecific 非空（1）。
  * 不包含 slice 专属 gate（techChoices/interfaces/dataModels/errorSpecs——feature plan 无这些）。
  * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。
+ *
+ * inheritedItemIdsValid 的 validIds：当前 unit 所有可被 inheritedItemIds 引用的条目 id——
+ * feature 的 clarifications[].id + spec 的 FR/AC/UC/Decision id。
  *
  * @param unit 待校验的 Feature
  */
 export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
   const judgment = unit.designReviewJudgment;
+  const spec = unit.clarifications.spec;
+  const validIds = new Set<string>();
+  for (const c of unit.clarifications.clarifications) validIds.add(c.id);
+  for (const fr of spec.functionalRequirements) validIds.add(fr.id);
+  for (const ac of spec.acceptanceCriteria) validIds.add(ac.id);
+  for (const bc of spec.businessCases) validIds.add(bc.id);
+  for (const d of spec.decisions) validIds.add(d.id);
   return [
     frAcCoverage(unit),
     acReachableFromFr(unit),
     acNonEmpty(unit),
     featureSplitNonEmpty(unit),
     featureSplitDagValid(unit),
+    allDecisionsResolved(unit.clarifications.clarifications),
+    inheritedItemIdsValid(unit.plan.split, validIds),
     designReviewNecessityNonEmpty(judgment),
     designReviewSufficiencyComplete(judgment),
     designReviewAlternativesNonEmpty(judgment),
@@ -664,20 +785,27 @@ export function epicLayerSpecificNonEmpty(unit: Epic): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 epic design-review 全部 8 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
+ * 跑 epic design-review 全部 10 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：split 结构完整性（2）→ 业务判断非空（5，复用
- * wave/slice/feature 共用的 judgment gate）→ layerSpecific 非空（1）。
+ * 顺序对应附录清单：split 结构完整性（2）→ 决策已解决 + inheritedItemIds 有效（2）
+ * → 业务判断非空（5，复用 wave/slice/feature 共用的 judgment gate）→ layerSpecific 非空（1）。
  * 不包含 feature 专属的 FR-AC 强引用 gate（frAcCoverage/acReachableFromFr/acNonEmpty——epic 无 spec）。
  * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。
+ *
+ * inheritedItemIdsValid 的 validIds：当前 unit 所有可被 inheritedItemIds 引用的条目 id——
+ * epic 无 spec，只有 clarifications[].id。
  *
  * @param unit 待校验的 Epic
  */
 export function runEpicDesignReviewGates(unit: Epic): GateResult[] {
   const judgment = unit.designReviewJudgment;
+  const validIds = new Set<string>();
+  for (const c of unit.clarifications) validIds.add(c.id);
   return [
     epicSplitNonEmpty(unit),
     epicSplitDagValid(unit),
+    allDecisionsResolved(unit.clarifications),
+    inheritedItemIdsValid(unit.plan.split, validIds),
     designReviewNecessityNonEmpty(judgment),
     designReviewSufficiencyComplete(judgment),
     designReviewAlternativesNonEmpty(judgment),

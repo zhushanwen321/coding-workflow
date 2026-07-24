@@ -1,13 +1,13 @@
 /**
- * v1 feature handler — retrospect action（查 child slice 状态 + 跑 4 个 gate + 写 retrospectData）。
+ * v1 feature handler — retrospect action（查 child slice 状态 + 跑 6 个 gate + 写 retrospectData）。
  *
- * 设计来源：feature-internal.runFeatureRetrospectGates（4 个 gate 聚合，复用 slice 的 4 个子 gate）、
+ * 设计来源：feature-internal.runFeatureRetrospectGates（6 个 gate 聚合，复用 slice 的 6 个子 gate）、
  * PLANNING_TRANSITIONS.retrospect（executing → retrospected）、core judgments.PlanningRetrospectData。
  *
  * 职责：
  * 1. 查 child slice 状态：deps.store.findChildren(unit.id) → 收集每个 child 的 status
  * 2. 写 unit.retrospectData = input.retrospectData
- * 3. 跑 runFeatureRetrospectGates(unit, childStatuses)（4 个 gate：allWavesClosed + lessons + cover + splitFulfillment）
+ * 3. 跑 runFeatureRetrospectGates(unit, childStatuses)（6 个 gate：allWavesClosed + lessons + cover + splitFulfillment + childUnitEvidence + deliveryVerdict）
  * 4. 任一 gate fail → 短路返回 ok=false（不流转 status、append fail 记录）
  * 5. 全 pass → status 流转（executing → retrospected）→ save
  *

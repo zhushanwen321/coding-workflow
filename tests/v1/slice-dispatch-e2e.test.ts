@@ -16,7 +16,7 @@ import { dispatch, V1Error } from "../../src/v1/dispatch.js";
 import {
   advanceWaveToClosed,
   createV1Env,
-  makeValidPlanningRetrospectData,
+  makeRetrospectDataFromStore,
   makeValidSliceDesignReviewJudgment,
   makeValidSlicePlan,
   STUB_NOW,
@@ -132,7 +132,7 @@ describe("dispatch 完整 slice 生命周期", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidPlanningRetrospectData() },
+        input: { retrospectData: makeRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -184,7 +184,7 @@ describe("dispatch 完整 slice 生命周期", () => {
       advanceWaveToClosed(env.deps, childId);
     }
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidPlanningRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     const closeout = dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
@@ -325,7 +325,7 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
       advanceWaveToClosed(env.deps, childId);
     }
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidPlanningRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);

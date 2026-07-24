@@ -6,12 +6,14 @@
  * PLANNING_TRANSITIONS.replan（旁路，from ∈ {design-reviewed, executing}，to=undefined）。
  *
  * 职责：
- * 1. computeImpactCascade({unit, abandonedIds, loadChildren})：算多层级联影响面
+ * 1. 本地标记：把 abandonedIds 命中的 epic Clarification 标 status='abandoned'（append-only，不删）。
+ *    与 feature replan 标废弃 FR/AC/UC、slice replan 标废弃 plan 条目同构。
+ * 2. computeImpactCascade({unit, abandonedIds, loadChildren})：算多层级联影响面
  *    - loadChildren：store.findChildren → 映射 WorkUnitBase[]
- * 2. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
+ * 3. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
  *    （action='abort', note='级联 abort'）、append abandonedRefs、save
- * 3. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
- * 4. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
+ * 4. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
+ * 5. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
  *
  * 与 feature replan 同构（跳过 freeze 校验）：
  * - feature/epic plan 是 Plan 基类，只有 split（Split 不继承 WorkUnitItem、无 status 字段，不可废弃），
@@ -51,9 +53,20 @@ export function handleReplanEpic(
   input: ReplanInput,
   deps: V1Deps,
 ): ActionResult {
+  const at = deps.clock.now();
+
+  // ── 本地变更 Step 1：把 abandonedIds 命中的 epic Clarification 标 status='abandoned'（append-only，不删）──
+  // epic 是顶层 PlanningUnit，clarifications 为 Clarification[]（数组形态，非 feature 的 FeatureClarification 容器）。
+  // Clarification extends WorkUnitItem 有 status 字段，与 feature replan 标废弃 FR/AC/UC、slice replan 标废弃 plan 条目同构。
+  if (input.abandonedIds.length > 0) {
+    const abandonedSet = new Set(input.abandonedIds);
+    unit.clarifications = unit.clarifications.map((c) =>
+      abandonedSet.has(c.id) ? { ...c, status: "abandoned" as const } : c,
+    );
+  }
+
   // ── computeImpactCascade：多层级联影响面 ──
   // （epic plan 无可标 abandoned 的 plan 条目，跳过 slice 的 plan 改动 + checkFreezePlanning 步骤）
-  const at = deps.clock.now();
   const replanImpact = computeImpactCascade({
     unit,
     abandonedIds: input.abandonedIds,

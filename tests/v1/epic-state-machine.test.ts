@@ -5,7 +5,7 @@
  * 实际推进来验 epic 专属路径：
  * - clarify 数组 push 累积（非 feature 的容器覆盖）—— epic vs feature 核心差异
  * - plan 写入 Plan 基类（只 split，无技术方案）
- * - design-review 跑 epic 8 个 gate（split 结构 2 + judgment 5 + layerSpecific 1）
+ * - design-review 跑 epic 10 个 gate（split 结构 2 + 决策/inherited 2 + judgment 5 + layerSpecific 1）
  * - execute 创建 child feature（scope=feature，targetLayer='feature'）
  * - retrospect 查 child feature 状态
  * - closeout 写 frozenAt（顶层无父，crossLayer 天然 undefined）
@@ -20,6 +20,7 @@ import type { Epic } from "../../src/v1/core/workunit.js";
 import { dispatch, V1Error } from "../../src/v1/dispatch.js";
 import {
   createV1Env,
+  makeEpicRetrospectDataFromStore,
   makeValidClarification,
   makeValidEpicDesignReviewJudgment,
   makeValidEpicPlan,
@@ -145,7 +146,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect("techChoices" in unit.plan).toBe(false);
   });
 
-  it("design-review → design-reviewed（8 个 gate 全过）", () => {
+  it("design-review → design-reviewed（10 个 gate 全过）", () => {
     const unitId = setupToEpicPlanning(env.deps, "sm-dr");
     const result = dispatch(
       {
@@ -158,7 +159,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect(result.ok).toBe(true);
     expect(result.status).toBe("design-reviewed");
     expect(result.nextAction?.action).toBe("execute");
-    expect(result.gateResults).toHaveLength(8);
+    expect(result.gateResults).toHaveLength(10);
 
     const unit = loadEpic(unitId);
     expect(unit.designReviewJudgment.necessity).toBeTruthy();
@@ -190,7 +191,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidEpicRetrospectData() },
+        input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -205,7 +206,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidEpicRetrospectData() },
+        input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -360,7 +361,7 @@ describe("epic 非法转换抛 illegal_transition", () => {
   it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
     const unitId = setupEpicWithClosedFeatures(env.deps, "sm-terminal");
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidEpicRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
@@ -412,6 +413,14 @@ describe("epic replan 旁路（status 不变）", () => {
     expect(result.nextAction?.action).toBe("plan");
     // replanImpact 有返回
     expect(result.replanImpact).toBeDefined();
+
+    // 本地标记：abandonedIds 命中的 epic Clarification 标 status='abandoned'（append-only，不删）
+    const after = loadEpic(unitId);
+    const hit = after.clarifications.filter((c) => c.id === "Q1");
+    expect(hit).toHaveLength(1);
+    expect(hit[0]?.status).toBe("abandoned");
+    // 条目仍在数组里（未物理删除）
+    expect(after.clarifications.length).toBeGreaterThanOrEqual(1);
   });
 
   it("executing replan → status 仍 executing", () => {
@@ -426,6 +435,11 @@ describe("epic replan 旁路（status 不变）", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.status).toBe("executing");
+    // 本地标记同样生效（与 status 无关，design-reviewed/executing 一致）
+    const after = loadEpic(unitId);
+    expect(
+      after.clarifications.find((c) => c.id === "Q1")?.status,
+    ).toBe("abandoned");
   });
 });
 

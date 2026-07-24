@@ -82,7 +82,10 @@ function freshEpic(): Epic {
  */
 function makeDeps() {
   const noopStore = { save: () => {} };
-  return makeStubDeps(noopStore as unknown as Parameters<typeof makeStubDeps>[0]);
+  return makeStubDeps(
+    noopStore as unknown as Parameters<typeof makeStubDeps>[0],
+    "/tmp/cw-snapshot-test",
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════

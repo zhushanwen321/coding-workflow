@@ -21,10 +21,10 @@ import {
   advanceChildSlicesToClosed,
   createV1Env,
   makeFeatureClarifyInput,
+  makeFeatureRetrospectDataFromStore,
   makeFeatureSpec,
   makeValidFeatureDesignReviewJudgment,
   makeValidFeaturePlan,
-  makeValidFeatureRetrospectData,
   setupFeatureWithClosedSlices,
   setupToFeaturePlanning,
   STUB_NOW,
@@ -102,7 +102,7 @@ describe("dispatch 完整 feature 生命周期", () => {
     );
     expect(dr.ok).toBe(true);
     expect(dr.status).toBe("design-reviewed");
-    expect(dr.gateResults).toHaveLength(11);
+    expect(dr.gateResults).toHaveLength(13);
 
     // 5. execute（创建 child slice）
     const execute = dispatch(featureExecute(unitId), env.deps);
@@ -137,7 +137,7 @@ describe("dispatch 完整 feature 生命周期", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidFeatureRetrospectData() },
+        input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -184,7 +184,7 @@ describe("dispatch 完整 feature 生命周期", () => {
     dispatch(featureExecute(unitId), env.deps);
     advanceChildSlicesToClosed(env.deps, unitId);
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidFeatureRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     const closeout = dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
@@ -501,7 +501,7 @@ describe("dispatch feature 非法跳步", () => {
   it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
     const unitId = setupFeatureWithClosedSlices(env.deps, "e2e-terminal");
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidFeatureRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);

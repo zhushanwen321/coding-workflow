@@ -1,13 +1,14 @@
 /**
  * v1 feature gate 测试。
  *
- * 测 feature design-review 的 11 个 gate（纯函数，零 IO）：
+ * 测 feature design-review 的 13 个 gate（纯函数，零 IO）：
  * - FR-AC 强引用 3：frAcCoverage / acReachableFromFr / acNonEmpty（feature 专属）
  * - split 结构完整性 2：featureSplitNonEmpty / featureSplitDagValid
+ * - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  * - judgment 非空 5（复用 wave/slice 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  * - feature layerSpecific 非空 1（feature 专属 6 字段）
  *
- * 另测 runFeatureDesignReviewGates 聚合：合法 → 11 个全 pass；构造各种 fail 场景验正确 gate fail。
+ * 另测 runFeatureDesignReviewGates 聚合：合法 → 13 个全 pass；构造各种 fail 场景验正确 gate fail。
  *
  * 用 makeFeatureUnit + 合法工厂构造基线，手动设坏字段触发 fail（每个 gate 覆盖 pass + fail）。
  */
@@ -313,14 +314,14 @@ describe("feature design-review gates: feature layerSpecific 非空（6 字段�
 });
 
 // ═══════════════════════════════════════════════════════════════
-// runFeatureDesignReviewGates 聚合（11 个 gate）
+// runFeatureDesignReviewGates 聚合（13 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
-describe("runFeatureDesignReviewGates 聚合（11 个 gate）", () => {
-  it("合法 feature → 11 个 gate 全 pass", () => {
+describe("runFeatureDesignReviewGates 聚合（13 个 gate）", () => {
+  it("合法 feature → 13 个 gate 全 pass", () => {
     const unit = validFeature();
     const results = runFeatureDesignReviewGates(unit);
-    expect(results).toHaveLength(11);
+    expect(results).toHaveLength(13);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 

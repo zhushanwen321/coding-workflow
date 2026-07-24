@@ -21,11 +21,11 @@ import { dispatch, V1Error } from "../../src/v1/dispatch.js";
 import {
   advanceChildFeaturesToClosed,
   createV1Env,
+  makeEpicRetrospectDataFromStore,
   makeValidClarification,
   makeValidEpicDesignReviewJudgment,
   makeValidEpicLayerSpecific,
   makeValidEpicPlan,
-  makeValidEpicRetrospectData,
   setupEpicWithClosedFeatures,
   setupToEpicPlanning,
   STUB_NOW,
@@ -96,7 +96,7 @@ describe("dispatch 完整 epic 生命周期", () => {
     expect(plan.status).toBe("planning");
     expect(loadEpic(unitId).plan.split).toHaveLength(1);
 
-    // 4. design-review（8 个 gate 全过）
+    // 4. design-review（10 个 gate 全过）
     const dr = dispatch(
       {
         action: "design-review",
@@ -107,7 +107,7 @@ describe("dispatch 完整 epic 生命周期", () => {
     );
     expect(dr.ok).toBe(true);
     expect(dr.status).toBe("design-reviewed");
-    expect(dr.gateResults).toHaveLength(8);
+    expect(dr.gateResults).toHaveLength(10);
 
     // 5. execute（创建 child feature）
     const execute = dispatch(epicExecute(unitId), env.deps);
@@ -143,7 +143,7 @@ describe("dispatch 完整 epic 生命周期", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidEpicRetrospectData() },
+        input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -454,7 +454,7 @@ describe("dispatch epic 非法跳步", () => {
   it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
     const unitId = setupEpicWithClosedFeatures(env.deps, "e2e-terminal");
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidEpicRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
@@ -524,7 +524,7 @@ describe("dispatch epic closeout 顶层无父 crossLayer=undefined", () => {
   it("epic 无 parentUnitId → closeout 后 crossLayer undefined（孤立终点）", () => {
     const unitId = setupEpicWithClosedFeatures(env.deps, "e2e-orphan");
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidEpicRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     const closeout = dispatch(
@@ -565,7 +565,7 @@ describe("dispatch epic closeout 顶层无父 crossLayer=undefined", () => {
     dispatch(epicExecute(unitId), env.deps);
     advanceChildFeaturesToClosed(env.deps, unitId);
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidEpicRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     const closeout = dispatch(

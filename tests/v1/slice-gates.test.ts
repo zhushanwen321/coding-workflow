@@ -2,8 +2,9 @@
  * v1 slice gate 测试。
  *
  * 测两类 slice gate（纯函数，零 IO）：
- * - design-review 9 gates（runSliceDesignReviewGates + 9 个单 gate）
+ * - design-review 11 gates（runSliceDesignReviewGates + 11 个单 gate）
  *   - 结构完整性 3：techChoiceNonEmpty / splitNonEmpty / splitDagValid（DAG 无环）
+ *   - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  *   - judgment 非空 5（复用 wave 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  *   - layerSpecific 非空 1（slice 专属 6 字段）
  * - retrospect 4 gates（runSliceRetrospectGates + 4 个单 gate）
@@ -226,11 +227,11 @@ describe("slice design-review gates: layerSpecific 非空（6 字段）", () => 
   });
 });
 
-describe("runSliceDesignReviewGates 聚合（9 个 gate）", () => {
-  it("合法 slice → 9 个 gate 全 pass", () => {
+describe("runSliceDesignReviewGates 聚合（11 个 gate）", () => {
+  it("合法 slice → 11 个 gate 全 pass", () => {
     const unit = validSlice();
     const results = runSliceDesignReviewGates(unit);
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(11);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
@@ -376,8 +377,8 @@ describe("slice retrospect gates", () => {
   });
 });
 
-describe("runSliceRetrospectGates 聚合（4 个 gate）", () => {
-  it("合法 retrospectData + child 全 closed → 4 个 gate 全 pass", () => {
+describe("runSliceRetrospectGates 聚合（6 个 gate）", () => {
+  it("合法 retrospectData + child 全 closed → 6 个 gate 全 pass", () => {
     const unit = validSlice();
     unit.retrospectData = {
       reviewedItems: [
@@ -393,7 +394,7 @@ describe("runSliceRetrospectGates 聚合（4 个 gate）", () => {
       splitFulfillment: [{ splitSlug: "w1", verdict: "delivered" }],
     };
     const results = runSliceRetrospectGates(unit, ["closed"]);
-    expect(results).toHaveLength(4);
+    expect(results).toHaveLength(6);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
@@ -408,6 +409,7 @@ describe("runSliceRetrospectGates 聚合（4 个 gate）", () => {
     };
     const failed = runSliceRetrospectGates(unit, ["created"]).filter((r) => !r.passed);
     // allWavesClosed fail + lessonsLearned fail + reviewedItemsCover fail + splitFulfillment fail = 4
+    // （childUnitEvidenceComplete: childUnitIds 为空无需覆盖 → pass；deliveryVerdictNonEmpty: "failed" 非空 → pass）
     expect(failed.length).toBe(4);
   });
 });

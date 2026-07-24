@@ -1,11 +1,11 @@
 /**
- * v1 wave handler — design-review action（跑 7 个 gate + 写 designReviewJudgment）。
+ * v1 wave handler — design-review action（跑 8 个 gate + 写 designReviewJudgment）。
  *
- * 来源：v5 wave 附录 A §10（编排骨架）、§2.7 + §11（WAVE_DESIGN_REVIEW_GATES 7 个 gate 清单）、
- *      state-machine WAVE_TRANSITIONS["design-review"]（progressive，planning/design-reviewed → design-reviewed）。
+ * 来源：v5 wave 附录 A §10（编排骨架）、§2.7 + §11（WAVE_DESIGN_REVIEW_GATES gate 清单）、
+ *      §3（layerSpecific 非空 gate）、state-machine WAVE_TRANSITIONS["design-review"]（progressive，planning/design-reviewed → design-reviewed）。
  *
  * 职责：
- * 1. 跑 7 个 design-review gate（2 个 testCases 结构 gate + 5 个 judgment 非空 gate）
+ * 1. 跑 8 个 design-review gate（2 个 testCases 结构 gate + 5 个 judgment 非空 gate + 1 个 wave layerSpecific 非空 gate）
  * 2. 任一 gate fail → 短路返回 ok=false + gateResults（不改 status、不 save、不写 judgment）
  * 3. 全 pass → 写 designReviewJudgment → status 流转（→ design-reviewed）→ save
  *
@@ -20,6 +20,7 @@ import {
   designReviewTradeoffsPresent,
   testCasesHaveExpected,
   testCasesNonEmpty,
+  waveLayerSpecificNonEmpty,
 } from "../rules/gates/design-review.js";
 import {
   appendFailRecord,
@@ -42,7 +43,7 @@ export function handleDesignReview(
   input: DesignReviewInput,
   deps: V1Deps,
 ): ActionResult {
-  // ── 跑 7 个 gate ──
+  // ── 跑 8 个 gate ──
   // 先跑 testCases 结构 gate（designReviewJudgment 还没写，先验 plan 产物）
   const gateResults = [
     testCasesNonEmpty(unit),
@@ -52,6 +53,7 @@ export function handleDesignReview(
     designReviewAlternativesNonEmpty(input.designReviewJudgment),
     designReviewTradeoffsPresent(input.designReviewJudgment),
     designReviewRisksPresent(input.designReviewJudgment),
+    waveLayerSpecificNonEmpty(input.designReviewJudgment.layerSpecific),
   ];
 
   // 短路：任一 fail → 不改 status、不写 judgment，但 append fail 记录 + 异常 guidance

@@ -13,7 +13,7 @@
  * 4. appendFeatureFailRecord / buildFeatureFailureNextAction：gate/freeze fail 路径四段式异常导航
  * 5. runFeatureRetrospectGates：feature 版 retrospect gate 聚合（rules/gates/retrospect.ts
  *    未提供 feature 专用聚合，feature 与 slice 的 retrospectData / plan.split / judgment 同型，
- *    复用 4 个子 gate 组装；rules 层零 IO，子 gate 均为独立纯函数）
+ *    复用 6 个子 gate 组装；rules 层零 IO，子 gate 均为独立纯函数）
  *
  * 不变量：本文件只做编排（IO 仅经 deps）+ guidance 填充（调 guidance/ 纯函数）+ gate 子函数组装。
  */
@@ -32,6 +32,8 @@ import {
 } from "../../guidance/index.js";
 import {
   allWavesClosed,
+  childUnitEvidenceComplete,
+  deliveryVerdictNonEmpty,
   reviewedItemsCoverDesignReview,
   sliceLessonsLearnedNonEmpty,
   splitFulfillmentCoversPlan,
@@ -335,8 +337,8 @@ export function buildFeatureFailureNextAction(
  *
  * rules/gates/retrospect.ts 只提供 slice 版聚合（runSliceRetrospectGates，签名锁 Slice），
  * 未提供 feature 专用版。feature 与 slice 的 retrospectData（PlanningRetrospectData）、
- * plan.split（Split[]）、designReviewJudgment（DesignReviewJudgment）类型完全一致，4 个子 gate
- * 均接收这三种入参（不依赖 Slice 特有字段），故 feature 直接复用 4 个子 gate 组装。
+ * plan.split（Split[]）、designReviewJudgment（DesignReviewJudgment）类型完全一致，6 个子 gate
+ * 均接收这三种入参（不依赖 Slice 特有字段），故 feature 直接复用 6 个子 gate 组装。
  *
  * 语义对应：feature 的 child 是 slice（slice 的 child 是 wave），allWavesClosed 判定
  * 「所有 child 终态」的语义对 feature 同样成立（child slice 终态 = closed/aborted）。
@@ -353,6 +355,8 @@ export function runFeatureRetrospectGates(
     sliceLessonsLearnedNonEmpty(unit.retrospectData),
     reviewedItemsCoverDesignReview(unit.retrospectData, unit.designReviewJudgment),
     splitFulfillmentCoversPlan(unit.retrospectData, unit.plan.split),
+    childUnitEvidenceComplete(unit.retrospectData.childUnitIdsEvidence, unit.executeResult.childUnitIds),
+    deliveryVerdictNonEmpty(unit.retrospectData.deliveryVerdict),
   ];
 }
 

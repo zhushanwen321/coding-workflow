@@ -8,9 +8,10 @@
  *
  * 每个 createV1Env() 产出独立隔离的环境，cleanup() 清理临时目录 + 还原 V1_HOME。
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { TestRunResult } from "../../../src/v1/core/evidence.js";
 import type {
@@ -60,13 +61,14 @@ export function createV1Env(): V1Env {
   const root = mkdtempSync(join(tmpdir(), "cw-v1-test-"));
   const cwd = join(root, "cwd");
   const v1Home = join(root, "v1home");
-  mkdtempSync(v1Home); // 占位目录，V1Store 会 mkdirSync
+  mkdirSync(cwd, { recursive: true }); // cwd 作为仓库工作目录（execute 提取 changedFiles 时绑 git cwd）
+  mkdirSync(v1Home, { recursive: true }); // V1Store 会在此下写 _v1.json
 
   const prevV1Home = process.env.V1_HOME;
   process.env.V1_HOME = v1Home;
 
   const store = new V1Store(cwd);
-  const deps = makeStubDeps(store);
+  const deps = makeStubDeps(store, cwd);
 
   const cleanup = (): void => {
     if (prevV1Home === undefined) {
@@ -86,9 +88,10 @@ export function createV1Env(): V1Env {
  * - gitValidator.exists：始终 true（测试不依赖真实 git）
  * - testRunner.run：返回固定 passed 结果
  * - fileExists.exists：始终 true（closeout drift 检查）
+ * - workspacePath：指向 cwd（execute 提取 changedFiles 的 git cwd；默认非 git 仓库，提取返回空数组 + note）
  * - clock.now：返回固定 ISO 时间
  */
-export function makeStubDeps(store: V1Store): V1Deps {
+export function makeStubDeps(store: V1Store, cwd: string): V1Deps {
   return {
     store,
     gitValidator: { exists: (_hash: string) => true },
@@ -100,6 +103,7 @@ export function makeStubDeps(store: V1Store): V1Deps {
       }),
     },
     fileExists: { exists: (_ref: string) => true },
+    workspacePath: cwd,
     clock: { now: () => STUB_NOW },
   };
 }
@@ -189,6 +193,12 @@ export function makeValidDesignReviewJudgment(): DesignReviewJudgment {
     risks: [
       { id: "RK1", item: "token leak", severity: "medium", mitigation: "short TTL" },
     ],
+    layerSpecific: {
+      testCaseCoverageNote: "testCases 覆盖核心路径与错误分支",
+      boundaryConditionNote: "边界：空输入/超长 token/过期 refresh",
+      mockStrategyNote: "OAuth provider 走 DI mock，不触真实网络",
+      tddRedReadinessNote: "红灯可独立运行，expected 明确",
+    },
   };
 }
 
@@ -241,17 +251,80 @@ export function makeNeedsFollowupExecReviewJudgment(): ExecReviewJudgment {
 
 /**
  * 合法的 RetrospectData（过 2 个 gate）。
- * reviewedItems 覆盖 necessity/sufficiency/alternatives + TF1/RK1。
+ * reviewedItems 覆盖 designReviewJudgment（necessity/sufficiency/alternatives + TF1/RK1）
+ * + testJudgment（necessityMet/sufficiencyMet/alternativesReconsidered）
+ * + execReviewJudgment（readability/architecture）。TF1/RK1 由 tradeoffRef/riskRef 引用，
+ * 与 designReviewJudgment 的 tradeoff/risk id 去重合并，故只列一次。
  */
 export function makeValidRetrospectData(): RetrospectData {
   return {
     reviewedItems: [
+      // designReviewJudgment
       { itemId: "necessity", outcome: "fulfilled" },
       { itemId: "sufficiency", outcome: "fulfilled" },
       { itemId: "alternatives", outcome: "fulfilled" },
       { itemId: "TF1", outcome: "fulfilled" },
       { itemId: "RK1", outcome: "fulfilled", note: "TTL=15min" },
+      // testJudgment（§5 对照项）
+      { itemId: "necessityMet", outcome: "fulfilled" },
+      { itemId: "sufficiencyMet", outcome: "fulfilled" },
+      { itemId: "alternativesReconsidered", outcome: "fulfilled" },
+      // execReviewJudgment（§6 对照项）
+      { itemId: "readability", outcome: "fulfilled" },
+      { itemId: "architecture", outcome: "fulfilled" },
     ],
     lessonsLearned: "TDD red-green flow caught an edge case in token refresh",
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// git commit 工厂（验证 §4.4 changedFiles 从 commit 提取）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 在 env.cwd 造一个 git 仓库 + 含指定文件的 commit，返回 commit hash。
+ *
+ * 用于验证 execute handler 的 extractChangedFiles（§4.4：cw 从 commit 提取 changedFiles）。
+ * 调用前 cwd 不是 git 仓库；首次调用初始化仓库（git init + 配置局部 user）并造 initial commit，
+ * 后续调用追加 commit。返回最后一个 commit 的完整 hash。
+ *
+ * @param env    createV1Env() 产出的环境（cwd 用于 git cwd）
+ * @param files  文件相对路径 → 内容的映射，作为本次 commit 的变更
+ * @returns 本次 commit 的完整 hash
+ */
+export function commitWithFiles(
+  env: V1Env,
+  files: Record<string, string>,
+): string {
+  const cwd = env.cwd;
+  // 首次调用初始化仓库（避免重复 init 覆盖配置）
+  if (!existsGitRepo(cwd)) {
+    spawnSync("git", ["init"], { cwd, encoding: "utf-8" });
+    spawnSync("git", ["config", "user.email", "test@cw.local"], { cwd, encoding: "utf-8" });
+    spawnSync("git", ["config", "user.name", "cw-test"], { cwd, encoding: "utf-8" });
+    // 造一个空的 initial commit，作为后续 commit 的父提交（extractChangedFiles 需要 <commit>^ 存在）
+    spawnSync("git", ["commit", "--allow-empty", "-m", "initial"], { cwd, encoding: "utf-8" });
+  }
+  // 写文件并 add（自动创建父目录）
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = join(cwd, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content, "utf-8");
+    spawnSync("git", ["add", rel], { cwd, encoding: "utf-8" });
+  }
+  const msg = `add ${Object.keys(files).join(", ")}`;
+  spawnSync("git", ["commit", "-m", msg], { cwd, encoding: "utf-8" });
+  // 取最新 commit 的完整 hash
+  const r = spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" });
+  return r.stdout.trim();
+}
+
+/** 判断 cwd 是否已是 git 仓库（.git 目录存在）。 */
+function existsGitRepo(cwd: string): boolean {
+  const r = spawnSync(
+    "git",
+    ["rev-parse", "--is-inside-work-tree"],
+    { cwd, encoding: "utf-8" },
+  );
+  return r.status === 0;
 }

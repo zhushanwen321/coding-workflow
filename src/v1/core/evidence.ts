@@ -51,6 +51,8 @@ export interface WaveEvidence extends Evidence {
   commitHash: string;
   /** 本次 wave 改动的文件清单（从 commit 提取）。 */
   changedFiles: string[];
+  /** changedFiles 提取失败时的原因记录（提取成功时为空）。 */
+  extractionNote?: string;
   /** test 阶段的测试结果（test 完成后填，无 test 则空）。 */
   testRunResult?: TestRunResult;
 }

@@ -21,6 +21,7 @@ import { dispatch, V1Error } from "../../src/v1/dispatch.js";
 import {
   createV1Env,
   makeFeatureClarifyInput,
+  makeFeatureRetrospectDataFromStore,
   makeValidFeatureDesignReviewJudgment,
   makeValidFeaturePlan,
   makeValidFeatureRetrospectData,
@@ -161,7 +162,7 @@ describe("feature 主链 7 步状态流转（create→closeout）", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidFeatureRetrospectData() },
+        input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -176,7 +177,7 @@ describe("feature 主链 7 步状态流转（create→closeout）", () => {
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidFeatureRetrospectData() },
+        input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) },
       },
       env.deps,
     );
@@ -279,7 +280,7 @@ describe("feature 非法转换抛 illegal_transition", () => {
   it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
     const unitId = setupFeatureWithClosedSlices(env.deps, "sm-terminal");
     dispatch(
-      { action: "retrospect", unitId, input: { retrospectData: makeValidFeatureRetrospectData() } },
+      { action: "retrospect", unitId, input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) } },
       env.deps,
     );
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);

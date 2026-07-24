@@ -197,11 +197,22 @@ export function makeValidSliceDesignReviewJudgment(): DesignReviewJudgment {
 }
 
 /**
- * 合法的 PlanningRetrospectData（过 slice retrospect 4 gate）。
+ * 合法的 PlanningRetrospectData（过 slice retrospect 6 gate）。
  * reviewedItems 覆盖 necessity/sufficiency/alternatives/TF1/RK1。
  * splitFulfillment 覆盖 makeValidSlicePlan 的 split slug "w1"。
+ * childUnitIdsEvidence 覆盖 executeResult.childUnitIds。
+ *
+ * 可选参数：
+ * - childUnitIds：传则按真实 childUnitIds 构造 childUnitIdsEvidence（advance helper 推进
+ *   完 child wave 后从 store 读真实 id 传入）；不传用默认 "wave:test-slice::w1"（gate 单元测试基线）
+ * - splitSlugs：传则按真实 plan.split slug 构造 splitFulfillment；不传用默认 "w1"
  */
-export function makeValidPlanningRetrospectData(): PlanningRetrospectData {
+export function makeValidPlanningRetrospectData(
+  childUnitIds?: string[],
+  splitSlugs?: string[],
+): PlanningRetrospectData {
+  const ids = childUnitIds ?? ["wave:test-slice::w1"];
+  const slugs = splitSlugs ?? ["w1"];
   return {
     reviewedItems: [
       { itemId: "necessity", outcome: "fulfilled" },
@@ -212,13 +223,29 @@ export function makeValidPlanningRetrospectData(): PlanningRetrospectData {
     ],
     lessonsLearned: "slice tech plan gave wave clear contract, minimal rework",
     deliveryVerdict: "delivered",
-    childUnitIdsEvidence: [
-      { childId: "wave:test-slice::w1", status: "closed" },
-    ],
-    splitFulfillment: [
-      { splitSlug: "w1", verdict: "delivered" },
-    ],
+    childUnitIdsEvidence: ids.map((id) => ({ childId: id, status: "closed" as const })),
+    splitFulfillment: slugs.map((slug) => ({ splitSlug: slug, verdict: "delivered" as const })),
   };
+}
+
+/**
+ * 从 store 读 unit 的真实 childUnitIds + plan.split slugs，构造过全部 gate 的 PlanningRetrospectData。
+ *
+ * advance helper / e2e / state-machine 测试做 retrospect 前用这个，避免 childUnitIdsEvidence
+ * 与动态生成的 childUnitId 不匹配导致 childUnitEvidenceComplete gate fail。
+ */
+export function makeRetrospectDataFromStore(
+  deps: V1Deps,
+  unitId: string,
+): PlanningRetrospectData {
+  const record = deps.store.load(unitId) as unknown as {
+    executeResult: { childUnitIds: string[] };
+    plan: { split: { slug: string }[] };
+  };
+  return makeValidPlanningRetrospectData(
+    record.executeResult.childUnitIds,
+    record.plan.split.map((s) => s.slug),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════

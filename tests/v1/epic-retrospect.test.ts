@@ -195,15 +195,15 @@ describe("runEpicRetrospectGates: splitFulfillmentCoversPlan", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("runEpicRetrospectGates 聚合（4 个 gate）", () => {
-  it("合法 retrospectData + child 全 closed → 4 个 gate 全 pass", () => {
+  it("合法 retrospectData + child 全 closed → 6 个 gate 全 pass", () => {
     const unit = epicForRetrospect();
     unit.retrospectData = makeValidEpicRetrospectDataForSplits(["f1", "f2"]);
     const results = runEpicRetrospectGates(unit, ["closed", "closed"]);
-    expect(results).toHaveLength(4);
+    expect(results).toHaveLength(6);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
-  it("child 未全 closed + lessonsLearned 空 + 缺 reviewedItems + 缺 splitFulfillment → 4 gate 全 fail", () => {
+  it("child 未全 closed + lessonsLearned 空 + 缺 reviewedItems + 缺 splitFulfillment → 4 gate fail（新增 2 gate 仍 pass）", () => {
     const unit = epicForRetrospect();
     unit.retrospectData = {
       reviewedItems: [],
@@ -213,6 +213,7 @@ describe("runEpicRetrospectGates 聚合（4 个 gate）", () => {
       splitFulfillment: [],
     };
     const failed = runEpicRetrospectGates(unit, ["created"]).filter((r) => !r.passed);
+    // 原 4 个 gate fail；新增 childUnitEvidenceComplete（childUnitIds 空 → pass）+ deliveryVerdictNonEmpty（"failed" → pass）
     expect(failed).toHaveLength(4);
   });
 });
@@ -244,11 +245,20 @@ describe("dispatch 集成：child feature 未全 close → retrospect ok=false �
 
   it("child feature 全 closed → retrospect ok=true 流转到 retrospected", () => {
     const unitId = setupEpicWithClosedFeatures(env.deps, "retro-ok");
+    const epic = env.store.load(unitId) as unknown as {
+      executeResult: { childUnitIds: string[] };
+      plan: { split: { slug: string }[] };
+    };
     const result = dispatch(
       {
         action: "retrospect",
         unitId,
-        input: { retrospectData: makeValidEpicRetrospectData() },
+        input: {
+          retrospectData: makeValidEpicRetrospectData(
+            epic.executeResult.childUnitIds,
+            epic.plan.split.map((s) => s.slug),
+          ),
+        },
       },
       env.deps,
     );

@@ -35,6 +35,7 @@ import type {
 } from "../../core/clarifications.js";
 import type { AbandonedRef, WorkUnitStatus } from "../../core/status.js";
 import type { Feature, WorkUnitBase } from "../../core/workunit.js";
+import { V1Error } from "../../dispatch.js";
 import { checkFreezeFeatureSpec } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
@@ -85,6 +86,47 @@ export function handleReplanFeature(
       ? ({ ...it, status: "abandoned" } as BusinessCase)
       : it,
   );
+
+  // ── 追加新增的 spec 条目（status='active'，append-only）──
+  // 用于「FR1 拆成 FR1a+FR1b」：FR1 由 abandonedIds 废弃，FR1a/FR1b 由 addedSpecItems 追加。
+  // 必须在 checkFreezeFeatureSpec 之前完成追加，让 freeze 看到的是变更后的最终 spec
+  //（append-only 校验只管“未删/核心字段未改”，新增条目是 append，不违反）。
+  if (input.addedSpecItems) {
+    const {
+      functionalRequirements: frs,
+      acceptanceCriteria: acs,
+      businessCases: ucs,
+    } = input.addedSpecItems;
+    // id 冲突检测：新增 id 不得与现有 active/abandoned 条目 id 重复（跨 FR/AC/UC 全局唯一）。
+    const existingIds = new Set<string>([
+      ...spec.functionalRequirements.map((i) => i.id),
+      ...spec.acceptanceCriteria.map((i) => i.id),
+      ...spec.businessCases.map((i) => i.id),
+    ]);
+    const dupes: string[] = [];
+    for (const it of [...(frs ?? []), ...(acs ?? []), ...(ucs ?? [])]) {
+      if (existingIds.has(it.id)) dupes.push(it.id);
+    }
+    if (dupes.length > 0) {
+      throw new V1Error(
+        "illegal_argument",
+        `replan addedSpecItems id 冲突: ${dupes.join(", ")}`,
+      );
+    }
+    // 强制 status='active'，追加到数组末尾（append-only，不覆盖）。agent 传入的 status 被忽略。
+    if (frs)
+      spec.functionalRequirements.push(
+        ...frs.map((it) => ({ ...it, status: "active" as const })),
+      );
+    if (acs)
+      spec.acceptanceCriteria.push(
+        ...acs.map((it) => ({ ...it, status: "active" as const })),
+      );
+    if (ucs)
+      spec.businessCases.push(
+        ...ucs.map((it) => ({ ...it, status: "active" as const })),
+      );
+  }
 
   // ── checkFreezeFeatureSpec：验 abandoned 条目未被删/核心字段未被改/status 未复活 ──
   const freezeViolations = checkFreezeFeatureSpec(before, unit);
