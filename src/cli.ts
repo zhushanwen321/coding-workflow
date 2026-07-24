@@ -95,6 +95,7 @@ import type {
 import {
   dispatch as v1Dispatch,
   getUnitScope,
+  renderHandoff,
   renderList,
   renderStatus,
   renderTree,
@@ -181,7 +182,7 @@ const V1_ADVANCE_ACTIONS = new Set([
 const V1_VALID_ACTIONS = new Set(["create", ...V1_ADVANCE_ACTIONS]);
 
 /** v1 只读查询命令（tree/status/list）——不经 dispatch、不写 store。 */
-const V1_READONLY_QUERIES = new Set(["tree", "status", "list"]);
+const V1_READONLY_QUERIES = new Set(["tree", "status", "list", "handoff"]);
 
 // ── 跨平台「用系统默认应用打开文件」 ──────────────────────────
 
@@ -1355,9 +1356,9 @@ async function runV1(
  * 与 advance action 的根本区别：
  *   - 不调 dispatch、不写 store、不 append statusHistory
  *   - 只 new V1Store 读 _v1.json + 调 render 函数 + console.log
- *   - 参数错误（如 status 缺 --unitId、tree/status 指定不存在的 unit）→ throw CwError → main catch → exit 1
+ *   - 参数错误（如 status/handoff 缺 --unitId、tree/status 指定不存在的 unit）→ throw CwError → main catch → exit 1
  *
- * 输出是纯文本（tree/列表）或 JSON（status），不走 ActionResult 序列化。
+ * 输出是纯文本（tree/列表/handoff）或 JSON（status），不走 ActionResult 序列化。
  */
 async function runV1Readonly(
   action: string,
@@ -1389,6 +1390,21 @@ async function runV1Readonly(
       throw new CwError(`unit not found: ${unitId}`);
     }
     process.stdout.write(renderStatus(unit));
+    return;
+  }
+
+  if (action === "handoff") {
+    // handoff：单 unit 的叙述性交接摘要（含下一步 guidance）。
+    // 与 status 同样需要 --unitId + load + not found 判定，但输出是五段式纯文本。
+    const unitId = flag(parsed, "unitId");
+    if (!unitId) {
+      throw new CwError("handoff 需要 --unitId");
+    }
+    const unit = store.load(unitId);
+    if (unit === null) {
+      throw new CwError(`unit not found: ${unitId}`);
+    }
+    process.stdout.write(renderHandoff(unit));
     return;
   }
 
