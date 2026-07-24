@@ -245,13 +245,14 @@ describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
     expect(result.stderr).toContain("layer");
   });
 
-  it("未实现的 layer（epic）→ exit 1 + 明确提示未实现", () => {
+  it("非法 layer 名 → exit 1 + 明确提示非法", () => {
+    // epic 已实现，改用虚构 layer 名验证「未知 layer 被拒」防御逻辑
     const result = runV1Cli(
-      ["v1", "create", "epic", "--slug", "x", "--objective", "y"],
+      ["v1", "create", "bogus-layer", "--slug", "x", "--objective", "y"],
       e,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("尚未实现");
+    expect(result.stderr).toContain("非法");
   });
 });
 

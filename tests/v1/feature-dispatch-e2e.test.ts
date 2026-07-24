@@ -510,11 +510,12 @@ describe("dispatch feature 非法跳步", () => {
     expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(V1Error);
   });
 
-  it("unsupported scope（epic 未实现）→ throw V1Error(unsupported_scope)", () => {
-    // 手动存一个 scope=epic 的 record，loadWorkUnit 会抛 unsupported_scope
+  it("unsupported scope（未实现的 scope）→ throw V1Error(unsupported_scope)", () => {
+    // 手动存一个 scope='custom-unknown' 的 record，loadWorkUnit 会抛 unsupported_scope
+    //（epic 已实现，改用虚构 scope 验证未知 scope 的防御逻辑）
     env.store.save({
-      id: "epic:fake",
-      scope: "epic",
+      id: "custom-unknown:fake",
+      scope: "custom-unknown",
       slug: "fake",
       status: "created",
       statusHistory: [],
@@ -525,14 +526,14 @@ describe("dispatch feature 非法跳步", () => {
 
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "epic:fake", input: makeFeatureClarifyInput() },
+        { action: "clarify", unitId: "custom-unknown:fake", input: makeFeatureClarifyInput() },
         env.deps,
       ),
     ).toThrow(V1Error);
 
     try {
       dispatch(
-        { action: "clarify", unitId: "epic:fake", input: makeFeatureClarifyInput() },
+        { action: "clarify", unitId: "custom-unknown:fake", input: makeFeatureClarifyInput() },
         env.deps,
       );
       throw new Error("should have thrown");
