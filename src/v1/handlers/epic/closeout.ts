@@ -19,6 +19,7 @@
 import type { Epic } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import type { ActionResult, CloseoutInput, V1Deps, V1NextAction } from "../types.js";
+import { rollupChildDelivery } from "../rollup.js";
 import {
   appendEpicFailRecord,
   buildEpicFailureNextAction,
@@ -89,6 +90,12 @@ export function handleCloseoutEpic(
   epicTransition(unit, "closeout", frozenAt);
 
   saveEpic(deps, unit);
+
+  // epic closeout 完成（status→closed）→ rollup 到 parent 的 childDelivery。
+  // epic 通常顶层（parentUnitId 为空），rollupChildDelivery 内部静默跳过；保持对称接入。
+  if (unit.parentUnitId !== undefined && unit.parentUnitId !== "") {
+    rollupChildDelivery(deps, unit.id);
+  }
 
   // ── crossLayer：回溯父单元（epic 顶层无 parent，天然 undefined——孤立终点）──
   const crossLayer: V1NextAction["crossLayer"] | undefined =

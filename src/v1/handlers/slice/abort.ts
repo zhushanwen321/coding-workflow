@@ -20,6 +20,7 @@ import type { StatusChange, WorkUnitStatus } from "../../core/status.js";
 import type { Slice } from "../../core/workunit.js";
 import type { AbortInput, ActionResult, V1Deps } from "../types.js";
 import { buildSliceNextAction, readRecordStatus, readRecordStatusHistory, saveSlice, sliceTransition } from "./slice-internal.js";
+import { rollupChildDelivery } from "../rollup.js";
 
 /**
  * 执行 slice abort action（级联）。
@@ -35,13 +36,18 @@ export function handleAbortSlice(
 ): ActionResult {
   const at = deps.clock.now();
 
+  // ── 自身 status 流转 → aborted ──
+  // 先落盘自身（cascadeAbortChildren 内 rollup 会读 parent 的最新状态，避免被后续 saveSlice 覆盖）
+  sliceTransition(unit, "abort", at, input.reason);
+  saveSlice(deps, unit);
+
   // ── 级联 abort 所有 child wave（及更深子孙）──
   cascadeAbortChildren(deps, unit.id, at, input.reason);
 
-  // ── 自身 status 流转 → aborted ──
-  sliceTransition(unit, "abort", at, input.reason);
-
-  saveSlice(deps, unit);
+  // slice 自身 abort 完成（status→aborted）→ rollup 到 parent（feature/epic）的 childDelivery。
+  if (unit.parentUnitId !== undefined && unit.parentUnitId !== "") {
+    rollupChildDelivery(deps, unit.id);
+  }
   return {
     unitId: unit.id,
     status: unit.status,
@@ -86,6 +92,11 @@ function cascadeAbortChildren(
     child.statusHistory = history;
     child.status = "aborted";
     deps.store.save(child);
+    // 级联 abort 的 child（终态变更）→ rollup 到 child 的 parent 的 childDelivery。
+    // child 的 parent 可能是当前 slice 或更上层；rollupChildDelivery 内部按 child.parentUnitId 定位。
+    if (child.parentUnitId !== undefined && child.parentUnitId !== "") {
+      rollupChildDelivery(deps, child.id);
+    }
 
     // 递归下一层
     cascadeAbortChildren(deps, child.id, at, reason);

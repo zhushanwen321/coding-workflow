@@ -21,6 +21,7 @@
 import type { Slice } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import type { ActionResult, CloseoutInput, V1Deps, V1NextAction } from "../types.js";
+import { rollupChildDelivery } from "../rollup.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -91,6 +92,12 @@ export function handleCloseoutSlice(
   sliceTransition(unit, "closeout", frozenAt);
 
   saveSlice(deps, unit);
+
+  // slice closeout 完成（status→closed）→ rollup 到 parent（feature/epic）的 childDelivery。
+  // rollupChildDelivery 内部判断 parent 是否 PlanningUnit / 是否已冻结，非 PlanningUnit parent 静默跳过。
+  if (unit.parentUnitId !== undefined && unit.parentUnitId !== "") {
+    rollupChildDelivery(deps, unit.id);
+  }
 
   // ── crossLayer：回溯父单元（无 parent 则孤立终点）──
   const crossLayer: V1NextAction["crossLayer"] | undefined =

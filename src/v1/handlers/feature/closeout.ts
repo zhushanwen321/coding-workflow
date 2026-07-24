@@ -18,6 +18,7 @@
 import type { Feature } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import type { ActionResult, CloseoutInput, V1Deps, V1NextAction } from "../types.js";
+import { rollupChildDelivery } from "../rollup.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -88,6 +89,11 @@ export function handleCloseoutFeature(
   featureTransition(unit, "closeout", frozenAt);
 
   saveFeature(deps, unit);
+
+  // feature closeout 完成（status→closed）→ rollup 到 parent（epic）的 childDelivery。
+  if (unit.parentUnitId !== undefined && unit.parentUnitId !== "") {
+    rollupChildDelivery(deps, unit.id);
+  }
 
   // ── crossLayer：回溯父单元（无 parent 则孤立终点）──
   const crossLayer: V1NextAction["crossLayer"] | undefined =

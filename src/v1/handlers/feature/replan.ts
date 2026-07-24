@@ -40,6 +40,7 @@ import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Store } from "../../store/v1-store.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
+import { rollupChildDelivery } from "../rollup.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -114,15 +115,16 @@ export function handleReplanFeature(
     loadChildren: (parentId) => loadChildrenAsWorkUnitBase(deps.store, parentId),
   });
 
-  // ── 级联 abort 受影响 child unit ──
-  for (const childUnitId of replanImpact.aborted) {
-    cascadeAbortUnit(deps.store, childUnitId, at, input.abandonedIds);
-  }
-
   // ── replan 旁路：status 不变，append statusHistory（from=to=current, action='replan', note）──
   featureTransition(unit, "replan", at, input.note);
 
+  // 先落盘自身（cascadeAbortUnit 内 rollup 读 parent 最新状态，避免被后续 saveFeature 覆盖）
   saveFeature(deps, unit);
+
+  // ── 级联 abort 受影响 child unit ──
+  for (const childUnitId of replanImpact.aborted) {
+    cascadeAbortUnit(deps, childUnitId, at, input.abandonedIds);
+  }
   return {
     unitId: unit.id,
     status: unit.status,
@@ -184,11 +186,12 @@ function readBasedOnParent(record: WorkUnitRecord): string[] {
  * @param abandonedIds 触发本次级联的废弃条目 id（写入 abandonedRefs.workUnitItemId）
  */
 function cascadeAbortUnit(
-  store: V1Store,
+  deps: V1Deps,
   unitId: string,
   at: string,
   abandonedIds: string[],
 ): void {
+  const store = deps.store;
   const record = store.load(unitId);
   if (record === null) return;
 
@@ -217,11 +220,15 @@ function cascadeAbortUnit(
   record.abandonedRefs = abandonedRefs;
 
   store.save(record);
+  // 级联 abort 的 record（终态变更）→ rollup 到 record 的 parent 的 childDelivery。
+  if (record.parentUnitId !== undefined && record.parentUnitId !== "") {
+    rollupChildDelivery(deps, record.id);
+  }
 
   // 递归子孙
   const descendants = store.findChildren(unitId);
   for (const desc of descendants) {
-    cascadeAbortUnit(store, desc.id, at, abandonedIds);
+    cascadeAbortUnit(deps, desc.id, at, abandonedIds);
   }
 }
 
