@@ -16,28 +16,28 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { createSlice, createFeature, createEpic } from "../../src/v1/core/workunit.js";
+import type { Epic,Feature, Slice } from "../../src/v1/core/workunit.js";
+import { createEpic,createFeature, createSlice } from "../../src/v1/core/workunit.js";
 import {
-  buildSliceNextAction,
-  buildSliceFailureNextAction,
-  appendSliceFailRecord,
-  getSliceSchemaText,
-} from "../../src/v1/handlers/slice/slice-internal.js";
+  appendEpicFailRecord,
+  buildEpicFailureNextAction,
+  buildEpicNextAction,
+  getEpicSchemaText,
+} from "../../src/v1/handlers/epic/epic-internal.js";
 import {
-  buildFeatureNextAction,
-  buildFeatureFailureNextAction,
   appendFeatureFailRecord,
+  buildFeatureFailureNextAction,
+  buildFeatureNextAction,
   getFeatureSchemaText,
 } from "../../src/v1/handlers/feature/feature-internal.js";
 import {
-  buildEpicNextAction,
-  buildEpicFailureNextAction,
-  appendEpicFailRecord,
-  getEpicSchemaText,
-} from "../../src/v1/handlers/epic/epic-internal.js";
-import { makeStubDeps } from "./helpers/v1-env.js";
-import type { Slice, Feature, Epic } from "../../src/v1/core/workunit.js";
+  appendSliceFailRecord,
+  buildSliceFailureNextAction,
+  buildSliceNextAction,
+  getSliceSchemaText,
+} from "../../src/v1/handlers/slice/slice-internal.js";
 import type { PlanningAction } from "../../src/v1/rules/state-machine.js";
+import { makeStubDeps } from "./helpers/v1-env.js";
 
 /**
  * 正常路径 guidance 必含的三段段头（buildNormalGuidance §3.4）。
