@@ -15,6 +15,11 @@
  * 不变量：rules 层零 IO。纯函数对比 before/after。
  */
 import type {
+  AcceptanceCriterion,
+  BusinessCase,
+  FunctionalRequirement,
+} from "../core/clarifications.js";
+import type {
   SliceDataModel,
   SliceErrorSpec,
   SliceInterface,
@@ -24,7 +29,7 @@ import type {
   WaveTask,
   WaveTestCase,
 } from "../core/plan.js";
-import type { ExecutionUnit, Slice } from "../core/workunit.js";
+import type { ExecutionUnit, Feature, Slice } from "../core/workunit.js";
 
 // ═══════════════════════════════════════════════════════════════
 // FreezeViolation
@@ -42,7 +47,10 @@ export interface FreezeViolation {
     | "wave_deleted_abandoned"
     | "wave_modified_abandoned"
     | "slice_deleted_abandoned"
-    | "slice_modified_abandoned";
+    | "slice_modified_abandoned"
+    | "feature_deleted_abandoned"
+    | "feature_modified_abandoned"
+    | "feature_revived_abandoned";
   /** 涉及的条目 id。 */
   itemId: string;
   /** 被改的字段（modified 类型必填，deleted 类型无）。 */
@@ -400,6 +408,174 @@ function collectSliceViolations<
     if (changedField) {
       violations.push({
         type: "slice_modified_abandoned",
+        itemId: beforeItem.id,
+        field: changedField,
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的核心字段 "${changedField}" 被改（违反 append-only：abandoned 条目应冻结）`,
+      });
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// feature checkFreezeFeatureSpec（FeatureSpec 条目 append-only 校验）
+// ═══════════════════════════════════════════════════════════════
+// 来源：feature §7.2（feature replan：废弃 spec 条目 status=abandoned，append-only 保历史）、
+//      design-v5-model.md §5.6（abort + appendOnly 机制）。
+// 与 wave checkFreeze / slice checkFreezePlanning 同构，只是校验 FeatureSpec 的 3 类条目
+// （functionalRequirements / acceptanceCriteria / businessCases）。
+// 注：FeatureSpec.decisions 不继承 WorkUnitItem（投影自 Clarification，不逐项废弃），不在此校验。
+// 与 wave/slice 的关键差异：feature 的 abandoned 条目若 status 被改回 active 算独立违反类型
+// feature_revived_abandoned（wave/slice 复用 *_modified_abandoned + field=status，feature 区分以
+// 突出「复活」语义，便于跨层统计）。
+
+/**
+ * 判定 FunctionalRequirement 是否核心字段被改。
+ * 核心字段：title（需求标题）+ detail（需求详情）+ ac（强引用 AC id 清单，让 FR-AC 覆盖可机器验）。
+ * id/status 不进核心集（status 由本函数单独验复活，id 是标识）。
+ */
+function functionalRequirementCoreChanged(
+  before: FunctionalRequirement,
+  after: FunctionalRequirement,
+): string | undefined {
+  if (before.title !== after.title) return "title";
+  if (before.detail !== after.detail) return "detail";
+  if (!arrayEqual(before.ac, after.ac)) return "ac";
+  return undefined;
+}
+
+/**
+ * 判定 AcceptanceCriterion 是否核心字段被改。
+ * 核心字段：condition（验收条件）+ verification（验证方式）。
+ * verification 是 optional，undefined === undefined 直接走 !== 比较，无需特殊处理。
+ */
+function acceptanceCriterionCoreChanged(
+  before: AcceptanceCriterion,
+  after: AcceptanceCriterion,
+): string | undefined {
+  if (before.condition !== after.condition) return "condition";
+  if (before.verification !== after.verification) return "verification";
+  return undefined;
+}
+
+/**
+ * 判定 BusinessCase 是否核心字段被改。
+ * 核心字段：actor（参与者）+ scenario（场景）+ expectedResult（预期结果）。
+ */
+function businessCaseCoreChanged(
+  before: BusinessCase,
+  after: BusinessCase,
+): string | undefined {
+  if (before.actor !== after.actor) return "actor";
+  if (before.scenario !== after.scenario) return "scenario";
+  if (before.expectedResult !== after.expectedResult) return "expectedResult";
+  return undefined;
+}
+
+/**
+ * 对比 before/after 的 FeatureSpec，校验 abandoned 条目的 append-only 不变量。
+ *
+ * 校验逻辑（对 status="abandoned" 的条目）：
+ * 1. **被删除**（before 有 after 无）→ violation type="feature_deleted_abandoned"
+ * 2. **status 被翻转**（abandoned → active，"复活"废弃条目）→ violation type="feature_revived_abandoned"
+ * 3. **核心字段被改**（如 fr.title/detail/ac、ac.condition/verification、uc.actor/scenario/expectedResult）
+ *    → violation type="feature_modified_abandoned"
+ * 4. status="active" 的条目可改（无 violation，spec progressive / 新增都允许）
+ *
+ * FeatureSpec.decisions 不校验（投影自 Clarification，不逐项废弃，同 SlicePlan.decisions 的处理）。
+ *
+ * @param before replan 前的 Feature
+ * @param after  replan 后的 Feature
+ * @returns 违反列表（空数组 = 无违反，append-only 不变量保持）
+ */
+export function checkFreezeFeatureSpec(
+  before: Feature,
+  after: Feature,
+): FreezeViolation[] {
+  const violations: FreezeViolation[] = [];
+  const beforeSpec = before.clarifications.spec;
+  const afterSpec = after.clarifications.spec;
+
+  // 逐类校验 3 种 FeatureSpec 条目（FR/AC/UC）
+  collectFeatureViolations(
+    "functionalRequirements",
+    beforeSpec.functionalRequirements,
+    afterSpec.functionalRequirements,
+    functionalRequirementCoreChanged,
+    violations,
+  );
+  collectFeatureViolations(
+    "acceptanceCriteria",
+    beforeSpec.acceptanceCriteria,
+    afterSpec.acceptanceCriteria,
+    acceptanceCriterionCoreChanged,
+    violations,
+  );
+  collectFeatureViolations(
+    "businessCases",
+    beforeSpec.businessCases,
+    afterSpec.businessCases,
+    businessCaseCoreChanged,
+    violations,
+  );
+
+  return violations;
+}
+
+/**
+ * 对单类 FeatureSpec 条目收集 append-only 违反（与 wave/slice collect*Violations 同构）。
+ *
+ * 与 wave/slice 版的关键差异：status 复活用独立 violation type
+ * `feature_revived_abandoned`（而非 `feature_modified_abandoned` + field=status），
+ * 以突出「复活」语义便于跨层统计。
+ *
+ * @param kind 条目类别名（用于 report 诊断）
+ * @param beforeItems before 侧该类条目数组
+ * @param afterItems after 侧该类条目数组
+ * @param coreChangedFn 判定该类条目核心字段是否被改的函数
+ */
+function collectFeatureViolations<
+  T extends { id: string; status: "active" | "abandoned" },
+>(
+  kind: "functionalRequirements" | "acceptanceCriteria" | "businessCases",
+  beforeItems: T[],
+  afterItems: T[],
+  coreChangedFn: (before: T, after: T) => string | undefined,
+  violations: FreezeViolation[],
+): void {
+  const afterById = new Map(afterItems.map((it) => [it.id, it] as const));
+
+  for (const beforeItem of beforeItems) {
+    // 只校验 abandoned 条目（active 条目可改）
+    if (beforeItem.status !== "abandoned") continue;
+
+    const afterItem = afterById.get(beforeItem.id);
+
+    // 情况 1：被删除（before 有 after 无）
+    if (!afterItem) {
+      violations.push({
+        type: "feature_deleted_abandoned",
+        itemId: beforeItem.id,
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 被物理删除（违反 append-only：应保留 status=abandoned）`,
+      });
+      continue;
+    }
+
+    // 情况 1b：status 被翻转（abandoned → active，"复活"废弃条目）
+    if (afterItem.status !== "abandoned") {
+      violations.push({
+        type: "feature_revived_abandoned",
+        itemId: beforeItem.id,
+        field: "status",
+        reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的 status 被改为 "${afterItem.status}"（违反 append-only：abandoned 条目不可复活）`,
+      });
+      continue;
+    }
+
+    // 情况 2：核心字段被改
+    const changedField = coreChangedFn(beforeItem, afterItem);
+    if (changedField) {
+      violations.push({
+        type: "feature_modified_abandoned",
         itemId: beforeItem.id,
         field: changedField,
         reason: `abandoned ${kind} 条目 "${beforeItem.id}" 的核心字段 "${changedField}" 被改（违反 append-only：abandoned 条目应冻结）`,

@@ -10,15 +10,16 @@
  */
 import { describe, expect,it } from "vitest";
 
+import type { AcceptanceCriterion, BusinessCase, FunctionalRequirement } from "../../src/v1/core/clarifications.js";
 import type {
   WaveContract,
   WaveFile,
   WaveTask,
   WaveTestCase,
 } from "../../src/v1/core/plan.js";
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { createWave } from "../../src/v1/core/workunit.js";
-import { checkFreeze } from "../../src/v1/rules/freeze.js";
+import type { ExecutionUnit, Feature } from "../../src/v1/core/workunit.js";
+import { createFeature, createWave } from "../../src/v1/core/workunit.js";
+import { checkFreeze, checkFreezeFeatureSpec } from "../../src/v1/rules/freeze.js";
 
 // ── 辅助构造带 abandoned 条目的 wave ─────────────────────────
 
@@ -126,6 +127,175 @@ describe("U13-U14: freeze append-only 校验", () => {
       const before = waveWithAbandoned();
       const after = structuredClone(before);
       expect(checkFreeze(before, after)).toEqual([]);
+    });
+  });
+});
+
+// ───────────────────────────────────────────────────────────────
+// checkFreezeFeatureSpec（FeatureSpec FR/AC/UC append-only 校验）
+// ───────────────────────────────────────────────────────────────
+
+/**
+ * 构造带 abandoned + active 条目的 FeatureSpec feature（三类各 1 abandoned + FR 额外 1 active）。
+ */
+function featureWithAbandonedSpec(): Feature {
+  const u = createFeature({
+    slug: "freeze-feature-test",
+    objective: "o",
+    parentUnitId: "epic:e",
+    basedOnParent: [],
+  });
+  const abandonedFr: FunctionalRequirement = {
+    id: "FR1", status: "abandoned", title: "old-title", detail: "old-detail", ac: ["AC1"],
+  };
+  const abandonedAc: AcceptanceCriterion = {
+    id: "AC1", status: "abandoned", condition: "old-condition", verification: "unit",
+  };
+  const abandonedUc: BusinessCase = {
+    id: "UC1", status: "abandoned", actor: "old-actor", scenario: "old-scenario", expectedResult: "old-result",
+  };
+  const activeFr: FunctionalRequirement = {
+    id: "FR2", status: "active", title: "active-title", detail: "d", ac: [],
+  };
+  u.clarifications.spec.functionalRequirements = [abandonedFr, activeFr];
+  u.clarifications.spec.acceptanceCriteria = [abandonedAc];
+  u.clarifications.spec.businessCases = [abandonedUc];
+  return u;
+}
+
+describe("checkFreezeFeatureSpec: FeatureSpec append-only 校验", () => {
+  describe("abandoned 条目核心字段被改 → feature_modified_abandoned", () => {
+    it("FR.title 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.functionalRequirements.find((f) => f.id === "FR1")!.title = "tampered";
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.type).toBe("feature_modified_abandoned");
+      expect(v[0]!.itemId).toBe("FR1");
+      expect(v[0]!.field).toBe("title");
+    });
+
+    it("FR.detail 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.functionalRequirements.find((f) => f.id === "FR1")!.detail = "tampered";
+      expect(checkFreezeFeatureSpec(before, after)).toHaveLength(1);
+    });
+
+    it("FR.ac 数组被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.functionalRequirements.find((f) => f.id === "FR1")!.ac = ["AC9"];
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.field).toBe("ac");
+    });
+
+    it("AC.condition 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.acceptanceCriteria.find((a) => a.id === "AC1")!.condition = "new";
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.field).toBe("condition");
+    });
+
+    it("AC.verification 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.acceptanceCriteria.find((a) => a.id === "AC1")!.verification = "manual";
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.field).toBe("verification");
+    });
+
+    it("UC.actor 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.businessCases.find((b) => b.id === "UC1")!.actor = "new-actor";
+      expect(checkFreezeFeatureSpec(before, after)).toHaveLength(1);
+    });
+
+    it("UC.scenario 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.businessCases.find((b) => b.id === "UC1")!.scenario = "new-scenario";
+      expect(checkFreezeFeatureSpec(before, after)).toHaveLength(1);
+    });
+
+    it("UC.expectedResult 被改 → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.businessCases.find((b) => b.id === "UC1")!.expectedResult = "new-result";
+      expect(checkFreezeFeatureSpec(before, after)).toHaveLength(1);
+    });
+  });
+
+  describe("abandoned 条目被删 → feature_deleted_abandoned", () => {
+    it("删除 abandoned FR → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.functionalRequirements = after.clarifications.spec.functionalRequirements.filter((f) => f.id !== "FR1");
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.type).toBe("feature_deleted_abandoned");
+      expect(v[0]!.itemId).toBe("FR1");
+    });
+
+    it("删除 abandoned AC → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.acceptanceCriteria = [];
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.itemId).toBe("AC1");
+    });
+
+    it("删除 abandoned UC → violation", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.businessCases = [];
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.itemId).toBe("UC1");
+    });
+  });
+
+  describe("abandoned 条目 status 被翻转 → feature_revived_abandoned", () => {
+    it("FR abandoned→active → feature_revived_abandoned", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.functionalRequirements.find((f) => f.id === "FR1")!.status = "active";
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.type).toBe("feature_revived_abandoned");
+      expect(v[0]!.field).toBe("status");
+      expect(v[0]!.itemId).toBe("FR1");
+    });
+
+    it("UC abandoned→active → feature_revived_abandoned", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.businessCases.find((b) => b.id === "UC1")!.status = "active";
+      const v = checkFreezeFeatureSpec(before, after);
+      expect(v).toHaveLength(1);
+      expect(v[0]!.type).toBe("feature_revived_abandoned");
+    });
+  });
+
+  describe("active 条目被改 → 无 violation", () => {
+    it("active FR 核心字段被改 → 空 violations", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      after.clarifications.spec.functionalRequirements.find((f) => f.id === "FR2")!.title = "changed-active";
+      expect(checkFreezeFeatureSpec(before, after)).toEqual([]);
+    });
+
+    it("before/after 完全一致 → 空 violations", () => {
+      const before = featureWithAbandonedSpec();
+      const after = structuredClone(before);
+      expect(checkFreezeFeatureSpec(before, after)).toEqual([]);
     });
   });
 });

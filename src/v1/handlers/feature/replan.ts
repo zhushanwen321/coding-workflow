@@ -1,38 +1,48 @@
 /**
- * v1 feature handler — replan action（computeImpactCascade 级联 abort + 旁路 statusHistory）。
+ * v1 feature handler — replan action（spec 条目标 abandoned + freeze 校验 + 级联 abort + 旁路 statusHistory）。
  *
  * 设计来源：model §5.6.2（replan 流程 Step 2-4：影响面计算 + 级联 abort）、
+ * rules freeze.checkFreezeFeatureSpec（FeatureSpec 3 类条目 append-only 校验）、
  * rules replan.computeImpactCascade（多层级联传播）、
  * PLANNING_TRANSITIONS.replan（旁路，from ∈ {design-reviewed, executing}，to=undefined）。
  *
  * 职责：
- * 1. computeImpactCascade({unit, abandonedIds, loadChildren})：算多层级联影响面
+ * 1. before = 深拷贝 unit
+ * 2. 改 unit.clarifications.spec：把 abandonedIds 命中的 functionalRequirements /
+ *    acceptanceCriteria / businessCases 条目 status 改为 'abandoned'（append-only，不删；
+ *    decisions 投影自 Clarification，不逐项废弃，跳过）
+ * 3. checkFreezeFeatureSpec(before, after)：有 violation → 短路返回 ok=false（不 save 影响面）
+ * 4. computeImpactCascade({unit, abandonedIds, loadChildren})：算多层级联影响面
  *    - loadChildren：store.findChildren → 映射 WorkUnitBase[]
- * 2. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
+ * 5. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
  *    （action='abort', note='级联 abort'）、append abandonedRefs、save
- * 3. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
- * 4. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
+ * 6. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
+ * 7. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
  *
- * 与 slice replan 的关键差异（跳过 freeze 校验）：
- * - slice replan 先把 plan 的 techChoices/interfaces/dataModels/errorSpecs 条目标 status='abandoned'，
- *   再用 checkFreezePlanning(before, after) 验 append-only 不变性。
- * - feature plan 是 Plan 基类，只有 split（Split 不继承 WorkUnitItem、无 status 字段，不可废弃），
- *   故 feature plan 无可标 abandoned 的条目——没有可被偷偷删改的 WorkUnitItem 条目，
- *   也就不存在可违反的 append-only 约束，跳过 checkFreezePlanning。
- *   根因：checkFreezePlanning 签名锁 Slice（强读 SlicePlan 4 个技术字段），feature plan 无这些字段，
- *   类型不兼容；且 feature 的可废弃条目实际在 clarifications.spec（FR/AC/UC，继承 WorkUnitItem 有 status），
- *   对 spec 的 append-only 保护需要专门 freeze 函数（rules/freeze.ts 未提供），本 wave 不新增。
- * - abandonedIds 语义：废弃的 feature spec 条目 id（FR/AC/UC 等）。feature execute 时把
- *   split.inheritedItemIds 写入 child slice 的 basedOnParent，故废弃的 spec 条目通过 basedOnParent
- *   链路被 computeImpactCascade 命中，触发相关 child slice 级联 abort（核心机制与 slice 一致）。
+ * 与 slice replan 的差异：
+ * - slice 改 plan 4 类条目（techChoices/interfaces/dataModels/errorSpecs），feature 改 spec 3 类条目（FR/AC/UC）
+ * - 用 checkFreezeFeatureSpec（不是 checkFreezePlanning）
+ * - feature 的 child 是 slice，级联 abort 会实际触发
+ *
+ * abandonedIds 语义：废弃的 feature spec 条目 id（FR/AC/UC）。feature execute 时把
+ * split.inheritedItemIds 写入 child slice 的 basedOnParent，故废弃的 spec 条目通过 basedOnParent
+ * 链路被 computeImpactCascade 命中，触发相关 child slice 级联 abort（核心机制与 slice 一致）。
  */
+import type {
+  AcceptanceCriterion,
+  BusinessCase,
+  FunctionalRequirement,
+} from "../../core/clarifications.js";
 import type { AbandonedRef, WorkUnitStatus } from "../../core/status.js";
 import type { Feature, WorkUnitBase } from "../../core/workunit.js";
+import { checkFreezeFeatureSpec } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Store } from "../../store/v1-store.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import {
+  appendFeatureFailRecord,
+  buildFeatureFailureNextAction,
   buildFeatureNextAction,
   featureTransition,
   readRecordStatus,
@@ -52,8 +62,51 @@ export function handleReplanFeature(
   input: ReplanInput,
   deps: V1Deps,
 ): ActionResult {
+  // ── before 快照（深拷贝，对比 append-only 不变性）──
+  const before = structuredClone(unit);
+
+  // ── 改 clarifications.spec：把 abandonedIds 命中的 FR/AC/UC 条目标 status='abandoned'（不删，append-only）──
+  // decisions 投影自 Clarification（不继承 WorkUnitItem），不逐项废弃，跳过。
+  const abandonedSet = new Set(input.abandonedIds);
+  const spec = unit.clarifications.spec;
+  spec.functionalRequirements = spec.functionalRequirements.map((it) =>
+    abandonedSet.has(it.id)
+      ? ({ ...it, status: "abandoned" } as FunctionalRequirement)
+      : it,
+  );
+  spec.acceptanceCriteria = spec.acceptanceCriteria.map((it) =>
+    abandonedSet.has(it.id)
+      ? ({ ...it, status: "abandoned" } as AcceptanceCriterion)
+      : it,
+  );
+  spec.businessCases = spec.businessCases.map((it) =>
+    abandonedSet.has(it.id)
+      ? ({ ...it, status: "abandoned" } as BusinessCase)
+      : it,
+  );
+
+  // ── checkFreezeFeatureSpec：验 abandoned 条目未被删/核心字段未被改/status 未复活 ──
+  const freezeViolations = checkFreezeFeatureSpec(before, unit);
+
+  if (freezeViolations.length > 0) {
+    const reason = freezeViolations.map((v) => v.reason).join("; ");
+    appendFeatureFailRecord(deps, unit, "replan", reason);
+    const { nextAction, failureCount } = buildFeatureFailureNextAction(
+      unit,
+      "replan",
+    );
+    return {
+      unitId: unit.id,
+      status: unit.status,
+      ok: false,
+      error: `feature replan freeze violated: ${reason}`,
+      freezeViolations,
+      nextAction,
+      failureCount,
+    };
+  }
+
   // ── computeImpactCascade：多层级联影响面 ──
-  // （feature plan 无可标 abandoned 的 plan 条目，跳过 slice 的 plan 改动 + checkFreezePlanning 步骤）
   const at = deps.clock.now();
   const replanImpact = computeImpactCascade({
     unit,
