@@ -17,12 +17,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ChildDeliveryRecord } from "../../src/v1/core/evidence.js";
 import type { Epic, Feature, Slice } from "../../src/v1/core/workunit.js";
+import { rollupChildDelivery } from "../../src/v1/handlers/rollup.js";
 import { handleAbortSlice } from "../../src/v1/handlers/slice/abort.js";
 import { handleCloseoutSlice } from "../../src/v1/handlers/slice/closeout.js";
 import { handleExecuteSlice } from "../../src/v1/handlers/slice/execute.js";
 import { handleReplanSlice } from "../../src/v1/handlers/slice/replan.js";
 import { handleRetrospectSlice } from "../../src/v1/handlers/slice/retrospect.js";
-import { rollupChildDelivery } from "../../src/v1/handlers/rollup.js";
 import {
   setupEpicWithClosedFeatures,
 } from "./helpers/epic-env.js";
@@ -34,8 +34,8 @@ import {
   makeValidPlanningRetrospectData,
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
-import { createV1Env } from "./helpers/v1-env.js";
 import type { V1Env } from "./helpers/v1-env.js";
+import { createV1Env } from "./helpers/v1-env.js";
 
 let env: V1Env;
 

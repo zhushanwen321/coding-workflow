@@ -17,8 +17,8 @@
  */
 import type { Feature } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
-import type { ActionResult, CloseoutInput, V1Deps, V1NextAction } from "../types.js";
 import { rollupChildDelivery } from "../rollup.js";
+import type { ActionResult, CloseoutInput, V1Deps, V1NextAction } from "../types.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,

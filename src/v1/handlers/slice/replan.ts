@@ -35,8 +35,8 @@ import { checkFreezePlanning } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Store } from "../../store/v1-store.js";
-import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import { rollupChildDelivery } from "../rollup.js";
+import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
