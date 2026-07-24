@@ -15,8 +15,10 @@ import type { WorkUnitBase } from "../../src/v1/core/workunit.js";
 import { handleExecuteSlice } from "../../src/v1/handlers/slice/execute.js";
 import { handleReplanSlice } from "../../src/v1/handlers/slice/replan.js";
 import { computeImpactCascade } from "../../src/v1/rules/replan.js";
+import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
 import {
   createV1Env,
+  setupSliceWithClosedWaves,
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
 import type { V1Env } from "./helpers/v1-env.js";
@@ -265,5 +267,116 @@ describe("handleReplanSlice 集成：级联 abort child wave", () => {
     expect(result.ok).toBe(true);
     expect(result.replanImpact!.aborted).toEqual([]);
     expect(result.replanImpact!.pendingRebuild).toEqual(["GHOST_ID"]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// handleReplanSlice 集成：closed 子孙不再跳过（M2 修复）
+// ═══════════════════════════════════════════════════════════════
+
+describe("handleReplanSlice 集成：closed child 不再跳过（slice §6.1）", () => {
+  /** 读 record 的 status / statusHistory / abandonedRefs（store 透传，字段类型放宽）。 */
+  function readWave(record: WorkUnitRecord): {
+    status: string;
+    history: Array<{ from?: string; to?: string; action?: string }>;
+    abandonedRefs: Array<{ workUnitItemId: string }>;
+  } {
+    return {
+      status: String(record.status ?? ""),
+      history: (record.statusHistory ?? []) as Array<{
+        from?: string;
+        to?: string;
+        action?: string;
+      }>,
+      abandonedRefs: (record.abandonedRefs ?? []) as Array<{
+        workUnitItemId: string;
+      }>,
+    };
+  }
+
+  it("TC1：引用废弃条目的已 closed wave 被标 aborted（不再跳过）", () => {
+    // setupSliceWithClosedWaves：child wave 走完 9 步到 closed
+    const { slice } = setupSliceWithClosedWaves(env.deps, "closed-cascade");
+    const childId = slice.executeResult.childUnitIds[0]!;
+
+    // 前置：child wave 确为 closed，且 basedOnParent 含 IF1
+    const before = readWave(env.store.load(childId)!);
+    expect(before.status).toBe("closed");
+    expect(
+      (env.store.load(childId)! as unknown as { basedOnParent: string[] })
+        .basedOnParent,
+    ).toContain("IF1");
+
+    // replan 废弃 IF1
+    const result = handleReplanSlice(
+      slice,
+      { abandonedIds: ["IF1"], note: "IF1 obsolete, cascade closed child" },
+      env.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.replanImpact!.aborted).toContain(childId);
+
+    // child wave 由 closed 变 aborted
+    const after = readWave(env.store.load(childId)!);
+    expect(after.status).toBe("aborted");
+
+    // abandonedRefs 追加 IF1
+    expect(after.abandonedRefs.some((r) => r.workUnitItemId === "IF1")).toBe(true);
+  });
+
+  it("TC3：closed→aborted 的 statusHistory from=closed 记录正确", () => {
+    const { slice } = setupSliceWithClosedWaves(env.deps, "closed-from-rec");
+    const childId = slice.executeResult.childUnitIds[0]!;
+
+    handleReplanSlice(
+      slice,
+      { abandonedIds: ["IF1"], note: "verify from field" },
+      env.deps,
+    );
+
+    const after = readWave(env.store.load(childId)!);
+    // 最后一条 statusHistory 应是 closed→aborted action=abort
+    const last = after.history[after.history.length - 1]!;
+    expect(last.from).toBe("closed");
+    expect(last.to).toBe("aborted");
+    expect(last.action).toBe("abort");
+  });
+
+  it("TC2：已 aborted 的 child 不重复处理（幂等：不重复 append abandonedRefs）", () => {
+    const { slice } = setupSliceWithClosedWaves(env.deps, "aborted-idempotent");
+    const childId = slice.executeResult.childUnitIds[0]!;
+
+    // 第一次 replan：closed→aborted，append 一条 IF1 abandonedRef
+    handleReplanSlice(
+      slice,
+      { abandonedIds: ["IF1"], note: "first replan" },
+      env.deps,
+    );
+    const afterFirst = readWave(env.store.load(childId)!);
+    expect(afterFirst.status).toBe("aborted");
+    const refsAfterFirst = afterFirst.abandonedRefs.filter(
+      (r) => r.workUnitItemId === "IF1",
+    ).length;
+    const historyAfterFirst = afterFirst.history.length;
+
+    // 第二次 replan：child 已 aborted → 跳过，不重复 append
+    const reloaded = env.store.load(slice.id)! as unknown as Parameters<
+      typeof handleReplanSlice
+    >[0];
+    handleReplanSlice(
+      reloaded,
+      { abandonedIds: ["IF1"], note: "second replan" },
+      env.deps,
+    );
+
+    const afterSecond = readWave(env.store.load(childId)!);
+    const refsAfterSecond = afterSecond.abandonedRefs.filter(
+      (r) => r.workUnitItemId === "IF1",
+    ).length;
+
+    // 幂等：IF1 abandonedRef 数量不变，statusHistory 不追加
+    expect(refsAfterSecond).toBe(refsAfterFirst);
+    expect(afterSecond.history.length).toBe(historyAfterFirst);
   });
 });

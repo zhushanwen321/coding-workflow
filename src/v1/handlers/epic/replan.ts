@@ -138,7 +138,9 @@ function cascadeAbortUnit(
   if (record === null) return;
 
   const currentStatus = readRecordStatus(record);
-  if (currentStatus === "closed" || currentStatus === "aborted") return;
+  // 只跳过已 aborted（幂等：防重复 append abandonedRefs）。
+  // closed 不跳过——slice §6.1：引用废弃条目的子孙一律 abort，不区分是否已 closeout。
+  if (currentStatus === "aborted") return;
 
   // append statusHistory（action='abort'）
   const history = readRecordStatusHistory(record);
