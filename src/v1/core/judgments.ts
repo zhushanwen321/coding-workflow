@@ -91,6 +91,26 @@ export interface FeatureDesignReviewLayerSpecific {
   sliceSpecCoverageNote: string;
 }
 
+/**
+ * epic §3.2 — epic 的 designReviewJudgment.layerSpecific 具名 interface（5 字段，都是人审判断）。
+ *
+ * 注意：DesignReviewJudgment.layerSpecific 基类类型当前硬编码为 WaveDesignReviewLayerSpecific
+ *（已知坑4，slice/feature 也同样如此）。本 interface 作为 epic 层运行时约定，epic handler
+ * 用 `as unknown as` 绕过基类类型（与 slice/feature 当前做法一致）。
+ */
+export interface EpicDesignReviewLayerSpecific {
+  /** 战略对齐：这个 epic 是否服务更大的产品/业务方向？为什么是现在做？ */
+  strategicAlignment: string;
+  /** 拆分依据：为什么拆成这几个 feature？考虑过但没选的其他拆分方式是什么？ */
+  featureSplitRationale: string;
+  /** 范围边界：这个 epic 明确不做什么？ */
+  scopeBoundary: string;
+  /** 优先级依据：dependsOn 的顺序依据是什么？哪些 feature 必须先做？ */
+  priorityRationale: string;
+  /** 资源估算：每个 feature 的粗略工作量，整个 epic 在预期时间内可行吗？ */
+  resourceEstimate: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // TestJudgment（test 阶段产物，仅 ExecutionUnit）
 // ═══════════════════════════════════════════════════════════════

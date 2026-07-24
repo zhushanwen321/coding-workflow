@@ -130,6 +130,25 @@ export interface Feature extends PlanningUnit {
   evidence: PlanningEvidence;
 }
 
+/**
+ * model §1.4 / epic 附录 A — epic（PlanningUnit 的顶层具体实现）。
+ *
+ * 收窄字段类型：plan: Plan 基类（只 split）/ evidence: PlanningEvidence /
+ * clarifications: Clarification[]（数组形态，同 slice/wave，非 feature 的容器对象）/
+ * retrospectData: PlanningRetrospectData。与 feature 相比：epic 是 4 层顶层无父层
+ *（parentUnitId 永远 undefined），不产 spec（FR/AC/UC 是 feature 的事），clarify 产物
+ * 只是战略决策的 Clarification 数组。epic 的 plan 只用 Plan 基类（拆 feature 清单）。
+ */
+export interface Epic extends PlanningUnit {
+  scope: "epic";
+  status: PlanningStatus;
+  clarifications: Clarification[];
+  plan: Plan;
+  executeResult: PlanningExecuteResult;
+  retrospectData: PlanningRetrospectData;
+  evidence: PlanningEvidence;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ExecutionUnit（wave）— 本 topic 核心实现目标
 // ═══════════════════════════════════════════════════════════════
@@ -331,6 +350,69 @@ export function createFeature(args: {
         outOfScope: [],
       },
     },
+    plan: { split: [] },
+    designReviewJudgment: emptyDesignReviewJudgment(),
+    executeResult: { childUnitIds: [] },
+    retrospectData: {
+      reviewedItems: [],
+      lessonsLearned: "",
+      deliveryVerdict: "failed",
+      childUnitIdsEvidence: [],
+      splitFulfillment: [],
+    },
+    evidence: {
+      generatedAt: "",
+      artifacts: [],
+      childDelivery: [],
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// createEpic 工厂（epic 层入口）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 创建 epic（PlanningUnit 顶层）实例。
+ *
+ * 初始化通用字段 + statusHistory 首条（create 事件）。
+ * 产物字段初始化为空态，各 epic handler 逐步填充。与 createFeature 的区别：
+ * - clarifications 是 Clarification[] 数组（同 slice/wave），不是 FeatureClarification 容器对象。
+ * - epic 是 4 层顶层无父层：parentUnitId 永远不写入（顶层语义，调用方传也忽略），
+ *   basedOnParent/abandonedRefs 永远 []（无上游条目可引用/被废弃）。
+ * - plan 只用 Plan 基类（epic 不产 spec 也不产技术方案，只拆 feature 清单）。
+ * - evidence/retrospectData/executeResult 与 feature/slice 同型（PlanningUnit 共享）。
+ */
+export function createEpic(args: {
+  slug: string;
+  objective: string;
+  /**
+   * 父单元 id——epic 是顶层无父层，此参数语义上永远 undefined。
+   * 保留参数签名仅为与 createFeature/createSlice 对称（便于工厂模式统一），
+   * 但 epic handler 调用时不传，createEpic 内部也不写入 parentUnitId 字段。
+   */
+  parentUnitId?: string;
+  /** 引用父层哪些条目 id——epic 无上游，永远 []（传入也忽略）。 */
+  basedOnParent?: string[];
+  createdAt?: string;
+}): Epic {
+  const now = args.createdAt ?? new Date().toISOString();
+  const id = `epic:${args.slug}`;
+  return {
+    id,
+    scope: "epic",
+    slug: args.slug,
+    // epic 是顶层无父层——parentUnitId 永远不写入（即使调用方误传也忽略）
+    status: "created",
+    statusHistory: [
+      { at: now, action: "create", to: "created" },
+    ],
+    // epic 无上游：basedOnParent/abandonedRefs 永远 []（即使调用方误传也忽略）
+    basedOnParent: [],
+    abandonedRefs: [],
+    objective: args.objective,
+    // 产物初始化为空态（各 epic handler 逐步填充）
+    clarifications: [],
     plan: { split: [] },
     designReviewJudgment: emptyDesignReviewJudgment(),
     executeResult: { childUnitIds: [] },
