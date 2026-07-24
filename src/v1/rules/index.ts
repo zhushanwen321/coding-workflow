@@ -71,6 +71,14 @@ export {
   runFeatureDesignReviewGates,
 } from "./gates/design-review.js";
 
+// design-review 阶段 gate（epic 附录 A / epic §2.4）
+export {
+  epicLayerSpecificNonEmpty,
+  epicSplitDagValid,
+  epicSplitNonEmpty,
+  runEpicDesignReviewGates,
+} from "./gates/design-review.js";
+
 // test 阶段 gate（wave 附录 A §11 / §5.5）
 export type { GitValidator } from "./gates/test.js";
 export {

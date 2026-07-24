@@ -12,11 +12,12 @@
  */
 import type {
   DesignReviewJudgment,
+  EpicDesignReviewLayerSpecific,
   FeatureDesignReviewLayerSpecific,
   SliceDesignReviewLayerSpecific,
 } from "../../core/judgments.js";
 import type { Split } from "../../core/plan.js";
-import type { ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
+import type { Epic, ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
 import type { GateResult } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/design-review.js"`
@@ -571,5 +572,117 @@ export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
     designReviewTradeoffsPresent(judgment),
     designReviewRisksPresent(judgment),
     featureLayerSpecificNonEmpty(unit),
+  ];
+}
+
+// ═══════════════════════════════════════════════════════════════
+// epic design-review gate（epic §2.4 / epic §3.2）
+// ═══════════════════════════════════════════════════════════════
+// 来源：design-v5-epic.md §2.4（plan 阶段机器 gate 建议）、§3.2（layerSpecific 5 字段）。
+// 与 feature gate 的差异：
+//   - gate 接收 Epic（plan 是 Plan 基类只含 split，epic 不产 spec 也不产技术方案）
+//   - 结构完整性验 split 非空/DAG 无环（同 feature，转调通用 splitDagValidBySplits）
+//   - 不验 FR-AC 强引用（epic 无 spec，不产 FR/AC——这是 epic vs feature 的核心差异）
+//   - layerSpecific 验 epic 专属 5 字段（EpicDesignReviewLayerSpecific）
+
+/**
+ * epic §2.4 / 附录 A `feature-split-non-empty`（epic 版）— Plan.split 至少 1 项（epic 拆 feature 清单）。
+ *
+ * 与 feature 的 featureSplitNonEmpty 同源逻辑（Plan 基类只 split），epic 版仅文案/命名区分层。
+ * epic 的 split 描述 epic 拆成哪些 feature（无 split = 没法 execute 启动下层 feature）。
+ */
+export function epicSplitNonEmpty(unit: Epic): GateResult {
+  const count = unit.plan.split.length;
+  if (count < 1) {
+    return {
+      passed: false,
+      report: "feature-split-non-empty: split 为空（epic 必须拆出至少 1 个 feature）",
+    };
+  }
+  return {
+    passed: true,
+    report: `feature-split-non-empty: split 有 ${count} 项`,
+  };
+}
+
+/**
+ * epic §2.4 / 附录 A `feature-split-dag-valid`（epic 版）— Plan.split 的 dependsOn 无环（转调通用判环）。
+ *
+ * 与 feature 的 featureSplitDagValid / slice 的 splitDagValid 同源逻辑（Split 结构同型），
+ * epic 版仅文案/命名区分层。
+ */
+export function epicSplitDagValid(unit: Epic): GateResult {
+  return splitDagValidBySplits(unit.plan.split);
+}
+
+/**
+ * epic §3.2 / 附录 A `layer-specific-non-empty`（epic 版）— designReviewJudgment.layerSpecific 的 5 个字段都非空。
+ *
+ * layerSpecific 是 epic 专属的设计审查维度（EpicDesignReviewLayerSpecific 5 字段），
+ * 都是人审判断，gate 只验填了（不验内容质量）。layerSpecific 基类类型是
+ * WaveDesignReviewLayerSpecific（坑4，与 slice/feature 同），用 as 断言到 epic 子类型（与 slice/feature
+ * 的 layerSpecificNonEmpty/featureLayerSpecificNonEmpty 做法一致）。layerSpecific 可能 undefined（空态），需 guard。
+ */
+export function epicLayerSpecificNonEmpty(unit: Epic): GateResult {
+  const ls = unit.designReviewJudgment.layerSpecific as
+    | EpicDesignReviewLayerSpecific
+    | undefined;
+  if (!ls) {
+    return {
+      passed: false,
+      report: "layer-specific-non-empty: designReviewJudgment.layerSpecific 缺失（epic 必须填 5 个专属维度）",
+    };
+  }
+  const requiredKeys: ReadonlyArray<keyof EpicDesignReviewLayerSpecific> = [
+    "strategicAlignment",
+    "featureSplitRationale",
+    "scopeBoundary",
+    "priorityRationale",
+    "resourceEstimate",
+  ];
+  const empty: string[] = [];
+  for (const k of requiredKeys) {
+    const v = ls[k];
+    if (!v || v.trim() === "") {
+      empty.push(k);
+    }
+  }
+  if (empty.length > 0) {
+    return {
+      passed: false,
+      report: `layer-specific-non-empty: layerSpecific 以下字段为空（${empty.join(", ")}）`,
+    };
+  }
+  return {
+    passed: true,
+    report: `layer-specific-non-empty: layerSpecific 5 个字段都非空`,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// epic design-review gate 聚合
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 跑 epic design-review 全部 8 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
+ *
+ * 顺序对应附录清单：split 结构完整性（2）→ 业务判断非空（5，复用
+ * wave/slice/feature 共用的 judgment gate）→ layerSpecific 非空（1）。
+ * 不包含 feature 专属的 FR-AC 强引用 gate（frAcCoverage/acReachableFromFr/acNonEmpty——epic 无 spec）。
+ * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。
+ *
+ * @param unit 待校验的 Epic
+ */
+export function runEpicDesignReviewGates(unit: Epic): GateResult[] {
+  const judgment = unit.designReviewJudgment;
+  return [
+    epicSplitNonEmpty(unit),
+    epicSplitDagValid(unit),
+    designReviewNecessityNonEmpty(judgment),
+    designReviewSufficiencyComplete(judgment),
+    designReviewAlternativesNonEmpty(judgment),
+    designReviewTradeoffsPresent(judgment),
+    designReviewRisksPresent(judgment),
+    epicLayerSpecificNonEmpty(unit),
   ];
 }
