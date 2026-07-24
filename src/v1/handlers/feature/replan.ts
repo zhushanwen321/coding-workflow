@@ -95,6 +95,7 @@ export function handleReplanFeature(
     const { nextAction, failureCount } = buildFeatureFailureNextAction(
       unit,
       "replan",
+      reason,
     );
     return {
       unitId: unit.id,

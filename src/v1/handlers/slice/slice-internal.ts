@@ -1,24 +1,30 @@
 /**
  * v1 slice handlers 内部编排辅助（不对外导出，仅 handlers/slice/ 内部用）。
  *
- * 设计来源：wave 的 handlers/internal.ts 是 wave 专属（接收 ExecutionUnit、调
- * nextWaveStatus、用 wave 的 guidance 模板）。slice 层不能直接复用——按 dev-plan W4
- * 约定，slice handler 暂时自己内联编排（statusHistory push + save），guidance/nextAction
- * 返回最小结构（W6 的 guidance worker 再美化）。W5 会参数化 internal.ts，届时本文件可收敛。
+ * 设计来源：与 wave 的 handlers/internal.ts 同构——slice 层有专属 unit 类型（Slice）和
+ * PlanningAction，但 guidance 流水线（buildNormalGuidance / buildFailureGuidance）
+ * 与 wave 完全一致，故照 wave internal.ts 模式接入（w2 完成，消除 W4 的一句话占位）。
  *
  * 职责（slice 版）：
  * 1. sliceTransition：算 next PlanningStatus + append statusHistory + 更新 unit.status
  * 2. saveSlice：把 Slice 存到 store（unknown 中转，同 wave saveUnit 模式）
- * 3. buildSliceNextAction：返回最小 V1NextAction（action + unitPath.layer='slice' + 占位 guidance）
- * 4. appendSliceFailRecord / buildSliceFailureNextAction：gate/freeze fail 路径的最小异常导航
+ * 3. buildSliceNextAction：构建正常路径三段式 guidance（prefix + template + schema + 命令）
+ * 4. appendSliceFailRecord / buildSliceFailureNextAction：gate/freeze fail 路径四段式异常导航
  *
- * 不变量：本文件只做编排（IO 仅经 deps）+ 最小导航。业务规则在 rules/，guidance 渲染在 W6。
+ * 不变量：本文件只做编排（IO 仅经 deps）+ guidance 填充（调 guidance/ 纯函数）。
+ *      业务规则在 rules/，guidance 渲染在 guidance/。
  */
 import type { PlanningStatus, StatusChange } from "../../core/status.js";
 import type { Slice } from "../../core/workunit.js";
 import {
+  buildFailureGuidance,
+  buildFailureHint,
+  buildNormalGuidance,
+  buildPrefix,
+  deriveFailureCount,
   injectSchema,
   PLANNING_ACTION_TO_NEXT,
+  PLANNING_STAGE_TEMPLATES,
   PLANNING_STATUS_DISPLAY,
 } from "../../guidance/index.js";
 import type { PlanningAction } from "../../rules/state-machine.js";
@@ -177,10 +183,10 @@ export interface BuildSliceNextActionOpts {
 }
 
 /**
- * 构建 slice handler 正常路径的最小 V1NextAction。
+ * 构建 slice handler 正常路径的 V1NextAction（w2：接入 buildNormalGuidance 三段式）。
  *
- * W4 占位：guidance 用最小文本（「<action> 完成，下一步 <nextAction>」），W6 guidance worker
- * 按 slice 阶段模板美化成三段式。
+ * 照 wave internal.ts 的 buildNextAction 流水线：
+ *   prefix → PLANNING_STAGE_TEMPLATES 查约束 → getSliceSchemaText 取 schema → buildNormalGuidance 组装。
  *
  * @param unit 刚完成流转的 Slice
  * @param action 刚执行完的 PlanningAction
@@ -191,11 +197,29 @@ export function buildSliceNextAction(
   action: PlanningAction,
   opts?: BuildSliceNextActionOpts,
 ): V1NextAction {
-  const nextAction = opts?.nextActionOverride ?? SLICE_ACTION_TO_NEXT[action];
-  const nextText = nextAction === undefined
-    ? "（本层流程到此停留/结束）"
-    : `下一步 ${nextAction}`;
-  const guidance = `slice ${action} 完成，${nextText}`;
+  const statusDisplay = SLICE_STATUS_DISPLAY[unit.status] ?? unit.status;
+  const prefix = buildPrefix({
+    layer: "slice",
+    unitId: unit.id,
+    status: statusDisplay,
+    parentUnitId: unit.parentUnitId,
+  });
+
+  const template = PLANNING_STAGE_TEMPLATES[action];
+  const templateText = template?.constraint ?? "";
+  const schemaText = getSliceSchemaText(action);
+
+  const nextAction = opts?.nextActionOverride ?? SLICE_ACTION_TO_NEXT_PUBLIC[action];
+  const command = buildSliceCommand(action, unit.id, nextAction);
+
+  const guidance = buildNormalGuidance({
+    prefix,
+    nextAction: action,
+    command,
+    schemaText,
+    templateText,
+  });
+
   return {
     action: nextAction,
     guidance,
@@ -210,22 +234,23 @@ export function buildSliceNextAction(
 }
 
 /**
- * PlanningAction → 默认下一步 action（PLANNING_TRANSITIONS 状态机映射）。
+ * 组装 slice 命令字符串（照 wave internal.ts 的 buildCommand）。
  *
- * execute/终态 action（closeout/abort）的下一步不在本层：execute 下沉 child wave，
- * closeout 回溯父单元（crossLayer），abort 流程结束——都返回 undefined 由调用方填 crossLayer。
+ * 终态（nextAction=undefined）→ 仅状态提示，命令为空；有结构化或扁平 input → 附 --input。
  */
-const SLICE_ACTION_TO_NEXT: Readonly<Record<PlanningAction, string | undefined>> = {
-  create: "clarify",
-  clarify: "plan",
-  plan: "design-review",
-  "design-review": "execute",
-  execute: undefined, // 下沉 child wave，由调用方填 crossLayer.descend
-  retrospect: "closeout",
-  closeout: undefined, // 终态，回溯父单元 crossLayer.ascend
-  abort: undefined, // 终态
-  replan: "plan", // replan 后回 planning 重走 design-review
-};
+function buildSliceCommand(
+  currentAction: PlanningAction,
+  unitId: string,
+  nextAction: string | undefined,
+): string {
+  if (nextAction === undefined) {
+    return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
+  }
+  const hasInput = SLICE_ACTION_SCHEMA[nextAction] !== undefined ||
+    SLICE_FLAT_INPUT_HINT[nextAction] !== undefined;
+  const inputPart = hasInput ? ` --input @${nextAction}.json` : "";
+  return `cw ${nextAction} --unitId ${unitId}${inputPart}`;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // gate/freeze fail 路径（最小异常导航）
@@ -253,22 +278,43 @@ export function appendSliceFailRecord(
 }
 
 /**
- * 构建 slice handler fail 路径的最小 V1NextAction + failureCount。
+ * 构建 slice handler fail 路径的 V1NextAction + failureCount（w2：接入 buildFailureGuidance 四段式）。
  *
- * failureCount 从 statusHistory 派生（含本次——appendSliceFailRecord 已 append）。
+ * 照 wave internal.ts 的 buildFailureNextAction 流水线：
+ *   prefix（status 标注「未变」）→ deriveFailureCount（含本次）→ buildFailureHint → buildFailureGuidance。
  *
  * @param unit 已 appendSliceFailRecord 的 Slice
  * @param action 触发 fail 的 PlanningAction（修正后重提同一 action）
+ * @param problem gate fail 的具体问题（哪个字段/哪个条件没满足）
  */
 export function buildSliceFailureNextAction(
   unit: Slice,
   action: PlanningAction,
+  problem: string,
 ): { nextAction: V1NextAction; failureCount: number } {
-  const failureCount = deriveSliceFailureCount(unit.statusHistory, action);
+  const statusDisplay = SLICE_STATUS_DISPLAY[unit.status] ?? unit.status;
+  const prefix = buildPrefix({
+    layer: "slice",
+    unitId: unit.id,
+    status: `${statusDisplay}（未变）`,
+    parentUnitId: unit.parentUnitId,
+  });
+
+  const failureCount = deriveFailureCount(unit.statusHistory, action);
+  const failureHint = buildFailureHint(failureCount);
+  const fixCommand = buildSliceCommand(action, unit.id, action);
+
+  const guidance = buildFailureGuidance({
+    prefix,
+    problem,
+    fixCommand,
+    failureHint,
+  });
+
   return {
     nextAction: {
       action,
-      guidance: `slice ${action} gate/freeze 失败，请修正后重提 ${action}`,
+      guidance,
       unitPath: {
         layer: "slice",
         unitId: unit.id,
@@ -278,25 +324,6 @@ export function buildSliceFailureNextAction(
     },
     failureCount,
   };
-}
-
-/**
- * 从 statusHistory 派生某 action 的连续 fail 次数（§5.1 派生算法，含本次）。
- *
- * 扫描 statusHistory 尾部，连续且 action 匹配、note 含 "gate fail" 的记录计数。
- */
-function deriveSliceFailureCount(
-  statusHistory: StatusChange[],
-  action: string,
-): number {
-  let count = 0;
-  for (let i = statusHistory.length - 1; i >= 0; i--) {
-    const change = statusHistory[i];
-    if (change.action !== action) break;
-    if (change.note === undefined || !change.note.includes("gate fail")) break;
-    count++;
-  }
-  return count;
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -72,7 +72,7 @@ export function handleCloseoutEpic(
   if (driftReports.length > 0) {
     const reason = driftReports.join("; ");
     appendEpicFailRecord(deps, unit, "closeout", reason);
-    const { nextAction, failureCount } = buildEpicFailureNextAction(unit, "closeout");
+    const { nextAction, failureCount } = buildEpicFailureNextAction(unit, "closeout", reason);
     return {
       unitId: unit.id,
       status: unit.status,

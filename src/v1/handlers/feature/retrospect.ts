@@ -58,7 +58,7 @@ export function handleRetrospectFeature(
   if (failed.length > 0) {
     const reason = failed.map((g) => g.report).join("; ");
     appendFeatureFailRecord(deps, unit, "retrospect", reason);
-    const { nextAction, failureCount } = buildFeatureFailureNextAction(unit, "retrospect");
+    const { nextAction, failureCount } = buildFeatureFailureNextAction(unit, "retrospect", reason);
     return {
       unitId: unit.id,
       status: unit.status,

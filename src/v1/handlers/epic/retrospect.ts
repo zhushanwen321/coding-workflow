@@ -58,7 +58,7 @@ export function handleRetrospectEpic(
   if (failed.length > 0) {
     const reason = failed.map((g) => g.report).join("; ");
     appendEpicFailRecord(deps, unit, "retrospect", reason);
-    const { nextAction, failureCount } = buildEpicFailureNextAction(unit, "retrospect");
+    const { nextAction, failureCount } = buildEpicFailureNextAction(unit, "retrospect", reason);
     return {
       unitId: unit.id,
       status: unit.status,

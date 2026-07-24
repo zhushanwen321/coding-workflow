@@ -48,7 +48,7 @@ export function handleDesignReviewSlice(
   if (failed.length > 0) {
     const reason = failed.map((g) => g.report).join("; ");
     appendSliceFailRecord(deps, unit, "design-review", reason);
-    const { nextAction, failureCount } = buildSliceFailureNextAction(unit, "design-review");
+    const { nextAction, failureCount } = buildSliceFailureNextAction(unit, "design-review", reason);
     return {
       unitId: unit.id,
       status: unit.status,

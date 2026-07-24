@@ -74,7 +74,7 @@ export function handleCloseoutSlice(
   if (driftReports.length > 0) {
     const reason = driftReports.join("; ");
     appendSliceFailRecord(deps, unit, "closeout", reason);
-    const { nextAction, failureCount } = buildSliceFailureNextAction(unit, "closeout");
+    const { nextAction, failureCount } = buildSliceFailureNextAction(unit, "closeout", reason);
     return {
       unitId: unit.id,
       status: unit.status,

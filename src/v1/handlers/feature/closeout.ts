@@ -71,7 +71,7 @@ export function handleCloseoutFeature(
   if (driftReports.length > 0) {
     const reason = driftReports.join("; ");
     appendFeatureFailRecord(deps, unit, "closeout", reason);
-    const { nextAction, failureCount } = buildFeatureFailureNextAction(unit, "closeout");
+    const { nextAction, failureCount } = buildFeatureFailureNextAction(unit, "closeout", reason);
     return {
       unitId: unit.id,
       status: unit.status,

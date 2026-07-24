@@ -49,7 +49,7 @@ export function handleDesignReviewEpic(
   if (failed.length > 0) {
     const reason = failed.map((g) => g.report).join("; ");
     appendEpicFailRecord(deps, unit, "design-review", reason);
-    const { nextAction, failureCount } = buildEpicFailureNextAction(unit, "design-review");
+    const { nextAction, failureCount } = buildEpicFailureNextAction(unit, "design-review", reason);
     return {
       unitId: unit.id,
       status: unit.status,

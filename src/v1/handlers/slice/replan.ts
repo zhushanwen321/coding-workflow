@@ -83,7 +83,7 @@ export function handleReplanSlice(
   if (freezeViolations.length > 0) {
     const reason = freezeViolations.map((v) => v.reason).join("; ");
     appendSliceFailRecord(deps, unit, "replan", reason);
-    const { nextAction, failureCount } = buildSliceFailureNextAction(unit, "replan");
+    const { nextAction, failureCount } = buildSliceFailureNextAction(unit, "replan", reason);
     return {
       unitId: unit.id,
       status: unit.status,
