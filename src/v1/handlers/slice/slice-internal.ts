@@ -14,12 +14,111 @@
  *
  * 不变量：本文件只做编排（IO 仅经 deps）+ 最小导航。业务规则在 rules/，guidance 渲染在 W6。
  */
-import type { StatusChange } from "../../core/status.js";
+import type { PlanningStatus, StatusChange } from "../../core/status.js";
 import type { Slice } from "../../core/workunit.js";
+import {
+  injectSchema,
+  PLANNING_ACTION_TO_NEXT,
+  PLANNING_STATUS_DISPLAY,
+} from "../../guidance/index.js";
 import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Deps, V1NextAction } from "../types.js";
+
+// ═══════════════════════════════════════════════════════════════
+// guidance 填充静态基建（w1 新增，w2 接入 buildSliceNextAction 主体）
+// ═══════════════════════════════════════════════════════════════
+//
+// 以下 5 个 export 是 w1 的纯新增基建：ACTION_SCHEMA / getSchemaText / STATUS_DISPLAY /
+// ACTION_TO_NEXT / FLAT_INPUT_HINT。w1 不改 buildSliceNextAction/buildSliceFailureNextAction
+// 主体（w2 任务），这些常量声明为 exported const 避免 eslint unused 报错，w2 接入时使用。
+// 模式照 wave internal.ts（handlers/internal.ts）。
+
+/**
+ * action → 该 action 的 input schema 来源（core 源文件 + interface 名）。
+ *
+ * IF5 映射（slice 层）：clarify→Clarification@clarifications.ts、plan→SliceTechChoice@plan.ts。
+ * create/execute/replan/abort 无结构化 input（execute 按 split 下沉，不接收 input）。
+ */
+interface SchemaSource {
+  sourceFilePath: string;
+  interfaceName: string;
+}
+
+export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
+  create: undefined,
+  clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
+  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "SliceTechChoice" },
+  "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  execute: undefined, // 下沉创建 child wave，不接收 input
+  retrospect: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
+  closeout: { sourceFilePath: "src/v1/core/evidence.ts", interfaceName: "ArtifactRef" },
+  replan: undefined,
+  abort: undefined,
+};
+
+/**
+ * schema 文本缓存（按 action，模块级，整个进程只读一次源文件）。
+ *
+ * 照 wave internal.ts 模式：injectSchema 会 createSourceFile 解析 core TS（有成本），
+ * 且 schema 是静态的，缓存避免每次 handler 调用都重读重解析。
+ */
+const sliceSchemaCache = new Map<string, string>();
+
+/**
+ * 取某 action 的 input schema 文本（带缓存 + 降级）。
+ *
+ * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错）。
+ * - 同一 action 第二次调用命中缓存。
+ */
+export function getSliceSchemaText(action: string): string {
+  const cached = sliceSchemaCache.get(action);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const source = SLICE_ACTION_SCHEMA[action];
+  let text: string;
+  if (source === undefined) {
+    text = SLICE_FLAT_INPUT_HINT[action] ?? "（无结构化 input schema）";
+  } else {
+    try {
+      text = injectSchema(source.sourceFilePath, source.interfaceName);
+    } catch {
+      text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
+    }
+  }
+  sliceSchemaCache.set(action, text);
+  return text;
+}
+
+/**
+ * status → 中文展示（prefix-builder 的 status 参数要中文字符串）。
+ *
+ * 三层共用同一份（PlanningStatus 8 状态），直接 re-export guidance 层公共常量。
+ */
+export const SLICE_STATUS_DISPLAY = PLANNING_STATUS_DISPLAY as Readonly<
+  Record<PlanningStatus, string>
+>;
+
+/**
+ * action → 下一步 action（PLANNING_TRANSITIONS 状态机映射，三层共用）。
+ *
+ * 三层完全一致，直接 re-export guidance 层公共 PLANNING_ACTION_TO_NEXT。
+ */
+export const SLICE_ACTION_TO_NEXT_PUBLIC = PLANNING_ACTION_TO_NEXT;
+
+/**
+ * 无结构化 schema 的 action 的扁平参数提示。
+ *
+ * PlanningUnit 的 create 按 layer 路由；execute 不接收 input（下沉）；replan/abort 同 wave。
+ */
+export const SLICE_FLAT_INPUT_HINT: Readonly<Record<string, string>> = {
+  create: "{ slug: string, objective: string, parentUnitId?: string, basedOnParent?: string[], layer?: 'slice' }",
+  execute: "（execute 按 plan.split 自动创建 child wave，不接收 input；cw 返回 crossLayer.descend）",
+  replan: "{ abandonedIds: string[], note: string }",
+  abort: "{ reason?: string }",
+};
 
 // ═══════════════════════════════════════════════════════════════
 // status 流转 + 持久化
