@@ -1621,19 +1621,28 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  // dispatch action 合法性校验。
-  if (!VALID_DISPATCH_ACTIONS.includes(action as Action)) {
+  // 0.x 状态机入口已切断（cw 1.0 起）。legacy/ 代码保留但不再可达。
+  // 状态机 action 必须走 v1：`cw v1 <action>`。只读查询（status/list/stats/report）
+  // 与基建命令（init/gen-spec/skill）不受影响，可继续查询/操作历史 topic。
+  if (VALID_DISPATCH_ACTIONS.includes(action as Action)) {
     process.stderr.write(
-      `错误：未知 action "${action}"。有效 action: ${[
-        ...VALID_DISPATCH_ACTIONS,
-        "status",
-        "list",
-        "stats",
-        "init",
-      ].join(", ")}\n`,
+      `错误：0.x 状态机命令 "${action}" 已在 cw 1.0 停用。请改用：cw v1 ${action}\n` +
+        `（只读查询 status/list/stats/report 与 init/gen-spec/skill 不受影响）\n`,
     );
     process.exit(EXIT_CW_ERROR);
   }
+
+  // dispatch action 合法性校验。
+  process.stderr.write(
+    `错误：未知 action "${action}"。有效 action: ${[
+      ...VALID_DISPATCH_ACTIONS.map((a) => `v1 ${a}`),
+      "status",
+      "list",
+      "stats",
+      "init",
+    ].join(", ")}\n`,
+  );
+  process.exit(EXIT_CW_ERROR);
 
   // 读取 stdin（plan/tdd_plan/replan 从这里读 JSON payload）。
   const stdinData = await readStdin();
