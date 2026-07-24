@@ -972,9 +972,9 @@ function buildV1Params(
     // slice/feature 已实现（PlanningUnit），epic 仍拒绝。
     // dispatch 按 input.layer 路由（layer='slice' → handleCreateSlice，layer='feature' →
     // handleCreateFeature，默认 wave → handleCreate）。
-    if (layer !== "wave" && layer !== "slice" && layer !== "feature") {
+    if (layer !== "wave" && layer !== "slice" && layer !== "feature" && layer !== "epic") {
       throw new CwError(
-        `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice/feature 层`,
+        `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice/feature/epic 层`,
       );
     }
     const slug = typeof parsed.slug === "string" ? parsed.slug : undefined;
@@ -1033,7 +1033,7 @@ function buildV1Params(
       //   忽略 params.input，按 plan.split 自动创建 child wave），input 传空对象。
       //   V1Params 联合的 execute 分支类型是 ExecuteInput（commitHash 必填），slice 场景无 commitHash，
       //   显式断言绕过类型检查（与 slice-dispatch-e2e.test.ts 的 input:{} + as unknown 同语义）。
-      if (scope === "slice") {
+      if (scope === "slice" || scope === "feature" || scope === "epic") {
         return {
           action: "execute",
           unitId,

@@ -18,7 +18,18 @@
  *
  * 关键约束：guard fail 和 unit not found 抛错（不可恢复），gate fail 返回结果（可 retry）。
  */
-import type { ExecutionUnit, Feature, Slice } from "./core/workunit.js";
+import type { Epic, ExecutionUnit, Feature, Slice } from "./core/workunit.js";
+import {
+  handleAbortEpic,
+  handleClarifyEpic,
+  handleCloseoutEpic,
+  handleCreateEpic,
+  handleDesignReviewEpic,
+  handleExecuteEpic,
+  handlePlanEpic,
+  handleReplanEpic,
+  handleRetrospectEpic,
+} from "./handlers/epic/index.js";
 import {
   handleAbortFeature,
   handleClarifyFeature,
@@ -69,8 +80,10 @@ import {
 } from "./handlers/slice/index.js";
 import type {
   FeatureClarifyInput,
+  PlanEpicInput,
   PlanFeatureInput,
   PlanSliceInput,
+  RetrospectEpicInput,
   RetrospectFeatureInput,
   RetrospectSliceInput,
 } from "./handlers/types.js";
@@ -126,7 +139,7 @@ function assertUnreachable(_: never): never {
 export type V1Params =
   | { action: "create"; input: CreateInput }
   | { action: "clarify"; unitId: string; input: ClarifyInput | FeatureClarifyInput }
-  | { action: "plan"; unitId: string; input: PlanInput | PlanSliceInput | PlanFeatureInput }
+  | { action: "plan"; unitId: string; input: PlanInput | PlanSliceInput | PlanFeatureInput | PlanEpicInput }
   | { action: "design-review"; unitId: string; input: DesignReviewInput }
   | { action: "execute"; unitId: string; input: ExecuteInput }
   | { action: "test"; unitId: string; input: TestInput }
@@ -172,6 +185,9 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
     if (layer === "feature") {
       return handleCreateFeature(params.input, deps);
     }
+    if (layer === "epic") {
+      return handleCreateEpic(params.input, deps);
+    }
     return handleCreate(params.input, deps);
   }
 
@@ -206,6 +222,11 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
   }
   if (unit.scope === "feature") {
     return dispatchFeature(unit, params, deps);
+  }
+  // epic（PlanningUnit 顶层）。与 slice/feature 同属 PlanningUnit 分支（test/exec-review 已拦截 +
+  // guardPlanning 已过），路由到 dispatchEpic。
+  if (unit.scope === "epic") {
+    return dispatchEpic(unit, params, deps);
   }
   return dispatchSlice(unit, params, deps);
 }
@@ -385,6 +406,73 @@ function dispatchFeature(
   }
 }
 
+// ── dispatchEpic（epic/PlanningUnit 的 action 分派）──
+
+/**
+ * epic（PlanningUnit 顶层）的 action 分派——9 个 epic handler 的 switch。
+ *
+ * 调用前调用方须已通过 guardPlanning。本函数只做 handler 路由。
+ *
+ * epic 与 slice/feature 同属 PlanningUnit，流程结构一致（9 步无 test/exec-review），但 handler 实现不同
+ *（epic clarify 产物是数组 push、plan 只拆 feature、execute 下沉到 feature 而非 slice/wave）。
+ * 故照抄 dispatchFeature 结构，路由到 epic 版 handler。
+ *
+ * 关键差异：epic clarify 用通用 ClarifyInput（数组形态，同 slice/wave），不需断言为
+ * FeatureClarifyInput（feature 的 clarify 是容器对象）。epic plan 用 PlanEpicInput
+ *（= PlanFeatureInput 别名）。epic retrospect 用 RetrospectEpicInput（= RetrospectSliceInput 别名）。
+ *
+ * epic 无 test / exec-review（同 slice/feature）——收到这两个 action 抛 illegal_transition（双重防御）。
+ *
+ * @param unit    Epic
+ * @param params  V1Params（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
+ * @param deps    V1Deps
+ */
+function dispatchEpic(
+  unit: Epic,
+  params: V1ParamsExcludingCreate,
+  deps: V1Deps,
+): ActionResult {
+  switch (params.action) {
+    case "clarify":
+      // epic clarify 用通用 ClarifyInput（数组形态，同 slice/wave，非 feature 容器）。
+      return handleClarifyEpic(unit, params.input as ClarifyInput, deps);
+    case "plan":
+      // 进 dispatchEpic 必是 epic，其 plan input 必是 PlanEpicInput（显式断言，同 dispatchSlice/dispatchFeature）。
+      return handlePlanEpic(unit, params.input as PlanEpicInput, deps);
+    case "design-review":
+      return handleDesignReviewEpic(unit, params.input, deps);
+    case "execute":
+      // epic execute 不接收 input（按 plan.split 自动创建 child feature），忽略 params.input。
+      return handleExecuteEpic(unit, deps);
+    case "retrospect":
+      // 进 dispatchEpic 必是 epic，retrospect input 必是 RetrospectEpicInput
+      //（= RetrospectSliceInput 别名，都是 PlanningRetrospectData）。
+      return handleRetrospectEpic(
+        unit,
+        params.input as RetrospectEpicInput,
+        deps,
+      );
+    case "closeout":
+      return handleCloseoutEpic(unit, params.input, deps);
+    case "replan":
+      return handleReplanEpic(unit, params.input, deps);
+    case "abort":
+      return handleAbortEpic(unit, params.input, deps);
+    case "test":
+    case "exec-review":
+      // epic（PlanningUnit）不跑代码测试、不做 exec-review——这两个 action 是 wave 专属。
+      throw new V1Error(
+        "illegal_transition",
+        `epic has no ${params.action} action (only wave/ExecutionUnit does)`,
+      );
+    default: {
+      // create 已在 dispatch 提前 return；planning 7 主流程 + 2 旁路 + test/exec-review 已全覆盖。
+      // switch 穷尽 → 此分支不可达（params 在此被 narrow 成 never）。
+      assertUnreachable(params);
+    }
+  }
+}
+
 // ── 辅助：从 store 加载 WorkUnit（按 scope 返回 ExecutionUnit | Slice）──
 
 /**
@@ -413,7 +501,7 @@ export function getUnitScope(store: V1Store, unitId: string): string | null {
 function loadWorkUnit(
   store: V1Store,
   unitId: string,
-): ExecutionUnit | Slice | Feature | null {
+): ExecutionUnit | Slice | Feature | Epic | null {
   const record: WorkUnitRecord | null = store.load(unitId);
   if (!record) return null;
   if (record.scope === "wave") {
@@ -429,8 +517,12 @@ function loadWorkUnit(
     // eslint-disable-next-line taste/no-unsafe-cast
     return record as unknown as Feature;
   }
+  if (record.scope === "epic") {
+    // eslint-disable-next-line taste/no-unsafe-cast
+    return record as unknown as Epic;
+  }
   throw new V1Error(
     "unsupported_scope",
-    `unsupported scope: ${record.scope} (only wave/slice/feature implemented)`,
+    `unsupported scope: ${record.scope} (only wave/slice/feature/epic implemented)`,
   );
 }

@@ -170,10 +170,10 @@ export interface CreateInput {
   /** 引用父层哪些条目 id（创建时快照，影响面计算基础）。无 parent 时为空数组。 */
   basedOnParent?: string[];
   /**
-   * 创建哪个层。默认 'wave'（向后兼容）。dispatch 按 layer 决定调 createWave / createSlice / createFeature。
-   * 取值范围暂限 'wave'|'slice'|'feature'（epic 未实现）。
+   * 创建哪个层。默认 'wave'（向后兼容）。dispatch 按 layer 决定调 createWave / createSlice / createFeature / createEpic。
+   * 取值范围 'wave'|'slice'|'feature'|'epic'（四层全部支持）。
    */
-  layer?: "wave" | "slice" | "feature";
+  layer?: "wave" | "slice" | "feature" | "epic";
 }
 
 /** clarify handler 输入（progressive append clarifications）。 */
@@ -306,7 +306,23 @@ export interface PlanFeatureInput {
 }
 
 /**
+ * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
+ *
+ * epic 与 feature 的 plan 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
+ * 导出类型别名保持命名对称，不额外定义结构（运行时 dispatch 按 unit.scope 路由到对应 handler）。
+ */
+export type PlanEpicInput = PlanFeatureInput;
+
+/**
  * feature retrospect handler 输入——与 RetrospectSliceInput 同型（PlanningRetrospectData）。
  * 导出类型别名保持命名对称，不额外定义结构。
  */
 export type RetrospectFeatureInput = RetrospectSliceInput;
+
+/**
+ * epic retrospect handler 输入——与 RetrospectSliceInput/RetrospectFeatureInput 同型（PlanningRetrospectData）。
+ *
+ * epic/feature/slice 三层 PlanningUnit 的 retrospectData 都是 PlanningRetrospectData，结构完全一致。
+ * 导出类型别名保持命名对称。
+ */
+export type RetrospectEpicInput = RetrospectSliceInput;
