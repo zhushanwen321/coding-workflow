@@ -411,19 +411,16 @@ describe("W8: cw v1 unit not found → exit 1（V1Error 语义）", () => {
 });
 
 describe("W8: 0.x 命令与 v1 并存（向后兼容）", () => {
-  it("cw create（不带 v1 前缀）仍走 0.x → 返回 topicId（cw-<date>-<slug>）", () => {
-    // 0.x create 用 CW_HOME（这里也隔离，避免污染），不碰 V1_HOME。
+  it("cw create（不带 v1 前缀）在 cw 1.0 被拒（0.x 状态机入口已切断）→ exit 1 + 提示改用 v1", () => {
+    // cw 1.0 起切断 0.x 状态机入口：`cw create`（不带 v1）被拒，提示改用 `cw v1 create`。
+    // 只读查询（status/list/stats/report）与基建命令（init/gen-spec/skill）不受影响。
     const result = runV1Cli(
       ["create", "--slug", "legacy-coexist", "--objective", "0.x"],
       e,
     );
-    expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
-    expect(parsed.topicId).toMatch(/^cw-\d{4}-\d{2}-\d{2}-legacy-coexist$/);
-    expect(parsed.status).toBe("created");
-    // 0.x nextAction.action 是 clarify（与 v1 的字段语义一致但来自不同 dispatch）
-    const nextAction = parsed.nextAction as Record<string, unknown>;
-    expect(nextAction.action).toBe("clarify");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("0.x 状态机命令");
+    expect(result.stderr).toContain("cw v1 create");
   });
 
   it("v1 和 0.x 写各自的存储（V1_HOME vs CW_HOME）互不污染", () => {
