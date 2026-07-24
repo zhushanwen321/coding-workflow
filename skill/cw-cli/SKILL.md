@@ -146,7 +146,22 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 - v1 状态库：`~/.cw/<encoded-cwd>/_v1.json`（per-cwd 隔离）
 - 0.x 状态库：`~/.cw/<encoded-cwd>/_cw.json`（0.x 命令用，与 v1 隔离）
 - unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`）
-- 跨 session 接续：`cw v1 status --unitId <id>` 看当前进度，再按 nextAction 继续
+- 跨 session 接续 / 交接：`cw v1 handoff --unitId <id>`（首选，见下方只读查询）
+
+## 只读查询命令（不经 dispatch、不写 store）
+
+| 命令 | 用途 |
+|------|------|
+| `cw v1 list [--layer <l>]` | 全部 unit 的表格（unitId/layer/status/objective），扫全局用 |
+| `cw v1 tree [--unitId <id>]` | 以某 unit 为根的父子树（缩进），看拆解结构用 |
+| `cw v1 status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传） |
+| `cw v1 handoff --unitId <id>` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
+
+**交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw v1 handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（clarify 问答 + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
+
+- wave 完整支持；planning 层（slice/feature/epic）handler 未实现，guidance 段降级为静态提示
+- handoff 不落盘文件（守「store 是唯一真相」不变量），需保存输出自己 redirect
+- 缺 `--unitId` 或 unitId 不存在 → exit 1
 
 ## 前置检查
 

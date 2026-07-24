@@ -191,26 +191,15 @@ const TIMESTAMP_SLICE_LEN = 19;
 // renderHandoff — 单 unit 的交接摘要（供 agent 接手）
 // ═══════════════════════════════════════════════════════════════
 
-/** status → 该 status 下「当前所处阶段」的 action（用于调 buildNextAction 取阶段 guidance）。终态为 undefined。 */
-/** 语义：status=created 意味着「create 完成，现在进入 clarify 阶段」，对应阶段 action=clarify。 */
-const STATUS_TO_STAGE_ACTION: Readonly<Record<string, string | undefined>> = {
+/** status → 接手 agent 下一步该执行的 action（同时是调 buildNextAction 的阶段 action）。
+ *
+ * 语义：status=created 意味着「create 完成，现在该跑 clarify」。
+ * 该 action 既用于拼「下一步执行命令」，也传给 buildNextAction 取阶段 guidance
+ *（实测 stage action 与 execute action 在所有 status 上一致——design-review TO2 已确认，
+ * exec-review followup 已计划合并，此处落实）。终态(closed/aborted)为 undefined。
+ */
+const STATUS_TO_NEXT_ACTION: Readonly<Record<string, string | undefined>> = {
   // wave（ExecutionStatus）+ planning（PlanningStatus 共享同名状态）
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "execute",
-  tested: "exec-review",
-  "exec-reviewed": "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** status → 接手 agent 现在该执行的 cw 命令（即「推进当前状态」的 action）。终态无。 */
-/** 与 STAGE_ACTION 的区别：stage action 是「所处阶段」，execute action 是「要跑的命令名」。 */
-/** 多数 status 两者相同，但 design-reviewed 的阶段是 execute、要跑的也是 execute。 */
-const STATUS_TO_EXECUTE_ACTION: Readonly<Record<string, string | undefined>> = {
   created: "clarify",
   clarifying: "clarify",
   planning: "plan",
@@ -371,23 +360,22 @@ function renderNextStepSection(
     return lines;
   }
 
-  const executeAction = STATUS_TO_EXECUTE_ACTION[status];
-  if (!executeAction) {
+  const nextAction = STATUS_TO_NEXT_ACTION[status];
+  if (!nextAction) {
     lines.push(`（状态 ${status} 无已知下一步 action，请用 cw v1 status --unitId ${unit.id} 确认）`);
     return lines;
   }
 
   // 明确告诉接手 agent「现在该跑什么命令」
-  lines.push(`下一步执行：cw v1 ${executeAction} --unitId ${unit.id}`);
+  lines.push(`下一步执行：cw v1 ${nextAction} --unitId ${unit.id}`);
 
   // wave 层：复用 buildNextAction 取「当前阶段」的 guidance（含 schema + 关键约束）
   if (scope === "wave") {
     // WorkUnitRecord（宽松 [key:string]:unknown）与 ExecutionUnit（具名字段）结构上后者是前者的超集；
     // handoff 只读访问，断言安全（字段缺失时 helper 返回 undefined/空，不 crash）。
     const waveUnit = unit as unknown as ExecutionUnit;
-    const stageAction = STATUS_TO_STAGE_ACTION[status] ?? executeAction;
     try {
-      const next = buildNextAction(waveUnit, stageAction as WaveAction);
+      const next = buildNextAction(waveUnit, nextAction as WaveAction);
       lines.push("");
       lines.push("阶段提示（含 input schema + 关键约束）：");
       lines.push(next.guidance);
