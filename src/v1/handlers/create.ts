@@ -26,7 +26,32 @@ const TEST_RUNNER_HINT = `
   }
 或使用 --testCwd 参数临时覆盖（优先级高于 config）：
   cw v1 test --unitId <id> --testCwd packages/renderer
-配置后 cw 会在指定目录跑测试，解决 monorepo alias 等问题。`;
+配置后 cw 会在指定目录跑测试，解决 monorepo alias 等问题。
+
+## command 强烈建议配置为 wave 范围测试
+默认的 \`npx vitest run\` 是**全量回归**——会跑仓库里所有测试文件。cw 的 testsAllPass gate 只认 command 的退出码：只要仓库里**任意**一个预存 flaky/failing test 失败，本 wave 都会被卡住、为它不该负责的问题买单。
+
+**强烈建议**把 command 配成只覆盖本 wave 改动范围的测试文件：
+
+  {
+    "testRunner": {
+      // 按目录过滤（推荐：本 wave 改动集中在某个模块时）
+      "command": "npx vitest run src/__tests__/quota"
+    }
+  }
+
+或按文件列出：
+  {
+    "testRunner": {
+      "command": "npx vitest run path/to/test-a.test.ts path/to/test-b.test.ts"
+    }
+  }
+
+权衡：
+- 全量测试覆盖面广，但任何预存失败都会阻断本 wave，不适合 wave §5.1「验本次开发的正确性」的定位。
+- wave 范围测试精准、gate 更快更稳，但需要 agent 手动指定路径（cw 不会自动识别 wave 范围）。
+
+wave 范围内的测试文件从两处可知：plan 阶段的 WaveTestCase 列表、execute 阶段实际改动的测试文件。`;
 
 /**
  * 执行 create action。
