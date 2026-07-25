@@ -15,9 +15,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildReviewPrompt } from "../src/prompts/review.js";
-import { getShape } from "../src/shapes/registry.js";
-import type { ReviewDimension } from "../src/types.js";
+import { buildReviewPrompt } from "../src/legacy/prompts/review.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
+import type { ReviewDimension } from "../src/legacy/types.js";
 
 // ── AC-8: 等价性锁定（黄金快照） ──────────────────────────────────
 //

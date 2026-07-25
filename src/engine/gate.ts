@@ -13,8 +13,8 @@
  *   - GateRunner.run ← handler 内散落的 appendGateHistory + 状态流转逻辑
  *   - actionGates（ScopeConfig）← handler 内硬编码的「该 action 调哪些 gate」
  */
-import type { Unit } from "./unit.js";
 import type { EngineDeps } from "./deps.js";
+import type { Unit } from "./unit.js";
 
 /**
  * gate 校验结果。

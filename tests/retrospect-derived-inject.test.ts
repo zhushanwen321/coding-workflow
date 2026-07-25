@@ -25,14 +25,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { RETROSPECT_PROMPT } from "../src/prompts/retrospect.js";
-import { buildDerivedSummary, buildNextAction } from "../src/state-machine.js";
+import { RETROSPECT_PROMPT } from "../src/legacy/prompts/retrospect.js";
+import { buildDerivedSummary, buildNextAction } from "../src/legacy/state-machine.js";
 import type {
   GateHistoryEntry,
   TestCase,
   Topic,
   Wave,
-} from "../src/types.js";
+} from "../src/legacy/types.js";
 
 // ── 测试夹具（照 state-machine.test.ts / stats.test.ts 模式）────
 

@@ -9,14 +9,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { SCOPE_WARN_FILES, SCOPE_WARN_WAVES } from "../src/gate.js";
-import { computeStats, computeStatsAll } from "../src/stats.js";
+import { SCOPE_WARN_FILES, SCOPE_WARN_WAVES } from "../src/legacy/gate.js";
+import { computeStats, computeStatsAll } from "../src/legacy/stats.js";
 import type {
   GateHistoryEntry,
   RetrospectData,
   RuntimeEnv,
   Topic,
-} from "../src/types.js";
+} from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

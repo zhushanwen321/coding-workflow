@@ -18,11 +18,11 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { dispatch } from "../src/dispatch.js";
-import { checkAcMapping, checkFrCoverage, GitValidator } from "../src/gate.js";
-import { parseSpecSections } from "../src/plan-parser.js";
-import { CwStore } from "../src/store.js";
-import type { ActionDeps, SpecSection } from "../src/types.js";
+import { dispatch } from "../src/legacy/dispatch.js";
+import { checkAcMapping, checkFrCoverage, GitValidator } from "../src/legacy/gate.js";
+import { parseSpecSections } from "../src/legacy/plan-parser.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { ActionDeps, SpecSection } from "../src/legacy/types.js";
 
 /** 创建临时 store + topic（通过 dispatch create），返回 { store, topicId }。 */
 function createTmpStore(label: string) {
