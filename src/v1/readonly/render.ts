@@ -13,9 +13,12 @@
  *     但渲染层只关心可读字符串，未知字段降级为空串）。
  */
 import type { Clarification } from "../core/clarifications.js";
-import type { ExecutionUnit } from "../core/workunit.js";
+import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
+import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";
+import { buildFeatureNextAction } from "../handlers/feature/feature-internal.js";
 import { buildNextAction } from "../handlers/internal.js";
-import type { WaveAction } from "../rules/state-machine.js";
+import { buildSliceNextAction } from "../handlers/slice/slice-internal.js";
+import type { PlanningAction,WaveAction } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import type { V1Store } from "../store/v1-store.js";
 
@@ -191,22 +194,37 @@ const TIMESTAMP_SLICE_LEN = 19;
 // renderHandoff — 单 unit 的交接摘要（供 agent 接手）
 // ═══════════════════════════════════════════════════════════════
 
-/** status → 接手 agent 下一步该执行的 action（同时是调 buildNextAction 的阶段 action）。
+/** status → 接手 agent 下一步该执行的 action（同时是调 build{Scope}NextAction 的阶段 action）。
  *
- * 语义：status=created 意味着「create 完成，现在该跑 clarify」。
- * 该 action 既用于拼「下一步执行命令」，也传给 buildNextAction 取阶段 guidance
- *（实测 stage action 与 execute action 在所有 status 上一致——design-review TO2 已确认，
- * exec-review followup 已计划合并，此处落实）。终态(closed/aborted)为 undefined。
+ * 语义：status=created 意味着「create 完成，现在该跑 clarify」。终态(closed/aborted)为 undefined。
+ *
+ * 按 scope 拆两表：wave 和 planning 的状态机不同（planning 无 test/exec-review），
+ * 且 executing 状态在两层的下一步不同（wave→test，planning→retrospect）。
+ * 混用一表是原 bug 源头（曾把 wave 的 executing 错写成 execute、把两层的语义混在一起）。
  */
-const STATUS_TO_NEXT_ACTION: Readonly<Record<string, string | undefined>> = {
-  // wave（ExecutionStatus）+ planning（PlanningStatus 共享同名状态）
+
+/** wave（ExecutionStatus）→ WaveAction。execute 完成后 status=executing，下一步是 test（不是 execute）。 */
+const WAVE_STATUS_TO_ACTION: Readonly<Record<string, WaveAction | undefined>> = {
   created: "clarify",
   clarifying: "clarify",
   planning: "plan",
   "design-reviewed": "execute",
-  executing: "execute",
+  executing: "test",
   tested: "exec-review",
   "exec-reviewed": "retrospect",
+  retrospected: "closeout",
+  closed: undefined,
+  aborted: undefined,
+};
+
+/** planning（PlanningStatus，epic/feature/slice 共用）→ PlanningAction。
+ * planning 无 test/exec-review：execute 下沉子层后 status=executing，下一步直接是 retrospect。 */
+const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, PlanningAction | undefined>> = {
+  created: "clarify",
+  clarifying: "clarify",
+  planning: "plan",
+  "design-reviewed": "execute",
+  executing: "retrospect",
   retrospected: "closeout",
   closed: undefined,
   aborted: undefined,
@@ -222,12 +240,13 @@ const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
  * renderHandoff 是五段式 markdown 文本（agent/人读），聚合目标/已定决策/
  * 当前位置与下一步 guidance/涉及文件与契约/历史与变更。
  *
- * 下一步 guidance 复用 buildNextAction（纯函数，验证过不碰 store/fs/stdin），
+ * 下一步 guidance 复用各层的 build{Scope}NextAction（纯函数，验证过不碰 store/fs/stdin），
  * 保证 handoff 输出的 guidance 与实际跑 action 返回的 guidance 逐字一致。
+ * wave 调 buildNextAction，planning 层调 buildSlice/Feature/EpicNextAction。
  *
  * 按 unit.scope 收窄到强类型（ExecutionUnit/Slice/Feature/Epic）后访问字段。
- * planning 层（slice/feature/epic）handler 未实现，guidance 段降级为静态提示；
- * wave 层完整支持 buildNextAction。
+ * status→action 映射按 scope 拆两表（WAVE/PLANNING），反映两层状态机差异
+ *（planning 无 test/exec-review，executing 下一步是 retrospect 而非 test）。
  *
  * @param unit  已读出的 WorkUnitRecord（调用方负责 load + not found 判定）
  */
@@ -319,6 +338,11 @@ function renderDecisionsSection(unit: WorkUnitRecord): string[] {
 
   return lines;
 }
+/** 运行时判定一个值是否像 Clarification（有 question 字段）。 */
+function isClarificationLike(v: unknown): v is Clarification {
+  if (typeof v !== "object" || v === null) return false;
+  return typeof (v as Record<string, unknown>).question === "string";
+}
 
 /** 从 unit 读 clarifications（wave/slice/epic 是数组，feature 是容器对象）。 */
 function readClarifications(unit: WorkUnitRecord): Clarification[] {
@@ -337,15 +361,50 @@ function readClarifications(unit: WorkUnitRecord): Clarification[] {
   return [];
 }
 
-/** 运行时判定一个值是否像 Clarification（有 question 字段）。 */
-function isClarificationLike(v: unknown): v is Clarification {
-  if (typeof v !== "object" || v === null) return false;
-  return typeof (v as Record<string, unknown>).question === "string";
+/** 把宽松的 WorkUnitRecord 视为具名 unit 类型（handoff 只读访问）。
+ *
+ * WorkUnitRecord 有 `[key:string]:unknown` 索引签名，具名 unit（ExecutionUnit/Slice/Feature/Epic）
+ * 字段都是具体的；结构上后者是前者的超集，但 TS 认为索引签名与具名字段不兼容，需双重断言。
+ * 集中到此处，避免调用点重复 `as unknown as T`（品味 + 消除多处 lint warning）。 */
+function asUnit<T>(unit: WorkUnitRecord): T {
+  return unit as unknown as T;
+}
+
+/** 按 scope 调对应的 build{Scope}NextAction 取阶段 guidance。
+ *
+ * 四个函数签名同构（均返回 V1NextAction），但 action 类型不同（WaveAction vs PlanningAction）、
+ * unit 类型不同（ExecutionUnit vs Slice/Feature/Epic）。WorkUnitRecord 与具名 unit 类型结构上
+ * 后者是前者的超集；handoff 只读访问，断言安全（字段缺失时 build 内部 helper 降级，不 crash）。
+ * 返回 undefined 表示该 scope 未配置 build 函数或调用抛出。 */
+function buildGuidanceForScope(
+  unit: WorkUnitRecord,
+  scope: string,
+  status: string,
+): { action: string; guidance: string } | undefined {
+  const action = (scope === "wave" ? WAVE_STATUS_TO_ACTION : PLANNING_STATUS_TO_ACTION)[status];
+  if (!action) return undefined;
+  try {
+    let next: { guidance: string };
+    if (scope === "wave") {
+      next = buildNextAction(asUnit<ExecutionUnit>(unit), action as WaveAction);
+    } else if (scope === "slice") {
+      next = buildSliceNextAction(asUnit<Slice>(unit), action as PlanningAction);
+    } else if (scope === "feature") {
+      next = buildFeatureNextAction(asUnit<Feature>(unit), action as PlanningAction);
+    } else if (scope === "epic") {
+      next = buildEpicNextAction(asUnit<Epic>(unit), action as PlanningAction);
+    } else {
+      return undefined;
+    }
+    return { action, guidance: next.guidance };
+  } catch {
+    return { action, guidance: "" };
+  }
 }
 
 // ── §3 当前位置与下一步段 ──
 
-/** 渲染当前位置 + 下一步 action（含 guidance，仅 wave 完整支持）。 */
+/** 渲染当前位置 + 下一步 action + 阶段 guidance（wave/planning 均调对应 build 函数取真实 guidance）。 */
 function renderNextStepSection(
   unit: WorkUnitRecord,
   scope: string,
@@ -360,33 +419,23 @@ function renderNextStepSection(
     return lines;
   }
 
-  const nextAction = STATUS_TO_NEXT_ACTION[status];
-  if (!nextAction) {
+  const resolved = buildGuidanceForScope(unit, scope, status);
+  if (!resolved) {
     lines.push(`（状态 ${status} 无已知下一步 action，请用 cw v1 status --unitId ${unit.id} 确认）`);
     return lines;
   }
 
   // 明确告诉接手 agent「现在该跑什么命令」
-  lines.push(`下一步执行：cw v1 ${nextAction} --unitId ${unit.id}`);
+  lines.push(`下一步执行：cw v1 ${resolved.action} --unitId ${unit.id}`);
 
-  // wave 层：复用 buildNextAction 取「当前阶段」的 guidance（含 schema + 关键约束）
-  if (scope === "wave") {
-    // WorkUnitRecord（宽松 [key:string]:unknown）与 ExecutionUnit（具名字段）结构上后者是前者的超集；
-    // handoff 只读访问，断言安全（字段缺失时 helper 返回 undefined/空，不 crash）。
-    const waveUnit = unit as unknown as ExecutionUnit;
-    try {
-      const next = buildNextAction(waveUnit, nextAction as WaveAction);
-      lines.push("");
-      lines.push("阶段提示（含 input schema + 关键约束）：");
-      lines.push(next.guidance);
-    } catch {
-      lines.push("（阶段 guidance 生成失败，请直接执行上述命令获取）");
-    }
-    return lines;
+  // 阶段 guidance（含 schema + 关键约束）——与实际跑 action 返回的 guidance 逐字一致
+  if (resolved.guidance) {
+    lines.push("");
+    lines.push("阶段提示（含 input schema + 关键约束）：");
+    lines.push(resolved.guidance);
+  } else {
+    lines.push("（阶段 guidance 生成失败，请直接执行上述命令获取）");
   }
-
-  // planning 层（slice/feature/epic）：handler 未实现，降级为静态提示
-  lines.push("（planning 层 handler 暂未实现，请执行上述命令获取 guidance；若命令报错，用 cw v1 status 查看原始数据按流程手动推进）");
   return lines;
 }
 

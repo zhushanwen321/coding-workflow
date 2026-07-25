@@ -139,6 +139,24 @@ describe("TC2: renderHandoff 走到 design-reviewed 的 wave", () => {
   });
 });
 
+// ── TC2b: wave executing 状态→test（原 bug 回归：曾错写成 execute）──
+
+describe("TC2b: renderHandoff wave executing 下一步是 test", () => {
+  it("wave executing → cw v1 test（不是 execute）", () => {
+    const unit = asRecord({
+      ...createWave({ slug: "exec-w1", objective: "执行中" }),
+      status: "executing",
+      // design-review 已过，进入 executing（execute 完成）
+      designReviewJudgment: { alternatives: [], tradeoffs: [], risks: [] },
+    });
+    const out = renderHandoff(unit);
+    expect(out).toContain("状态：executing");
+    // 关键回归：executing 状态的下一步是 test（execute 已完成），原 bug 错写成 execute
+    expect(out).toContain("下一步执行：cw v1 test --unitId wave:exec-w1");
+    expect(out).not.toContain("下一步执行：cw v1 execute");
+  });
+});
+
 // ── TC3: wave 终态（closed / aborted）───────────────────────
 
 describe("TC3: renderHandoff 终态 wave", () => {
@@ -173,32 +191,49 @@ describe("TC3: renderHandoff 终态 wave", () => {
   });
 });
 
-// ── TC4: planning 三层空态不 crash ──────────────────────────
+// ── TC4: planning 三层输出真实 guidance（不再降级）──────────
 
-describe("TC4: renderHandoff planning 层（slice/feature/epic）空态", () => {
-  it("slice 空态：不 crash + 有目标 + 有历史", () => {
+describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
+  it("slice created：输出真实 guidance（调 buildSliceNextAction）", () => {
     const unit = asRecord(createSlice({ slug: "tech-s1", objective: "技术方案" }));
     const out = renderHandoff(unit);
     expect(out).toContain("# Handoff: slice:tech-s1 [created]");
     expect(out).toContain("技术方案");
     expect(out).toContain("create → created");
-    // planning 层下一步提示
-    expect(out).toContain("planning 层 handler 暂未实现");
+    // planning 层现在输出真实 guidance，不再是降级提示
+    expect(out).not.toContain("handler 暂未实现");
+    expect(out).toContain("下一步执行：cw v1 clarify --unitId slice:tech-s1");
+    expect(out).toContain("阶段提示（含 input schema + 关键约束）");
+    // slice guidance 应含 planning 特有内容（clarify 阶段的 spec 约束提示）
+    expect(out).toContain("clarifications");
   });
 
-  it("feature 空态：不 crash + clarifications 是容器对象不报错", () => {
+  it("slice executing：下一步是 retrospect（planning 无 test/exec-review）", () => {
+    const unit = asRecord({
+      ...createSlice({ slug: "exec-s1", objective: "执行中" }),
+      status: "executing",
+    });
+    const out = renderHandoff(unit);
+    // 关键：planning 的 executing → retrospect，不是 wave 的 executing → test
+    expect(out).toContain("下一步执行：cw v1 retrospect --unitId slice:exec-s1");
+    expect(out).not.toContain("cw v1 test");
+  });
+
+  it("feature 空态：不 crash + clarifications 容器对象不报错 + 输出 guidance", () => {
     const unit = asRecord(createFeature({ slug: "req-f1", objective: "需求规格" }));
     const out = renderHandoff(unit);
     expect(out).toContain("# Handoff: feature:req-f1 [created]");
     expect(out).toContain("需求规格");
     // feature 的 clarifications 是 {clarifications:[], spec:{...}} 容器，不应 crash
     expect(out).toContain("## 当前位置与下一步");
+    expect(out).toContain("下一步执行：cw v1 clarify --unitId feature:req-f1");
   });
 
-  it("epic 空态：不 crash + 有目标", () => {
+  it("epic 空态：不 crash + 有目标 + 输出 guidance", () => {
     const unit = asRecord(createEpic({ slug: "big-e1", objective: "战略目标" }));
     const out = renderHandoff(unit);
     expect(out).toContain("# Handoff: epic:big-e1 [created]");
     expect(out).toContain("战略目标");
+    expect(out).toContain("下一步执行：cw v1 clarify --unitId epic:big-e1");
   });
 });
