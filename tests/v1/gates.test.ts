@@ -36,6 +36,7 @@ import {
 } from "../../src/v1/rules/gates/retrospect.js";
 import {
   commitExists,
+  testCasesExecuted,
   testReferencesDesignReview,
   testsAllPass,
 } from "../../src/v1/rules/gates/test.js";
@@ -338,6 +339,83 @@ describe("exec-review gates", () => {
     it('overallVerdict="pass" + 空 actions → pass（不强制）', () => {
       const j = passJudgment();
       expect(execReviewFollowupActionsWhenNeeded(j).passed).toBe(true);
+    });
+  });
+
+  // U13: testCasesExecuted —— 验 passedCount/failedCount 覆盖非 manual 用例数。
+  // 特别回归覆盖 vitest 多行输出计数解析 bug：
+  //   vitest 输出 `Test Files N passed` 和 `Tests M passed` 两行，
+  //   passedCount 必须是 M（用例数）而非 N（文件数），否则本 gate 会误判 fail。
+  describe("U13: testCasesExecuted", () => {
+    function waveWith(n: number): ExecutionUnit {
+      const u = emptyWave();
+      u.plan.testCases = Array.from({ length: n }, (_, i) => tc(`TC${i + 1}`));
+      return u;
+    }
+    const okTj: TestJudgment = {
+      necessityMet: "met",
+      sufficiencyMet: { gapsConfirmed: [], gapsNewlyFound: [], overlapsConfirmed: [] },
+      alternativesReconsidered: "reconsidered",
+      tradeoffCostRealized: [],
+      riskOutcome: [],
+    };
+
+    it("非 manual 用例 5 个 + testRunResult 记录 5 次执行 → pass", () => {
+      const r = testCasesExecuted(
+        waveWith(5),
+        { passed: true, passedCount: 5, failedCount: 0 },
+        okTj,
+      );
+      expect(r.passed).toBe(true);
+    });
+
+    it("testRunResult 缺失 → fail", () => {
+      const r = testCasesExecuted(waveWith(5), undefined, okTj);
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/只记录了 0 次执行/);
+    });
+
+    it("executedCount < 非 manual 用例数 → fail", () => {
+      const r = testCasesExecuted(
+        waveWith(5),
+        { passed: true, passedCount: 3, failedCount: 0 },
+        okTj,
+      );
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/只记录了 3 次执行/);
+    });
+
+    // 关键回归：vitest 多行输出，passedCount 必须是用例数（Tests 行）而非文件数（Test Files 行）。
+    // 模拟 cli.ts testRunner 解析后的 TestRunResult（修复后行为）：936 用例通过 / 110 文件。
+    it("[REGRESSION] passedCount 取用例数(936)而非文件数(110) → 非 manual 200 个时 pass", () => {
+      // 若解析 bug 复发，passedCount 会是 110（文件数），executedCount=110 < 200 → gate 错误 fail。
+      // 本断言锁死：parsed passedCount 必须等于用例数。
+      const vitestTestCaseCount = 936;
+      const vitestFileCount = 110; // 旧 bug 会错取这个值
+      const r = testCasesExecuted(
+        waveWith(200),
+        { passed: true, passedCount: vitestTestCaseCount, failedCount: 0 },
+        okTj,
+      );
+      expect(r.passed).toBe(true);
+      // 反证：若 passedCount 被错取为文件数，gate 会 fail——锁住回归。
+      const buggyR = testCasesExecuted(
+        waveWith(200),
+        { passed: true, passedCount: vitestFileCount, failedCount: 0 },
+        okTj,
+      );
+      expect(buggyR.passed).toBe(false);
+    });
+
+    it("manual 类用例走退化验证（sufficiencyMet.note 非空 → pass）", () => {
+      const u = emptyWave();
+      u.plan.testCases = [{ ...tc("TC1"), type: "manual" }];
+      const tj = {
+        ...okTj,
+        sufficiencyMet: { ...okTj.sufficiencyMet, note: "manual 验收记录" },
+      };
+      const r = testCasesExecuted(u, undefined, tj);
+      expect(r.passed).toBe(true);
     });
   });
 });

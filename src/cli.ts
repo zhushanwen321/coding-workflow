@@ -1301,12 +1301,18 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
       const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
       const passed = r.status === 0;
       // 尝试从测试输出解析通过/失败计数（容错：解析不到就用 0 占位）。
+      // [HISTORICAL] vitest 输出两行「Test Files N passed」和「Tests N passed」，
+      // 旧正则 /(\d+)\s+passed/ 贪婪匹配第一个（Test Files 行的文件数），
+      // 导致 passedCount=文件数而非测试用例数，wave test-cases-executed gate 误判。
+      // 修复：matchAll 取最后一个匹配（Tests 行总在 Test Files 行之后）。
       let passedCount = 0;
       let failedCount = 0;
-      const passMatch = out.match(/(\d+)\s+passed/);
-      const failMatch = out.match(/(\d+)\s+failed/);
-      if (passMatch) passedCount = Number(passMatch[1]);
-      if (failMatch) failedCount = Number(failMatch[1]);
+      const passMatches = [...out.matchAll(/(\d+)\s+passed/g)];
+      const failMatches = [...out.matchAll(/(\d+)\s+failed/g)];
+      if (passMatches.length > 0)
+        passedCount = Number(passMatches[passMatches.length - 1][1]);
+      if (failMatches.length > 0)
+        failedCount = Number(failMatches[failMatches.length - 1][1]);
       // 解析失败测试名（vitest 默认 reporter：`× 测试名` 行 + 文件级 `FAIL  path` 兜底）。
       // 容错：解析不到就返回空数组，不抛错。
       const failedSet = new Set<string>();
