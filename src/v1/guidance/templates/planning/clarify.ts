@@ -19,5 +19,9 @@ import type { PlanningStageTemplate } from "./index.js";
 export const PLANNING_CLARIFY_TEMPLATE: PlanningStageTemplate = {
   goal: "澄清需求边界，补充 clarifications（progressive，可多次追加）。",
   constraint:
-    "关键约束：clarifications 是 append-only——只能追加，不能改历史条目；feature 层额外需填 spec（FeatureSpec）。",
+    "关键约束：clarifications 是 append-only——只能追加，不能改历史条目；feature 层额外需填 spec（FeatureSpec）。\n" +
+    "spec.functionalRequirements[].ac 必填（引用 AC id 的 string 数组），是 FR-AC 强引用 gate 的基础；" +
+    "缺失 ac 会在 design-review 阶段崩溃。示例：\n" +
+    'FR: { id: "FR1", status: "active", title: "...", detail: "...", ac: ["AC1"] }\n' +
+    'AC: { id: "AC1", status: "active", condition: "系统应...", verification: "review" }',
 };

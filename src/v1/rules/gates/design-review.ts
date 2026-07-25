@@ -142,6 +142,14 @@ export function designReviewSufficiencyComplete(
       report: "design-review-sufficiency-complete: sufficiency 缺失",
     };
   }
+  // guard: gaps/overlaps 可能 undefined（replan 等路径绕过 clarify 校验时）。
+  // 给可读 fail 而非下面 s.gaps.length 访问 undefined 崩溃。
+  if (!Array.isArray(s.gaps) || !Array.isArray(s.overlaps)) {
+    return {
+      passed: false,
+      report: "design-review-sufficiency-complete: sufficiency.gaps 或 overlaps 缺失（应为数组）",
+    };
+  }
   if (!s.meceNote || s.meceNote.trim() === "") {
     return {
       passed: false,
@@ -184,6 +192,14 @@ export function designReviewAlternativesNonEmpty(
 export function designReviewTradeoffsPresent(
   judgment: DesignReviewJudgment,
 ): GateResult {
+  // guard: tradeoffs 可能 undefined（replan 等路径绕过 clarify 校验时）。
+  // 给可读 fail 而非 judgment.tradeoffs.length 访问 undefined 崩溃。
+  if (!Array.isArray(judgment.tradeoffs)) {
+    return {
+      passed: false,
+      report: "design-review-tradeoffs-present: tradeoffs 字段缺失（应为数组）",
+    };
+  }
   if (judgment.tradeoffs.length < 1) {
     return {
       passed: false,
@@ -204,6 +220,13 @@ export function designReviewTradeoffsPresent(
 export function designReviewRisksPresent(
   judgment: DesignReviewJudgment,
 ): GateResult {
+  // guard: risks 可能 undefined（同 tradeoffs）。
+  if (!Array.isArray(judgment.risks)) {
+    return {
+      passed: false,
+      report: "design-review-risks-present: risks 字段缺失（应为数组）",
+    };
+  }
   if (judgment.risks.length < 1) {
     return {
       passed: false,
@@ -508,6 +531,12 @@ export function frAcCoverage(unit: Feature): GateResult {
   const problems: string[] = [];
   for (const fr of spec.functionalRequirements) {
     if (fr.status !== "active") continue;
+    // guard: fr.ac 可能 undefined（replan 等路径绕过 clarify 校验时入库的畸形 FR）。
+    // 给可读 fail 而非 fr.ac.length 访问 undefined 崩溃——这是原崩溃 bug 的根因点。
+    if (!Array.isArray(fr.ac)) {
+      problems.push(`${fr.id}（ac 字段缺失，应为引用 AC id 的数组）`);
+      continue;
+    }
     if (fr.ac.length === 0) {
       problems.push(`${fr.id}（未引用任何 AC）`);
       continue;
@@ -613,8 +642,7 @@ export function featureSplitDagValid(unit: Feature): GateResult {
  *
  * layerSpecific 是 feature 专属的设计审查维度（FeatureDesignReviewLayerSpecific 6 字段），
  * 都是人审判断，gate 只验填了（不验内容质量）。layerSpecific 基类类型是
- * WaveDesignReviewLayerSpecific（坑4，与 slice 同），用 as 断言到 feature 子类型（与 slice
- * 的 layerSpecificNonEmpty 做法一致）。layerSpecific 可能 undefined（空态），需 guard。
+ * Record<string, string> 下界，用 as 断言收窄到 feature 子类型。layerSpecific 可能 undefined（空态），需 guard。
  */
 export function featureLayerSpecificNonEmpty(unit: Feature): GateResult {
   const ls = unit.designReviewJudgment.layerSpecific as
@@ -741,8 +769,7 @@ export function epicSplitDagValid(unit: Epic): GateResult {
  *
  * layerSpecific 是 epic 专属的设计审查维度（EpicDesignReviewLayerSpecific 5 字段），
  * 都是人审判断，gate 只验填了（不验内容质量）。layerSpecific 基类类型是
- * WaveDesignReviewLayerSpecific（坑4，与 slice/feature 同），用 as 断言到 epic 子类型（与 slice/feature
- * 的 layerSpecificNonEmpty/featureLayerSpecificNonEmpty 做法一致）。layerSpecific 可能 undefined（空态），需 guard。
+ * Record<string, string> 下界，用 as 断言收窄到 epic 子类型。layerSpecific 可能 undefined（空态），需 guard。
  */
 export function epicLayerSpecificNonEmpty(unit: Epic): GateResult {
   const ls = unit.designReviewJudgment.layerSpecific as

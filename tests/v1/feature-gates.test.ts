@@ -93,6 +93,20 @@ describe("feature design-review gates: FR-AC 强引用（3 个）", () => {
       });
       expect(frAcCoverage(unit).passed).toBe(true);
     });
+
+    it("[BUG-HUNT 修复] FR.ac 字段 undefined（畸形数据绕过 clarify 校验时）→ 可读 fail 而非崩溃", () => {
+      // 原崩溃 bug：replan 等路径绕过 clarify 校验，fr.ac 为 undefined，
+      // fr.ac.length 访问抛 Cannot read properties of undefined。
+      // guard 后应返回可读 fail，不抛异常。
+      const unit = validFeature();
+      // 强行删除 ac 字段（模拟畸形入库数据）
+      const fr = unit.clarifications.spec.functionalRequirements[0]!;
+      delete (fr as { ac?: string[] }).ac;
+      expect(() => frAcCoverage(unit)).not.toThrow();
+      const r = frAcCoverage(unit);
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/ac 字段缺失/);
+    });
   });
 
   // acReachableFromFr
@@ -256,6 +270,27 @@ describe("feature design-review gates: judgment 非空（5 个，复用 wave/sli
     j.risks = [];
     expect(designReviewRisksPresent(j).passed).toBe(false);
     expect(designReviewRisksPresent(fullJudgment()).passed).toBe(true);
+  });
+
+  it("[BUG-HUNT 修复] tradeoffs undefined → 可读 fail 而非崩溃", () => {
+    const j = fullJudgment() as unknown as { tradeoffs?: unknown };
+    delete j.tradeoffs;
+    expect(() => designReviewTradeoffsPresent(j as DesignReviewJudgment)).not.toThrow();
+    expect(designReviewTradeoffsPresent(j as DesignReviewJudgment).passed).toBe(false);
+  });
+
+  it("[BUG-HUNT 修复] risks undefined → 可读 fail 而非崩溃", () => {
+    const j = fullJudgment() as unknown as { risks?: unknown };
+    delete j.risks;
+    expect(() => designReviewRisksPresent(j as DesignReviewJudgment)).not.toThrow();
+    expect(designReviewRisksPresent(j as DesignReviewJudgment).passed).toBe(false);
+  });
+
+  it("[BUG-HUNT 修复] sufficiency.gaps undefined → 可读 fail 而非崩溃", () => {
+    const j = fullJudgment() as unknown as { sufficiency?: { gaps?: unknown } };
+    delete j.sufficiency!.gaps;
+    expect(() => designReviewSufficiencyComplete(j as DesignReviewJudgment)).not.toThrow();
+    expect(designReviewSufficiencyComplete(j as DesignReviewJudgment).passed).toBe(false);
   });
 });
 
