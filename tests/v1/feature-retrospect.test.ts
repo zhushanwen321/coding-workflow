@@ -1,7 +1,7 @@
 /**
  * v1 feature retrospect 测试。
  *
- * 测 feature retrospect 的验收逻辑（feature-internal.runFeatureRetrospectGates，4 个 gate）：
+ * 测 feature retrospect 的验收逻辑（feature-internal.runFeatureRetrospectGates，7 个 gate）：
  * - allWavesClosed（child slice 未全 closed/aborted → fail）
  * - sliceLessonsLearnedNonEmpty（lessonsLearned 空 → fail）
  * - reviewedItemsCoverDesignReview（reviewedItems 未覆盖 designReviewJudgment 核心项 → fail）
@@ -194,12 +194,12 @@ describe("runFeatureRetrospectGates: splitFulfillmentCoversPlan", () => {
 // runFeatureRetrospectGates 聚合
 // ═══════════════════════════════════════════════════════════════
 
-describe("runFeatureRetrospectGates 聚合（6 个 gate）", () => {
-  it("合法 retrospectData + child 全 closed → 6 个 gate 全 pass", () => {
+describe("runFeatureRetrospectGates 聚合（7 个 gate）", () => {
+  it("合法 retrospectData + child 全 closed → 7 个 gate 全 pass", () => {
     const unit = featureForRetrospect();
     unit.retrospectData = makeValidFeatureRetrospectDataForSplits(["s1", "s2"]);
     const results = runFeatureRetrospectGates(unit, ["closed", "closed"]);
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(7);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
@@ -213,7 +213,7 @@ describe("runFeatureRetrospectGates 聚合（6 个 gate）", () => {
       splitFulfillment: [],
     };
     const failed = runFeatureRetrospectGates(unit, ["created"]).filter((r) => !r.passed);
-    // 原 4 个 gate fail；新增 childUnitEvidenceComplete（childUnitIds 空 → pass）+ deliveryVerdictNonEmpty（"failed" → pass）
+    // allWavesClosed + lessons + cover + splitFulfillment 这 4 个 fail；childUnitEvidenceComplete（childUnitIds 空 → pass）+ deliveryVerdictNonEmpty（"failed" → pass）+ childDeliveryConsistency（childDelivery 空 → pass）
     expect(failed).toHaveLength(4);
   });
 });

@@ -16,6 +16,7 @@
  * 故 crossLayer 恒为 undefined（孤立终点）——代码逻辑与 feature 版完全一致（feature 版的三元判断
  * `unit.parentUnitId !== undefined && !== ""` 对 epic 天然走 undefined 分支），无需特判。
  */
+import { assertEvidenceNotFrozen } from "../../core/evidence.js";
 import type { Epic } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
@@ -40,6 +41,9 @@ export function handleCloseoutEpic(
   input: CloseoutInput,
   deps: V1Deps,
 ): ActionResult {
+  // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
+  assertEvidenceNotFrozen(unit.evidence, "closeout");
+  
   // ── 补 evidence 主观部分 ──
   if (input.summary !== undefined) {
     unit.evidence.summary = input.summary;

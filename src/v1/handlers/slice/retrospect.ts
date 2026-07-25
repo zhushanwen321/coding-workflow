@@ -7,7 +7,7 @@
  * 职责：
  * 1. 查 child wave 状态：deps.store.findChildren(unit.id) → 收集每个 child 的 status
  * 2. 写 unit.retrospectData = input.retrospectData
- * 3. 跑 runSliceRetrospectGates(unit, childStatuses)（4 个 gate：allWavesClosed + lessons + cover + splitFulfillment）
+ * 3. 跑 runSliceRetrospectGates(unit, childStatuses, evidenceChildDelivery)（7 个 gate：allWavesClosed + lessons + cover + splitFulfillment + childUnitEvidence + deliveryVerdict + childDeliveryConsistency）
  * 4. 任一 gate fail → 短路返回 ok=false（不流转 status、append fail 记录）
  * 5. 全 pass → status 流转（executing → retrospected）→ save
  *
@@ -17,7 +17,7 @@
  * 与 wave retrospect 的差异：
  * - 入参 PlanningRetrospectData（比 RetrospectData 宽：含 deliveryVerdict/splitFulfillment）
  * - 多查 child wave 状态注入 gate
- * - 4 个 gate（wave 是 2 个）
+ * - 7 个 gate（wave 是 2 个），包含 childDelivery 一致性校验
  */
 import type { Slice } from "../../core/workunit.js";
 import { runSliceRetrospectGates } from "../../rules/gates/retrospect.js";
@@ -52,7 +52,10 @@ export function handleRetrospectSlice(
   // 先写 retrospectData（gate 里 splitFulfillmentCoversPlan 校验依赖已写入的 splitFulfillment）
   unit.retrospectData = input.retrospectData;
 
-  const gateResults = runSliceRetrospectGates(unit, childStatuses);
+  // 读取 evidence.childDelivery 用于一致性校验（agent 填的 retrospectData 应与客观 childDelivery 一致）
+  const evidenceChildDelivery = unit.evidence.childDelivery;
+
+  const gateResults = runSliceRetrospectGates(unit, childStatuses, evidenceChildDelivery);
 
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {

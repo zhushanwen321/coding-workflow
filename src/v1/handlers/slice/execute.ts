@@ -22,7 +22,7 @@
  *
  * 不变量：execute 不跑 gate（split DAG 无环在 design-review 已验）。child wave 创建后立即 save。
  */
-import type { ChildDeliveryRecord } from "../../core/evidence.js";
+import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/evidence.js";
 import type { Slice } from "../../core/workunit.js";
 import { createWave } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
@@ -40,6 +40,9 @@ export function handleExecuteSlice(
   deps: V1Deps,
 ): ActionResult {
   const at = deps.clock.now();
+
+  // ── 检查 evidence 是否已冻结（frozenAt 非空后不可再改） ──
+  assertEvidenceNotFrozen(unit.evidence, "write childDelivery/generatedAt");
 
   // ── 按 plan.split 创建所有 child wave ──
   for (const split of unit.plan.split) {

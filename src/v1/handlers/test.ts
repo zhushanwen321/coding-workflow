@@ -16,6 +16,7 @@
  *
  * gate fail 短路语义：fail 时不改任何状态（test 是 executing → tested 的关键转换，fail 即业务未通过）。
  */
+import { assertEvidenceNotFrozen } from "../core/evidence.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import {
   commitExists,
@@ -94,6 +95,8 @@ export function handleTest(
   }
 
   // ── 全 pass：填 testRunResult + 写 testJudgment → status 流转 → save ──
+  // 检查 evidence 是否已冻结（frozenAt 非空后不可再改）
+  assertEvidenceNotFrozen(unit.evidence, "write testRunResult");
   unit.evidence.testRunResult = testRunResult;
   unit.testJudgment = input.testJudgment;
   transitionStatus(unit, "test", deps.clock.now());

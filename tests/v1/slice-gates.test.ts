@@ -394,7 +394,7 @@ describe("runSliceRetrospectGates 聚合（6 个 gate）", () => {
       splitFulfillment: [{ splitSlug: "w1", verdict: "delivered" }],
     };
     const results = runSliceRetrospectGates(unit, ["closed"]);
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(7);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 

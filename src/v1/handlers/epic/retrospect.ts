@@ -1,13 +1,13 @@
 /**
- * v1 epic handler — retrospect action（查 child feature 状态 + 跑 6 个 gate + 写 retrospectData）。
+ * v1 epic handler — retrospect action（查 child feature 状态 + 跑 7 个 gate + 写 retrospectData）。
  *
- * 设计来源：epic-internal.runEpicRetrospectGates（6 个 gate 聚合，复用 slice/feature 的 6 个子 gate）、
+ * 设计来源：epic-internal.runEpicRetrospectGates（7 个 gate 聚合，复用 slice/feature 的 7 个子 gate）、
  * PLANNING_TRANSITIONS.retrospect（executing → retrospected）、core judgments.PlanningRetrospectData。
  *
  * 职责：
  * 1. 查 child feature 状态：deps.store.findChildren(unit.id) → 收集每个 child 的 status
  * 2. 写 unit.retrospectData = input.retrospectData
- * 3. 跑 runEpicRetrospectGates(unit, childStatuses)（6 个 gate：allWavesClosed + lessons + cover + splitFulfillment + childUnitEvidence + deliveryVerdict）
+ * 3. 跑 runEpicRetrospectGates(unit, childStatuses)（7 个 gate：allWavesClosed + lessons + cover + splitFulfillment + childUnitEvidence + deliveryVerdict + childDeliveryConsistency）
  * 4. 任一 gate fail → 短路返回 ok=false（不流转 status、append fail 记录）
  * 5. 全 pass → status 流转（executing → retrospected）→ save
  *
@@ -52,7 +52,10 @@ export function handleRetrospectEpic(
   // 先写 retrospectData（gate 里 splitFulfillmentCoversPlan 校验依赖已写入的 splitFulfillment）
   unit.retrospectData = input.retrospectData;
 
-  const gateResults = runEpicRetrospectGates(unit, childStatuses);
+  // 读取 evidence.childDelivery 用于一致性校验（agent 填的 retrospectData 应与客观 childDelivery 一致）
+  const evidenceChildDelivery = unit.evidence.childDelivery;
+
+  const gateResults = runEpicRetrospectGates(unit, childStatuses, evidenceChildDelivery);
 
   const failed = gateResults.filter((g) => !g.passed);
   if (failed.length > 0) {

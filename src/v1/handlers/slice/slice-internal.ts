@@ -55,7 +55,7 @@ interface SchemaSource {
 export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
   clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "SliceTechChoice" },
+  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "PlanSliceInput" },
   "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
   execute: undefined, // 下沉创建 child wave，不接收 input
   retrospect: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
@@ -207,6 +207,7 @@ export function buildSliceNextAction(
 
   const template = PLANNING_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
   const schemaText = getSliceSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? SLICE_ACTION_TO_NEXT_PUBLIC[action];
@@ -215,6 +216,7 @@ export function buildSliceNextAction(
   const guidance = buildNormalGuidance({
     prefix,
     nextAction: action,
+    goal,
     command,
     schemaText,
     templateText,
@@ -249,7 +251,7 @@ function buildSliceCommand(
   const hasInput = SLICE_ACTION_SCHEMA[nextAction] !== undefined ||
     SLICE_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? ` --input @${nextAction}.json` : "";
-  return `cw ${nextAction} --unitId ${unitId}${inputPart}`;
+  return `cw v1 ${nextAction} --unitId ${unitId}${inputPart}`;
 }
 
 // ═══════════════════════════════════════════════════════════════

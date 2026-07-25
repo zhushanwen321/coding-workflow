@@ -163,9 +163,9 @@ interface Split {
 
 **为什么不是「全量继承」**：见 model §4.2——v4 的「cw 自动全量拷贝上游所有 id 到下游 basedOnParent」会污染下游（下游不用的 id 也被记下来）。v5 改为 plan 阶段显式声明，execute 时按声明写入。
 
-### 2.4 plan 阶段的机器 gate（建议）
+### 2.4 design-review 阶段的机器 gate
 
-epic 的 plan gate（实现层参考）：
+epic 的 design-review gate（实现层在 design-review 阶段执行）：
 
 - `all-decisions-resolved`：所有 `clarifications[].resolution` 非空（progressive 推进的完成度判据）
 - `feature-split-non-empty`：`plan.split` 至少一项
@@ -400,7 +400,7 @@ epic 支持 replan 追踪的条目（继承 WorkUnitItem 的）只有 **Clarific
 
 ### 6.2 replan 机制（共享，不重复）
 
-v5 的 replan 机制采用 **abort + appendOnly**（model §5.6）：上层 replan 废弃条目后，cw 自动计算下游影响面，把引用了废弃条目的下层（及其所有子孙）**级联 abort**，然后返回影响面给 agent，由 agent 决定是否通过 `cw create` 重建。
+v5 的 replan 机制采用 **abort + appendOnly**（model §5.6）：上层 replan 废弃条目后，cw 自动计算下游影响面，把引用了废弃条目的下层（及其所有子孙）**级联 abort**，然后返回影响面给 agent，由 agent 决定是否通过 `cw v1 create` 重建。
 
 完整 4 步流程（本地变更 → 影响面计算 → 级联 abort → 返回给 agent）见 model §5.6.2。本文不重述机制，只讲 epic 层的差异。
 
@@ -434,18 +434,18 @@ epic replan 一个 Clarification（如 D1「用 OAuth」→「自研」）时，
 
 **关键点**：feature 的 `basedOnParent` 来自 execute 时 epic `plan.split` 的 `inheritedItemIds`（§2.3/§4.2）。所以「哪些 feature 受影响」**精确取决于 plan 阶段声明的继承关系**——这是 v5 把继承关系从「全量拷贝」改为「显式声明」的直接收益：replan 影响面查询精确，不污染未引用的 feature。
 
-### 6.5 重建（agent 主导，通过 cw create）
+### 6.5 重建（agent 主导，通过 cw v1 create）
 
 agent 看 replan 返回的 `pendingRebuild`，决定怎么重建（model §5.6.3）：
 
 - **场景 A（纯删除）**：epic 纯废弃 D2（如「不再支持 guest 角色」）→ cw 自动 abort 引用 D2 的 feature 及其子孙。agent 核实 cw 的处理，无需重建（D2 的决策没了就是没了）。
-- **场景 B（替换/拆分）**：epic 把 D1「用 OAuth」拆成 D1a「OAuth 用于 toC」+ D1b「自研用于 toB」→ cw abort 引用 D1 的 feature 及其子孙，agent 决定怎么承接 D1a/D1b（新建 feature 承接？合到现有 feature？都不接？）。**重建走 `cw create`**（新建 feature 走正常流程），不是「feature replan」。
+- **场景 B（替换/拆分）**：epic 把 D1「用 OAuth」拆成 D1a「OAuth 用于 toC」+ D1b「自研用于 toB」→ cw abort 引用 D1 的 feature 及其子孙，agent 决定怎么承接 D1a/D1b（新建 feature 承接？合到现有 feature？都不接？）。**重建走 `cw v1 create`**（新建 feature 走正常流程），不是「feature replan」。
 
 **重建的典型动作**：
 ```
 agent: "新建 feature-oauth 承接 D1a，新建 feature-self-auth 承接 D1b"
-cw create feature --parent=epic --inheritedItemIds=[D1a]
-cw create feature --parent=epic --inheritedItemIds=[D1b]
+cw v1 create feature --parent=epic --inheritedItemIds=[D1a]
+cw v1 create feature --parent=epic --inheritedItemIds=[D1b]
 ```
 
 新建的 feature 走正常流程（create → clarify → plan → ...），不是 replan。feature 的 `basedOnParent` 在 execute 时按新声明的 `inheritedItemIds` 写入（§4.2）。
@@ -469,7 +469,7 @@ epic 是顶层：
 
 | 项 | model 引用 | epic 层的状态 |
 |---|---|---|
-| ~~`inheritedItemIds` 的 replan 更新机制~~ | model §7.1 | **已定（v5 采用 abort + appendOnly 方案）**。详见 §6.2–§6.5 及 model §5.6：上层 replan 废弃条目后，cw 自动计算影响面 + 级联 abort 引用废弃条目的子孙 + 返回给 agent + agent 通过 `cw create` 重建。epic 层场景见 §6.4–§6.5 |
+| ~~`inheritedItemIds` 的 replan 更新机制~~ | model §7.1 | **已定（v5 采用 abort + appendOnly 方案）**。详见 §6.2–§6.5 及 model §5.6：上层 replan 废弃条目后，cw 自动计算影响面 + 级联 abort 引用废弃条目的子孙 + 返回给 agent + agent 通过 `cw v1 create` 重建。epic 层场景见 §6.4–§6.5 |
 | ~~`PlanningRetrospectData.splitFulfillment` 是否对照所有 split 项~~ | model §7.1 | **已定（slice 文档定稿：必须覆盖所有 split 项）**。slice §5.1 已定稿：splitFulfillment 必须对照 `SlicePlan.split` 的**所有**项（不能只对照部分），每项给 `delivered` / `partial` / `failed` verdict。slice 是 PlanningUnit 的最底层，最接近执行，其约定适用于三层 PlanningUnit。epic 同样适用（机器 gate 验覆盖，§5.5）|
 | `execReviewJudgment` 字段结构 | model §7.1 | **与 epic 无关**（epic 是 PlanningUnit，没有 execReviewJudgment）。仅 wave 层相关 |
 

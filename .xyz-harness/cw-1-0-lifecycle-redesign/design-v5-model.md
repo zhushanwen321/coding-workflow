@@ -552,13 +552,13 @@ Step 4 [返回给 agent]:
 agent 看 replan 返回的 `pendingRebuild`，决定怎么重建：
 
 - **场景 A（仅删除）**：上层纯删除 FR2，没有新增 → cw 自动 abort 引用 FR2 的下层。agent 核实 cw 的处理，无需重建（FR2 的需求没了就是没了）。
-- **场景 B（涉及新增）**：上层把 FR1 拆成 FR1a + FR1b → cw abort 引用 FR1 的下层，agent 决定怎么承接 FR1a/FR1b（新建 slice 承接？合到现有 slice？都不接？）。**重建走 `cw create`**（新建 WorkUnit 走正常流程），不是「下层 replan」。
+- **场景 B（涉及新增）**：上层把 FR1 拆成 FR1a + FR1b → cw abort 引用 FR1 的下层，agent 决定怎么承接 FR1a/FR1b（新建 slice 承接？合到现有 slice？都不接？）。**重建走 `cw v1 create`**（新建 WorkUnit 走正常流程），不是「下层 replan」。
 
 **重建的典型动作**：
 ```
 agent: "新建 slice-auth-v2 承接 FR1a + AC1, 新建 slice-oauth 承接 FR1b"
-cw create slice --parent=feature --inheritedItemIds=[FR1a, AC1]
-cw create slice --parent=feature --inheritedItemIds=[FR1b]
+cw v1 create slice --parent=feature --inheritedItemIds=[FR1a, AC1]
+cw v1 create slice --parent=feature --inheritedItemIds=[FR1b]
 ```
 
 新建的 WorkUnit 走正常流程（create → clarify → plan → ...），不是 replan。
@@ -869,7 +869,7 @@ interface FeatureSpec {
 |---|---|---|
 | ~~`execReviewJudgment` 的字段结构~~ | **已在 wave 文档定稿** | §5.8 给的是概要（readability/architecture 必填、codeSmells 可选、FollowupAction 结构化、overallVerdict、layerSpecific 具名化），权威定义见 wave §6.1。纯人审，无机器 gate，不阻塞 closeout。model §5.8 已同步：readability/architecture 从可选改为必填、followupActions 从 `string[]` 改为 `FollowupAction[]` |
 | ~~`PlanningRetrospectData.splitFulfillment`~~ | **已在 slice 文档定稿：必须覆盖 SlicePlan.split 所有项** | slice §5.1 已定稿：splitFulfillment 必须对照 `SlicePlan.split` 的**所有**项（不能只对照部分），每项给 `delivered` / `partial` / `failed` verdict。slice 是 PlanningUnit 的最底层，最接近执行，其约定适用于三层 PlanningUnit |
-| ~~`inheritedItemIds` 的 replan 更新机制~~ | **已定（v5 采用 abort + appendOnly 方案）** | 详见 §5.6。核心机制：上层 replan 废弃条目后，cw 自动计算影响面 + 级联 abort 引用废弃条目的子孙 + 返回给 agent + agent 通过 `cw create` 重建。不在字段层面做「自动迁移」或「下层 replan」。删掉了 `replacedBy` 字段和 `accept-replan` action |
+| ~~`inheritedItemIds` 的 replan 更新机制~~ | **已定（v5 采用 abort + appendOnly 方案）** | 详见 §5.6。核心机制：上层 replan 废弃条目后，cw 自动计算影响面 + 级联 abort 引用废弃条目的子孙 + 返回给 agent + agent 通过 `cw v1 create` 重建。不在字段层面做「自动迁移」或「下层 replan」。删掉了 `replacedBy` 字段和 `accept-replan` action |
 
 ### 7.2 后续文档
 
@@ -939,7 +939,7 @@ interface FeatureSpec {
 | **Plan 内部条目类型用层前缀** | slice 的条目是 `SliceTechChoice` / `SliceInterface` / `SliceDataModel` / `SliceErrorSpec`；wave 的条目是 `WaveTestCase` / `WaveTask` / `WaveFile` / `WaveContract`（见 §0.4）|
 | **不引入 v4 废弃词** | §8 列出的所有废弃词（verify/verifyJudgment/refKind/SpecSection/Payload/EpicPayload 等）不能在层文档里当当前概念用 |
 | **execute 有产物** | execute 不能写成「无独立产物」。PlanningUnit 写 `executeResult: PlanningExecuteResult { childUnitIds }`；ExecutionUnit 写 `executeResult: ExecutionExecuteResult { commitHash }`（见 §2.5）|
-| **replan 机制严格按 §5.6** | 各层文档描述 replan 时必须采用 **abort + appendOnly** 机制（上层 replan → cw 自动级联 abort 受影响子孙 → 返回给 agent → agent 通过 `cw create` 重建）。**不能写「下层 replan」「accept-replan」「inheritedItemIds 自动迁移」「replacedBy 维护替代关系」等 v5 已废弃的机制** |
+| **replan 机制严格按 §5.6** | 各层文档描述 replan 时必须采用 **abort + appendOnly** 机制（上层 replan → cw 自动级联 abort 受影响子孙 → 返回给 agent → agent 通过 `cw v1 create` 重建）。**不能写「下层 replan」「accept-replan」「inheritedItemIds 自动迁移」「replacedBy 维护替代关系」等 v5 已废弃的机制** |
 
 ### 9.2 各层文档的差异化内容
 

@@ -18,6 +18,7 @@
  * - crossLayer 用 ascend（slice closeout 后回父 feature/epic），wave closeout 走 guidance 的
  *   computeCrossLayerAfterCloseout（兄弟/回溯复合路由）。W4 的 slice 直接给最小 ascend。
  */
+import { assertEvidenceNotFrozen } from "../../core/evidence.js";
 import type { Slice } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
@@ -42,6 +43,9 @@ export function handleCloseoutSlice(
   input: CloseoutInput,
   deps: V1Deps,
 ): ActionResult {
+  // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
+  assertEvidenceNotFrozen(unit.evidence, "closeout");
+  
   // ── 补 evidence 主观部分 ──
   if (input.summary !== undefined) {
     unit.evidence.summary = input.summary;

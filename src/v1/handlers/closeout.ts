@@ -15,6 +15,7 @@
  *
  * drift 短路语义：closeout 是终态转换（→ closed 不可逆），drift 即交付物不一致，不允许冻结。
  */
+import { assertEvidenceNotFrozen } from "../core/evidence.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { computeCrossLayerAfterCloseout } from "../guidance/index.js";
 import type { GateResult } from "../rules/gates/types.js";
@@ -40,6 +41,9 @@ export function handleCloseout(
   input: CloseoutInput,
   deps: V1Deps,
 ): ActionResult {
+  // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
+  assertEvidenceNotFrozen(unit.evidence, "closeout");
+  
   // ── 补 evidence 主观部分 ──
   if (input.summary !== undefined) {
     unit.evidence.summary = input.summary;

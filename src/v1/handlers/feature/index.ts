@@ -11,7 +11,7 @@
  * - plan：写 Plan 基类（只 split，无技术方案）
  * - design-review：feature 10 个 gate（FR-AC 强引用 3 + split 结构 2 + judgment 5 + layerSpecific 1）
  * - execute：【核心】按 split 创建 child slice，递归下沉点（targetLayer='slice'）
- * - retrospect：查 child slice 状态 + 4 个 gate + 写 PlanningRetrospectData
+ * - retrospect：查 child slice 状态 + 7 个 gate + 写 PlanningRetrospectData
  * - closeout：补 evidence 主观部分 + drift 检查 + 冻结 + 回溯父单元
  * - replan：computeImpactCascade 多层级联 + 旁路 statusHistory（feature plan 无可废弃条目，跳过 freeze）
  * - abort：级联 abort child slice + 流转 aborted

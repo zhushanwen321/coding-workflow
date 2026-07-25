@@ -15,6 +15,7 @@
  * 与 slice closeout 的差异：crossLayer 用 ascend（feature closeout 后回父 epic），slice closeout
  * 回父 feature——两者都是 ascend 到父单元，逻辑同构。
  */
+import { assertEvidenceNotFrozen } from "../../core/evidence.js";
 import type { Feature } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
@@ -39,6 +40,9 @@ export function handleCloseoutFeature(
   input: CloseoutInput,
   deps: V1Deps,
 ): ActionResult {
+  // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
+  assertEvidenceNotFrozen(unit.evidence, "closeout");
+
   // ── 补 evidence 主观部分 ──
   if (input.summary !== undefined) {
     unit.evidence.summary = input.summary;

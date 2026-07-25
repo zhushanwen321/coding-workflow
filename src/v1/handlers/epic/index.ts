@@ -10,7 +10,7 @@
  * - clarify：数组追加（progressive append，同 slice/wave，非 feature 的容器覆盖）
  * - plan：写 Plan 基类（只 split，无技术方案，无 spec）
  * - execute：【核心】按 split 创建 child feature，递归下沉点（targetLayer='feature'）
- * - retrospect：查 child feature 状态 + 4 个 gate + 写 PlanningRetrospectData
+ * - retrospect：查 child feature 状态 + 7 个 gate + 写 PlanningRetrospectData
  * - closeout：补 evidence 主观部分 + drift 检查 + 冻结 + 回溯父单元（epic 顶层无父，孤立终点）
  * - replan：computeImpactCascade 多层级联 + 旁路 statusHistory（epic plan 无可废弃条目，跳过 freeze）
  * - abort：级联 abort child feature + 流转 aborted

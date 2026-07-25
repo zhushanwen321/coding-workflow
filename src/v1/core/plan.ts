@@ -79,6 +79,12 @@ export interface WaveTestCase extends WorkUnitItem {
   input: string;
   expected: string;
   type: "unit" | "integration" | "e2e" | "manual";
+  /**
+   * 验证方式（可选，从 AcceptanceCriterion.verification 投影）。
+   * unit → 机器跑，manual/review → 退化验证。
+   * 未设置时默认按 type 字段判断（manual type 走退化验证，其他走机器跑）。
+   */
+  verification?: "unit" | "manual" | "review";
 }
 
 /** wave 附录 A §4 — 执行任务清单。 */
@@ -191,3 +197,57 @@ export interface SliceErrorSpec extends WorkUnitItem {
   errorCode?: string;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Handler Input 类型（从 handlers/types.ts 搬入，供 schema-injector 解析）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * plan handler 输入（写 WavePlan 4 类条目）。
+ *
+ * 由 schema-injector 从 core 源码自动提取 schema 文本，注入 plan 阶段 guidance。
+ * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.plan 能指向它。
+ */
+export interface PlanInput {
+  testCases: WaveTestCase[];
+  tasks: WaveTask[];
+  files: WaveFile[];
+  contracts: WaveContract[];
+}
+
+/**
+ * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
+ *
+ * 与 wave 的 PlanInput 完全不同：wave 写 testCases/tasks/files/contracts，
+ * slice 写技术方案（techChoices/interfaces/dataModels/errorSpecs）+ split（拆 wave 清单）。
+ *
+ * decisions 可选——不传时由 handler 从本层 Clarification 投影（model §5.10）。
+ * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.plan 能指向它。
+ */
+export interface PlanSliceInput {
+  techChoices: SliceTechChoice[];
+  interfaces: SliceInterface[];
+  dataModels: SliceDataModel[];
+  errorSpecs: SliceErrorSpec[];
+  split: Split[];
+  /** 技术决策（投影自本层 Clarification）。可选——不传由 handler 投影。 */
+  decisions?: Decision[];
+}
+
+/**
+ * feature plan handler 输入（Plan 基类，只 split）。
+ *
+ * 与 slice 的 PlanSliceInput 完全不同：feature 不产技术方案，plan 只拆 slice 清单。
+ * 原定义在 handlers/types.ts，搬入 core/plan.ts 保持类型归位一致性。
+ */
+export interface PlanFeatureInput {
+  split: Split[];
+}
+
+/**
+ * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
+ *
+ * epic 与 feature 的 plan 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
+ */
+export interface PlanEpicInput {
+  split: Split[];
+}

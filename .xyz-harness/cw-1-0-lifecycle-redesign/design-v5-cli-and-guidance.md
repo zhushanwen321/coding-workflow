@@ -23,14 +23,14 @@ agent 通过 cw-cli skill + 每段 guidance，自包含地完成从选层到 clo
 
 ```
 # 起步：显式带 layer。parent 全可选——任何一层都能独立起步（见 §1.3）
-cw create epic    --slug <slug> --objective "..."
-cw create feature --slug <slug> --objective "..." [--parent <epicId>]
-cw create slice   --slug <slug> --objective "..." [--parent <featureId>]
-cw create wave    --slug <slug> --objective "..." [--parent <sliceId>] [--basedOnParent '[...]']
+cw v1 create epic    --slug <slug> --objective "..."
+cw v1 create feature --slug <slug> --objective "..." [--parent <epicId>]
+cw v1 create slice   --slug <slug> --objective "..." [--parent <featureId>]
+cw v1 create wave    --slug <slug> --objective "..." [--parent <sliceId>] [--basedOnParent '[...]']
 
 # 推进：靠 unitId 前缀路由（WorkUnit.id 格式 = "{scope}:{slug}"）
-cw clarify       --unitId wave:auth-w1 --input @clarify.json
-cw plan          --unitId wave:auth-w1 --input @plan.json
+cw v1 clarify       --unitId wave:auth-w1 --input @clarify.json
+cw v1 plan          --unitId wave:auth-w1 --input @plan.json
 cw execute       --unitId wave:auth-w1 --commitHash <sha>
 
 # 旁路：unitId 即路由
@@ -84,7 +84,7 @@ v5 的 4 层是**可选组合**，不是强制树。任何一层 create 时都�
 
 ### 2.1 核心理念（继承 0.x）
 
-- **唯一入口**：`cw create <layer>`（skill 只暴露 4 个 create 命令，后续 action 全靠 guidance 驱动）
+- **唯一入口**：`cw v1 create <layer>`（skill 只暴露 4 个 create 命令，后续 action 全靠 guidance 驱动）
 - **guidance 是唯一导航**：create 之后全靠返回的 `nextAction.guidance` 推进
 - **通过 bash 调 cw**，读 stdout JSON
 
@@ -109,22 +109,22 @@ v5 model §1.3 明确主张：三层 PlanningUnit 不是粒度递减的同构层
 你的任务下一步要产出什么？
 
 ① 施工执行——能直接写出 testCases + files + contracts
-   → cw create wave [--parent <sliceId>]
+   → cw v1 create wave [--parent <sliceId>]
    有 parent：挂到 slice 下，对照 slice 的技术条目。
    无 parent：独立起步（适用于技术方案已清晰的 bug 修复 / 小改动）。
 
 ② 技术方案化——需要先定义接口契约/数据模型/错误处理/技术选型，才能动手写代码
-   → cw create slice [--parent <featureId>]
+   → cw v1 create slice [--parent <featureId>]
    有 parent：承接 feature 的 FR/AC/UC 作为上游约束。
    无 parent：基于 objective 独立做技术方案（适用于方案设计本身就是任务目标的场景）。
 
 ③ 需求规格化——需要把模糊需求变成可验收的规格（FR/AC/UC）
-   → cw create feature [--parent <epicId>]
+   → cw v1 create feature [--parent <epicId>]
    有 parent：承接 epic 的战略方向。
    无 parent：独立做需求规格化。
 
 ④ 战略翻译——需要拆成多个独立功能方向，决定各自边界和优先级
-   → cw create epic
+   → cw v1 create epic
    epic 通常无 parent（顶层目标），也可有 parent（子战略）。
 ```
 
@@ -165,7 +165,7 @@ skill 必须让 agent 理解 4 层树结构 + 何时下沉/回溯/横向：
 
 ### 2.6 先查现有树
 
-`cw create` 前，agent 应先 `cw tree` 看是否有进行中的 WorkUnit。如果已有合适的 parent，挂上去（`--parent`）；如果是全新任务或没有匹配的 parent，按 §2.3 选层后独立 create（无 parent，§1.3）。
+`cw v1 create` 前，agent 应先 `cw tree` 看是否有进行中的 WorkUnit。如果已有合适的 parent，挂上去（`--parent`）；如果是全新任务或没有匹配的 parent，按 §2.3 选层后独立 create（无 parent，§1.3）。
 
 ---
 
@@ -235,7 +235,7 @@ input schema 从 core TS 类型自动生成（`schema-injector.ts`），不手�
 
 ## 下一步
 编写执行计划，定义 testCases / tasks / files / contracts。
-命令：cw plan --unitId wave:auth-w1 --input @plan.json
+命令：cw v1 plan --unitId wave:auth-w1 --input @plan.json
 
 ## input schema
 { "testCases": [{ "id":"T1","status":"active","scenario":"...","input":"...","expected":"...","type":"unit"|"integration"|"e2e"|"manual" }],
@@ -320,7 +320,7 @@ PlanningUnit 的 plan schema 和 wave 完全不同（是 Split[]，不是 4 类�
 
 ## 下一步
 编写执行计划，定义拆分。slice 的 plan 把技术方案拆成多个 wave。
-命令：cw plan --unitId slice:auth-login --input @plan.json
+命令：cw v1 plan --unitId slice:auth-login --input @plan.json
 
 ## input schema
 { "split":[{ "slug":"token-validation","description":"这个 wave 负责什么","dependsOn":["..."],
@@ -349,7 +349,7 @@ testCases 为空。design-review gate 要求 testCases 至少 1 条。
 
 ## 怎么修
 补充 testCases 后重新提交：
-cw plan --unitId wave:auth-w1 --input @plan.json
+cw v1 plan --unitId wave:auth-w1 --input @plan.json
 ```
 
 **第 3 次 fail**（递进提示）：
@@ -362,7 +362,7 @@ testCases 仍为空（第 3 次）。
 
 ## 递进提示
 连续失败 3 次。考虑：
-- 需求本身不明确 → 回到 clarify（cw clarify --unitId wave:auth-w1）
+- 需求本身不明确 → 回到 clarify（cw v1 clarify --unitId wave:auth-w1）
 - plan 有根本问题 → replan（cw replan --unitId wave:auth-w1 --abandonedIds '[...]' --note "..."）
 - 选错了层 → cw abort 重选
 ```
@@ -417,10 +417,10 @@ replan 是「agent 主动决策」的典型——如果 agent 不知道 replan �
 
 ## 下一步
 重新编写 plan，把废弃条目的意图承接进新条目。
-命令：cw plan --unitId wave:auth-w1 --input @plan.json
+命令：cw v1 plan --unitId wave:auth-w1 --input @plan.json
 提交完整 plan（含原 active 条目 + 新 append 条目），废弃条目标 status="abandoned" 保留。
 plan 之后必须重新 design-review（replan 改了 plan，原 designReviewJudgment 失效，需刷新匹配新 plan）：
-cw plan → cw design-review → cw execute（完整重走 plan 后的链路）。
+cw v1 plan → cw design-review → cw execute（完整重走 plan 后的链路）。
 
 ## replan 机制
 - replan 不是自动迁移，cw 不会把废弃条目内容搬到新条目——你负责承接意图
@@ -466,7 +466,7 @@ execute 成功**本次返回**就给出下沉 guidance——因为 execute 这�
 
 ## 下一步
 开始第一个子 wave 的流程。
-命令：cw clarify --unitId wave:auth-w1
+命令：cw v1 clarify --unitId wave:auth-w1
 （后续靠 wave:auth-w1 各阶段返回的 guidance 推进，直到它 closeout）
 
 ## 子 wave 进度

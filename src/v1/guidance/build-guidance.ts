@@ -22,7 +22,9 @@ export interface BuildNormalGuidanceArgs {
   prefix: string;
   /** 下一步 action 名（如 "plan"）。用于「下一步」段的语义。 */
   nextAction: string;
-  /** 完整命令（如 "cw plan --unitId wave:x --input @plan.json"）。 */
+  /** 一句话目标（来自 template.goal，描述当前阶段要做什么）。 */
+  goal: string;
+  /** 完整命令（如 "cw v1 plan --unitId wave:x --input @plan.json"）。 */
   command: string;
   /** input schema 文本（来自 schema-injector）。 */
   schemaText: string;
@@ -39,7 +41,7 @@ export interface BuildNormalGuidanceArgs {
  * {prefix}
  *
  * ## 下一步
- * {一句话目标}
+ * {goal}
  * 命令：{command}
  *
  * ## input schema + 关键约束
@@ -47,12 +49,11 @@ export interface BuildNormalGuidanceArgs {
  * {templateText 的关键约束段}
  * ```
  *
- * 注：一句话目标来自 templateText 的 goal，由调用方拆出——本函数把 templateText
- *      作为「关键约束段」整段附在 schema 后（goal 单独由调用方填入「下一步」段）。
- *      若调用方把 goal 已含在 nextAction 之外的文案里，可直接传空 templateText。
+ * 注：goal 来自 template.goal（一句话目标），由调用方从 template 取出后传入。
+ *      templateText 是 constraint 段（关键约束），整段附在 schema 后。
  */
 export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
-  const { prefix, nextAction, command, schemaText, templateText } = args;
+  const { prefix, goal, command, schemaText, templateText } = args;
   // 约束段为空时不留空行；非空时前缀换行。
   const constraintSection = templateText.trim() !== ""
     ? `\n${templateText.trim()}`
@@ -63,7 +64,7 @@ export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
     prefix,
     "",
     "## 下一步",
-    `（${nextAction} 阶段）`,
+    goal,
     `命令：${command}`,
     "",
     "## input schema + 关键约束",

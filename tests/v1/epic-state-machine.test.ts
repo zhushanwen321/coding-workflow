@@ -444,6 +444,68 @@ describe("epic replan 旁路（status 不变）", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// T9c: epic replan→feature 级联 abort
+// ═══════════════════════════════════════════════════════════════
+
+describe("T9c: epic replan→feature 级联 abort", () => {
+  it("epic replan 废弃 Q1 → child feature status 变 aborted + abandonedRefs 追加", () => {
+    const unitId = setupToEpicExecuting(env.deps, "cascade-epic");
+    const unit = loadEpic(unitId);
+    const childId = unit.executeResult.childUnitIds[0]!;
+
+    const childBefore = env.store.load(childId) as unknown as { basedOnParent: string[]; status: string };
+    expect(childBefore.basedOnParent).toContain("Q1");
+    expect(childBefore.status).toBe("created");
+
+    const result = dispatch(
+      { action: "replan", unitId, input: { abandonedIds: ["Q1"], note: "Q1 obsolete, cascade child" } },
+      env.deps,
+    ) as { ok: boolean; replanImpact?: { aborted: string[] } };
+    expect(result.ok).toBe(true);
+    expect(result.replanImpact!.aborted).toContain(childId);
+
+    const childAfter = env.store.load(childId) as unknown as { status: string; abandonedRefs: Array<{ workUnitItemId: string }> };
+    expect(childAfter.status).toBe("aborted");
+    expect(childAfter.abandonedRefs.some((r) => r.workUnitItemId === "Q1")).toBe(true);
+
+    const epicAfter = env.store.load(unitId) as unknown as { status: string };
+    expect(epicAfter.status).toBe("executing");
+  });
+
+  it("epic replan 废弃不存在的 id → aborted 空", () => {
+    const unitId = setupToEpicExecuting(env.deps, "cascade-epic-empty");
+    const result = dispatch(
+      { action: "replan", unitId, input: { abandonedIds: ["GHOST_ID"], note: "no hit" } },
+      env.deps,
+    ) as { ok: boolean; replanImpact?: { aborted: string[]; pendingRebuild: string[] } };
+    expect(result.ok).toBe(true);
+    expect(result.replanImpact!.aborted).toEqual([]);
+    expect(result.replanImpact!.pendingRebuild).toEqual(["GHOST_ID"]);
+  });
+
+  it("已 aborted 的 child 不重复处理（幂等）", () => {
+    const unitId = setupToEpicExecuting(env.deps, "cascade-epic-idempotent");
+    const unit = loadEpic(unitId);
+    const childId = unit.executeResult.childUnitIds[0]!;
+
+    dispatch({ action: "replan", unitId, input: { abandonedIds: ["Q1"], note: "first" } }, env.deps);
+    const afterFirst = env.store.load(childId) as unknown as {
+      status: string; abandonedRefs: Array<{ workUnitItemId: string }>; statusHistory: Array<{ action: string }>;
+    };
+    expect(afterFirst.status).toBe("aborted");
+    const refsAfterFirst = afterFirst.abandonedRefs.filter((r) => r.workUnitItemId === "Q1").length;
+    const historyAfterFirst = afterFirst.statusHistory.length;
+
+    dispatch({ action: "replan", unitId, input: { abandonedIds: ["Q1"], note: "second" } }, env.deps);
+    const afterSecond = env.store.load(childId) as unknown as {
+      abandonedRefs: Array<{ workUnitItemId: string }>; statusHistory: Array<{ action: string }>;
+    };
+    expect(afterSecond.abandonedRefs.filter((r) => r.workUnitItemId === "Q1").length).toBe(refsAfterFirst);
+    expect(afterSecond.statusHistory.length).toBe(historyAfterFirst);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // abort 终态
 // ═══════════════════════════════════════════════════════════════
 

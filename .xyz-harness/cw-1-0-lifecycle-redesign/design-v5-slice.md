@@ -251,7 +251,7 @@ feature 层做 FR-AC 强引用 gate（FR 显式声明对应的 AC id），因为
 - **机器验不出有意义的约束**：就算加了 IF.dataModelIds 强引用，gate 能验的只是「IF 引用的 DM id 存在」这种弱约束——验不了「IF 的返回值真的匹配 DM 的结构」「ERR 真的覆盖了 IF 的所有错误态」。后者需要语义理解，机器判不了
 - **YAGNI**：slice 技术方案的遗漏模式不同（更多是「接口契约写漏了字段」「错误态没覆盖」），靠 agent 自审 + design-review 的 `interfaceContractNote` / `errorCoverage` 人审判断更合适
 
-**诚实补充**：有一种低级的机器可验校验被 v5 故意放弃——**id 存在性校验**（如 SliceErrorSpec.interfaceId 引用了 IF5，但 `SlicePlan.interfaces` 里没有 IF5）。这种拼写错误级别的检查机器能做、成本极低。v5 选择不做的原因：跨项引用主要散落在自由文本（contract / notes）里，机器解析自由文本抽 id 既不准又费事，收益有限。这是明确的取舍，不是「机器完全验不了」。
+**诚实补充**：跨项引用的 id 存在性校验（如 SliceErrorSpec.interfaceId 引用了 IF5，但 `SlicePlan.interfaces` 里没有 IF5）仍然不做——跨项引用主要散落在自由文本（contract / notes）里，机器解析自由文本抽 id 既不准又费事。但 `split.inheritedItemIds` 的 id 存在性校验**已实现**（`inherited-item-ids-valid` gate，design-review 阶段执行）——inheritedItemIds 是结构化字段（非自由文本），校验成本极低且防笔误/孤儿引用，对 replan 影响面查询的准确性有直接价值。
 
 ---
 
@@ -284,6 +284,7 @@ interface SliceDesignReviewLayerSpecific {
 
 **机器 gate**（验结构不验内容）：
 - **结构完整性**：`techChoices` 至少 1 条 SliceTechChoice（`tech-choice-non-empty`，技术方案的核心）/ `split` 非空（`split-non-empty`）/ split 依赖无环（`split-dag-valid`）
+- **决策已解决 + 继承 id 有效**：所有 clarification 的 resolution 非空（`all-decisions-resolved`）/ `split.inheritedItemIds` 引用的 id 都在当前 unit 可继承条目集里存在（`inherited-item-ids-valid`）
 - **业务判断非空**：designReviewJudgment.necessity 非空 / sufficiency 三项（gaps/overlaps/meceNote）填齐 / alternatives 非空 / tradeoffs 至少 1 条（或显式声明「无」+ 理由）/ risks 至少 1 条（或显式声明「无」+ 理由）
 - **layerSpecific 非空**：6 个 slice 专属字段都填（机器只验非空，内容质量人审）
 
@@ -465,7 +466,7 @@ retrospect 通过后进入 closeout，对 `PlanningEvidence` 做以下 3 件事�
 
 ## 6. slice 的 replan
 
-slice 的 replan 机制**完全遵循 model §5.6 的 abort + appendOnly 策略**（上层 replan 废弃条目 → cw 自动计算影响面 → 级联 abort 受影响子孙 → 返回 agent → agent 通过 `cw create` 重建），本文档只讲 slice 在这个机制里扮演的两个角色。
+slice 的 replan 机制**完全遵循 model §5.6 的 abort + appendOnly 策略**（上层 replan 废弃条目 → cw 自动计算影响面 → 级联 abort 受影响子孙 → 返回 agent → agent 通过 `cw v1 create` 重建），本文档只讲 slice 在这个机制里扮演的两个角色。
 
 ### 6.1 slice 作为发起者（replan 自己的技术方案）
 
@@ -491,11 +492,11 @@ cw 按 model §5.6.2 的 4 步执行：
 
 4. **返回给 agent**：cw 返回 `{ aborted, preserved, pendingRebuild }`（model §5.6.2 Step 4）——`aborted` 是已被 cw abort 的 wave，`preserved` 是未受影响的 wave，`pendingRebuild` 提示「哪些被废弃条目失去了承接 wave」。
 
-**agent 的重建动作**（model §5.6.3，agent 主导，**不是 slice replan**）：agent 看 `pendingRebuild` 决定怎么重建，走 **`cw create wave`** 新建 wave 承接新版本的技术方案：
+**agent 的重建动作**（model §5.6.3，agent 主导，**不是 slice replan**）：agent 看 `pendingRebuild` 决定怎么重建，走 **`cw v1 create wave`** 新建 wave 承接新版本的技术方案：
 
 ```
 agent: "新建 wave exchange-token-v2 承接新的 IF1v2"
-cw create wave --parent=<sliceId> --inheritedItemIds=[IF1v2, DM1, TC2]
+cw v1 create wave --parent=<sliceId> --inheritedItemIds=[IF1v2, DM1, TC2]
 ```
 
 新建的 wave 走正常 9 步流程（create → clarify → ...），不是 replan。
@@ -515,11 +516,11 @@ slice 不是顶层（epic 才是），可能被上游 feature replan 影响—�
 3. 级联 abort：slice → `status="aborted"` + `abandonedRefs` 追加 `{workUnitItemId: "FR1", abandonedAt}`；slice 的所有 wave 同样被 abort（基于废弃 slice 的 wave 失去意义）
 4. cw 返回 feature 的 `pendingRebuild`（含「FR1a/FR1b 没有对应的 slice」）
 
-**slice 不需要做任何动作解锁**——cw 直接 abort，没有「待 agent 确认」的中间态（model §5.6.4 已否决「等下层自行决定」类机制）。slice 被废弃就是被废弃，由 agent 决定是否通过 **`cw create slice`** 新建承接新 FR/AC 的 slice（见 §6.3）。
+**slice 不需要做任何动作解锁**——cw 直接 abort，没有「待 agent 确认」的中间态（model §5.6.4 已否决「等下层自行决定」类机制）。slice 被废弃就是被废弃，由 agent 决定是否通过 **`cw v1 create slice`** 新建承接新 FR/AC 的 slice（见 §6.3）。
 
-### 6.3 slice 的重建（agent 通过 `cw create slice`）
+### 6.3 slice 的重建（agent 通过 `cw v1 create slice`）
 
-slice 被 abort 后（无论是 §6.1 的发起者场景还是 §6.2 的承受者场景），承接新上游条目的重建都走 **`cw create slice`**，不是 slice replan。
+slice 被 abort 后（无论是 §6.1 的发起者场景还是 §6.2 的承受者场景），承接新上游条目的重建都走 **`cw v1 create slice`**，不是 slice replan。
 
 **典型重建场景**（feature replan 把 FR1 拆成 FR1a + FR1b，旧 slice-s1 因 `basedOnParent` 含 FR1 被 abort）：
 
@@ -529,9 +530,9 @@ agent 看待 feature replan 返回的 pendingRebuild:
   "FR1b 没有对应的 slice"
 
 agent 决定重建:
-  cw create slice --parent=feature:oauth-login \
+  cw v1 create slice --parent=feature:oauth-login \
                   --inheritedItemIds=[FR1a, AC1, UC1]    // 新 slice 承接 FR1a
-  cw create slice --parent=feature:oauth-login \
+  cw v1 create slice --parent=feature:oauth-login \
                   --inheritedItemIds=[FR1b]              // 另一个 slice 承接 FR1b
 ```
 
@@ -553,7 +554,7 @@ agent 决定重建:
 | 项 | model 位置 | slice 文档的处理 |
 |---|---|---|
 | **splitFulfillment 的对照范围** | §7.1 | **本文档已定稿**：slice 的 splitFulfillment 必须覆盖 SlicePlan.split 的所有项（§5.2）。理由：slice 是最底层 PlanningUnit，split 项和 wave 一一对应，必须逐个判 |
-| **inheritedItemIds 的 replan 更新机制** | §7.1 | **已定**（model §7.1 已定 v5 采用 abort + appendOnly 方案）：slice 场景下不更新 inheritedItemIds，旧 slice 直接 abort，agent 通过 `cw create slice` 重建承接新上游条目的 slice（§6.3）|
+| **inheritedItemIds 的 replan 更新机制** | §7.1 | **已定**（model §7.1 已定 v5 采用 abort + appendOnly 方案）：slice 场景下不更新 inheritedItemIds，旧 slice 直接 abort，agent 通过 `cw v1 create slice` 重建承接新上游条目的 slice（§6.3）|
 | **execReviewJudgment 的字段结构** | §7.1 | 和 slice 无关——execReviewJudgment 是 ExecutionUnit（wave）专属，slice 没有 |
 | **research 服务**（Clarification type=research） | §7.2 | 后续文档。slice 是 research 的重度用户（技术选型查官方文档、查 API 限流等大量靠 research）|
 | **claim**（多 agent 并行互斥） | §7.2 | 后续文档。slice 拆多个 wave 后可能并行施工，claim 机制防冲突 |

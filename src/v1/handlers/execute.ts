@@ -14,6 +14,7 @@
  * 不变量：execute 不跑 gate（commit 存在性在 test gate 验，避免 executing 状态因 commit 无效卡死）。
  */
 import type { WaveEvidence } from "../core/evidence.js";
+import { assertEvidenceNotFrozen } from "../core/evidence.js";
 import { extractChangedFiles } from "../core/git.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, saveUnit, transitionStatus } from "./internal.js";
@@ -31,10 +32,23 @@ export function handleExecute(
   input: ExecuteInput,
   deps: V1Deps,
 ): ActionResult {
+  // ── 检测 replan 后重新 execute：旧 commitHash 需要 append 进 statusHistory ──
+  const oldCommitHash = unit.executeResult?.commitHash;
+  if (oldCommitHash && oldCommitHash !== input.commitHash) {
+    unit.statusHistory.push({
+      to: unit.status,
+      at: deps.clock.now(),
+      action: "execute",
+      note: `commitHash changed: ${oldCommitHash} → ${input.commitHash}`,
+    });
+  }
+  
   // 写 executeResult（commitHash 记录，存在性在 test gate 验）
   unit.executeResult = { commitHash: input.commitHash };
 
   // 填 evidence 客观部分
+  // 检查 evidence 是否已冻结（frozenAt 非空后不可再改）
+  assertEvidenceNotFrozen(unit.evidence, "write commitHash/changedFiles/generatedAt");
   const at = deps.clock.now();
   unit.evidence.commitHash = input.commitHash;
   // changedFiles 由 cw 从 commit 提取（§4.4 客观字段，不靠 agent 声明；input.changedFiles 已废弃将被忽略）

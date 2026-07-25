@@ -18,8 +18,12 @@ export interface DesignReviewJudgment {
   alternatives: string;
   tradeoffs: Tradeoff[];
   risks: Risk[];
-  /** 各层专属判断（wave 收紧为 WaveDesignReviewLayerSpecific）。 */
-  layerSpecific?: WaveDesignReviewLayerSpecific;
+  /**
+   * 各层专属判断（各层具名 interface 收紧，基类用 Record<string, string> 下界）。
+   * wave: WaveDesignReviewLayerSpecific / slice: SliceDesignReviewLayerSpecific /
+   * feature: FeatureDesignReviewLayerSpecific / epic: EpicDesignReviewLayerSpecific。
+   */
+  layerSpecific?: Record<string, string>;
 }
 
 /** model §5.8 — 充分性（MECE）。 */
@@ -72,9 +76,8 @@ export interface SliceDesignReviewLayerSpecific {
 /**
  * feature §4.2 — feature 的 designReviewJudgment.layerSpecific 具名 interface（6 字段，都是人审判断）。
  *
- * 注意：DesignReviewJudgment.layerSpecific 基类类型当前硬编码为 WaveDesignReviewLayerSpecific
- *（已知坑4，slice 也同样如此）。本 interface 作为 feature 层运行时约定，feature handler
- * 用 `as unknown as` 绕过基类类型（与 slice 当前做法一致）。
+ * 基类 DesignReviewJudgment.layerSpecific 类型为 Record<string, string> 下界，
+ * 各层 gate 函数用类型断言收窄到本 interface（如 featureLayerSpecificNonEmpty）。
  */
 export interface FeatureDesignReviewLayerSpecific {
   /** spec 的 MECE 整体结论。 */
@@ -94,9 +97,8 @@ export interface FeatureDesignReviewLayerSpecific {
 /**
  * epic §3.2 — epic 的 designReviewJudgment.layerSpecific 具名 interface（5 字段，都是人审判断）。
  *
- * 注意：DesignReviewJudgment.layerSpecific 基类类型当前硬编码为 WaveDesignReviewLayerSpecific
- *（已知坑4，slice/feature 也同样如此）。本 interface 作为 epic 层运行时约定，epic handler
- * 用 `as unknown as` 绕过基类类型（与 slice/feature 当前做法一致）。
+ * 基类 DesignReviewJudgment.layerSpecific 类型为 Record<string, string> 下界，
+ * 各层 gate 函数用类型断言收窄到本 interface（如 epicLayerSpecificNonEmpty）。
  */
 export interface EpicDesignReviewLayerSpecific {
   /** 战略对齐：这个 epic 是否服务更大的产品/业务方向？为什么是现在做？ */

@@ -136,7 +136,7 @@ interface SchemaSource {
 const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
   clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "WaveTask" },
+  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "PlanInput" },
   "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
   execute: undefined,
   test: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "TestJudgment" },
@@ -230,6 +230,7 @@ export function buildNextAction(
 
   const template = WAVE_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
   const schemaText = opts?.schemaTextOverride ?? getSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? ACTION_TO_NEXT[action];
@@ -238,6 +239,7 @@ export function buildNextAction(
   const guidance = buildNormalGuidance({
     prefix,
     nextAction: action,
+    goal,
     command,
     schemaText,
     templateText,
@@ -348,7 +350,7 @@ export function appendFailRecord(
 /**
  * 组装命令字符串（正常路径用 nextAction，异常路径 fixCommand 用 action 自身重提）。
  *
- * 格式（§4.x）：`cw <action> --unitId <id>`（有 input 时附 `--input @<action>.json`）。
+ * 格式（§4.x）：`cw v1 <action> --unitId <id>`（有 input 时附 `--input @<action>.json`）。
  * 终态（nextAction=undefined）→ 仅给状态提示，命令为空。
  */
 function buildCommand(
@@ -362,5 +364,5 @@ function buildCommand(
   const hasInput = ACTION_SCHEMA[nextAction] !== undefined ||
     FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? ` --input @${nextAction}.json` : "";
-  return `cw ${nextAction} --unitId ${unitId}${inputPart}`;
+  return `cw v1 ${nextAction} --unitId ${unitId}${inputPart}`;
 }

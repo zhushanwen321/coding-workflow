@@ -325,16 +325,19 @@ export function deliveryVerdictNonEmpty(
 }
 
 /**
- * 跑 slice retrospect 全部 6 个 gate（slice §5.5 SLICE_RETROSPECT_GATES）。
+ * 跑 slice retrospect 全部 7 个 gate（slice §5.5 SLICE_RETROSPECT_GATES）。
  *
  * childStatuses 由 handler 从 store.findChildren 查询后注入（rules 层零 IO）。
+ * evidenceChildDelivery 由 handler 从 unit.evidence.childDelivery 读取后注入（rules 层零 IO）。
  *
  * @param unit 待校验的 Slice
  * @param childStatuses 所有 child wave 的当前 status（handler 注入）
+ * @param evidenceChildDelivery evidence.childDelivery 记录（handler 注入，用于一致性校验）
  */
 export function runSliceRetrospectGates(
   unit: Slice,
   childStatuses: ReadonlyArray<"closed" | "aborted" | string>,
+  evidenceChildDelivery?: ReadonlyArray<{ splitSlug: string; childUnitId: string; childStatus: string }>,
 ): GateResult[] {
   return [
     allWavesClosed(childStatuses),
@@ -343,5 +346,82 @@ export function runSliceRetrospectGates(
     splitFulfillmentCoversPlan(unit.retrospectData, unit.plan.split),
     childUnitEvidenceComplete(unit.retrospectData.childUnitIdsEvidence, unit.executeResult.childUnitIds),
     deliveryVerdictNonEmpty(unit.retrospectData.deliveryVerdict),
+    childDeliveryConsistency(unit.retrospectData.childUnitIdsEvidence, evidenceChildDelivery ?? []),
   ];
+}
+
+/**
+ * PlanningUnit §5.5 `child-delivery-consistency` — childUnitIdsEvidence 与 evidence.childDelivery 一致性校验。
+ *
+ * 防止 agent 填出与客观 childDelivery 矛盾的验收结论：
+ * - childUnitIdsEvidence 中的每个 childId 必须在 evidence.childDelivery 中有对应记录
+ * - evidence.childDelivery 中的每个 childUnitId 必须在 childUnitIdsEvidence 中有对应记录
+ * - 两者的 childStatus 应一致（evidence.childDelivery 是客观状态，childUnitIdsEvidence 是 agent 填的验收状态）
+ *
+ * @param childUnitIdsEvidence agent 填的验收证据
+ * @param evidenceChildDelivery 客观的 childDelivery 记录
+ */
+export function childDeliveryConsistency(
+  childUnitIdsEvidence: ReadonlyArray<{ childId: string; status: string }>,
+  evidenceChildDelivery: ReadonlyArray<{ splitSlug: string; childUnitId: string; childStatus: string }>,
+): GateResult {
+  // evidence.childDelivery 为空时跳过一致性校验（PlanningUnit 的 evidence.childDelivery
+  // 由 execute 阶段 rollup 填充，单元未经过 execute 或未接入 rollup 时为空数组，
+  // 此时无法做一致性校验，视为“无数据可对照”而非“不一致”。）
+  if (evidenceChildDelivery.length === 0) {
+    return {
+      passed: true,
+      report: "child-delivery-consistency: evidence.childDelivery 为空，跳过一致性校验",
+    };
+  }
+
+  const evidenceChildIds = new Set(evidenceChildDelivery.map((d) => d.childUnitId));
+  const evidenceChildIdSet = new Set(childUnitIdsEvidence.map((e) => e.childId));
+
+  const missingInEvidence: string[] = [];
+  for (const childId of evidenceChildIdSet) {
+    if (!evidenceChildIds.has(childId)) {
+      missingInEvidence.push(childId);
+    }
+  }
+
+  const missingInChildUnitIds: string[] = [];
+  for (const childId of evidenceChildIds) {
+    if (!evidenceChildIdSet.has(childId)) {
+      missingInChildUnitIds.push(childId);
+    }
+  }
+
+  const statusMismatches: string[] = [];
+  for (const delivery of evidenceChildDelivery) {
+    const agentRecord = childUnitIdsEvidence.find((e) => e.childId === delivery.childUnitId);
+    if (agentRecord && agentRecord.status !== delivery.childStatus) {
+      statusMismatches.push(
+        `${delivery.childUnitId}: agent=${agentRecord.status} vs evidence=${delivery.childStatus}`
+      );
+    }
+  }
+
+  const issues: string[] = [];
+  if (missingInEvidence.length > 0) {
+    issues.push(`childUnitIdsEvidence 中的 childId 在 evidence.childDelivery 中缺失: ${missingInEvidence.join(", ")}`);
+  }
+  if (missingInChildUnitIds.length > 0) {
+    issues.push(`evidence.childDelivery 中的 childUnitId 在 childUnitIdsEvidence 中缺失: ${missingInChildUnitIds.join(", ")}`);
+  }
+  if (statusMismatches.length > 0) {
+    issues.push(`childStatus 不一致: ${statusMismatches.join("; ")}`);
+  }
+
+  if (issues.length > 0) {
+    return {
+      passed: false,
+      report: `child-delivery-consistency: ${issues.join("; ")}`,
+    };
+  }
+
+  return {
+    passed: true,
+    report: `child-delivery-consistency: childUnitIdsEvidence 与 evidence.childDelivery 一致（${evidenceChildIds.size} 个 child）`,
+  };
 }

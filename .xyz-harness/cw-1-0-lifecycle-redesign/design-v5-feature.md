@@ -410,6 +410,10 @@ feature 的 design-review 机器 gate 验「结构完整性 + 业务判断非空
 - `slice-split-non-empty`：`plan.split` 至少 1 个
 - `slice-split-dag-valid`：slice 依赖关系无循环
 
+**决策已解决 + 继承 id 有效**：
+- `all-decisions-resolved`：所有 `clarifications[].resolution` 非空（progressive 推进的完成度判据）
+- `inherited-item-ids-valid`：每个 `split.inheritedItemIds` 的 id 都能在 feature 的可继承条目集（clarification/spec FR/AC/UC id）里找到（防止声明继承不存在的 id）
+
 **业务判断非空**：
 - `designReviewJudgment.necessity` 非空
 - `designReviewJudgment.sufficiency` 三项填齐（gaps / overlaps / meceNote）
@@ -452,7 +456,7 @@ execute 时 cw 遍历 `plan.split`，对每个 split 项：
 
 **这是 v5 的关键变化**（model §4.2）：v4 是 cw 把 feature 当前的所有 Clarification + FR/AC/UC id 全量拷贝到每个 slice.basedOnParent（slice plan 时再减少）；v5 改为按 split 显式声明写入，basedOnParent 只含真正相关的 id。
 
-**basedOnParent 是创建时的历史快照，append-only，永不重写**（model §4.2、§5.3、§5.6）。后续 feature replan 改了 FR/AC，cw **不重新计算 basedOnParent 差异、不追加任何东西到 basedOnParent**——而是把引用了废弃条目的 slice（及其所有子孙）**级联 abort**，由 agent 通过 `cw create slice` 重建承接新条目的 slice（详见 §7）。换言之：basedOnParent 在 execute 时写一次就定格，replan 走「abort 旧 slice + 重建新 slice」，不走「改 basedOnParent」。
+**basedOnParent 是创建时的历史快照，append-only，永不重写**（model §4.2、§5.3、§5.6）。后续 feature replan 改了 FR/AC，cw **不重新计算 basedOnParent 差异、不追加任何东西到 basedOnParent**——而是把引用了废弃条目的 slice（及其所有子孙）**级联 abort**，由 agent 通过 `cw v1 create slice` 重建承接新条目的 slice（详见 §7）。换言之：basedOnParent 在 execute 时写一次就定格，replan 走「abort 旧 slice + 重建新 slice」，不走「改 basedOnParent」。
 
 ### 5.3 feature 在 execute 阶段做什么
 
@@ -600,7 +604,7 @@ feature 在 replan 机制中**同时扮演两个角色**（和 slice 对称，�
 - **作为发起者**：feature 改自己的 Clarification 或 FeatureSpec（FR/AC/UC），cw 自动级联 abort 受影响的下游 slice
 - **作为承受者**：被上游 epic replan 影响（epic 改 Clarification 废弃条目，cw 级联 abort 引用该条目的 feature 及其子孙）
 
-**v5 的 replan 机制严格按 model §5.6**：**abort + appendOnly**（方案 e）。上层 replan 废弃条目后，cw 自动计算下游影响面，把引用了废弃条目的下层（及其所有子孙）**级联 abort**，然后在受影响子孙的 `abandonedRefs` 追加废弃记录，最后返回影响面给 agent，由 agent 决定是否、以及如何通过 `cw create` 重建新的下层。**不存在「下层 replan」「accept-replan」「inheritedItemIds 自动迁移」等机制**。
+**v5 的 replan 机制严格按 model §5.6**：**abort + appendOnly**（方案 e）。上层 replan 废弃条目后，cw 自动计算下游影响面，把引用了废弃条目的下层（及其所有子孙）**级联 abort**，然后在受影响子孙的 `abandonedRefs` 追加废弃记录，最后返回影响面给 agent，由 agent 决定是否、以及如何通过 `cw v1 create` 重建新的下层。**不存在「下层 replan」「accept-replan」「inheritedItemIds 自动迁移」等机制**。
 
 ### 7.1 通用 replan 机制（引用 model，不重复）
 
@@ -676,14 +680,14 @@ Step 4 [返回给 agent]:
     - "FR1b 没有对应的 slice"
 ```
 
-#### 7.4.2 agent 主导的重建（走 `cw create slice`）
+#### 7.4.2 agent 主导的重建（走 `cw v1 create slice`）
 
-agent 看 `pendingRebuild`，决定怎么承接新条目（model §5.6 Step 4 的 `pendingRebuild`）。**重建走 `cw create slice`**（新建 WorkUnit 走正常流程），**不是「slice replan」**——slice 已经被 cw abort 了，重建是在 feature 下新建 slice：
+agent 看 `pendingRebuild`，决定怎么承接新条目（model §5.6 Step 4 的 `pendingRebuild`）。**重建走 `cw v1 create slice`**（新建 WorkUnit 走正常流程），**不是「slice replan」**——slice 已经被 cw abort 了，重建是在 feature 下新建 slice：
 
 ```
 agent: "新建 slice-A-v2 承接 FR1a + FR2；新建 slice-C 承接 FR1b"
-cw create slice --parent=feature --inheritedItemIds=[FR1a, FR2]
-cw create slice --parent=feature --inheritedItemIds=[FR1b]
+cw v1 create slice --parent=feature --inheritedItemIds=[FR1a, FR2]
+cw v1 create slice --parent=feature --inheritedItemIds=[FR1b]
 ```
 
 新建的 slice 走自己的 7 步流程（create → clarify → plan → ...），cw 把 `inheritedItemIds` 写入新 slice 的 `basedOnParent`（机制同 §5.2）。
@@ -703,7 +707,7 @@ cw create slice --parent=feature --inheritedItemIds=[FR1b]
 
 | 项 | 状态 | feature 层的体现 |
 |---|---|---|
-| **`inheritedItemIds` 的 replan 更新机制** | **已定（model §7.1 采用 abort + appendOnly）** | feature→slice 是最典型触发场景（spec 变更频繁）。本文 §7.4 给出该机制在 feature→slice 场景的完整流程描述（cw 级联 abort + agent 通过 `cw create slice` 重建），与 model §5.6 一致。slice/wave 文档直接复用本流程 |
+| **`inheritedItemIds` 的 replan 更新机制** | **已定（model §7.1 采用 abort + appendOnly）** | feature→slice 是最典型触发场景（spec 变更频繁）。本文 §7.4 给出该机制在 feature→slice 场景的完整流程描述（cw 级联 abort + agent 通过 `cw v1 create slice` 重建），与 model §5.6 一致。slice/wave 文档直接复用本流程 |
 | **PlanningUnit 的 retrospect 兼验收字段** | **已提案，待确认**（model §7.1）| `PlanningRetrospectData`（deliveryVerdict + childUnitIdsEvidence + splitFulfillment）已在 model §5.8 提案，本文 §6 给出 feature 特化语义。`splitFulfillment` 是否对照所有 split 项（本文提案是「是」），最终需 slice 文档评审定稿 |
 | **AC.verification 字段的机器辅助** | **后续迭代**（model §7.3）| verification 字段保持不变（不改名）。消费场景：下游 wave 的 test 阶段如果 `verification=unit` 则 cw 实跑测试，`=manual` 退化为人审。后续可加机器辅助（如 verification=unit 时要求 condition 含可测动词、模糊词 warning），当前 v5 诚实承认全人审 |
 | **research 服务** | **后续文档**（model §7.2）| Clarification type=research 时调外部查询，feature clarify 阶段可能触发（如「OAuth 2.0 的 PKCE 流程是什么」查 RFC）|
@@ -1029,8 +1033,8 @@ interface AbandonedRef {
 }
 
 // feature 的双向 replan 角色（§7，机制统一为 abort + appendOnly，model §5.6）：
-//   - 作为发起者：cw feature replan，改 spec → cw 级联 abort 受影响 slice 及其子孙 → agent 通过 cw create slice 重建
-//   - 作为承受者：被 epic replan 级联 abort（basedOnParent 含废弃 epic 条目）→ agent 通过 cw create feature 重建
+//   - 作为发起者：cw feature replan，改 spec → cw 级联 abort 受影响 slice 及其子孙 → agent 通过 cw v1 create slice 重建
+//   - 作为承受者：被 epic replan 级联 abort（basedOnParent 含废弃 epic 条目）→ agent 通过 cw v1 create feature 重建
 //
 // 旁路 action（两类共享，model §3.3）：replan / abort（无 accept-replan）
 ```

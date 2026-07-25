@@ -1,7 +1,7 @@
 /**
  * v1 epic retrospect 测试。
  *
- * 测 epic retrospect 的验收逻辑（epic-internal.runEpicRetrospectGates，4 个 gate）：
+ * 测 epic retrospect 的验收逻辑（epic-internal.runEpicRetrospectGates，7 个 gate）：
  * - allWavesClosed（child feature 未全 closed/aborted → fail）
  * - sliceLessonsLearnedNonEmpty（lessonsLearned 空 → fail）
  * - reviewedItemsCoverDesignReview（reviewedItems 未覆盖 designReviewJudgment 核心项 → fail）
@@ -18,13 +18,26 @@ import type { PlanningRetrospectData } from "../../src/v1/core/judgments.js";
 import { createEpic, type Epic } from "../../src/v1/core/workunit.js";
 import { dispatch } from "../../src/v1/dispatch.js";
 import { runEpicRetrospectGates } from "../../src/v1/handlers/epic/epic-internal.js";
+import type { V1Deps } from "../../src/v1/handlers/types.js";
 import {
   createV1Env,
+  makeValidClarification,
   makeValidEpicDesignReviewJudgment,
   makeValidEpicRetrospectData,
+  makeValidEpicSplit,
   setupEpicWithClosedFeatures,
   setupToEpicExecuting,
 } from "./helpers/epic-env.js";
+import {
+  makeFeatureClarifyInput,
+  makeValidFeatureDesignReviewJudgment,
+  makeValidFeaturePlan,
+} from "./helpers/feature-env.js";
+import {
+  advanceWaveToClosed,
+  makeValidSliceDesignReviewJudgment,
+  makeValidSlicePlan,
+} from "./helpers/slice-env.js";
 import type { V1Env } from "./helpers/v1-env.js";
 
 let env: V1Env;
@@ -194,12 +207,12 @@ describe("runEpicRetrospectGates: splitFulfillmentCoversPlan", () => {
 // runEpicRetrospectGates 聚合
 // ═══════════════════════════════════════════════════════════════
 
-describe("runEpicRetrospectGates 聚合（4 个 gate）", () => {
-  it("合法 retrospectData + child 全 closed → 6 个 gate 全 pass", () => {
+describe("runEpicRetrospectGates 聚合（7 个 gate）", () => {
+  it("合法 retrospectData + child 全 closed → 7 个 gate 全 pass", () => {
     const unit = epicForRetrospect();
     unit.retrospectData = makeValidEpicRetrospectDataForSplits(["f1", "f2"]);
     const results = runEpicRetrospectGates(unit, ["closed", "closed"]);
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(7);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
@@ -213,7 +226,7 @@ describe("runEpicRetrospectGates 聚合（4 个 gate）", () => {
       splitFulfillment: [],
     };
     const failed = runEpicRetrospectGates(unit, ["created"]).filter((r) => !r.passed);
-    // 原 4 个 gate fail；新增 childUnitEvidenceComplete（childUnitIds 空 → pass）+ deliveryVerdictNonEmpty（"failed" → pass）
+    // allWavesClosed + lessons + cover + splitFulfillment 这 4 个 fail；childUnitEvidenceComplete（childUnitIds 空 → pass）+ deliveryVerdictNonEmpty（"failed" → pass）+ childDeliveryConsistency（childDelivery 空 → pass）
     expect(failed).toHaveLength(4);
   });
 });
@@ -291,4 +304,279 @@ function makeValidEpicRetrospectDataForSplits(splitSlugs: string[]): PlanningRet
     })),
     splitFulfillment: splitSlugs.map((slug) => ({ splitSlug: slug, verdict: "delivered" as const })),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// T9d: epic retrospect 混合终态（部分 closed + 部分 aborted）
+// ═══════════════════════════════════════════════════════════════
+
+describe("T9d: epic retrospect 混合终态（closed + aborted）", () => {
+  it("child f1 closed + child f2 aborted → allWavesClosed gate pass（混合终态）", () => {
+    const { epicId, childClosedId, childAbortedId } = setupEpicWithMixedTerminal(env);
+
+    const retrospectData: PlanningRetrospectData = {
+      reviewedItems: [
+        { itemId: "necessity", outcome: "fulfilled" },
+        { itemId: "sufficiency", outcome: "fulfilled" },
+        { itemId: "alternatives", outcome: "fulfilled" },
+        { itemId: "TF1", outcome: "fulfilled" },
+        { itemId: "RK1", outcome: "fulfilled" },
+      ],
+      lessonsLearned: "mixed terminal: f1 delivered, f2 abandoned for scope reduction",
+      deliveryVerdict: "partial",
+      childUnitIdsEvidence: [
+        { childId: childClosedId, status: "closed" },
+        { childId: childAbortedId, status: "aborted" },
+      ],
+      splitFulfillment: [
+        { splitSlug: "f1", verdict: "delivered" },
+        { splitSlug: "f2", verdict: "failed" },
+      ],
+    };
+
+    const result = dispatch(
+      { action: "retrospect", unitId: epicId, input: { retrospectData } },
+      env.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("retrospected");
+  });
+
+  it("混合终态 retrospect gate 全 pass（6 gate）", () => {
+    const { epicId, childClosedId, childAbortedId } = setupEpicWithMixedTerminal(env);
+
+    const unit = env.store.load(epicId) as unknown as Epic;
+    unit.retrospectData = {
+      reviewedItems: [
+        { itemId: "necessity", outcome: "fulfilled" },
+        { itemId: "sufficiency", outcome: "fulfilled" },
+        { itemId: "alternatives", outcome: "fulfilled" },
+        { itemId: "TF1", outcome: "fulfilled" },
+        { itemId: "RK1", outcome: "fulfilled" },
+      ],
+      lessonsLearned: "mixed terminal state handled correctly",
+      deliveryVerdict: "partial",
+      childUnitIdsEvidence: [
+        { childId: childClosedId, status: "closed" },
+        { childId: childAbortedId, status: "aborted" },
+      ],
+      splitFulfillment: [
+        { splitSlug: "f1", verdict: "delivered" },
+        { splitSlug: "f2", verdict: "failed" },
+      ],
+    };
+
+    const results = runEpicRetrospectGates(unit, ["closed", "aborted"], [
+      { splitSlug: "f1", childUnitId: childClosedId, childStatus: "closed" },
+      { splitSlug: "f2", childUnitId: childAbortedId, childStatus: "aborted" },
+    ]);
+    expect(results).toHaveLength(7);
+    expect(results.every((r) => r.passed)).toBe(true);
+  });
+
+  it("混合终态 + deliveryVerdict=partial → deliveryVerdictNonEmpty gate pass", () => {
+    const { epicId, childClosedId, childAbortedId } = setupEpicWithMixedTerminal(env);
+
+    const unit = env.store.load(epicId) as unknown as Epic;
+    unit.retrospectData = {
+      reviewedItems: [
+        { itemId: "necessity", outcome: "fulfilled" },
+        { itemId: "sufficiency", outcome: "fulfilled" },
+        { itemId: "alternatives", outcome: "fulfilled" },
+        { itemId: "TF1", outcome: "fulfilled" },
+        { itemId: "RK1", outcome: "fulfilled" },
+      ],
+      lessonsLearned: "partial delivery",
+      deliveryVerdict: "partial",
+      childUnitIdsEvidence: [
+        { childId: childClosedId, status: "closed" },
+        { childId: childAbortedId, status: "aborted" },
+      ],
+      splitFulfillment: [
+        { splitSlug: "f1", verdict: "delivered" },
+        { splitSlug: "f2", verdict: "failed" },
+      ],
+    };
+
+    const results = runEpicRetrospectGates(unit, ["closed", "aborted"], [
+      { splitSlug: "f1", childUnitId: childClosedId, childStatus: "closed" },
+      { splitSlug: "f2", childUnitId: childAbortedId, childStatus: "aborted" },
+    ]);
+    expect(results[4]!.passed).toBe(true);
+  });
+
+  it("混合终态 childUnitIdsEvidence 缺失 aborted child → childUnitEvidenceComplete gate fail", () => {
+    const { epicId, childClosedId, childAbortedId } = setupEpicWithMixedTerminal(env);
+
+    const unit = env.store.load(epicId) as unknown as Epic;
+    unit.retrospectData = {
+      reviewedItems: [
+        { itemId: "necessity", outcome: "fulfilled" },
+        { itemId: "sufficiency", outcome: "fulfilled" },
+        { itemId: "alternatives", outcome: "fulfilled" },
+        { itemId: "TF1", outcome: "fulfilled" },
+        { itemId: "RK1", outcome: "fulfilled" },
+      ],
+      lessonsLearned: "partial delivery",
+      deliveryVerdict: "partial",
+      childUnitIdsEvidence: [
+        { childId: childClosedId, status: "closed" },
+      ],
+      splitFulfillment: [
+        { splitSlug: "f1", verdict: "delivered" },
+        { splitSlug: "f2", verdict: "failed" },
+      ],
+    };
+
+    const results = runEpicRetrospectGates(unit, ["closed", "aborted"], [
+      { splitSlug: "f1", childUnitId: childClosedId, childStatus: "closed" },
+      { splitSlug: "f2", childUnitId: childAbortedId, childStatus: "aborted" },
+    ]);
+    const childUnitGate = results[4]!;
+    expect(childUnitGate.passed).toBe(false);
+    expect(childUnitGate.report).toMatch(/childUnitIds/);
+  });
+});
+
+// ── T9d 辅助 ──
+
+function setupEpicWithMixedTerminal(
+  testEnv: V1Env,
+): { epicId: string; childClosedId: string; childAbortedId: string } {
+  const { deps } = testEnv;
+  const slug = "mixed-retro-epic";
+  const epicId = `epic:${slug}`;
+  dispatch(
+    { action: "create", input: { slug, objective: `obj ${slug}`, layer: "epic" } },
+    deps,
+  );
+  dispatch(
+    { action: "clarify", unitId: epicId, input: { clarifications: [makeValidClarification()] } },
+    deps,
+  );
+  dispatch(
+    {
+      action: "plan",
+      unitId: epicId,
+      input: { split: [makeValidEpicSplit("f1"), makeValidEpicSplit("f2")] },
+    },
+    deps,
+  );
+  dispatch(
+    { action: "design-review", unitId: epicId, input: { designReviewJudgment: makeValidEpicDesignReviewJudgment() } },
+    deps,
+  );
+  dispatch(
+    { action: "execute", unitId: epicId, input: {} } as unknown as Parameters<typeof dispatch>[0],
+    deps,
+  );
+
+  const epicRecord = deps.store.load(epicId) as unknown as {
+    executeResult: { childUnitIds: string[] };
+  };
+  const childClosedId = epicRecord.executeResult.childUnitIds[0]!;
+  const childAbortedId = epicRecord.executeResult.childUnitIds[1]!;
+
+  advanceChildFeatureToClosed(deps, childClosedId);
+
+  dispatch(
+    { action: "abort", unitId: childAbortedId, input: { reason: "scope reduction" } },
+    deps,
+  );
+
+  return { epicId, childClosedId, childAbortedId };
+}
+
+function advanceChildFeatureToClosed(deps: V1Deps, featureId: string): void {
+  dispatch(
+    { action: "clarify", unitId: featureId, input: makeFeatureClarifyInput() },
+    deps,
+  );
+  dispatch(
+    { action: "plan", unitId: featureId, input: makeValidFeaturePlan() },
+    deps,
+  );
+  dispatch(
+    { action: "design-review", unitId: featureId, input: { designReviewJudgment: makeValidFeatureDesignReviewJudgment() } },
+    deps,
+  );
+  dispatch(
+    { action: "execute", unitId: featureId, input: {} } as unknown as Parameters<typeof dispatch>[0],
+    deps,
+  );
+
+  const featureRecord = deps.store.load(featureId) as unknown as {
+    executeResult: { childUnitIds: string[] };
+    plan: { split: { slug: string }[] };
+  };
+  for (const sliceId of featureRecord.executeResult.childUnitIds) {
+    advanceSliceToClosed(deps, sliceId);
+  }
+
+  dispatch(
+    {
+      action: "retrospect",
+      unitId: featureId,
+      input: {
+        retrospectData: {
+          reviewedItems: [
+            { itemId: "necessity", outcome: "fulfilled" },
+            { itemId: "sufficiency", outcome: "fulfilled" },
+            { itemId: "alternatives", outcome: "fulfilled" },
+            { itemId: "TF1", outcome: "fulfilled" },
+            { itemId: "RK1", outcome: "fulfilled" },
+          ],
+          lessonsLearned: "feature done",
+          deliveryVerdict: "delivered",
+          childUnitIdsEvidence: featureRecord.executeResult.childUnitIds.map((id) => ({ childId: id, status: "closed" as const })),
+          splitFulfillment: featureRecord.plan.split.map((s) => ({ splitSlug: s.slug, verdict: "delivered" as const })),
+        },
+      },
+    },
+    deps,
+  );
+  dispatch(
+    { action: "closeout", unitId: featureId, input: { artifacts: [] } },
+    deps,
+  );
+}
+
+function advanceSliceToClosed(deps: V1Deps, sliceId: string): void {
+  dispatch({ action: "clarify", unitId: sliceId, input: { clarifications: [] } }, deps);
+  dispatch({ action: "plan", unitId: sliceId, input: makeValidSlicePlan() }, deps);
+  dispatch({ action: "design-review", unitId: sliceId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } }, deps);
+  dispatch({ action: "execute", unitId: sliceId, input: {} } as unknown as Parameters<typeof dispatch>[0], deps);
+
+  const sliceRecord = deps.store.load(sliceId) as unknown as {
+    executeResult: { childUnitIds: string[] };
+    plan: { split: { slug: string }[] };
+  };
+  for (const waveId of sliceRecord.executeResult.childUnitIds) {
+    advanceWaveToClosed(deps, waveId);
+  }
+
+  dispatch(
+    {
+      action: "retrospect",
+      unitId: sliceId,
+      input: {
+        retrospectData: {
+          reviewedItems: [
+            { itemId: "necessity", outcome: "fulfilled" },
+            { itemId: "sufficiency", outcome: "fulfilled" },
+            { itemId: "alternatives", outcome: "fulfilled" },
+            { itemId: "TF1", outcome: "fulfilled" },
+            { itemId: "RK1", outcome: "fulfilled" },
+          ],
+          lessonsLearned: "slice done",
+          deliveryVerdict: "delivered",
+          childUnitIdsEvidence: sliceRecord.executeResult.childUnitIds.map((id) => ({ childId: id, status: "closed" as const })),
+          splitFulfillment: sliceRecord.plan.split.map((s) => ({ splitSlug: s.slug, verdict: "delivered" as const })),
+        },
+      },
+    },
+    deps,
+  );
+  dispatch({ action: "closeout", unitId: sliceId, input: { artifacts: [] } }, deps);
 }

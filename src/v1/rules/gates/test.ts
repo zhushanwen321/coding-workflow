@@ -176,9 +176,15 @@ export function testReferencesDesignReview(
 /**
  * wave §5.5 / 附录 A `test-cases-executed` — 所有 WaveTestCase 都被执行了。
  *
- * 两层校验：
- * - **非 manual 类**：testRunResult 有执行记录（passedCount + failedCount 覆盖非 manual 数量）
+ * 三层校验（按 verification 字段决定处理策略）：
+ * - **unit 类**：testRunResult 有执行记录（passedCount + failedCount 覆盖 unit 数量）
  * - **manual 类**：在 testJudgment.sufficiencyMet.note 有验收记录（manual 测试不机器跑，走退化验证，wave §5.3/§5.8）
+ * - **review 类**：在 testJudgment.sufficiencyMet.note 有验收记录（review 测试走退化验证）
+ *
+ * 消费 AcceptanceCriterion.verification 字段（从 WaveTestCase.verification 投影）：
+ * - unit → 机器跑
+ * - manual/review → 退化验证
+ * - 未设置时默认按 tc.type 判断（manual type 走退化验证，其他走机器跑）
  *
  * manual 类 WaveTestCase 的验收记录归宿在 testJudgment.sufficiencyMet.note（wave §5.8 line 533）。
  */
@@ -188,8 +194,20 @@ export function testCasesExecuted(
   testJudgment: TestJudgment,
 ): GateResult {
   const testCases: WaveTestCase[] = unit.plan.testCases;
-  const nonManual = testCases.filter((tc) => tc.type !== "manual");
-  const manual = testCases.filter((tc) => tc.type === "manual");
+  
+  // 判断是否需要机器验证（unit 类）还是退化验证（manual/review 类）
+  // 优先使用 verification 字段，未设置时按 type 判断
+  const needsMachineVerification = (tc: WaveTestCase): boolean => {
+    // 如果有 verification 字段，按 verification 决定
+    if (tc.verification !== undefined) {
+      return tc.verification === "unit";
+    }
+    // 否则按 type 判断（manual type 走退化验证，其他走机器跑）
+    return tc.type !== "manual";
+  };
+  
+  const nonManual = testCases.filter((tc) => needsMachineVerification(tc));
+  const manual = testCases.filter((tc) => !needsMachineVerification(tc));
 
   // 非 manual 类：验 testRunResult 有足够执行记录
   const executedCount = testRunResult

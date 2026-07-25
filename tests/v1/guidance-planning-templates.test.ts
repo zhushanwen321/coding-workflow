@@ -93,10 +93,10 @@ describe("slice ACTION_SCHEMA（IF5 映射）", () => {
     });
   });
 
-  it("plan → SliceTechChoice@plan.ts", () => {
+  it("plan → PlanSliceInput@plan.ts", () => {
     expect(SLICE_ACTION_SCHEMA.plan).toEqual({
       sourceFilePath: "src/v1/core/plan.ts",
-      interfaceName: "SliceTechChoice",
+      interfaceName: "PlanSliceInput",
     });
   });
 
@@ -123,10 +123,10 @@ describe("feature ACTION_SCHEMA（IF5 映射）", () => {
     });
   });
 
-  it("plan → Split@plan.ts", () => {
+  it("plan → PlanFeatureInput@plan.ts", () => {
     expect(FEATURE_ACTION_SCHEMA.plan).toEqual({
       sourceFilePath: "src/v1/core/plan.ts",
-      interfaceName: "Split",
+      interfaceName: "PlanFeatureInput",
     });
   });
 
@@ -145,10 +145,10 @@ describe("epic ACTION_SCHEMA（IF5 映射）", () => {
     });
   });
 
-  it("plan → Split@plan.ts（与 feature 同，Plan 基类只 split）", () => {
+  it("plan → PlanEpicInput@plan.ts（与 feature 同，Plan 基类只 split）", () => {
     expect(EPIC_ACTION_SCHEMA.plan).toEqual({
       sourceFilePath: "src/v1/core/plan.ts",
-      interfaceName: "Split",
+      interfaceName: "PlanEpicInput",
     });
   });
 });

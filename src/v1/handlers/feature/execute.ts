@@ -26,7 +26,7 @@
  *
  * 不变量：execute 不跑 gate（split DAG 无环在 design-review 已验）。child slice 创建后立即 save。
  */
-import type { ChildDeliveryRecord } from "../../core/evidence.js";
+import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/evidence.js";
 import type { Feature } from "../../core/workunit.js";
 import { createSlice } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
@@ -44,6 +44,9 @@ export function handleExecuteFeature(
   deps: V1Deps,
 ): ActionResult {
   const at = deps.clock.now();
+
+  // ── 检查 evidence 是否已冻结（progressive execute 重跑时防止往已冻结 evidence 写 childDelivery） ──
+  assertEvidenceNotFrozen(unit.evidence, "write childDelivery/generatedAt");
 
   // ── 按 plan.split 创建所有 child slice ──
   for (const split of unit.plan.split) {

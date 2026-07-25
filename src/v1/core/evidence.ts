@@ -9,6 +9,10 @@
  * - closeout 阶段：agent 补主观部分 + cw 校验 artifacts drift + cw 冻结（frozenAt）
  *
  * 不变量：frozenAt 非空后，整个 evidence 对象不可再改（由 handlers 层强制）。
+ *
+ * 强制机制：
+ * - isEvidenceFrozen(evidence) 检查 evidence 是否已冻结
+ * - handlers 层在写 evidence 前调用 isEvidenceFrozen 检查，已冻结则抛错
  */
 // ═══════════════════════════════════════════════════════════════
 // Evidence 基类（所有层共享）
@@ -98,4 +102,40 @@ export interface TestRunResult {
   runnerMode?: string;
   /** 原始报告文件路径 / URL（可选）。 */
   rawReportRef?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Evidence 冻结检查（handlers 层强制机制）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 检查 evidence 是否已冻结（frozenAt 非空）。
+ *
+ * 不变量：frozenAt 非空后，整个 evidence 对象不可再改（由 handlers 层强制）。
+ * 本函数提供统一的冻结检查点，handlers 层在写 evidence 前调用。
+ *
+ * @param evidence 待检查的 evidence 对象
+ * @returns true 表示已冻结（不可再改），false 表示未冻结（可修改）
+ */
+export function isEvidenceFrozen(evidence: Evidence): boolean {
+  return evidence.frozenAt !== undefined && evidence.frozenAt !== "";
+}
+
+/**
+ * 检查 evidence 是否已冻结，已冻结则抛错。
+ *
+ * 用于 handlers 层强制执行 frozenAt 非空后不可再改的约束。
+ * 调用点：任何写 evidence 的 handler 方法开头。
+ *
+ * @param evidence 待检查的 evidence 对象
+ * @param operation 操作描述（用于错误消息）
+ * @throws Error 如果 evidence 已冻结
+ */
+export function assertEvidenceNotFrozen(evidence: Evidence, operation: string): void {
+  if (isEvidenceFrozen(evidence)) {
+    throw new Error(
+      `Cannot ${operation}: evidence is frozen (frozenAt=${evidence.frozenAt}). ` +
+      `Evidence cannot be modified after closeout.`
+    );
+  }
 }

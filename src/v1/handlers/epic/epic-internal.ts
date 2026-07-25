@@ -32,6 +32,7 @@ import {
 } from "../../guidance/index.js";
 import {
   allWavesClosed,
+  childDeliveryConsistency,
   childUnitEvidenceComplete,
   deliveryVerdictNonEmpty,
   reviewedItemsCoverDesignReview,
@@ -67,7 +68,7 @@ interface SchemaSource {
 export const EPIC_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
   clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "Split" },
+  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "PlanEpicInput" },
   "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
   execute: undefined, // 下沉创建 child feature，不接收 input
   retrospect: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
@@ -210,6 +211,7 @@ export function buildEpicNextAction(
 
   const template = PLANNING_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
   const schemaText = getEpicSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? EPIC_ACTION_TO_NEXT_PUBLIC[action];
@@ -218,6 +220,7 @@ export function buildEpicNextAction(
   const guidance = buildNormalGuidance({
     prefix,
     nextAction: action,
+    goal,
     command,
     schemaText,
     templateText,
@@ -250,7 +253,7 @@ function buildEpicCommand(
   const hasInput = EPIC_ACTION_SCHEMA[nextAction] !== undefined ||
     EPIC_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? ` --input @${nextAction}.json` : "";
-  return `cw ${nextAction} --unitId ${unitId}${inputPart}`;
+  return `cw v1 ${nextAction} --unitId ${unitId}${inputPart}`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -332,12 +335,12 @@ export function buildEpicFailureNextAction(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 epic retrospect 全部 4 个 gate。
+ * 跑 epic retrospect 全部 7 个 gate。
  *
  * rules/gates/retrospect.ts 只提供 slice 版聚合（runSliceRetrospectGates，签名锁 Slice），
  * 未提供 epic 专用版。epic 与 slice/feature 的 retrospectData（PlanningRetrospectData）、
- * plan.split（Split[]）、designReviewJudgment（DesignReviewJudgment）类型完全一致，6 个子 gate
- * 均接收这三种入参（不依赖 Slice 特有字段），故 epic 直接复用 6 个子 gate 组装。
+ * plan.split（Split[]）、designReviewJudgment（DesignReviewJudgment）类型完全一致，7 个子 gate
+ * 均接收这三种入参（不依赖 Slice 特有字段），故 epic 直接复用 7 个子 gate 组装。
  *
  * 语义对应：epic 的 child 是 feature（feature 的 child 是 slice），allWavesClosed 判定
  * 「所有 child 终态」的语义对 epic 同样成立（child feature 终态 = closed/aborted）。
@@ -348,6 +351,7 @@ export function buildEpicFailureNextAction(
 export function runEpicRetrospectGates(
   unit: Epic,
   childStatuses: ReadonlyArray<"closed" | "aborted" | string>,
+  evidenceChildDelivery?: ReadonlyArray<{ splitSlug: string; childUnitId: string; childStatus: string }>,
 ): GateResult[] {
   return [
     allWavesClosed(childStatuses),
@@ -356,6 +360,7 @@ export function runEpicRetrospectGates(
     splitFulfillmentCoversPlan(unit.retrospectData, unit.plan.split),
     childUnitEvidenceComplete(unit.retrospectData.childUnitIdsEvidence, unit.executeResult.childUnitIds),
     deliveryVerdictNonEmpty(unit.retrospectData.deliveryVerdict),
+    childDeliveryConsistency(unit.retrospectData.childUnitIdsEvidence, evidenceChildDelivery ?? []),
   ];
 }
 

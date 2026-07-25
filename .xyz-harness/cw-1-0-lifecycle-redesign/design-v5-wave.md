@@ -794,7 +794,7 @@ wave 的 closeout（model §2.2 第 9 步）是 evidence 生命周期的终点�
 
 ## 8. wave 的 replan（承受者 + 叶子发起者）
 
-v5 的 replan 机制是 **abort + appendOnly**（model §5.6）：上层 replan 废弃条目 → cw 自动计算影响面 → 级联 abort 受影响子孙 → 返回给 agent → agent 通过 `cw create` 重建。wave 在这个机制下有**两个角色**：
+v5 的 replan 机制是 **abort + appendOnly**（model §5.6）：上层 replan 废弃条目 → cw 自动计算影响面 → 级联 abort 受影响子孙 → 返回给 agent → agent 通过 `cw v1 create` 重建。wave 在这个机制下有**两个角色**：
 
 - **承受者**：上游 slice replan 废弃 SliceTechChoice / SliceInterface / SliceDataModel / SliceErrorSpec → cw 检测 wave.basedOnParent 命中废弃条目 → wave 被 abort（cw 只标 status=aborted，不动 git，commitHash 保留为历史）
 - **叶子发起者**：wave 自己 replan 废弃自己的 WaveTestCase / WaveTask / WaveFile / WaveContract——wave 是叶子，**没有下层**，影响面计算结果恒为空（无下游级联），replan 只影响 wave 自己
@@ -845,7 +845,7 @@ Step 3 [返回给 agent]:
 - abandonedRefs 是**纯历史记录**（workUnitItemId + abandonedAt 两字段），不阻塞任何流程——cw 已直接 abort，没有「待处理 → 已处理」中间态（model §5.6.5 删掉了 resolvedAt / resolvedAction）
 - basedOnParent **不动**（创建时的历史快照，append-only 永不重写，model §4.2）
 
-**已 closeout 的 wave**（边界场景）：slice replan 时如果某个 wave 已 closed（真终态），cw 仍按机制标 aborted（model §5.6 的级联 abort 包括已 closed 的子孙）——但 git commit 不删，commitHash 保留为历史。真要跟进新决策由 agent 通过 `cw create` 建新 wave 重做（不是「原 wave 复活」）。
+**已 closeout 的 wave**（边界场景）：slice replan 时如果某个 wave 已 closed（真终态），cw 仍按机制标 aborted（model §5.6 的级联 abort 包括已 closed 的子孙）——但 git commit 不删，commitHash 保留为历史。真要跟进新决策由 agent 通过 `cw v1 create` 建新 wave 重做（不是「原 wave 复活」）。
 
 ### 8.3 wave replan 后必须重新 design-review（用户决策）
 
