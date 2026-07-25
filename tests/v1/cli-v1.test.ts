@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { buildLayerPromptGuidance } from "../../src/cli.js";
 import { setupGitRepo } from "../helpers/git.js";
 import {
   makeValidSliceDesignReviewJudgment,
@@ -227,13 +228,27 @@ describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
     expect(result.stderr).toContain("slug");
   });
 
-  it("缺 layer → exit 1 + 错误信息含 layer", () => {
+  it("缺 layer → exit 0 + 返回选层 guidance（规模表/层级树/反模式/命令）", () => {
+    // layer 完全缺失（create 后无位置参数）：返回选层 guidance 引导 agent 选层。
+    // 与下方「非法 layer 字符串 → exit 1」区分：缺失走 guidance，非法值走 throw。
     const result = runV1Cli(
       ["v1", "create", "--slug", "x", "--objective", "y"],
       e,
     );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("layer");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("规模");
+    expect(result.stdout).toContain("epic → feature → slice → wave");
+    expect(result.stdout).toContain("反模式");
+    expect(result.stdout).toContain("cw v1 create <layer>");
+    // 不应进 dispatch：stdout 不是 JSON（无 unitId/nextAction）。
+    expect(result.stdout).not.toContain("unitId");
+  });
+
+  it("create 后无任何参数 → exit 0 + 选层 guidance", () => {
+    // argv[4] === undefined 的形态（cw v1 create 后什么都不跟）。
+    const result = runV1Cli(["v1", "create"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("选择 layer");
   });
 
   it("非法 layer → exit 1 + 错误信息", () => {
@@ -546,3 +561,19 @@ function findV1Json(dir: string): string | null {
 function readV1Json(path: string): string {
   return readFileSync(path, "utf-8");
 }
+
+describe("W7b: buildLayerPromptGuidance 纯函数（create 缺 layer 的 guidance 内容）", () => {
+  it("返回非空字符串，含四个 layer 名 + 规模表 + 反模式", () => {
+    const guidance = buildLayerPromptGuidance();
+    expect(typeof guidance).toBe("string");
+    expect(guidance.length).toBeGreaterThan(0);
+    // 四个 layer 名都出现（选层表 + 命令示例都会命中）
+    for (const layer of ["wave", "slice", "feature", "epic"]) {
+      expect(guidance).toContain(layer);
+    }
+    // 选层决策框架的三个标志性段落
+    expect(guidance).toContain("规模");
+    expect(guidance).toContain("epic → feature → slice → wave");
+    expect(guidance).toContain("反模式");
+  });
+});

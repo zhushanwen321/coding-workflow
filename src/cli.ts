@@ -158,8 +158,47 @@ const READONLY_QUERIES = new Set(["status", "list", "stats", "report"]);
 //
 // create 需要 layer 参数（wave/slice/feature/epic），其他 action 靠 --unitId 路由。
 
-/** v1 create 接受的层（目前 v1 dispatch 只实现 wave 流程，其余层接口预留）。 */
+/** v1 create 接受的层（wave/slice/feature/epic 四层均已实现，dispatch 按 input.layer 路由）。 */
 const V1_CREATE_LAYERS = new Set(["wave", "slice", "feature", "epic"]);
+
+/**
+ * create 缺 layer 时返回的选层 guidance（强制拦截点）。
+ *
+ * 内容复用 skill/cw-cli 已沉淀的选层决策框架（commit d27e79a）：规模×性质表 +
+ * 层级关系树 + 反模式 + 命令示例。agent 必经 create 入口，layer 缺失时在这里被
+ * 引导选层，避免凭直觉选错层级导致拆解结构畸形（如 slice 维度任务误建多个碎 slice）。
+ *
+ * 抽成常量 + 纯函数包装，便于单元测试断言内容（含四层名/规模表/反模式标记）。
+ */
+const LAYER_PROMPT_GUIDANCE = `## 下一步：选择 layer
+
+cw v1 create 需要指定 layer。按「规模 × 性质」判断（先看规模）：
+
+| 规模 | layer | 理由 |
+|------|-------|------|
+| 1 个 wave 能搞定（单文件/几个函数/明确 bug） | wave | 无需 plan 设计，直接施工 |
+| 多个 wave，但共享一套技术方案 | slice | plan 设计接口/数据模型，execute 自动拆 wave |
+| 需求模糊，需规格化后才能拆技术方案 | feature | 先出 FR/AC/UC，execute 拆多个 slice |
+| 多个独立功能方向、需战略级拆解 | epic | execute 拆多个 feature |
+
+层级关系：epic → feature → slice → wave（上层 execute 自动创建下层子 unit，guidance 引导 descend）。
+选 1 个上层即可，下层会自动拆解，不要手动建多个同级。
+
+反模式：单个 slice 维度的任务，不要为每个 wave 手动建 slice——建 1 个 slice，execute 时自动拆 wave。
+
+命令（选好 layer 后重调）：
+  cw v1 create <layer> --slug <slug> --objective "<一句话目标>" [--parent <parentId>]
+`;
+
+/**
+ * 构造 create 缺 layer 时的选层 guidance（纯函数，供单元测试）。
+ *
+ * 单独成函数而非直接用常量：未来若需根据 parent scope 裁剪可选 layer（如挂在 slice
+ * 下只该选 wave），可在此扩展参数，调用方无需改动。
+ */
+export function buildLayerPromptGuidance(): string {
+  return LAYER_PROMPT_GUIDANCE;
+}
 
 /**
  * v1 推进 action（create 之外）。
@@ -941,9 +980,12 @@ function readV1Input(
 /**
  * buildV1Params — 把 v1 子命令的 flags 构造成 V1Params 联合。
  *
- *   - create：layer 必填（wave/slice，feature/epic 未实现）+ --slug + --objective 必填，
- *     可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
- *     dispatch 按 layer 路由（wave → handleCreate，slice → handleCreateSlice）。
+ *   - create：layer 必填（wave/slice/feature/epic 四层均已实现）+ --slug + --objective
+ *     必填，可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
+ *     注意：layer 完全缺失（undefined）已在 runV1 早返回选层 guidance，不进入此函数；
+ *     此处只处理 layer 已给定（合法或非法字符串）的情况。dispatch 按 layer 路由
+ *     （wave → handleCreate，slice → handleCreateSlice，feature → handleCreateFeature，
+ *     epic → handleCreateEpic）。
  *   - 推进 action：--unitId 必填；--commitHash 仅 wave execute 用（slice/PlanningUnit
  *     execute 不接收 input，input 传空对象，dispatchSlice 忽略）；其余靠 --input/stdin。
  *   - replan/abort 的 input 也可用专门的 flag 构造（--abandonedIds/--note/--reason），
@@ -976,9 +1018,9 @@ function buildV1Params(
         `v1 create 的 layer "${layer}" 非法，合法值: ${[...V1_CREATE_LAYERS].join("/")}）`,
       );
     }
-    // slice/feature 已实现（PlanningUnit），epic 仍拒绝。
-    // dispatch 按 input.layer 路由（layer='slice' → handleCreateSlice，layer='feature' →
-    // handleCreateFeature，默认 wave → handleCreate）。
+    // V1_CREATE_LAYERS 已保证 layer ∈ {wave,slice,feature,epic}（上方 has() 校验通过），
+    // 四层均已实现。dispatch 按 input.layer 路由到对应 handler。
+    // 此处防御性判断保留：即便未来 V1_CREATE_LAYERS 与路由不一致也能 fail-fast。
     if (layer !== "wave" && layer !== "slice" && layer !== "feature" && layer !== "epic") {
       throw new CwError(
         `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice/feature/epic 层`,
@@ -1319,6 +1361,21 @@ async function runV1(
       `错误：未知 v1 action "${v1Action}"。合法: ${[...V1_VALID_ACTIONS].join(", ")}\n`,
     );
     process.exit(EXIT_CW_ERROR);
+  }
+
+  // create 缺 layer → 返回选层 guidance + exit 0（强制拦截点，不进 dispatch）。
+  // 与 readonly 查询分支同类：CLI 参数层早返回，不写 store。agent 必经 create 入口，
+  // layer 缺失时被引导选层，避免凭直觉选错层级。
+  //
+  // 「缺失」的两种形态都走 guidance：
+  //   1. layer === undefined：cw v1 create --slug x（create 后直接跟 flag）
+  //   2. layer 以 '-' 开头：argv[4] 被误占为 flag（如 cw v1 create --slug x），
+  //      argv 位置解析拿到 "--slug"。两者都是 agent 省略了 layer。
+  // 非法 layer 字符串（如 'bogus'，不以 '-' 开头但不在四层中）不在此分支，
+  // 仍由 buildV1Params 抛 CwError（exit 1）——那是真错误而非缺失。
+  if (v1Action === "create" && (layer === undefined || layer.startsWith("-"))) {
+    process.stdout.write(buildLayerPromptGuidance());
+    return;
   }
 
   // 推进 action 读 stdin（create 不读 stdin）。
