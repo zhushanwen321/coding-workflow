@@ -103,6 +103,7 @@ import {
   type V1Params,
   V1Store,
 } from "./v1/index.js";
+import { parseFailedTestNames, parseVitestCounts } from "./v1/utils/parse-vitest-output.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
@@ -1300,32 +1301,10 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
       });
       const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
       const passed = r.status === 0;
-      // 尝试从测试输出解析通过/失败计数（容错：解析不到就用 0 占位）。
-      // [HISTORICAL] vitest 输出两行「Test Files N passed」和「Tests N passed」，
-      // 旧正则 /(\d+)\s+passed/ 贪婪匹配第一个（Test Files 行的文件数），
-      // 导致 passedCount=文件数而非测试用例数，wave test-cases-executed gate 误判。
-      // 修复：matchAll 取最后一个匹配（Tests 行总在 Test Files 行之后）。
-      let passedCount = 0;
-      let failedCount = 0;
-      const passMatches = [...out.matchAll(/(\d+)\s+passed/g)];
-      const failMatches = [...out.matchAll(/(\d+)\s+failed/g)];
-      if (passMatches.length > 0)
-        passedCount = Number(passMatches[passMatches.length - 1][1]);
-      if (failMatches.length > 0)
-        failedCount = Number(failMatches[failMatches.length - 1][1]);
-      // 解析失败测试名（vitest 默认 reporter：`× 测试名` 行 + 文件级 `FAIL  path` 兜底）。
-      // 容错：解析不到就返回空数组，不抛错。
-      const failedSet = new Set<string>();
-      const failNameRe = /^[×]\s+(.+)$/gm;
-      let m: RegExpExecArray | null;
-      while ((m = failNameRe.exec(out)) !== null) {
-        failedSet.add(m[1].trim());
-      }
-      const failFileRe = /^FAIL\s+(\S+)/gm;
-      while ((m = failFileRe.exec(out)) !== null) {
-        failedSet.add(m[1].trim());
-      }
-      const failedTests = [...failedSet];
+      // 解析逻辑 extract 到纯函数（src/v1/utils/parse-vitest-output.ts）以便直接单测。
+      // [HISTORICAL] 计数解析的历史 bug 见该纯函数 JSDoc（取最后一个 match 拿 Tests 行用例数）。
+      const { passedCount, failedCount } = parseVitestCounts(out);
+      const failedTests = parseFailedTestNames(out);
       void unit; // testRunner 接口要求传 unit，当前实现不依赖 unit 内容。
       return { passed, passedCount, failedCount, failedTests };
     },
