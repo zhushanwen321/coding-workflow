@@ -102,6 +102,8 @@ export interface TestRunResult {
   runnerMode?: string;
   /** 原始报告文件路径 / URL（可选）。 */
   rawReportRef?: string;
+  /** 失败测试名列表（解析自测试输出，供 agent 定位）。可选：旧 evidence 无此字段。 */
+  failedTests?: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════

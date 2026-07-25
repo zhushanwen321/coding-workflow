@@ -86,9 +86,12 @@ export function testsAllPass(
     };
   }
   if (!testRunResult.passed) {
+    const failedList = testRunResult.failedTests && testRunResult.failedTests.length > 0
+      ? `，失败测试：${testRunResult.failedTests.join(" | ")}`
+      : "";
     return {
       passed: false,
-      report: `tests-all-pass: 测试未全部通过（passed=${testRunResult.passedCount}, failed=${testRunResult.failedCount}）`,
+      report: `tests-all-pass: 测试未全部通过（passed=${testRunResult.passedCount}, failed=${testRunResult.failedCount}${failedList}）`,
     };
   }
   return {

@@ -1307,8 +1307,21 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
       const failMatch = out.match(/(\d+)\s+failed/);
       if (passMatch) passedCount = Number(passMatch[1]);
       if (failMatch) failedCount = Number(failMatch[1]);
+      // 解析失败测试名（vitest 默认 reporter：`× 测试名` 行 + 文件级 `FAIL  path` 兜底）。
+      // 容错：解析不到就返回空数组，不抛错。
+      const failedSet = new Set<string>();
+      const failNameRe = /^[×]\s+(.+)$/gm;
+      let m: RegExpExecArray | null;
+      while ((m = failNameRe.exec(out)) !== null) {
+        failedSet.add(m[1].trim());
+      }
+      const failFileRe = /^FAIL\s+(\S+)/gm;
+      while ((m = failFileRe.exec(out)) !== null) {
+        failedSet.add(m[1].trim());
+      }
+      const failedTests = [...failedSet];
       void unit; // testRunner 接口要求传 unit，当前实现不依赖 unit 内容。
-      return { passed, passedCount, failedCount };
+      return { passed, passedCount, failedCount, failedTests };
     },
   };
   const fileExists = {

@@ -175,6 +175,29 @@ describe("test gates", () => {
       expect(r.report).toMatch(/tests-all-pass/);
     });
 
+    it("passed=false 且 failedTests 非空 → report 含失败测试名", () => {
+      const r = testsAllPass({
+        passed: false,
+        passedCount: 0,
+        failedCount: 1,
+        failedTests: ["some test"],
+      });
+      expect(r.passed).toBe(false);
+      expect(r.report).toContain("some test");
+      expect(r.report).toMatch(/失败测试：some test/);
+    });
+
+    it("passed=false 且 failedTests 为空 → report 不含失败测试段", () => {
+      const r = testsAllPass({
+        passed: false,
+        passedCount: 0,
+        failedCount: 1,
+        failedTests: [],
+      });
+      expect(r.passed).toBe(false);
+      expect(r.report).not.toMatch(/失败测试/);
+    });
+
     it("testRunResult 缺失（undefined）→ fail", () => {
       const r = testsAllPass(undefined);
       expect(r.passed).toBe(false);
