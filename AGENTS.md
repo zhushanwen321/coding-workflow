@@ -8,7 +8,7 @@
 
 ```bash
 npm run check:all   # tsc 类型检查（src + tests）
-npm test            # vitest run（464 个测试，含真实子进程 e2e）
+npm test            # vitest run（1380 个测试，含真实子进程 e2e）
 npm run lint        # eslint src/ tests/
 npm run build       # tsc 编译到 dist/
 ```
