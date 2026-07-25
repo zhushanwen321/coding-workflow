@@ -41,29 +41,52 @@ description: >-
 
 ### 第 0 步：该不该用 CW（见上方表格）
 
-### 第 1 步：选层（按工作性质，不按规模）
+### 第 1 步：选层
 
-4 层 WorkUnit，两种类型。**任何一层都能独立起步**（parent 全可选）：
+#### 层级关系与自动拆解
 
-| 层 | 类型 | 工作性质 | 什么时候选 |
-|----|------|---------|-----------|
-| **wave** | ExecutionUnit（9步） | 施工执行——能直接写 testCases + files + contracts | 技术方案已清晰，直接施工 |
-| **slice** | PlanningUnit（7步） | 技术方案化——需要定义接口契约/数据模型/技术选型 | 知道做什么，需要设计怎么做 |
-| **feature** | PlanningUnit（7步） | 需求规格化——需要把模糊需求变成可验收规格（FR/AC/UC）| 需求模糊，需要规格化 |
-| **epic** | PlanningUnit（7步） | 战略翻译——需要拆成多个独立功能方向 | 多功能协作的大型目标 |
+4 层 WorkUnit 构成树状拆解链，**上层 execute 时按 plan.split 自动创建下层子 unit**，guidance 随后引导 `crossLayer.descend` 下沉到第一个 child：
 
-判别核心：问自己「我下一步要写的第一份产物是什么」——能直接写 testCases→wave，需要写技术契约→slice，需要写 FR/AC/UC→feature，需要拆功能方向→epic。
+```
+epic    （战略目标）       execute → 拆出多个 feature
+  └─ feature （需求规格）    execute → 拆出多个 slice
+       └─ slice  （技术方案）  execute → 拆出多个 wave
+            └─ wave   （施工执行） 唯一产生代码的层（写 testCases/files/contracts）
+```
+
+**关键认知**：选 1 个上层 unit 即可，下层会自动拆解。例如一个 feature 的需求可能拆出 3 个 slice、每个 slice 拆出 2 个 wave——你只需建那 1 个 feature，execute 时 cw 自动建 6 个 wave 孙单元，guidance 引导逐个推进。**不要手动建多个同级 unit 去凑覆盖面**。
+
+任何一层都能无 parent 独立起步（`--parent` 可选）。
+
+#### 怎么选：规模 × 性质
+
+选层由 **规模（工作量）× 性质（下一步产物）** 共同决定。**先看规模，再看性质**——规模不够上高层级是常见错误：
+
+| 规模（预估工作量） | 推荐起步层 | 理由 |
+|-------------------|-----------|------|
+| **1 个 wave 能搞定**（单文件 / 几个函数 / 明确的小 bug） | 直接 `wave` | 无需 plan 设计，直接施工 |
+| **多个 wave，但共享一套技术方案** | 直接 `slice` | slice 的 plan 设计接口/数据模型，execute 自动拆出多个 wave |
+| **需求模糊，需要规格化后才能拆技术方案** | `feature` | feature 先出 FR/AC/UC，execute 拆多个 slice |
+| **多个独立功能方向、需战略级拆解** | `epic` | execute 拆多个 feature |
+
+性质判据（规模介于两档之间时用）：问「下一步要写的第一份产物是什么」——能直接写 testCases→wave，需要写接口契约→slice，需要写 FR/AC/UC→feature，需要拆功能方向→epic。
+
+#### 反模式（必读）
+
+- ❌ **单个 slice 维度的任务，为每个 wave 手动建一个 slice** → 产出多个碎 slice。正解：建 **1 个 slice**，execute 时 cw 自动按 plan.split 拆出多个 wave，guidance 引导 descend。
+- ❌ **能 1 个 wave 搞定却上 slice** → 多走 plan/design-review 的开销，无收益。
+- ❌ **手动建多个 wave 挂同一个 parent** → 没有 slice 层的技术方案聚合，接口/数据模型割裂。正解：建 1 个 slice 让它拆。
+
+核心原则：**选能覆盖全貌的最小层，宁低勿高；上层会自动拆解下层，不要手动凑**。
 
 ### 第 2 步：create
 
 ```bash
-# wave（最常用，唯一产生代码的层）
-cw v1 create wave --slug <kebab-case-slug> --objective "<一句话目标>" [--parent <parentId>]
-
-# slice / feature / epic（PlanningUnit，当前暂未实现 handler，仅 wave 可用）
-cw v1 create slice  --slug <slug> --objective "..." [--parent <featureId>]
+# 任一层都可起步（--parent 可选，挂到已有树上）
+cw v1 create wave    --slug <kebab-case-slug> --objective "<一句话目标>" [--parent <parentId>]
+cw v1 create slice   --slug <slug> --objective "..." [--parent <featureId>]
 cw v1 create feature --slug <slug> --objective "..." [--parent <epicId>]
-cw v1 create epic   --slug <slug> --objective "..."
+cw v1 create epic    --slug <slug> --objective "..."
 ```
 
 `--parent` 可选——任何一层都能无 parent 独立起步。有 parent 时挂到已有树上。
@@ -159,7 +182,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 **交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw v1 handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（clarify 问答 + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
 
-- wave 完整支持；planning 层（slice/feature/epic）handler 未实现，guidance 段降级为静态提示
+- wave / slice / feature / epic 四层均完整支持（handoff 按 scope 调对应的 build{Scope}NextAction 生成 guidance）
 - handoff 不落盘文件（守「store 是唯一真相」不变量），需保存输出自己 redirect
 - 缺 `--unitId` 或 unitId 不存在 → exit 1
 
