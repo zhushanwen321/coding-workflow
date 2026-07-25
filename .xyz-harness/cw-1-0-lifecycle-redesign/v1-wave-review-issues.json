@@ -1,0 +1,6 @@
+[
+  {"dimension":"test-coverage","severity":"must-fix","ref":"src/v1/rules/gates/test.ts","description":"缺 test-cases-executed gate（wave附录A line1244要求4个gate，只实现3个）"},
+  {"dimension":"edge-case","severity":"should-fix","ref":"src/v1/handlers/abort.ts:67","description":"abort未append abandonedRefs（model§5.6.2 Step3要求），wave叶子无子孙当前无害，标注wave-only stub"},
+  {"dimension":"edge-case","severity":"should-fix","ref":"src/v1/rules/replan.ts:59","description":"computeImpact未级联传播（model§5.6.2 Step2级联规则），wave叶子影响面恒空，标注wave-only stub"},
+  {"dimension":"type-safety","severity":"must-fix","ref":"src/v1/rules/freeze.ts:177","description":"freeze未保护abandoned条目status字段，废弃条目可被复活为active"}
+]

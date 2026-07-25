@@ -28,10 +28,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { dispatch } from "../src/dispatch.js";
-import { GitValidator } from "../src/gate.js";
-import { CwStore } from "../src/store.js";
-import type { ActionDeps } from "../src/types.js";
+import { dispatch } from "../src/legacy/dispatch.js";
+import { GitValidator } from "../src/legacy/gate.js";
+import { CwStore } from "../src/legacy/store.js";
+import type { ActionDeps } from "../src/legacy/types.js";
 import { setupGitRepo } from "./helpers/git.js";
 import { makeValidDevPlanJson } from "./helpers/plan.js";
 

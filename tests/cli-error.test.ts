@@ -7,8 +7,8 @@
 import { describe, expect,it } from "vitest";
 
 import { mapExitCode } from "../src/cli.js";
-import { GuardError } from "../src/dispatch.js";
-import { CwError } from "../src/types.js";
+import { GuardError } from "../src/legacy/dispatch.js";
+import { CwError } from "../src/legacy/types.js";
 
 describe("mapExitCode (W4 typed error)", () => {
   it("CwError → exit 1", () => {

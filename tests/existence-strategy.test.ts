@@ -17,14 +17,14 @@
  *   - 禁 any：用具体接口形状 + 字面量联合
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync,mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { getShape } from "../src/shapes/registry.js";
-import type { Topic } from "../src/types.js";
+import { getShape } from "../src/legacy/shapes/registry.js";
+import type { Topic } from "../src/legacy/types.js";
 
 // ── 测试夹具 ────────────────────────────────────────────────
 

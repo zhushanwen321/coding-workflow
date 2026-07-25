@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { runInit } from "../src/init.js";
+import { runInit } from "../src/legacy/init.js";
 
 // ── 辅助 ─────────────────────────────────────────────────────
 

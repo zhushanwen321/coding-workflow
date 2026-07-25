@@ -26,7 +26,7 @@ import type {
   ProcessIssueType,
   RetrospectData,
   RetrospectInsights,
-} from "../src/types.js";
+} from "../src/legacy/types.js";
 
 // ── ProcessIssueType 四值枚举（FR-3 / D5）──────────────────────
 

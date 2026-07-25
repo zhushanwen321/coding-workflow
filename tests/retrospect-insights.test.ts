@@ -24,13 +24,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { computeStatsAll } from "../src/stats.js";
+import { computeStatsAll } from "../src/legacy/stats.js";
 import type {
   RetrospectData,
   RetrospectInsights,
   RuntimeEnv,
   Topic,
-} from "../src/types.js";
+} from "../src/legacy/types.js";
 
 // ── 测试夹具（照 stats.test.ts 模式）──────────────────────────
 

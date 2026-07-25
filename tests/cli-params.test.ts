@@ -12,7 +12,7 @@ import { describe, expect,it } from "vitest";
 
 import type { ParsedArgs } from "../src/cli.js";
 import { buildParams } from "../src/cli.js";
-import { CwError } from "../src/types.js";
+import { CwError } from "../src/legacy/types.js";
 
 // 构造空 ParsedArgs（模拟 minimist 无 flag 输出）
 function makeParsed(overrides: Partial<ParsedArgs> = {}): ParsedArgs {

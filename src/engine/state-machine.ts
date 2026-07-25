@@ -31,12 +31,12 @@
  * @typeParam A - action 字面量联合（每层自定义）
  * @typeParam P - payload 类型（每层 frontmatter 扩展）
  */
-import type { Unit } from "./unit.js";
-import type { ScopeConfig } from "./scope-config.js";
-import type { GateSpec, GateHistoryEntry } from "./gate.js";
+import type { EngineDeps } from "./deps.js";
 import type { FreezeViolation } from "./freeze.js";
 import { checkFreeze } from "./freeze.js";
-import type { EngineDeps } from "./deps.js";
+import type { GateHistoryEntry,GateSpec } from "./gate.js";
+import type { ScopeConfig } from "./scope-config.js";
+import type { Unit } from "./unit.js";
 
 /**
  * guard 判定结果。

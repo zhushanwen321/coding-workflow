@@ -6,8 +6,8 @@
 
 import { describe, expect,it } from "vitest";
 
-import { parseDevPlan, parseLitePlan } from "../src/plan-parser.js";
-import { CwError } from "../src/types.js";
+import { parseDevPlan, parseLitePlan } from "../src/legacy/plan-parser.js";
+import { CwError } from "../src/legacy/types.js";
 
 // ── 测试夹具：合法 plan.json ─────────────────────────────────
 
@@ -381,7 +381,7 @@ describe("parseDevPlan dependsOn 存在性检测（assertKnownDeps）", () => {
 
 // ── W2: parseDevPlan + parseTestJson 新增测试 ─────────────────
 
-import { parseClarifyJson, parseTestJson } from "../src/plan-parser.js";
+import { parseClarifyJson, parseTestJson } from "../src/legacy/plan-parser.js";
 
 describe("W2: parseDevPlan（拆分后的 dev-plan.json）", () => {
   it("只含 waves 不含 testCases → legacyTestCases undefined", () => {
