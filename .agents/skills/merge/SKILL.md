@@ -57,11 +57,27 @@ git merge --ff-only origin/main
 
 #### 3.2 确定版本类型
 
-根据本次变更判断版本类型（与用户确认）：
+根据本次变更判断版本类型（与用户确认）。判断标准：
 
-- **patch**（默认）：bug fix、内部重构、不影响 CLI 行为的改动
-- **minor**：新增 action / 新增 gate / CLI 新增子命令、向后兼容的能力增强
-- **major**：破坏性变更（action 语义改变、状态机转换规则修改、CLI 参数不兼容）
+**patch**（默认）：
+- bug fix（handler 逻辑修复、guard 误判修正）
+- 内部重构（不改变 exports / CLI 行为的模块拆分、类型提取）
+- 文档更新（CONTEXT.md / ARCHITECTURE.md / prompts 内容调整）
+- 测试补充（新增测试用例、提升覆盖率）
+- 不影响 CLI 行为的改动（日志优化、错误信息文案、内部工具函数）
+
+**minor**：
+- 新增 action（状态机新增可执行动作，如 `tdd_plan`、`retrospect`）
+- 新增 gate（新增机器检查门，如新增一个 `code-review-gate`）
+- 新增 handler（实现新的 action handler）
+- CLI 新增子命令（如 `cw v1 stats`、`cw v1 export`）
+- 向后兼容的能力增强（gate 检查更严格但不阻断已通过的流程、guidance 内容改进）
+
+**major**：
+- action 语义改变（已发布的 action 含义或行为发生变化，现有 agent 调用方式不兼容）
+- 状态机转换规则修改（合法 transition 变更、新增/删除线性路径约束）
+- CLI 参数不兼容（已有子命令参数格式变化、输出 JSON schema 变更）
+- 删除已发布的 action / gate / handler（下游依赖断裂）
 
 #### 3.3 bump 版本
 
@@ -71,6 +87,73 @@ npm version <patch|minor|major> --no-git-tag-version
 NEW_VER=$(node -p "require('./package.json').version")
 echo "版本: $CURRENT_VER → $NEW_VER"
 ```
+
+#### 3.3.5 CHANGELOG 生成
+
+**[OPTIONAL]** 自动生成变更记录。基于 conventional commits 前缀（feat/fix/chore/docs/refactor/test）提取，追加到 `CHANGELOG.md`。
+
+```bash
+cd /Users/zhushanwen/Code/coding-workflow-workspace/main
+
+PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+TAG="v$NEW_VER"
+
+# 提取上个 tag 到 HEAD 的 commit，按前缀分类
+if [ -n "$PREV_TAG" ]; then
+  RANGE="${PREV_TAG}..HEAD"
+else
+  RANGE="HEAD"
+fi
+
+{
+  echo ""
+  echo "## [$TAG] - $(date +%Y-%m-%d)"
+  echo ""
+
+  # feat
+  FEATS=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^feat" --extended-regexp)
+  if [ -n "$FEATS" ]; then
+    echo "### Features"
+    echo "$FEATS"
+    echo ""
+  fi
+
+  # fix
+  FIXES=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^fix" --extended-regexp)
+  if [ -n "$FIXES" ]; then
+    echo "### Bug Fixes"
+    echo "$FIXES"
+    echo ""
+  fi
+
+  # refactor
+  REFACTORS=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^refactor" --extended-regexp)
+  if [ -n "$REFACTORS" ]; then
+    echo "### Refactoring"
+    echo "$REFACTORS"
+    echo ""
+  fi
+
+  # docs / test / chore（合并为 Miscellaneous）
+  MISC=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^docs\|^test\|^chore" --extended-regexp)
+  if [ -n "$MISC" ]; then
+    echo "### Miscellaneous"
+    echo "$MISC"
+    echo ""
+  fi
+} >> CHANGELOG.md
+
+# 检查是否真的有内容追加（排除空 header）
+git diff --quiet CHANGELOG.md && echo "无 conventional commit，跳过 CHANGELOG" || echo "CHANGELOG 已更新"
+```
+
+若 CHANGELOG.md 不存在，先创建：
+
+```bash
+[ -f CHANGELOG.md ] || echo "# Changelog" > CHANGELOG.md
+```
+
+脚本无需额外依赖，纯 `git log` + `--grep` + 重定向。生成后可人工审阅再 commit。
 
 #### 3.4 commit + tag + push
 
@@ -96,6 +179,49 @@ gh run watch --workflow=release.yml
 ```
 
 ⚠️ release.yml 在发布前会跑 `npm run build` + `npm test`。如果阶段 1 的本地验证已通过，这里通常也会过。但 CI 环境与本地可能有 Node 版本差异（CI 用 node 20），出问题时优先排查 Node 版本兼容性。
+
+### 阶段 4.5: 发布失败回滚
+
+**[MANDATORY] 只在 CI 失败或 npm publish 产物有问题时执行。正常发布流程跳过此阶段。**
+
+#### 场景 A: CI 失败但 tag 已推
+
+tag 推送后 CI 构建/测试失败，版本未发布到 npm。需要清理 tag、修复后重新走 bump 流程。
+
+```bash
+cd /Users/zhushanwen/Code/coding-workflow-workspace/main
+
+# 1. 删除远程 tag
+TAG="v$NEW_VER"
+git push origin --delete "$TAG"
+
+# 2. 删除本地 tag
+git tag -d "$TAG"
+
+# 3. 回退 bump commit（如果是纯 bump，reset 回上一个 commit）
+git reset --hard HEAD~1
+
+# 4. 修复问题（在 feature 分支修 → PR → merge，或直接在 main 修）
+
+# 5. 重新走阶段 3.3 ~ 3.4（bump → tag → push）
+```
+
+#### 场景 B: npm publish 成功但包有问题
+
+CI 发布成功，但包内容有误（构建产物损坏、关键文件缺失）。需在发布后 72 小时内 unpublish。
+
+```bash
+# 1. unpublish 版本（npm 限制：发布 72 小时内可 unpublish，超时不可逆）
+npm unpublish @zhushanwen/coding-workflow@$NEW_VER
+
+# 2. 删除对应 tag（防止下次 CI 再次发布同一版本）
+git push origin --delete "$TAG"
+git tag -d "$TAG"
+
+# 3. 修复后重新走阶段 3.3 ~ 3.4
+```
+
+⚠️ `npm unpublish` 有时间窗口限制（72 小时），且会导致该版本号永久不可复用。发现越早操作越安全。超过窗口后只能发布修复版（新 patch），无法撤回已发布版本。
 
 ### 阶段 5: 交付物验证
 

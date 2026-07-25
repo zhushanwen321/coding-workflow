@@ -20,7 +20,7 @@ import type {
 } from "../../core/judgments.js";
 import type { Split } from "../../core/plan.js";
 import type { Epic, ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
-import type { GateResult } from "./types.js";
+import { runGateSafely, type GateResult } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/design-review.js"`
 export type { GateResult };
@@ -183,11 +183,12 @@ export function designReviewAlternativesNonEmpty(
 }
 
 /**
- * 附录 A `design-review-tradeoffs-present` — tradeoffs 至少 1 条或显式声明。
+ * 附录 A `design-review-tradeoffs-present` — tradeoffs 至少 1 条，且每条必须有 id。
  *
- * 简化（按 spec）：tradeoffs 数组非空即可。
- * 完整语义应是「至少 1 条或显式声明『无』+ 理由」，但 v5 wave 附录 A 的 gate 清单
- * 只验 present，具体内容由 agent 自负责（machine gate 只验结构，§6.5 诚实说明）。
+ * id 是后续 test/retrospect 阶段引用 tradeoff 的唯一标识（ref 约定：数组元素→元素 id）。
+ * 缺 id 会导致 retrospect gate 的 expected 集合混入 undefined，永远无法通过。
+ *
+ * 简化（按 spec）：tradeoffs 数组非空 + 每条有 id 即可。具体内容由 agent 自负责（machine gate 只验结构，§6.5）。
  */
 export function designReviewTradeoffsPresent(
   judgment: DesignReviewJudgment,
@@ -206,16 +207,27 @@ export function designReviewTradeoffsPresent(
       report: "design-review-tradeoffs-present: tradeoffs 为空（至少 1 条，或显式声明「无」+ 理由）",
     };
   }
+  // 验每条 tradeoff 必须有 id（后续 test/retrospect 用 id 做 ref 引用）
+  const missingIds = judgment.tradeoffs.filter((t) => !t.id || typeof t.id !== "string" || t.id.trim() === "");
+  if (missingIds.length > 0) {
+    return {
+      passed: false,
+      report: `design-review-tradeoffs-present: ${missingIds.length} 条 tradeoff 缺少 id 字段（id 是后续 test/retrospect 引用的唯一标识，必须填）`,
+    };
+  }
   return {
     passed: true,
-    report: `design-review-tradeoffs-present: tradeoffs 有 ${judgment.tradeoffs.length} 条`,
+    report: `design-review-tradeoffs-present: tradeoffs 有 ${judgment.tradeoffs.length} 条，每条都有 id`,
   };
 }
 
 /**
- * 附录 A `design-review-risks-present` — risks 至少 1 条或显式声明。
+ * 附录 A `design-review-risks-present` — risks 至少 1 条，且每条必须有 id。
  *
- * 简化（按 spec）：risks 数组非空即可（同 tradeoffs 的处理逻辑）。
+ * id 是后续 test/retrospect 阶段引用 risk 的唯一标识（ref 约定：数组元素→元素 id）。
+ * 缺 id 会导致 retrospect gate 的 expected 集合混入 undefined，永远无法通过。
+ *
+ * 简化（按 spec）：risks 数组非空 + 每条有 id 即可（同 tradeoffs 的处理逻辑）。
  */
 export function designReviewRisksPresent(
   judgment: DesignReviewJudgment,
@@ -233,9 +245,17 @@ export function designReviewRisksPresent(
       report: "design-review-risks-present: risks 为空（至少 1 条，或显式声明「无」+ 理由）",
     };
   }
+  // 验每条 risk 必须有 id（后续 test/retrospect 用 id 做 ref 引用）
+  const missingIds = judgment.risks.filter((r) => !r.id || typeof r.id !== "string" || r.id.trim() === "");
+  if (missingIds.length > 0) {
+    return {
+      passed: false,
+      report: `design-review-risks-present: ${missingIds.length} 条 risk 缺少 id 字段（id 是后续 test/retrospect 引用的唯一标识，必须填）`,
+    };
+  }
   return {
     passed: true,
-    report: `design-review-risks-present: risks 有 ${judgment.risks.length} 条`,
+    report: `design-review-risks-present: risks 有 ${judgment.risks.length} 条，每条都有 id`,
   };
 }
 
@@ -311,16 +331,24 @@ export function inheritedItemIdsValid(
  * techChoices 是 slice 技术方案的核心（选型记录），没有选型的 slice 等于没做技术决策。
  */
 export function techChoiceNonEmpty(unit: Slice): GateResult {
-  const count = unit.plan.techChoices.length;
-  if (count < 1) {
+  const items = unit.plan.techChoices;
+  if (items.length < 1) {
     return {
       passed: false,
       report: "tech-choice-non-empty: techChoices 为空（slice 必须有至少 1 条技术选型）",
     };
   }
+  // 验每条 techChoice 必须有 id（后续引用的唯一标识）
+  const missingIds = items.filter((item) => !item.id || typeof item.id !== "string" || item.id.trim() === "");
+  if (missingIds.length > 0) {
+    return {
+      passed: false,
+      report: `tech-choice-non-empty: ${missingIds.length} 条 techChoice 缺少 id 字段（id 是后续引用的唯一标识，必须填）`,
+    };
+  }
   return {
     passed: true,
-    report: `tech-choice-non-empty: techChoices 有 ${count} 条`,
+    report: `tech-choice-non-empty: techChoices 有 ${items.length} 条，每条都有 id`,
   };
 }
 
@@ -330,16 +358,24 @@ export function techChoiceNonEmpty(unit: Slice): GateResult {
  * split 描述 slice 如何拆成 wave（无 split = 没法 execute 创建下层 wave）。
  */
 export function splitNonEmpty(unit: Slice): GateResult {
-  const count = unit.plan.split.length;
-  if (count < 1) {
+  const items = unit.plan.split;
+  if (items.length < 1) {
     return {
       passed: false,
       report: "split-non-empty: split 为空（slice 必须拆出至少 1 个 wave）",
     };
   }
+  // 验每条 split 必须有 slug（后续引用的唯一标识）
+  const missingSlugs = items.filter((item) => !item.slug || typeof item.slug !== "string" || item.slug.trim() === "");
+  if (missingSlugs.length > 0) {
+    return {
+      passed: false,
+      report: `split-non-empty: ${missingSlugs.length} 条 split 缺少 slug 字段（slug 是后续引用的唯一标识，必须填）`,
+    };
+  }
   return {
     passed: true,
-    report: `split-non-empty: split 有 ${count} 项`,
+    report: `split-non-empty: split 有 ${items.length} 项，每条都有 slug`,
   };
 }
 
@@ -361,6 +397,14 @@ export function splitNonEmpty(unit: Slice): GateResult {
  * 对外不导出——各层 exported gate（splitDagValid / featureSplitDagValid）转调它。
  */
 function splitDagValidBySplits(splits: Split[]): GateResult {
+  // 过滤无效 slug（agent 可能漏填），报告验证错误
+  const invalidSplits = splits.filter((s) => !s.slug || typeof s.slug !== "string" || s.slug.trim() === "");
+  if (invalidSplits.length > 0) {
+    return {
+      passed: false,
+      report: `split-dag-valid: ${invalidSplits.length} 条 split 缺少 slug 字段（slug 是判环和后续引用的基础，必须填）`,
+    };
+  }
   const slugs = new Set(splits.map((s) => s.slug));
   // dependsOn 邻接表：slug → 它依赖的（必须在它之前完成的）slug 列表
   const depsBySlug = new Map<string, string[]>();
@@ -494,17 +538,17 @@ export function runSliceDesignReviewGates(unit: Slice): GateResult[] {
   for (const d of plan.decisions) validIds.add(d.id);
   for (const c of unit.clarifications) validIds.add(c.id);
   return [
-    techChoiceNonEmpty(unit),
-    splitNonEmpty(unit),
-    splitDagValid(unit),
-    allDecisionsResolved(unit.clarifications),
-    inheritedItemIdsValid(plan.split, validIds),
-    designReviewNecessityNonEmpty(judgment),
-    designReviewSufficiencyComplete(judgment),
-    designReviewAlternativesNonEmpty(judgment),
-    designReviewTradeoffsPresent(judgment),
-    designReviewRisksPresent(judgment),
-    layerSpecificNonEmpty(unit),
+    runGateSafely("tech-choice-non-empty", techChoiceNonEmpty, unit),
+    runGateSafely("split-non-empty", splitNonEmpty, unit),
+    runGateSafely("split-dag-valid", splitDagValid, unit),
+    runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications),
+    runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, plan.split, validIds),
+    runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
+    runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
+    runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),
+    runGateSafely("design-review-tradeoffs-present", designReviewTradeoffsPresent, judgment),
+    runGateSafely("design-review-risks-present", designReviewRisksPresent, judgment),
+    runGateSafely("layer-specific-non-empty", layerSpecificNonEmpty, unit),
   ];
 }
 
@@ -615,16 +659,24 @@ export function acNonEmpty(unit: Feature): GateResult {
  *（描述 feature 拆成哪些 slice）。无 split = 没法 execute 启动下层 slice。
  */
 export function featureSplitNonEmpty(unit: Feature): GateResult {
-  const count = unit.plan.split.length;
-  if (count < 1) {
+  const items = unit.plan.split;
+  if (items.length < 1) {
     return {
       passed: false,
       report: "slice-split-non-empty: split 为空（feature 必须拆出至少 1 个 slice）",
     };
   }
+  // 验每条 split 必须有 slug（后续引用的唯一标识）
+  const missingSlugs = items.filter((item) => !item.slug || typeof item.slug !== "string" || item.slug.trim() === "");
+  if (missingSlugs.length > 0) {
+    return {
+      passed: false,
+      report: `slice-split-non-empty: ${missingSlugs.length} 条 split 缺少 slug 字段（slug 是后续引用的唯一标识，必须填）`,
+    };
+  }
   return {
     passed: true,
-    report: `slice-split-non-empty: split 有 ${count} 项`,
+    report: `slice-split-non-empty: split 有 ${items.length} 项，每条都有 slug`,
   };
 }
 
@@ -708,19 +760,19 @@ export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
   for (const bc of spec.businessCases) validIds.add(bc.id);
   for (const d of spec.decisions) validIds.add(d.id);
   return [
-    frAcCoverage(unit),
-    acReachableFromFr(unit),
-    acNonEmpty(unit),
-    featureSplitNonEmpty(unit),
-    featureSplitDagValid(unit),
-    allDecisionsResolved(unit.clarifications.clarifications),
-    inheritedItemIdsValid(unit.plan.split, validIds),
-    designReviewNecessityNonEmpty(judgment),
-    designReviewSufficiencyComplete(judgment),
-    designReviewAlternativesNonEmpty(judgment),
-    designReviewTradeoffsPresent(judgment),
-    designReviewRisksPresent(judgment),
-    featureLayerSpecificNonEmpty(unit),
+    runGateSafely("fr-ac-coverage", frAcCoverage, unit),
+    runGateSafely("ac-reachable-from-fr", acReachableFromFr, unit),
+    runGateSafely("ac-non-empty", acNonEmpty, unit),
+    runGateSafely("slice-split-non-empty", featureSplitNonEmpty, unit),
+    runGateSafely("slice-split-dag-valid", featureSplitDagValid, unit),
+    runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications.clarifications),
+    runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, unit.plan.split, validIds),
+    runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
+    runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
+    runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),
+    runGateSafely("design-review-tradeoffs-present", designReviewTradeoffsPresent, judgment),
+    runGateSafely("design-review-risks-present", designReviewRisksPresent, judgment),
+    runGateSafely("layer-specific-non-empty", featureLayerSpecificNonEmpty, unit),
   ];
 }
 
@@ -741,16 +793,24 @@ export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
  * epic 的 split 描述 epic 拆成哪些 feature（无 split = 没法 execute 启动下层 feature）。
  */
 export function epicSplitNonEmpty(unit: Epic): GateResult {
-  const count = unit.plan.split.length;
-  if (count < 1) {
+  const items = unit.plan.split;
+  if (items.length < 1) {
     return {
       passed: false,
       report: "feature-split-non-empty: split 为空（epic 必须拆出至少 1 个 feature）",
     };
   }
+  // 验每条 split 必须有 slug（后续引用的唯一标识）
+  const missingSlugs = items.filter((item) => !item.slug || typeof item.slug !== "string" || item.slug.trim() === "");
+  if (missingSlugs.length > 0) {
+    return {
+      passed: false,
+      report: `feature-split-non-empty: ${missingSlugs.length} 条 split 缺少 slug 字段（slug 是后续引用的唯一标识，必须填）`,
+    };
+  }
   return {
     passed: true,
-    report: `feature-split-non-empty: split 有 ${count} 项`,
+    report: `feature-split-non-empty: split 有 ${items.length} 项，每条都有 slug`,
   };
 }
 
@@ -829,15 +889,15 @@ export function runEpicDesignReviewGates(unit: Epic): GateResult[] {
   const validIds = new Set<string>();
   for (const c of unit.clarifications) validIds.add(c.id);
   return [
-    epicSplitNonEmpty(unit),
-    epicSplitDagValid(unit),
-    allDecisionsResolved(unit.clarifications),
-    inheritedItemIdsValid(unit.plan.split, validIds),
-    designReviewNecessityNonEmpty(judgment),
-    designReviewSufficiencyComplete(judgment),
-    designReviewAlternativesNonEmpty(judgment),
-    designReviewTradeoffsPresent(judgment),
-    designReviewRisksPresent(judgment),
-    epicLayerSpecificNonEmpty(unit),
+    runGateSafely("feature-split-non-empty", epicSplitNonEmpty, unit),
+    runGateSafely("feature-split-dag-valid", epicSplitDagValid, unit),
+    runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications),
+    runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, unit.plan.split, validIds),
+    runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
+    runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
+    runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),
+    runGateSafely("design-review-tradeoffs-present", designReviewTradeoffsPresent, judgment),
+    runGateSafely("design-review-risks-present", designReviewRisksPresent, judgment),
+    runGateSafely("layer-specific-non-empty", epicLayerSpecificNonEmpty, unit),
   ];
 }

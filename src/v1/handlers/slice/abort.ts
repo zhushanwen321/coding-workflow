@@ -76,9 +76,8 @@ function cascadeAbortChildren(
   const children = deps.store.findChildren(parentId);
   for (const child of children) {
     const childStatus = readRecordStatus(child);
-    // 只跳过已 aborted（幂等：防重复 append abandonedRefs）。
-    // closed 不跳过——slice §6.1：引用废弃条目的子孙一律 abort，不区分是否已 closeout。
-    if (childStatus === "aborted") continue;
+    // 已终态跳过（closed/aborted 不可逆，无需重复 abort）
+    if (childStatus === "closed" || childStatus === "aborted") continue;
 
     const change: StatusChange = {
       from: childStatus as WorkUnitStatus,

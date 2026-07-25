@@ -303,7 +303,7 @@ export function buildSliceFailureNextAction(
   });
 
   const failureCount = deriveFailureCount(unit.statusHistory, action);
-  const failureHint = buildFailureHint(failureCount);
+  const failureHint = buildFailureHint(failureCount, unit.id, action);
   const fixCommand = buildSliceCommand(action, unit.id, action);
 
   const guidance = buildFailureGuidance({

@@ -10,8 +10,9 @@
  *
  * 范式参考：src/legacy/plan-parser.ts 的 Type.Object + Value.Check / Value.Errors。
  *
- * 不变量：零 IO，零 mock，纯函数。schema 与 FeatureSpec interface 同构（多余字段用 Optional 允许，
- * 不破坏 agent 已提交的附加信息——agent 附加 priority/statement 等字段无害）。
+ * 不变量：零 IO，零 mock，纯函数。schema 启用 strict 模式（additionalProperties: false），拒绝
+ * 未声明的额外字段，避免 agent 拼错字段名（如 FR 写成 `acId` 替代 `ac`）时被静默忽略。
+ * 已知合法的 agent 附加信息（priority / statement）显式声明为 Optional。
  */
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -43,10 +44,10 @@ const FunctionalRequirementSchema = Type.Object({
   title: Type.String(),
   detail: Type.String(),
   ac: Type.Array(Type.String()),
-  // 允许 agent 附加的额外字段（不校验、不拒绝）——保持与「额外字段无害」原则一致
+  // 显式声明 agent 已使用的附加字段，避免 strict 模式误伤。
   priority: Type.Optional(Type.Unknown()),
   statement: Type.Optional(Type.Unknown()),
-});
+}, { additionalProperties: false });
 
 /**
  * AcceptanceCriterion 的 schema（AC，feature 专属，model §5.7）。
@@ -60,7 +61,7 @@ const AcceptanceCriterionSchema = Type.Object({
   verification: Type.Optional(
     Type.Union([Type.Literal("unit"), Type.Literal("manual"), Type.Literal("review")]),
   ),
-});
+}, { additionalProperties: false });
 
 /**
  * BusinessCase 的 schema（UC，feature 专属，model §5.7）。
@@ -73,7 +74,7 @@ const BusinessCaseSchema = Type.Object({
   actor: Type.String(),
   scenario: Type.String(),
   expectedResult: Type.String(),
-});
+}, { additionalProperties: false });
 
 /**
  * Decision 的 schema（投影自 Clarification，不继承 WorkUnitItem）。
@@ -85,7 +86,7 @@ const DecisionSchema = Type.Object({
   decision: Type.String(),
   rationale: Type.String(),
   sourceClarification: Type.Optional(Type.String()),
-});
+}, { additionalProperties: false });
 
 /**
  * FeatureSpec 的 typebox schema（与 FeatureSpec interface 同构）。
@@ -114,7 +115,7 @@ export const FeatureSpecSchema = Type.Object({
   ),
   background: Type.Optional(Type.String()),
   constraints: Type.Optional(Type.String()),
-});
+}, { additionalProperties: false });
 
 // schema 入参类型从 Value.Check 签名派生（避免跨版本 TSchema 导出不稳定，同 plan-parser.ts）。
 type SpecSchema = Parameters<typeof Value.Check>[0];

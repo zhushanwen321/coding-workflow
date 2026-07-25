@@ -82,13 +82,26 @@ export function retrospectCoversJudgments(
 ): GateResult {
   // 构造期望被覆盖的 itemId 集合（ref 约定：裸字段→字段名，数组元素→元素 id）
   const expected = new Set<string>();
+  const validationErrors: string[] = [];
+  // 报告中截断描述的最大长度
+  const MAX_DESC_LENGTH = 30;
   expected.add("necessity");
   expected.add("sufficiency");
   expected.add("alternatives");
   for (const t of designReviewJudgment.tradeoffs) {
+    // 防御：agent 可能漏填 id（类型声明 required 但运行时无保障）
+    if (!t.id || typeof t.id !== "string" || t.id.trim() === "") {
+      validationErrors.push(`tradeoff 缺少 id 字段（decision: ${t.decision?.slice(0, MAX_DESC_LENGTH) ?? "??"}）`);
+      continue;
+    }
     expected.add(t.id);
   }
   for (const r of designReviewJudgment.risks) {
+    // 防御：agent 可能漏填 id
+    if (!r.id || typeof r.id !== "string" || r.id.trim() === "") {
+      validationErrors.push(`risk 缺少 id 字段（item: ${r.item?.slice(0, MAX_DESC_LENGTH) ?? "??"}）`);
+      continue;
+    }
     expected.add(r.id);
   }
 
@@ -100,9 +113,19 @@ export function retrospectCoversJudgments(
     expected.add("sufficiencyMet");
     expected.add("alternativesReconsidered");
     for (const tc of testJudgment.tradeoffCostRealized) {
+      // 防御：agent 可能用 tradeoff 而非 tradeoffRef（字段名混淆）
+      if (!tc.tradeoffRef || typeof tc.tradeoffRef !== "string" || tc.tradeoffRef.trim() === "") {
+        validationErrors.push(`tradeoffCostRealized 缺少 tradeoffRef 字段（可能误用 tradeoff）`);
+        continue;
+      }
       expected.add(tc.tradeoffRef);
     }
     for (const ro of testJudgment.riskOutcome) {
+      // 防御：agent 可能用 risk 而非 riskRef
+      if (!ro.riskRef || typeof ro.riskRef !== "string" || ro.riskRef.trim() === "") {
+        validationErrors.push(`riskOutcome 缺少 riskRef 字段（可能误用 risk）`);
+        continue;
+      }
       expected.add(ro.riskRef);
     }
   }
@@ -135,15 +158,22 @@ export function retrospectCoversJudgments(
     }
   }
 
-  if (missing.length > 0) {
+  if (missing.length > 0 || validationErrors.length > 0) {
+    const parts: string[] = [];
+    if (validationErrors.length > 0) {
+      parts.push(`输入验证错误: ${validationErrors.join("; ")}`);
+    }
+    if (missing.length > 0) {
+      parts.push(`reviewedItems 未覆盖核心判断项（缺失: ${missing.join(", ")}）`);
+    }
     return {
       passed: false,
-      report: `retrospect-covers-judgments: reviewedItems 未覆盖核心判断项（缺失: ${missing.join(", ")}）`,
+      report: `retrospect-covers-judgments: ${parts.join("; ")}`,
     };
   }
   return {
     passed: true,
-    report: `retrospect-covers-judgments: reviewedItems 覆盖全部 ${expected.size} 项核心判断`,
+    report: `retrospect-covers-judgments: reviewedItems 覆盖全部 ${expected.size} 项核心判断${validationErrors.length > 0 ? `（注意：有 ${validationErrors.length} 条输入验证错误被跳过）` : ""}`,
   };
 }
 
@@ -198,6 +228,14 @@ export function splitFulfillmentCoversPlan(
   retrospectData: PlanningRetrospectData,
   split: ReadonlyArray<Split>,
 ): GateResult {
+  // 过滤无效 slug（agent 可能漏填），报告验证错误
+  const invalidSplits = split.filter((s) => !s.slug || typeof s.slug !== "string" || s.slug.trim() === "");
+  if (invalidSplits.length > 0) {
+    return {
+      passed: false,
+      report: `split-fulfillment-covers-plan: ${invalidSplits.length} 条 split 缺少 slug 字段（slug 是覆盖校验的基础，必须填）`,
+    };
+  }
   const expected = new Set(split.map((s) => s.slug));
   const covered = new Set(retrospectData.splitFulfillment.map((f) => f.splitSlug));
   const missing: string[] = [];

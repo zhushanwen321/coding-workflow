@@ -89,7 +89,8 @@ export const WAVE_PLAN_TEMPLATE: WaveStageTemplate = {
 export const WAVE_DESIGN_REVIEW_TEMPLATE: WaveStageTemplate = {
   goal: "设计审查。对照 testCases 验 plan 是否必要、充分、MECE、有替代/取舍/风险。",
   constraint:
-    "关键约束：designReviewJudgment 的每个字段都必须填（necessity/sufficiency/alternatives/tradeoffs/risks）；tradeoffs 和 risks 的 id 会被后续 test/retrospect 引用。",
+    "关键约束：designReviewJudgment 的每个字段都必须填（necessity/sufficiency/alternatives/tradeoffs/risks）；" +
+    "tradeoffs 和 risks 的每个元素必须有 id 字段（string 类型，如 \"T1\"/\"R1\"），这个 id 会被后续 test/retrospect 阶段引用。",
 };
 
 /**
@@ -107,7 +108,9 @@ export const WAVE_EXECUTE_TEMPLATE: WaveStageTemplate = {
 export const WAVE_TEST_TEMPLATE: WaveStageTemplate = {
   goal: "代码品味审查的前置：先确认功能对（cw 自动跑测试），再填 testJudgment 对照 design-review 验收。",
   constraint:
-    "关键约束：tradeoffCostRealized 的 tradeoffRef 和 riskOutcome 的 riskRef 必须引用 design-review 里定义过的 id；" + SUBAGENT_LIGHT_TEST,
+    "关键约束：tradeoffCostRealized 的每个元素必须有 tradeoffRef 字段（引用 design-review 里 tradeoffs 的 id）；" +
+    "riskOutcome 的每个元素必须有 riskRef 字段（引用 design-review 里 risks 的 id）；" +
+    "字段名是 tradeoffRef/riskRef，不是 tradeoff/risk；" + SUBAGENT_LIGHT_TEST,
 };
 
 /** exec-review 阶段（4 gate + 写 execReviewJudgment，纯人审代码品味）。 */

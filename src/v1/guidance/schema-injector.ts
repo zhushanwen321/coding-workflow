@@ -25,8 +25,9 @@
  *      sourceFilePath 相对于 cwd（调用方保证指向 src/v1/core/*.ts）。
  */
 import { readFileSync } from "node:fs";
-
 import * as ts from "typescript";
+
+import { ACTION_SCHEMA } from "./action-schemas.js";
 
 // ═══════════════════════════════════════════════════════════════
 // 类型
@@ -96,6 +97,45 @@ export function injectSchema(sourceFilePath: string, interfaceName: string): str
   // 解析并递归展开引用类型 + 补 extends 字段。
   const lines = renderInterface(target, allInterfaces, /* depth */ 0, new Set());
   return ["{", ...lines, "}"].join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 构建期：生成预计算 schema 产物
+// ═══════════════════════════════════════════════════════════════
+
+/** 单个 action 的预计算 schema 条目。 */
+export interface SchemaGenEntry {
+  /** 来源 core 源文件路径。 */
+  sourceFilePath: string;
+  /** 提取的 interface 名。 */
+  interfaceName: string;
+  /** 渲染后的 schema 文本。 */
+  schemaText: string;
+}
+
+/**
+ * 为所有 ACTION_SCHEMA 中声明的 action 预计算 schema 文本，输出可序列化的 JSON 对象。
+ *
+ * 设计：npm pack 只发布 dist/ 目录，运行时 src/v1/core/*.ts 可能不存在。
+ * 因此在 build 阶段调用本函数生成 dist/v1/guidance/schemas.gen.json，
+ * 运行时优先读该 JSON 产物，命中则直接返回 schema 文本；未命中再降级回
+ * injectSchema（开发时无 build 产物仍可工作）。
+ *
+ * @returns action → SchemaGenEntry 的映射对象。
+ */
+export function buildSchemaGenFile(): Record<string, SchemaGenEntry> {
+  const result: Record<string, SchemaGenEntry> = {};
+  for (const [action, source] of Object.entries(ACTION_SCHEMA)) {
+    if (source === undefined) {
+      continue;
+    }
+    result[action] = {
+      sourceFilePath: source.sourceFilePath,
+      interfaceName: source.interfaceName,
+      schemaText: injectSchema(source.sourceFilePath, source.interfaceName),
+    };
+  }
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════

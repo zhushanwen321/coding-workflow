@@ -294,6 +294,51 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     // judgment 未写入
     expect(loadUnit(unitId).designReviewJudgment.necessity).toBe("");
   });
+
+  /**
+   * M12 验证：wave handler fail 时 appendFailRecord 写入 statusHistory + failureCount 派生。
+   *
+   * 背景：v1 用 unit.statusHistory（不是 0.x 的 gateHistory）记录 gate fail，appendFailRecord
+   * 把 fail 落盘后 deriveFailureCount 才能从 statusHistory 派生连续 fail 次数。
+   * 如果 handler 不 appendFailRecord，failureCount 永远为 0、递进提示不工作。
+   *
+   * 此测试验证 wave design-review fail 路径：连续 2 次 fail → failureCount = 1 / 2，
+   * statusHistory 末尾有 gate fail 记录（说明 appendFailRecord 落盘）。
+   */
+  it("wave design-review 连续 fail → failureCount 累计（1→2）+ statusHistory 落盘", () => {
+    const unitId = "wave:m12-failcount";
+    dispatch({ action: "create", input: {
+      slug: "m12-failcount", objective: "o", parentUnitId: "slice:s", basedOnParent: [],
+    } }, env.deps);
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
+    dispatch({ action: "plan", unitId, input: {
+      testCases: [], tasks: [], files: [], contracts: [],
+    } }, env.deps);
+
+    // 第一次 design-review fail（testCases 空触发 test-cases-non-empty）
+    const first = dispatch({ action: "design-review", unitId, input: {
+      designReviewJudgment: makeValidDesignReviewJudgment(),
+    } }, env.deps);
+    expect(first.ok).toBe(false);
+    expect(first.failureCount).toBe(1);
+    // statusHistory 末尾有 gate fail 记录（验证 appendFailRecord 落盘）
+    const historyAfterFirst = loadUnit(unitId).statusHistory;
+    const lastAfterFirst = historyAfterFirst[historyAfterFirst.length - 1];
+    expect(lastAfterFirst).toBeDefined();
+    expect(lastAfterFirst?.note).toMatch(/gate fail/);
+
+    // 第二次同 action fail → failureCount 累计到 2
+    const second = dispatch({ action: "design-review", unitId, input: {
+      designReviewJudgment: makeValidDesignReviewJudgment(),
+    } }, env.deps);
+    expect(second.ok).toBe(false);
+    expect(second.failureCount).toBe(2);
+    // statusHistory 末尾仍是 gate fail（连续两条）
+    const historyAfterSecond = loadUnit(unitId).statusHistory;
+    const lastAfterSecond = historyAfterSecond[historyAfterSecond.length - 1];
+    expect(lastAfterSecond).toBeDefined();
+    expect(lastAfterSecond?.note).toMatch(/gate fail/);
+  });
 });
 
 describe("E: dispatch replan 旁路（不改 status）", () => {

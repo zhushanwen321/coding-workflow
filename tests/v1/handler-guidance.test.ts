@@ -335,7 +335,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
     expect(r2.failureCount).toBe(2);
     // 第 2 次含「递进提示」段（failureCount=2 > 1）
     expect(r2.nextAction!.guidance).toContain("## 递进提示");
-    expect(r2.nextAction!.guidance).toContain("cw clarify");
+    expect(r2.nextAction!.guidance).toContain("cw v1 clarify");
   });
 
   it("gate fail 后 statusHistory 尾部含 fail 记录（note 含 'gate fail'）", () => {

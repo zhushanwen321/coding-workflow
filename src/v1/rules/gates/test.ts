@@ -138,6 +138,15 @@ export function testReferencesDesignReview(
   }
 
   // 2. tradeoff id 覆盖（真引用一致）
+  // 先验每条 tradeoffCostRealized 必须有 tradeoffRef
+  const missingRefs = testJudgment.tradeoffCostRealized
+    .filter((t) => !t.tradeoffRef || typeof t.tradeoffRef !== "string" || t.tradeoffRef.trim() === "");
+  if (missingRefs.length > 0) {
+    return {
+      passed: false,
+      report: `test-references-design-review: ${missingRefs.length} 条 tradeoffCostRealized 缺少 tradeoffRef 字段（字段名是 tradeoffRef，不是 tradeoff）`,
+    };
+  }
   const tradeoffRefs = new Set(
     testJudgment.tradeoffCostRealized.map((t) => t.tradeoffRef),
   );
@@ -147,11 +156,20 @@ export function testReferencesDesignReview(
   if (missingTradeoffs.length > 0) {
     return {
       passed: false,
-      report: `test-references-design-review: tradeoffCostRealized 未覆盖 tradeoffs（缺失 refs: ${missingTradeoffs.join(", ")}）`,
+      report: `test-references-design-review: tradeoffCostRealized 未覆盖 tradeoffs（缺失 refs: ${missingTradeoffs.join(", ")})`,
     };
   }
 
   // 3. risk id 覆盖（真引用一致）
+  // 先验每条 riskOutcome 必须有 riskRef
+  const missingRiskRefs = testJudgment.riskOutcome
+    .filter((r) => !r.riskRef || typeof r.riskRef !== "string" || r.riskRef.trim() === "");
+  if (missingRiskRefs.length > 0) {
+    return {
+      passed: false,
+      report: `test-references-design-review: ${missingRiskRefs.length} 条 riskOutcome 缺少 riskRef 字段（字段名是 riskRef，不是 risk）`,
+    };
+  }
   const riskRefs = new Set(testJudgment.riskOutcome.map((r) => r.riskRef));
   const missingRisks = designReviewJudgment.risks
     .filter((r) => !riskRefs.has(r.id))
@@ -159,7 +177,7 @@ export function testReferencesDesignReview(
   if (missingRisks.length > 0) {
     return {
       passed: false,
-      report: `test-references-design-review: riskOutcome 未覆盖 risks（缺失 refs: ${missingRisks.join(", ")}）`,
+      report: `test-references-design-review: riskOutcome 未覆盖 risks（缺失 refs: ${missingRisks.join(", ")})`,
     };
   }
 

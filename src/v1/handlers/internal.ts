@@ -13,6 +13,9 @@
  * 不变量：transitionStatus / saveUnit / appendFailRecord 是纯编排（IO 仅经 deps）；guidance 填充
  *      读 core 源文件生成 schema（构建期/运行期均可，内部按 action 缓存，每 action 仅读一次）。
  */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExecutionStatus } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import {
@@ -24,6 +27,7 @@ import {
   injectSchema,
   WAVE_STAGE_TEMPLATES,
 } from "../guidance/index.js";
+import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
@@ -123,41 +127,35 @@ const ACTION_TO_NEXT: Readonly<Record<string, string | undefined>> = {
 };
 
 /**
- * action → 该 action 的 input schema 来源（core 源文件 + interface 名）。
- *
- * injectSchema 从源码自动提取 schema 文本（§3.6），避免类型改了 guidance 漂移。
- * undefined 表示该 action 无结构化 input（create 的 slug/objective 是扁平参数，不走 schema block）。
- */
-interface SchemaSource {
-  sourceFilePath: string;
-  interfaceName: string;
-}
-
-const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
-  create: undefined,
-  clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "PlanInput" },
-  "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
-  execute: undefined,
-  test: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "TestJudgment" },
-  "exec-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "ExecReviewJudgment" },
-  retrospect: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "RetrospectData" },
-  closeout: { sourceFilePath: "src/v1/core/evidence.ts", interfaceName: "ArtifactRef" },
-  replan: undefined,
-  abort: undefined,
-};
-
-/**
  * schema 文本缓存（按 action，模块级，整个进程只读一次源文件）。
  *
- * injectSchema 会 createSourceFile 解析 core TS（有成本），且 schema 是静态的
- * （core 源码运行期不变），缓存避免每次 handler 调用都重读重解析。
+ * 优先读取 build 阶段预生成的 dist/v1/guidance/schemas.gen.json；未命中时降级到
+ * injectSchema 实时解析 src/v1/core/*.ts（开发时无 build 产物仍可工作）。
  */
 const schemaCache = new Map<string, string>();
 
+/** 从预计算 JSON 产物读取某 action 的 schema 文本。 */
+interface SchemaGenFile {
+  [action: string]: { schemaText: string } | undefined;
+}
+
 /**
- * 取某 action 的 input schema 文本（带缓存 + 降级）。
+ * 定位预计算 schema 产物路径。
  *
+ * 本文件在 src/v1/handlers/internal.ts 或 dist/v1/handlers/internal.js 中运行，
+ * 向上三层即项目根目录，再拼 dist/v1/guidance/schemas.gen.json。
+ */
+function getSchemaGenFilePath(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  const projectRoot = dirname(dirname(dirname(currentFile)));
+  return resolve(projectRoot, "dist", "v1", "guidance", "schemas.gen.json");
+}
+
+/**
+ * 取某 action 的 input schema 文本（带缓存 + 优先读预计算产物 + 降级）。
+ *
+ * - 命中 dist/v1/guidance/schemas.gen.json 中对应 action → 直接返回产物中的 schemaText。
+ * - 产物缺失或损坏 → 降级到 injectSchema 实时解析 src/v1/core/*.ts。
  * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错，guidance 不应因 schema 生成失败而中断；
  *   schema 是给 agent 看的辅助信息，缺失只降级体验）。
  * - 同一 action 第二次调用命中缓存。
@@ -173,11 +171,26 @@ function getSchemaText(action: string): string {
     // 无结构化 schema 的 action（create / execute / replan / abort）：用扁平参数提示。
     text = FLAT_INPUT_HINT[action] ?? "（无结构化 input schema）";
   } else {
-    try {
-      text = injectSchema(source.sourceFilePath, source.interfaceName);
-    } catch {
-      // 降级：源文件缺失或 interface 不存在时给出可读提示，不阻断 guidance。
-      text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
+    const genPath = getSchemaGenFilePath();
+    if (existsSync(genPath)) {
+      try {
+        const genFile = JSON.parse(readFileSync(genPath, "utf-8")) as SchemaGenFile;
+        const entry = genFile[action];
+        if (entry?.schemaText !== undefined) {
+          text = entry.schemaText;
+        } else {
+          text = injectSchema(source.sourceFilePath, source.interfaceName);
+        }
+      } catch {
+        text = injectSchema(source.sourceFilePath, source.interfaceName);
+      }
+    } else {
+      try {
+        text = injectSchema(source.sourceFilePath, source.interfaceName);
+      } catch {
+        // 降级：源文件缺失或 interface 不存在时给出可读提示，不阻断 guidance。
+        text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
+      }
     }
   }
   schemaCache.set(action, text);
@@ -293,7 +306,7 @@ export function buildFailureNextAction(
 
   // 含本次的连续 fail 次数（appendFailRecord 已 append，故扫描含本次）。
   const failureCount = deriveFailureCount(unit.statusHistory, action);
-  const failureHint = buildFailureHint(failureCount);
+  const failureHint = buildFailureHint(failureCount, unit.id, action);
 
   const fixCommand = buildCommand(action, unit.id, action);
 

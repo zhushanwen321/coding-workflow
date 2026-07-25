@@ -223,7 +223,25 @@ const V1_VALID_ACTIONS = new Set(["create", ...V1_ADVANCE_ACTIONS]);
 /** v1 只读查询命令（tree/status/list）——不经 dispatch、不写 store。 */
 const V1_READONLY_QUERIES = new Set(["tree", "status", "list", "handoff"]);
 
-// ── 跨平台「用系统默认应用打开文件」 ──────────────────────────
+// ── verbose / debug 日志 ─────────────────────────────────────
+
+/** 进程级 verbose 开关（由 main 解析 --verbose / CW_DEBUG 后设置）。 */
+let cwVerbose = false;
+
+/** 当 CW_DEBUG=1 或 --verbose 时启用 verbose 日志。 */
+function isVerbose(parsed: ParsedArgs): boolean {
+  return process.env.CW_DEBUG === "1" || parsed.verbose === true;
+}
+
+/** verbose 模式下向 stderr 写调试日志（不污染 stdout JSON）。 */
+function debugLog(...args: unknown[]): void {
+  if (!cwVerbose) return;
+  const message = args
+    .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
+  process.stderr.write(`[cw:debug] ${message}\n`);
+}
+
 
 /**
  * shouldAutoOpen — 是否自动 open 产出的文件。
@@ -1238,6 +1256,7 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
  * 命令默认 `npx vitest run`，可通过 cw.config.json 的 testRunner.command 覆盖。
  */
 function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
+  debugLog("constructV1Deps workspacePath", workspacePath, "testCwd", testCwd);
   const store = new V1Store(workspacePath);
   const gitValidator = {
     exists: (hash: string): boolean => {
@@ -1266,9 +1285,11 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
     : workspacePath;
   const runnerCommand = config?.testRunner?.command ?? "npx vitest run";
   const [runnerCmd, ...runnerArgs] = runnerCommand.split(/\s+/);
+  debugLog("constructV1Deps runnerCwd", runnerCwd, "runnerCommand", runnerCommand);
 
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
+      debugLog("testRunner.run unit", unit.id, "cwd", runnerCwd);
       // 在 runnerCwd 下跑测试命令；exit 0 视为通过。
       // 用 spawnSync 同步阻塞，超时 120s（防 agent 误配死循环测试卡死 CLI）。
       const r = spawnSync(runnerCmd, runnerArgs, {
@@ -1342,12 +1363,14 @@ async function runV1(
   const layer = argv[ARGV_V1_LAYER];
 
   if (v1ActionRaw === undefined) {
+    debugLog("runV1 missing action");
     process.stderr.write(
       `错误：v1 需要指定 action。用法：cw v1 <action> [layer] [options]\n`,
     );
     process.exit(EXIT_CW_ERROR);
   }
   const v1Action = String(v1ActionRaw);
+  debugLog("runV1 action", v1Action, "layer", layer);
 
   // ── readonly 查询分支（tree/status/list）──
   // 不经 dispatch、不写 store、不读 stdin。只 new V1Store 读数据 + render + console.log + 早返回。
@@ -1357,6 +1380,7 @@ async function runV1(
   }
 
   if (!V1_VALID_ACTIONS.has(v1Action)) {
+    debugLog("runV1 unknown action", v1Action);
     process.stderr.write(
       `错误：未知 v1 action "${v1Action}"。合法: ${[...V1_VALID_ACTIONS].join(", ")}\n`,
     );
@@ -1374,6 +1398,7 @@ async function runV1(
   // 非法 layer 字符串（如 'bogus'，不以 '-' 开头但不在四层中）不在此分支，
   // 仍由 buildV1Params 抛 CwError（exit 1）——那是真错误而非缺失。
   if (v1Action === "create" && (layer === undefined || layer.startsWith("-"))) {
+    debugLog("runV1 create missing layer");
     process.stdout.write(buildLayerPromptGuidance());
     return;
   }
@@ -1381,6 +1406,7 @@ async function runV1(
   // 推进 action 读 stdin（create 不读 stdin）。
   const stdinData = v1Action === "create" ? "" : await readStdin();
   const isStdinTTY = process.stdin.isTTY === true;
+  debugLog("runV1 stdin length", stdinData.length, "isTTY", isStdinTTY);
 
   // 构造 V1Params（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
   // 非 create action 先读 unit scope（wave 需 --commitHash，slice 不需要）。
@@ -1395,11 +1421,14 @@ async function runV1(
     isStdinTTY,
     scope,
   );
+  debugLog("runV1 params", params);
 
   // 构造 V1Deps + 调 v1Dispatch。
   const testCwd = flag(parsed, "testCwd");
   const deps = constructV1Deps(workspacePath, testCwd);
+  debugLog("runV1 deps constructed");
   const result: V1ActionResult = v1Dispatch(params, deps);
+  debugLog("runV1 dispatch result", result);
 
   // 序列化 ActionResult → stdout JSON。
   process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
@@ -1578,11 +1607,42 @@ export function mapExitCode(err: Error): number {
     : EXIT_INTERNAL_ERROR;
 }
 
+/**
+ * 格式化顶层 catch 的错误输出。
+ *
+ * 契约：
+ *   - 非 Error 值 → exit 2，输出 String(err)
+ *   - CwError / V1Error（exit 1）→ 只输出友好 message，不暴露堆栈
+ *   - 其他内部异常（exit 2）→ 输出 message + 完整 stack trace
+ *
+ * 与 mapExitCode 分离：render 负责 stderr 文案，mapExitCode 负责 exit code 映射。
+ */
+export function renderCliError(err: unknown): {
+  exitCode: number;
+  stderr: string;
+} {
+  if (!(err instanceof Error)) {
+    return {
+      exitCode: EXIT_INTERNAL_ERROR,
+      stderr: `错误：${String(err)}\n`,
+    };
+  }
+
+  const exitCode = mapExitCode(err);
+  const lines: string[] = [`错误：${err.message}`];
+  if (exitCode === EXIT_INTERNAL_ERROR) {
+    lines.push(`堆栈：${err.stack ?? "(无堆栈)"}`);
+  }
+  return { exitCode, stderr: lines.join("\n") + "\n" };
+}
+
 // ── main ─────────────────────────────────────────────────────
 
 async function main(argv: string[]): Promise<void> {
   // argv[0]=node 路径, argv[1]=脚本路径, argv[2] 起才是用户参数
   const parsed = minimist(argv.slice(ARGV_USER_PARAMS_START)) as ParsedArgs;
+  cwVerbose = isVerbose(parsed);
+  debugLog("verbose mode enabled");
   const rawAction = parsed._[0];
 
   if (rawAction === undefined) {
@@ -1840,9 +1900,9 @@ const isCliEntry = (() => {
 
 if (isCliEntry) {
   main(process.argv).catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`错误：${message}\n`);
-    const exitCode = err instanceof Error ? mapExitCode(err) : EXIT_INTERNAL_ERROR;
+    debugLog("main catch", err);
+    const { exitCode, stderr } = renderCliError(err);
+    process.stderr.write(stderr);
     process.exit(exitCode);
   });
 }

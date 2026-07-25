@@ -1,7 +1,7 @@
 /**
  * v1 rules — spec-schema（FeatureSpec 校验纯函数）测试。
  *
- * 测 validateFeatureSpec：合法 spec 通过 / 漏 ac 失败 / 字段类型错失败 / 额外字段允许 / 空对象失败。
+ * 测 validateFeatureSpec：合法 spec 通过 / 漏 ac 失败 / 字段类型错失败 / 未声明额外字段失败 / 空对象失败。
  * 纯函数，零 IO，零 mock。
  */
 import { describe, expect, it } from "vitest";
@@ -65,7 +65,8 @@ describe("validateFeatureSpec", () => {
     expect(result.errors.some((e) => e.includes("condition"))).toBe(true);
   });
 
-  it("额外字段（priority/statement）允许通过——不破坏 agent 已附加的信息", () => {
+  it("FR 显式声明的附加字段（priority/statement）允许通过", () => {
+    // priority / statement 是 schema 显式声明为 Optional 的字段，strict 模式下仍允许
     const spec = {
       ...makeFeatureSpec(),
       functionalRequirements: [
@@ -77,12 +78,30 @@ describe("validateFeatureSpec", () => {
           ac: ["AC1"],
           priority: "high",
           statement: "附加说明",
-          customField: 123,
         },
       ],
     };
     const result = validateFeatureSpec(spec);
     expect(result.valid).toBe(true);
+  });
+
+  it("FR 未声明的额外字段（customField）失败（strict 模式拦截拼错字段名）", () => {
+    const spec = {
+      ...makeFeatureSpec(),
+      functionalRequirements: [
+        {
+          id: "FR1",
+          status: "active",
+          title: "t",
+          detail: "d",
+          ac: ["AC1"],
+          customField: 123,
+        },
+      ],
+    };
+    const result = validateFeatureSpec(spec);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("customField"))).toBe(true);
   });
 
   it("非对象 / null 失败", () => {

@@ -11,13 +11,17 @@
  * - tc3: slice replan 级联 abort child wave → parent slice.childDelivery childStatus=aborted（cascadeAbortUnit 内 rollup）
  * - tc4: slice abort 级联 child wave → parent slice.childDelivery childStatus=aborted（cascadeAbortChildren 内 rollup）
  * - tc5: feature closeout → parent epic.childDelivery childStatus=closed（跨层）
- * - tc6: parent slice 已冻结（frozenAt）→ rollup 跳过（childDelivery 不动）
+ * - tc7: slice abort 不级联修改已 closed 的 child wave（脏数据防护）
+ * - tc8: feature abort 不级联修改已 closed 的 child slice（脏数据防护）
+ * - tc9: epic abort 不级联修改已 closed 的 child feature（脏数据防护）
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ChildDeliveryRecord } from "../../src/v1/core/evidence.js";
 import type { Epic, Feature, Slice } from "../../src/v1/core/workunit.js";
 import { rollupChildDelivery } from "../../src/v1/handlers/rollup.js";
+import { handleAbortEpic } from "../../src/v1/handlers/epic/abort.js";
+import { handleAbortFeature } from "../../src/v1/handlers/feature/abort.js";
 import { handleAbortSlice } from "../../src/v1/handlers/slice/abort.js";
 import { handleCloseoutSlice } from "../../src/v1/handlers/slice/closeout.js";
 import { handleExecuteSlice } from "../../src/v1/handlers/slice/execute.js";
@@ -32,6 +36,7 @@ import {
 } from "./helpers/feature-env.js";
 import {
   makeValidPlanningRetrospectData,
+  setupSliceWithClosedWaves,
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
 import type { V1Env } from "./helpers/v1-env.js";
@@ -213,3 +218,83 @@ describe("parent slice 冻结后 rollup 跳过", () => {
     expect(after).toEqual(snapshot);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// tc7: slice abort 不级联修改已 closed 的 child wave（T-Critical-3 修复）
+// ═══════════════════════════════════════════════════════════════
+
+describe("slice abort 级联跳过已 closed 的 child wave", () => {
+  it("child wave 已 closed → slice abort 后仍 closed，且 evidence 不被污染", () => {
+    const { slice, childWaveIds } = setupSliceWithClosedWaves(env.deps, "abort-skip-closed-wave");
+    expect(slice.status).toBe("executing");
+    expect(childWaveIds.length).toBeGreaterThan(0);
+
+    const childId = childWaveIds[0]!;
+    const childBefore = env.deps.store.load(childId) as unknown as { status: string; statusHistory: unknown[]; evidence: { frozenAt: string } };
+    expect(childBefore.status).toBe("closed");
+    expect(childBefore.evidence.frozenAt).toBeDefined();
+    const historyBefore = JSON.stringify(childBefore.statusHistory);
+
+    handleAbortSlice(loadSlice(slice.id), { reason: "abandon slice" }, env.deps);
+
+    const childAfter = env.deps.store.load(childId) as unknown as { status: string; statusHistory: unknown[]; evidence: { frozenAt: string } };
+    expect(childAfter.status).toBe("closed");
+    expect(JSON.stringify(childAfter.statusHistory)).toBe(historyBefore);
+    expect(childAfter.evidence.frozenAt).toBe(childBefore.evidence.frozenAt);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// tc8: feature abort 不级联修改已 closed 的 child slice（T-Critical-3 修复）
+// ═══════════════════════════════════════════════════════════════
+
+describe("feature abort 级联跳过已 closed 的 child slice", () => {
+  it("child slice 已 closed → feature abort 后仍 closed，且 evidence 不被污染", () => {
+    const featureId = setupFeatureWithClosedSlices(env.deps, "abort-skip-closed-slice");
+    const feature = loadFeature(featureId);
+    expect(feature.status).toBe("executing");
+    const childSliceIds = feature.executeResult.childUnitIds;
+    expect(childSliceIds.length).toBeGreaterThan(0);
+
+    const childId = childSliceIds[0]!;
+    const childBefore = env.deps.store.load(childId) as unknown as { status: string; statusHistory: unknown[]; evidence: { frozenAt: string } };
+    expect(childBefore.status).toBe("closed");
+    expect(childBefore.evidence.frozenAt).toBeDefined();
+    const historyBefore = JSON.stringify(childBefore.statusHistory);
+
+    handleAbortFeature(loadFeature(featureId), { reason: "abandon feature" }, env.deps);
+
+    const childAfter = env.deps.store.load(childId) as unknown as { status: string; statusHistory: unknown[]; evidence: { frozenAt: string } };
+    expect(childAfter.status).toBe("closed");
+    expect(JSON.stringify(childAfter.statusHistory)).toBe(historyBefore);
+    expect(childAfter.evidence.frozenAt).toBe(childBefore.evidence.frozenAt);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// tc9: epic abort 不级联修改已 closed 的 child feature（T-Critical-3 修复）
+// ═══════════════════════════════════════════════════════════════
+
+describe("epic abort 级联跳过已 closed 的 child feature", () => {
+  it("child feature 已 closed → epic abort 后仍 closed，且 evidence 不被污染", () => {
+    const epicId = setupEpicWithClosedFeatures(env.deps, "abort-skip-closed-feature");
+    const epic = loadEpic(epicId);
+    expect(epic.status).toBe("executing");
+    const childFeatureIds = epic.executeResult.childUnitIds;
+    expect(childFeatureIds.length).toBeGreaterThan(0);
+
+    const childId = childFeatureIds[0]!;
+    const childBefore = env.deps.store.load(childId) as unknown as { status: string; statusHistory: unknown[]; evidence: { frozenAt: string } };
+    expect(childBefore.status).toBe("closed");
+    expect(childBefore.evidence.frozenAt).toBeDefined();
+    const historyBefore = JSON.stringify(childBefore.statusHistory);
+
+    handleAbortEpic(loadEpic(epicId), { reason: "abandon epic" }, env.deps);
+
+    const childAfter = env.deps.store.load(childId) as unknown as { status: string; statusHistory: unknown[]; evidence: { frozenAt: string } };
+    expect(childAfter.status).toBe("closed");
+    expect(JSON.stringify(childAfter.statusHistory)).toBe(historyBefore);
+    expect(childAfter.evidence.frozenAt).toBe(childBefore.evidence.frozenAt);
+  });
+});
+
