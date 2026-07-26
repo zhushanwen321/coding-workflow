@@ -249,7 +249,7 @@ function renderSingleCwd(
   pageLen: number,
   verbose: boolean,
 ): string {
-  return renderTable(page, childCountIndex, verbose) + renderPagination(opts, total, offset, pageLen, 0);
+  return renderTable(page, childCountIndex, verbose) + renderPagination(opts, total, offset, pageLen);
 }
 
 /**
@@ -285,8 +285,6 @@ function renderGrouped(
   // BC4：跨组去重 remoteUrl（同 repo 多 worktree）
   const seenRemoteUrls = new Set<string>();
 
-  // 为每组算该组在 page 内的起始 offset（组内分页元信息用）
-  let runningPageOffset = 0;
   for (const cwd of groupOrder) {
     const groupUnits = groupMap.get(cwd)!;
     const head = groupUnits[0];
@@ -294,13 +292,20 @@ function renderGrouped(
 
     out.push(renderGroupHeader(meta, cwd, seenRemoteUrls));
     out.push(renderTable(groupUnits, childCountIndex, verbose));
-    // 组内分页：该组占总页的位置（runningPageOffset 基于全局 page 切片）
-    out.push(renderPagination(opts, groupUnits.length, runningPageOffset, groupUnits.length, 0, true));
-    runningPageOffset += groupUnits.length;
   }
 
   // 跨组分页元信息（基于 filtered 全量，区别于组内 page 切片）
-  out.push(renderPagination(opts, total, offset, pageLen, filtered.length));
+  out.push(renderPagination(opts, total, offset, pageLen));
+
+  // C2：--all 模式分页可能截断其他 cwd 组（slice 在分组前发生），
+  // 让 agent 知道有遗漏的 cwd 组，避免把当前页当作跨 cwd 的完整集合。
+  const totalCwdGroups = new Set(filtered.map((au) => au.cwd ?? "(unknown cwd)")).size;
+  const shownCwdGroups = new Set(page.map((au) => au.cwd ?? "(unknown cwd)")).size;
+  if (shownCwdGroups < totalCwdGroups) {
+    out.push(
+      `${totalCwdGroups} cwd groups total, ${shownCwdGroups} shown (use --grep to narrow or --limit to show more)\n`,
+    );
+  }
   return out.join("");
 }
 
@@ -401,18 +406,14 @@ function renderTable(
  * 渲染分页元信息。
  *
  * total > pageLen 时输出分隔行 + "Showing <start>–<end> of <total>" + 翻页提示。
- * total ≤ pageLen 时不输出（单页内无需分页提示）。groupInternal=true 时强制不输出
- *（组内已按组长度计算，避免误导；组级分页由调用方单独输出）。
+ * total ≤ pageLen 时不输出（单页内无需分页提示）。
  */
 function renderPagination(
   opts: ListOptions,
   total: number,
   offset: number,
   pageLen: number,
-  _filteredTotal: number,
-  groupInternal = false,
 ): string {
-  if (groupInternal) return "";
   if (total <= pageLen) return "";
   const limit = opts.limit ?? DEFAULT_LIMIT;
   const start = offset + 1;

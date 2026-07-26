@@ -18,24 +18,21 @@
  * 测试策略：真实 fs + 真实 V1Store + 真实 JSON 文件（zero mock）。
  * V1_HOME 隔离：每个 describe 的 beforeEach 设独立 tmp V1_HOME（吸取 Wave A C1 教训）。
  */
-import { spawnSync } from "node:child_process";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
   writeFileSync,
-  readFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { renderList, type AnnotatedUnit } from "../../src/v1/readonly/render.js";
 import { loadAllCwdsFromHome } from "../../src/v1/readonly/cross-cwd.js";
 import { V1Store } from "../../src/v1/store/v1-store.js";
-import { encodeCwd, getV1JsonPath } from "../../src/v1/store/schema.js";
+import { encodeCwd } from "../../src/v1/store/schema.js";
 import type { RepoMeta, WorkUnitRecord } from "../../src/v1/store/schema.js";
 
 /** 造一个最小 WorkUnitRecord（靠索引签名 [key: string]: unknown 过类型，不强转）。 */
@@ -311,7 +308,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
   });
   afterEach(() => {
     if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1Home = prevV1Home;
+    else process.env.V1_HOME = prevV1Home;
     rmSync(v1Home, { recursive: true, force: true });
   });
 
@@ -371,6 +368,26 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     const loaded = loadAllCwdsFromHome(join(v1Home, "nonexistent-subdir"));
     expect(loaded).toEqual([]);
   });
+
+  it("TC-B5fs: 真实 fs 同 repo 多 worktree，renderList --all 的 group header 去重", () => {
+    // 两个 cwd 共享 remoteUrl（同 repo 不同 worktree）
+    writeCwdStore("/repo/ws-a", [makeUnit("wave:a")], makeRepoMeta({ worktreePath: "/repo/ws-a" }));
+    writeCwdStore("/repo/ws-b", [makeUnit("wave:b")], makeRepoMeta({ worktreePath: "/repo/ws-b" }));
+
+    const loaded = loadAllCwdsFromHome(v1Home);
+    const annotated: AnnotatedUnit[] = [];
+    for (const { cwd, data } of loaded) {
+      for (const unit of data.workUnits) {
+        annotated.push({ unit, cwd, repoMeta: data.repoMeta });
+      }
+    }
+
+    const out = renderList(annotated, { all: true });
+    // 首个 group 显示完整 remoteUrl
+    expect(out).toMatch(/git@github\.com:foo\/bar\.git/);
+    // 第二个 group 显示 (same repo)
+    expect(out).toMatch(/\(same repo\)/);
+  });
 });
 
 describe("Wave B: V1Store 集成 + --cwd", () => {
@@ -388,7 +405,7 @@ describe("Wave B: V1Store 集成 + --cwd", () => {
   });
   afterEach(() => {
     if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1Home = prevV1Home;
+    else process.env.V1_HOME = prevV1Home;
     rmSync(v1Home, { recursive: true, force: true });
     rmSync(cwdA, { recursive: true, force: true });
     rmSync(cwdB, { recursive: true, force: true });
@@ -408,5 +425,10 @@ describe("Wave B: V1Store 集成 + --cwd", () => {
     // 用 cwdB 的 store 查
     const unitsB = new V1Store(cwdB).loadAll();
     expect(unitsB.map((u) => u.id)).toEqual(["wave:b"]);
+  });
+
+  it.skip("TC-B6: --all 与 --cwd 互斥（cli 层，需 e2e，smoke test 已验证）", () => {
+    // 由 `node dist/cli.js v1 list --all --cwd /tmp` → exit 1 + 错误信息 验证过
+    // cli 层逻辑在 src/cli.ts，e2e 测试成本高，暂跳过
   });
 });

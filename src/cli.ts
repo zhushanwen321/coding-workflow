@@ -1513,6 +1513,11 @@ async function runV1Readonly(
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : V1_LIST_DEFAULT_LIMIT;
   const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
+  // M4：--cwd 必须是绝对路径（V1Store 按 encodeCwd(cwd) 落盘，相对路径会与实际 cwd 错位）
+  if (cwdFlag !== undefined && !isAbsolute(cwdFlag)) {
+    throw new CwError(`--cwd 需要绝对路径，当前值: ${cwdFlag}`);
+  }
+
   // ES3：--all 与 --cwd 互斥（--all 跨 cwd 遍历，--cwd 锁定单 cwd，语义冲突）
   if (isAll && cwdFlag !== undefined) {
     throw new CwError("--all and --cwd are mutually exclusive");
