@@ -15,6 +15,8 @@
 import type { SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { spawnSync } from "node:child_process";
 
+import type { RepoMeta } from "../store/schema.js";
+
 /** extractChangedFiles 的返回——提取成功时 changedFiles 非空（或空但无 note），失败时带 note。 */
 export interface ExtractResult {
   /** 变更文件列表（相对仓库根的路径）。提取失败时为空数组。 */
@@ -148,4 +150,35 @@ export function extractChangedFiles(
     .map((s) => s.trim())
     .filter(Boolean);
   return { changedFiles };
+}
+
+/**
+ * 采集 git repo 元信息（remoteUrl/branch/headCommit），用于 _v1.json 顶层 repoMeta。
+ *
+ * 与 extractChangedFiles 同风格：spawnSync + GIT_SPAWN_OPTS，失败降级不抛。
+ * 每个字段独立采集，单个 git 命令失败不影响其他字段。
+ *
+ * @param cwd 工作目录绝对路径（直接作为 repoMeta.worktreePath）
+ */
+export function collectRepoMeta(cwd: string): RepoMeta {
+  const runGit = (args: string[]): string => {
+    const result = spawnSync("git", args, { ...GIT_SPAWN_OPTS, cwd });
+    if (result.status !== 0 || result.error) {
+      return "";
+    }
+    return result.stdout.trim();
+  };
+
+  const remoteUrl = runGit(["remote", "get-url", "origin"]);
+  // detached HEAD 时 rev-parse --abbrev-ref HEAD 返回 "HEAD"，保留这个值
+  const branch = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+  const headCommit = runGit(["rev-parse", "--short", "HEAD"]);
+
+  return {
+    remoteUrl,
+    branch,
+    worktreePath: cwd,
+    headCommit,
+    recordedAt: new Date().toISOString(),
+  };
 }

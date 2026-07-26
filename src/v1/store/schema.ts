@@ -24,7 +24,30 @@ import { isAbsolute, join } from "node:path";
 
 /** v1 持久化文件的顶层 schema（扁平集合 + parentUnitId 外键）。 */
 export interface V1JsonFile {
+  /** schema 版本，初始 = 1。读取侧按版本走分支，缺失视为 0（最旧） */
+  schemaVersion?: number;
+  /** git repo 元信息，可选（旧 store 缺失时降级，首次推进类 action 时回填） */
+  repoMeta?: RepoMeta;
   workUnits: WorkUnitRecord[];
+}
+
+/**
+ * git repo 元信息（跨 cwd 接手时消歧同名 topic）。
+ *
+ * 一个 _v1.json 对应一个 cwd，RepoMeta 一对一存顶层（不存每个 unit 内，避免冗余）。
+ * 所有字段允许空字符串——git 命令失败时降级，不抛。
+ */
+export interface RepoMeta {
+  /** git remote get-url origin，无 origin 时 "" */
+  remoteUrl: string;
+  /** git rev-parse --abbrev-ref HEAD，detached 时 "HEAD" */
+  branch: string;
+  /** create 时的 process.cwd() 绝对路径 */
+  worktreePath: string;
+  /** git rev-parse --short HEAD，7 位短 hash，失败 "" */
+  headCommit: string;
+  /** 写入那一刻的 ISO 时间戳，判断 repoMeta 新鲜度 */
+  recordedAt: string;
 }
 
 /**

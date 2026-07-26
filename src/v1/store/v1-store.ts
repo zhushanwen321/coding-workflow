@@ -31,6 +31,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
+import { collectRepoMeta } from "../core/git.js";
 import type { V1JsonFile, WorkUnitRecord } from "./schema.js";
 import { getV1JsonPath } from "./schema.js";
 
@@ -72,6 +73,8 @@ export class V1Store {
   private readonly dbPath: string;
   private readonly lockPath: string;
   private readonly tmpPath: string;
+  /** 构造时传入的 cwd（repoMeta.worktreePath + collectRepoMeta 的 cwd 参数）。 */
+  private readonly cwd: string;
 
   /** 事务内的工作副本（深拷贝自磁盘 snapshot）。事务外为 null。 */
   private fileData: V1JsonFile | null = null;
@@ -79,6 +82,7 @@ export class V1Store {
   private lockHeld = false;
 
   constructor(cwd: string) {
+    this.cwd = cwd;
     this.dbPath = getV1JsonPath(cwd);
     this.lockPath = this.dbPath + ".lock";
     this.tmpPath = this.dbPath + ".tmp";
@@ -110,11 +114,15 @@ export class V1Store {
       );
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
+    // schema 迁移：旧 store 无 schemaVersion 视为已迁移到 v1（向前兼容）
+    if (data.schemaVersion === undefined) data.schemaVersion = 1;
+    // repoMeta 缺失留 undefined，首次推进类 save 时回填（不在只读 loadFileData 调 git）
     return data;
   }
 
   private emptyFile(): V1JsonFile {
-    return { workUnits: [] };
+    return { schemaVersion: 1, workUnits: [] };
+    // repoMeta 首次 save 时由 save() 填充，emptyFile 不调 git
   }
 
   /**
@@ -357,6 +365,8 @@ export class V1Store {
   save(unit: WorkUnitRecord): void {
     this.executeWrite(() => {
       const data = this.fileData!;
+      // 推进类写入刷新 repoMeta（readonly query 不走 save，不会触发）
+      data.repoMeta = collectRepoMeta(this.cwd);
       const idx = data.workUnits.findIndex((u) => u.id === unit.id);
       if (idx >= 0) {
         data.workUnits[idx] = unit;
