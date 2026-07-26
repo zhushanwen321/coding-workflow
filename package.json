@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/coding-workflow",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",
   "main": "./dist/legacy/types.js",
