@@ -39,6 +39,7 @@ function wub(
   id: string,
   parentUnitId: string | undefined,
   basedOnParent: string[],
+  abandonedParentItems?: string[],
 ): WorkUnitBase {
   return {
     id,
@@ -49,6 +50,7 @@ function wub(
     statusHistory: [],
     basedOnParent,
     abandonedRefs: [],
+    abandonedParentItems: abandonedParentItems ?? [],
     objective: "",
   };
 }
@@ -200,6 +202,72 @@ describe("computeImpactCascade: 纯函数（mock loadChildren）", () => {
     expect(impact.preserved).toEqual(["wave:w3"]);
     // IF1 + DM1 都无 preserved 引用 → 都 pendingRebuild
     expect(impact.pendingRebuild).toEqual(["IF1", "DM1"]);
+  });
+
+  // ── abandonedParentItems 例外：wave 主动声明脱离的 parent 条目不触发 abort ──
+
+  // TODO: unskip after wave 2 implements replan.ts cascade exception (computeImpactCascade)
+  it.skip("abandonedParentItems 例外：wave 声明废弃 TC3 → slice replan 废弃 TC3 时 wave preserved", () => {
+    const slice = wub("slice:s", undefined, []);
+    const w1 = wub("wave:w1", "slice:s", ["TC1", "TC3"]); // 含 TC3，但未声明废弃
+    const w2 = wub("wave:w2", "slice:s", ["TC1", "TC3"], ["TC3"]); // 含 TC3，已声明废弃
+    const loader = makeChildLoader(new Map([["slice:s", [w1, w2]]]));
+
+    const impact = computeImpactCascade({
+      unit: slice,
+      abandonedIds: ["TC3"],
+      loadChildren: loader,
+    });
+    // w1 含 TC3 且未声明废弃 → abort
+    // w2 含 TC3 但已声明废弃 → preserved（例外）
+    expect(impact.aborted).toEqual(["wave:w1"]);
+    expect(impact.preserved).toEqual(["wave:w2"]);
+    // TC3 有 w2 preserved 引用 → 不 pendingRebuild
+    expect(impact.pendingRebuild).toEqual([]);
+  });
+
+  it("abandonedParentItems 例外：废弃多个条目，wave 只声明废弃其中一个", () => {
+    const slice = wub("slice:s", undefined, []);
+    // w1 含 TC3+TC5，只声明废弃 TC3
+    const w1 = wub("wave:w1", "slice:s", ["TC3", "TC5"], ["TC3"]);
+    const loader = makeChildLoader(new Map([["slice:s", [w1]]]));
+
+    const impact = computeImpactCascade({
+      unit: slice,
+      abandonedIds: ["TC3", "TC5"],
+      loadChildren: loader,
+    });
+    // w1 含 TC3(已声明废弃,跳过) + TC5(未声明废弃,命中) → abort
+    expect(impact.aborted).toEqual(["wave:w1"]);
+    expect(impact.preserved).toEqual([]);
+  });
+
+  it("abandonedParentItems 空数组 → 等价于无例外（行为不变）", () => {
+    const slice = wub("slice:s", undefined, []);
+    const w1 = wub("wave:w1", "slice:s", ["TC3"], []); // 空数组 = 无废弃声明
+    const loader = makeChildLoader(new Map([["slice:s", [w1]]]));
+
+    const impact = computeImpactCascade({
+      unit: slice,
+      abandonedIds: ["TC3"],
+      loadChildren: loader,
+    });
+    // w1 含 TC3，无废弃声明 → 正常 abort（行为与无 abandonedParentItems 一致）
+    expect(impact.aborted).toEqual(["wave:w1"]);
+  });
+
+  it("abandonedParentItems undefined → 等价于无例外（向后兼容）", () => {
+    const slice = wub("slice:s", undefined, []);
+    // 不传第 4 参数 → abandonedParentItems = []（wub 默认）
+    const w1 = wub("wave:w1", "slice:s", ["TC3"]);
+    const loader = makeChildLoader(new Map([["slice:s", [w1]]]));
+
+    const impact = computeImpactCascade({
+      unit: slice,
+      abandonedIds: ["TC3"],
+      loadChildren: loader,
+    });
+    expect(impact.aborted).toEqual(["wave:w1"]);
   });
 });
 
