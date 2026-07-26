@@ -70,6 +70,17 @@ export interface WorkUnitBase {
   basedOnParent: string[];
   /** 被上游 replan 影响的废弃记录（纯历史记录）。 */
   abandonedRefs: AbandonedRef[];
+  /**
+   * wave 主动声明已脱离的 parent 条目 id（execute 时从 commit message 解析，append-only）。
+   *
+   * 与 abandonedRefs 的对照：
+   * - abandonedRefs：parent replan 时 cw 被动标记 wave（"你的 parent 废弃了你"）
+   * - abandonedParentItems：wave 主动声明（"我不再依赖这些 parent 条目"）
+   *
+   * 用途：slice replan cascade abort 时，wave 声明过的 parent 条目不触发 abort。
+   * 来源：execute handler 从 commit message `Cw-Abandon:` trailer 解析写入。
+   */
+  abandonedParentItems?: string[];
 
   // ── 主流程产物（逐步填充）──
   objective: string;
@@ -202,6 +213,7 @@ export function createWave(args: {
     ],
     basedOnParent: args.basedOnParent ? [...args.basedOnParent] : [],
     abandonedRefs: [],
+    abandonedParentItems: [],
     objective: args.objective,
     // 产物初始化为空态（各 handler 逐步填充）
     clarifications: [],
@@ -282,6 +294,7 @@ export function createSlice(args: {
     ],
     basedOnParent: args.basedOnParent ? [...args.basedOnParent] : [],
     abandonedRefs: [],
+    abandonedParentItems: [],
     objective: args.objective,
     // 产物初始化为空态（各 slice handler 逐步填充）
     clarifications: [],
@@ -338,6 +351,7 @@ export function createFeature(args: {
     ],
     basedOnParent: args.basedOnParent ? [...args.basedOnParent] : [],
     abandonedRefs: [],
+    abandonedParentItems: [],
     objective: args.objective,
     // 产物初始化为空态（各 feature handler 逐步填充）
     clarifications: {
@@ -410,6 +424,7 @@ export function createEpic(args: {
     // epic 无上游：basedOnParent/abandonedRefs 永远 []（即使调用方误传也忽略）
     basedOnParent: [],
     abandonedRefs: [],
+    abandonedParentItems: [],
     objective: args.objective,
     // 产物初始化为空态（各 epic handler 逐步填充）
     clarifications: [],

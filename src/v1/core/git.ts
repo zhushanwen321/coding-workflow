@@ -182,3 +182,69 @@ export function collectRepoMeta(cwd: string): RepoMeta {
     recordedAt: new Date().toISOString(),
   };
 }
+
+/**
+ * 从 commit 提取完整 commit message body。
+ *
+ * 机制：`git log -1 --format=%B <commitHash>`。与 extractChangedFiles 同风格：
+ * spawnSync + GIT_SPAWN_OPTS，失败降级返回 null（不抛异常）。
+ *
+ * @param workspacePath 仓库工作目录（cwd 绑定到 spawnSync）
+ * @param commitHash    目标 commit hash
+ * @returns commit message body（string），失败返回 null
+ */
+export function extractCommitMessage(
+  workspacePath: string,
+  commitHash: string,
+): string | null {
+  const result = spawnSync(
+    "git",
+    ["log", "-1", "--format=%B", commitHash],
+    { ...GIT_SPAWN_OPTS, cwd: workspacePath },
+  );
+  if (result.status !== 0 || result.error || typeof result.stdout !== "string") {
+    return null;
+  }
+  return result.stdout;
+}
+
+/**
+ * 从 commit message 解析 `Cw-Abandon:` trailer 标记的 parent 条目 id 列表。
+ *
+ * 机制：读 commit message body，找 `Cw-Abandon:` 开头的行（git trailer 格式），
+ * 提取冒号后的逗号分隔 id 列表。多个 trailer 行取最后一个（git trailer 标准行为）。
+ *
+ * 用途：wave execute 时解析，存入 wave.abandonedParentItems。
+ * slice replan cascade 时，已声明废弃的 parent 条目不触发 abort（computeImpactCascade 例外）。
+ *
+ * 失败降级：commit 不存在 / 无 trailer / 解析失败 → 返回空数组（不抛异常）。
+ * 与 extractChangedFiles / extractCommitMessage 同风格。
+ *
+ * @param workspacePath 仓库工作目录
+ * @param commitHash    目标 commit hash
+ * @returns 废弃的 parent 条目 id 列表（如 ["TC3"]），失败/无标记返回 []
+ */
+export function parseAbandonMarkers(
+  workspacePath: string,
+  commitHash: string,
+): string[] {
+  const body = extractCommitMessage(workspacePath, commitHash);
+  if (body === null) return [];
+
+  // 找最后一个 Cw-Abandon: trailer 行（git trailer 标准：空行后 key: value）
+  const lines = body.split("\n");
+  let lastAbandonLine: string | undefined;
+  for (const line of lines) {
+    if (/^Cw-Abandon:\s*/i.test(line.trim())) {
+      lastAbandonLine = line.trim();
+    }
+  }
+  if (!lastAbandonLine) return [];
+
+  // 提取冒号后的 id 列表：split 逗号，trim，过滤空
+  const afterColon = lastAbandonLine.replace(/^Cw-Abandon:\s*/i, "");
+  return afterColon
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
