@@ -12,6 +12,7 @@
  *     objective / status 字段需类型收窄为 string（store 不裁剪 core 字段，
  *     但渲染层只关心可读字符串，未知字段降级为空串）。
  */
+import { CwError } from "../../legacy/types.js";
 import type { Clarification } from "../core/clarifications.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
 import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";
@@ -531,8 +532,74 @@ const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, PlanningAction | undefi
 /** 终态 status 集合（不输出「下一步」段）。 */
 const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
 
+/** handoff 视图范围：self=仅焦点 unit；upstream=父链+焦点；full=父链+焦点+子树。 */
+export type HandoffScope = "self" | "upstream" | "full";
+
+/** renderHandoff 需要的 store 读方法结构类型（与 renderTree 同风格，不直接 import V1Store，保持纯函数可测性）。 */
+export interface HandoffStore {
+  load(id: string): WorkUnitRecord | null;
+  findChildren(parentUnitId: string): WorkUnitRecord[];
+}
+
 /**
- * renderHandoff — 以某 unit 为焦点的叙述性交接摘要。
+ * renderHandoff — 以某 unit 为焦点的叙述性交接摘要（可按 scope 扩展上下文）。
+ *
+ * 与 renderStatus 的区别：renderStatus 是原始 JSON dump（程序化消费），
+ * renderHandoff 是五段式 markdown 文本（agent/人读），聚合目标/已定决策/
+ * 当前位置与下一步 guidance/涉及文件与契约/历史与变更。
+ *
+ * scope 取值：
+ *   - "self"（默认）：仅焦点 unit 五段式，与历史行为完全一致。
+ *   - "upstream"：父链（根→焦点）每层 brief（目标+决策+下一步）+ 焦点完整五段式。
+ *   - "full"：父链 brief + 焦点完整 + 子树递归 brief。
+ *
+ * brief 段复用 renderDecisionsSection / renderNextStepSection（剔除 history/artifacts 避免爆行）。
+ * 父链/子树以 markdown 标题层级（##/####…）表达深度，焦点以 `=== FOCUS ===` 标记。
+ * 拼接结果超 HANDOFF_SIZE_WARNING_THRESHOLD 行时尾部追加 warning（不截断）。
+ *
+ * 下一步 guidance 复用各层的 build{Scope}NextAction（纯函数，验证过不碰 store/fs/stdin），
+ * 保证 handoff 输出的 guidance 与实际跑 action 返回的 guidance 逐字一致。
+ *
+ * @param unit   已读出的焦点 WorkUnitRecord（调用方负责 load + not found 判定）
+ * @param store  读方法结构类型（load / findChildren）；scope=self 时不使用，
+ *               默认空 store（仅给老的单参数调用方兜底，scope=self 时不会触达）
+ * @param scope  视图范围，默认 "self"
+ */
+export function renderHandoff(
+  unit: WorkUnitRecord,
+  store: HandoffStore = noopStore,
+  scope: HandoffScope = "self",
+): string {
+  if (!isValidHandoffScope(scope)) {
+    throw new CwError(`scope 必须是 self/upstream/full，当前值: ${scope}`);
+  }
+  if (scope === "self") return renderHandoffSelf(unit);
+  if (scope === "upstream") return renderHandoffUpstream(unit, store);
+  return renderHandoffFull(unit, store);
+}
+
+/**
+ * 默认空 store：load 永远返回 null，findChildren 永远返回空数组。
+ *
+ * 仅用于 renderHandoff 的老调用方（只传 unit、scope 隐式 self）兜底默认参数；
+ * scope=self 时根本不会触达 store 方法，故空实现安全。
+ */
+const noopStore: HandoffStore = {
+  load(): null {
+    return null;
+  },
+  findChildren(): WorkUnitRecord[] {
+    return [];
+  },
+};
+
+/** 运行时判定字符串是否为合法 HandoffScope（narrow 谓词）。 */
+function isValidHandoffScope(s: string): s is HandoffScope {
+  return s === "self" || s === "upstream" || s === "full";
+}
+
+/**
+ * renderHandoffSelf — 焦点 unit 的完整五段式（历史行为，单 unit）。
  *
  * 与 renderStatus 的区别：renderStatus 是原始 JSON dump（程序化消费），
  * renderHandoff 是五段式 markdown 文本（agent/人读），聚合目标/已定决策/
@@ -548,7 +615,7 @@ const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
  *
  * @param unit  已读出的 WorkUnitRecord（调用方负责 load + not found 判定）
  */
-export function renderHandoff(unit: WorkUnitRecord): string {
+function renderHandoffSelf(unit: WorkUnitRecord): string {
   const scope = unit.scope;
   const status = getStringField(unit, "status");
   const objective = getStringField(unit, "objective");
@@ -593,6 +660,177 @@ export function renderHandoff(unit: WorkUnitRecord): string {
   }
 
   return lines.join("\n");
+}
+
+// ── scope 扩展段（brief / upstream / full / size warning）──
+
+/** markdown 标题层级上限（# ~ ######）。 */
+const HANDOFF_MAX_HEADING_DEPTH = 6;
+
+/** handoff 拼接结果超过此行数时尾部追加 warning（不截断）。 */
+const HANDOFF_SIZE_WARNING_THRESHOLD = 500;
+
+/** 祖先 brief 的起始标题深度（##，留 # 给焦点完整段）。 */
+const ANCESTOR_HEADING_BASE_DEPTH = 2;
+
+/** 子树 brief 的起始标题深度（####，比焦点的 # 更深，表达「焦点之下」）。 */
+const SUBTREE_HEADING_BASE_DEPTH = 4;
+
+/**
+ * renderHandoffBrief — 父链/子树每层的精简视图。
+ *
+ * 只含：目标 + 已定决策 + 下一步（剔除 history/artifacts 避免爆行）。
+ * unit 头用 `#`×depth 表达层级（depth 上限 6）；段内复用 renderDecisionsSection
+ *（无标题，直接拼接）和 renderNextStepSection（含 `##` 标题，用 rewriteHeadingDepth
+ * 改写到目标深度，并改名为「位置/下一步」以区别焦点完整段的标题）。
+ *
+ * @param unit  该层 unit
+ * @param depth markdown 标题层级（2→##，3→###，…；上限 6）
+ */
+function renderHandoffBrief(unit: WorkUnitRecord, depth: number): string {
+  const headerDepth = Math.min(Math.max(depth, 1), HANDOFF_MAX_HEADING_DEPTH);
+  const hashes = "#".repeat(headerDepth);
+  const scope = unit.scope;
+  const status = getStringField(unit, "status");
+
+  const lines: string[] = [];
+  lines.push(`${hashes} ${unit.id} [${status}]`);
+  lines.push(`目标: ${getStringField(unit, "objective") || "(无)"}`);
+
+  // 已定决策（renderDecisionsSection 返回纯列表行，无标题，直接拼）
+  const decisions = renderDecisionsSection(unit);
+  if (decisions.length > 0) {
+    lines.push(`${hashes}# 已定决策`);
+    lines.push(...decisions);
+  }
+
+  // 下一步（renderNextStepSection 首行是 `## 当前位置与下一步`，改写到 headerDepth+1）
+  const nextStep = renderNextStepSection(unit, scope, status);
+  lines.push(...rewriteHeadingDepth(nextStep, headerDepth + 1, "位置/下一步"));
+
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * 改写 markdown 行数组里的 `#` 标题到目标深度（上限 6）。
+ *
+ * renderNextStepSection 硬编码 `## 当前位置与下一步`，brief 里需随父链深度对齐，
+ * 否则标题层级混乱。可选 `rename` 把首个标题改名为更贴合 brief 语义的名字。
+ *
+ * 仅改写以 1-6 个 `#` + 空格开头的行；非标题行原样保留。
+ */
+function rewriteHeadingDepth(
+  lines: ReadonlyArray<string>,
+  depth: number,
+  rename?: string,
+): string[] {
+  const targetDepth = Math.min(Math.max(depth, 1), HANDOFF_MAX_HEADING_DEPTH);
+  const targetHashes = "#".repeat(targetDepth);
+  let renamed = false;
+  return lines.map((line) => {
+    const m = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (!m) return line;
+    if (rename && !renamed) {
+      renamed = true;
+      return `${targetHashes} ${rename}`;
+    }
+    return `${targetHashes} ${m[2]}`;
+  });
+}
+
+/**
+ * renderHandoffUpstream — 父链（根→焦点）brief + 焦点完整五段式。
+ *
+ * 父链沿 parentUnitId 上溯到根（visited 防循环 RK-C3），每层用 brief，
+ * 深度从 2（##）开始递增；焦点用 renderHandoffSelf 完整五段式，并以
+ * `=== FOCUS ===` 标记起始，便于接手 agent 定位主体。
+ */
+function renderHandoffUpstream(
+  focus: WorkUnitRecord,
+  store: HandoffStore,
+): string {
+  const { ancestors } = collectAncestors(focus, store);
+
+  const parts: string[] = [];
+  ancestors.forEach((u, i) => {
+    parts.push(renderHandoffBrief(u, ANCESTOR_HEADING_BASE_DEPTH + i));
+  });
+  parts.push("=== FOCUS ===\n" + renderHandoffSelf(focus));
+
+  return appendSizeWarningIfNeeded(parts.join("\n"));
+}
+
+/**
+ * renderHandoffFull — 父链 brief + 焦点完整 + 子树递归 brief。
+ *
+ * 父链同 upstream；子树从焦点出发递归 findChildren，每层 brief，
+ * 深度从 4（####）开始（比焦点的 # 更深，表达「焦点之下」）。
+ * visited 集贯穿父链+子树，防止环导致无限递归。
+ */
+function renderHandoffFull(
+  focus: WorkUnitRecord,
+  store: HandoffStore,
+): string {
+  const { ancestors, visited } = collectAncestors(focus, store);
+
+  const parts: string[] = [];
+  ancestors.forEach((u, i) => {
+    parts.push(renderHandoffBrief(u, ANCESTOR_HEADING_BASE_DEPTH + i));
+  });
+  parts.push("=== FOCUS ===\n" + renderHandoffSelf(focus));
+
+  // 子树递归 brief（#### 深度起，比 focus 深）
+  const subtreeLines: string[] = [];
+  const renderSubtree = (parentId: string, depth: number): void => {
+    const children = store.findChildren(parentId);
+    for (const child of children) {
+      if (visited.has(child.id)) continue; // RK-C3 防循环
+      visited.add(child.id);
+      subtreeLines.push(renderHandoffBrief(child, depth));
+      renderSubtree(child.id, depth + 1);
+    }
+  };
+  renderSubtree(focus.id, SUBTREE_HEADING_BASE_DEPTH);
+  if (subtreeLines.length > 0) {
+    parts.push("--- 子树 ---\n" + subtreeLines.join("\n"));
+  }
+
+  return appendSizeWarningIfNeeded(parts.join("\n"));
+}
+
+/**
+ * 沿 parentUnitId 上溯收集祖先（根在前，焦点不在其中）。
+ *
+ * 返回 ancestors（根→最近祖先）和 visited（含焦点及所有已遍历 id），
+ * 供子树阶段复用以防循环。
+ */
+function collectAncestors(
+  focus: WorkUnitRecord,
+  store: HandoffStore,
+): { ancestors: WorkUnitRecord[]; visited: Set<string> } {
+  const ancestors: WorkUnitRecord[] = [];
+  const visited = new Set<string>();
+  visited.add(focus.id);
+  let current: WorkUnitRecord | null = focus;
+  while (current && typeof current.parentUnitId === "string" && current.parentUnitId !== "" && !visited.has(current.parentUnitId)) {
+    const parent = store.load(current.parentUnitId);
+    if (!parent) break;
+    visited.add(parent.id);
+    ancestors.unshift(parent); // 根在前
+    current = parent;
+  }
+  return { ancestors, visited };
+}
+
+/** 拼接结果超阈值时尾部追加 warning（不截断），让接手 agent 知道上下文偏大。 */
+function appendSizeWarningIfNeeded(content: string): string {
+  const lineCount = content.split("\n").length;
+  if (lineCount <= HANDOFF_SIZE_WARNING_THRESHOLD) return content;
+  return (
+    content +
+    `\n\n⚠ Handoff exceeds ${HANDOFF_SIZE_WARNING_THRESHOLD} lines (actual: ${lineCount}). ` +
+    `Consider narrowing scope (--scope self) or descending into a specific child.\n`
+  );
 }
 
 // ── §2 已定决策段 ──

@@ -1486,8 +1486,9 @@ async function runV1Readonly(
   }
 
   if (action === "handoff") {
-    // handoff：单 unit 的叙述性交接摘要（含下一步 guidance）。
+    // handoff：以某 unit 为焦点的叙述性交接摘要（含下一步 guidance）。
     // 与 status 同样需要 --unitId + load + not found 判定，但输出是五段式纯文本。
+    // --scope 控制上下文范围：self=仅焦点（默认）；upstream=父链+焦点；full=父链+焦点+子树。
     const unitId = flag(parsed, "unitId");
     if (!unitId) {
       throw new CwError("handoff 需要 --unitId");
@@ -1496,7 +1497,11 @@ async function runV1Readonly(
     if (unit === null) {
       throw new CwError(`unit not found: ${unitId}`);
     }
-    process.stdout.write(renderHandoff(unit));
+    const scope = flag(parsed, "scope") ?? "self";
+    if (scope !== "self" && scope !== "upstream" && scope !== "full") {
+      throw new CwError(`--scope 必须是 self/upstream/full，当前值: ${scope}`);
+    }
+    process.stdout.write(renderHandoff(unit, store, scope));
     return;
   }
 
