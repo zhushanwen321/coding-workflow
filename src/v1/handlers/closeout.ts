@@ -52,6 +52,8 @@ export function handleCloseout(
   unit.evidence.artifacts = artifacts;
 
   // ── drift 检查：artifacts[].ref 非空且指向真实存在 ──
+  // commit kind 用 gitValidator.exists 校验（commit hash 不是文件路径），
+  // 其他 kind 用 fileExists.exists 校验（文件路径 / URL）。
   const driftReports: string[] = [];
   for (const art of artifacts) {
     if (!art.ref || art.ref.trim() === "") {
@@ -60,10 +62,18 @@ export function handleCloseout(
       );
       continue;
     }
-    if (!deps.fileExists.exists(art.ref)) {
-      driftReports.push(
-        `artifact(kind=${art.kind}) ref="${art.ref}" 不存在（drift：交付物引用悬空）`,
-      );
+    if (art.kind === "commit") {
+      if (!deps.gitValidator.exists(art.ref)) {
+        driftReports.push(
+          `artifact(kind=commit) hash="${art.ref}" 不存在（drift：commit 引用悬空）`,
+        );
+      }
+    } else {
+      if (!deps.fileExists.exists(art.ref)) {
+        driftReports.push(
+          `artifact(kind=${art.kind}) ref="${art.ref}" 不存在（drift：交付物引用悬空）`,
+        );
+      }
     }
   }
 

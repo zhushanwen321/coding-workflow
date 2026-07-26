@@ -37,7 +37,7 @@ export interface Evidence {
 
 /** model §5.11.1 — 交付物引用（一条 = 一个交付物）。 */
 export interface ArtifactRef {
-  kind: "spec" | "plan" | "review-report" | "retrospect-report" | "code" | "test" | "doc" | "other";
+  kind: "spec" | "plan" | "review-report" | "retrospect-report" | "code" | "test" | "doc" | "other" | "commit";
   /** 文件路径 / URL / commit hash。 */
   ref: string;
   /** 简短说明（可选）。 */
