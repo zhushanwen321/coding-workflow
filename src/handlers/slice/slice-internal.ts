@@ -30,6 +30,7 @@ import {
 import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
+import { buildCommand } from "../../utils/command.js";
 import type { V1Deps, V1NextAction } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -236,9 +237,10 @@ export function buildSliceNextAction(
 }
 
 /**
- * 组装 slice 命令字符串（照 wave internal.ts 的 buildCommand）。
+ * 组装 slice 命令字符串（照 wave internal.ts 的 buildWaveNextCommand）。
  *
  * 终态（nextAction=undefined）→ 仅状态提示，命令为空；有结构化或扁平 input → 附 --input。
+ * 命令本体由 buildCommand（utils/command.ts）统一构造。
  */
 function buildSliceCommand(
   currentAction: PlanningAction,
@@ -250,8 +252,8 @@ function buildSliceCommand(
   }
   const hasInput = SLICE_ACTION_SCHEMA[nextAction] !== undefined ||
     SLICE_FLAT_INPUT_HINT[nextAction] !== undefined;
-  const inputPart = hasInput ? ` --input @${nextAction}.json` : "";
-  return `cw v1 ${nextAction} --unitId ${unitId}${inputPart}`;
+  const inputPart = hasInput ? `--input @${nextAction}.json` : "";
+  return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
 }
 
 // ═══════════════════════════════════════════════════════════════

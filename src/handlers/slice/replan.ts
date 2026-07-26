@@ -38,6 +38,7 @@ import type { V1Store } from "../../store/v1-store.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import { buildReplanGuidance } from "../../guidance/build-guidance.js";
+import { buildCommand } from "../../utils/command.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -128,7 +129,7 @@ export function handleReplanSlice(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: `cw v1 plan --unitId ${unit.id} --input @plan.json`,
+    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, "--input @plan.json"),
   });
 
   return {

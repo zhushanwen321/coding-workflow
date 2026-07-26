@@ -2,20 +2,20 @@
 /**
  * cli.ts — CW CLI 入口（agent 唯一入口点）。
  *
- * cw 1.0 起唯一命令形态：`cw v1 <action> [layer] [options]`。
- * 0.x（legacy/ 状态机、不带 v1 前缀的 action）已整体删除——main 里 `action !== "v1"`
- * 一律报「未知 action」并提示改用 `cw v1`。
+ * 命令形态：`cw <action> [layer] [options]`（Wave 3 起去掉 v1 前缀）。
+ * 0.x（legacy/ 状态机）已整体删除，v1 前缀也已切断——main 里 ALL_ACTIONS.has(action)
+ * 为假一律报「未知 action」并提示改用 `cw <action>`。
  *
  * 职责：
  *   - minimist argv 解析
- *   - stdin 读取（Promise 封装，v1 推进 action 的 input JSON 从 stdin 读）
- *   - runV1：argv → V1Params 构造（buildV1Params）→ V1Deps 装配（constructV1Deps）
+ *   - stdin 读取（Promise 封装，推进 action 的 input JSON 从 stdin 读）
+ *   - runWithAction：argv → V1Params 构造（buildParams）→ V1Deps 装配（constructV1Deps）
  *     → v1Dispatch 调用 + stdout JSON 序列化
- *   - runV1Readonly：tree/status/list/handoff 只读查询（不经 dispatch、不写 store）
+ *   - runReadonly：tree/status/list/handoff 只读查询（不经 dispatch、不写 store）
  *   - exit code 映射（0=正常, 1=CwError/V1Error/参数错误, 2=内部异常）
  *
  * 设计原则：
- *   - CLI 是 agent 的唯一导航入口。agent 只需知道 `cw v1 create`，后续全靠返回的 guidance 推进。
+ *   - CLI 是 agent 的唯一导航入口。agent 只需知道 `cw create`，后续全靠返回的 guidance 推进。
  *   - status/list/tree/handoff 是只读快照查询，绕过 dispatch（不触碰状态机、不写 store）。
  *   - exit code 语义区分：0=程序正常（含 gate fail，结果在 stdout JSON），1=guard/参数错误，
  *     2=未预期的内部异常。agent 按 exit code 判断是否需 retry。
@@ -62,6 +62,7 @@ import {
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
 import { getV1Home } from "./store/schema.js";
+import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
@@ -87,15 +88,15 @@ const EXIT_CW_ERROR = 1;
 /** 进程退出码：内部异常（未预期的错误）。 */
 const EXIT_INTERNAL_ERROR = 2;
 
-// ── v1 命令常量 ──────────────────────────────────────────────
+// ── 命令常量 ──────────────────────────────────────────────
 //
-// v1 是 cw 1.0 的唯一命令形态：`cw v1 <action> [layer] --flags`，走 src/dispatch.ts。
-// 0.x（legacy/）已删除，不带 v1 前缀的旧 action 名不再被识别。
+// cw 命令形态：`cw <action> [layer] --flags`，走 src/dispatch.ts。
+// 0.x（legacy/）已删除，v1 前缀已去掉（Wave 3）——action 直接跟在 cw 后。
 //
 // create 需要 layer 参数（wave/slice/feature/epic），其他 action 靠 --unitId 路由。
 
-/** v1 create 接受的层（wave/slice/feature/epic 四层均已实现，dispatch 按 input.layer 路由）。 */
-const V1_CREATE_LAYERS = new Set(["wave", "slice", "feature", "epic"]);
+/** create 接受的层（wave/slice/feature/epic 四层均已实现，dispatch 按 input.layer 路由）。 */
+const CREATE_LAYERS = new Set(["wave", "slice", "feature", "epic"]);
 
 /**
  * create 缺 layer 时返回的选层 guidance（强制拦截点）。
@@ -108,7 +109,7 @@ const V1_CREATE_LAYERS = new Set(["wave", "slice", "feature", "epic"]);
  */
 const LAYER_PROMPT_GUIDANCE = `## 下一步：选择 layer
 
-cw v1 create 需要指定 layer。按「规模 × 性质」判断（先看规模）：
+cw create 需要指定 layer。按「规模 × 性质」判断（先看规模）：
 
 | 规模 | layer | 理由 |
 |------|-------|------|
@@ -123,7 +124,7 @@ cw v1 create 需要指定 layer。按「规模 × 性质」判断（先看规模
 反模式：单个 slice 维度的任务，不要为每个 wave 手动建 slice——建 1 个 slice，execute 时自动拆 wave。
 
 命令（选好 layer 后重调）：
-  cw v1 create <layer> --slug <slug> --objective "<一句话目标>" [--parent <parentId>]
+  cw create <layer> --slug <slug> --objective "<一句话目标>" [--parent <parentId>]
 `;
 
 /**
@@ -137,10 +138,10 @@ export function buildLayerPromptGuidance(): string {
 }
 
 /**
- * v1 推进 action（create 之外）。
+ * 推进 action（create 之外）。
  * 这些 action 靠 --unitId 路由，input 通过 --input / stdin 传 JSON。
  */
-const V1_ADVANCE_ACTIONS = new Set([
+const ADVANCE_ACTIONS = new Set([
   "clarify",
   "plan",
   "design-review",
@@ -153,11 +154,14 @@ const V1_ADVANCE_ACTIONS = new Set([
   "abort",
 ]);
 
-/** v1 合法 action 总集（create + 10 个推进 action）。 */
-const V1_VALID_ACTIONS = new Set(["create", ...V1_ADVANCE_ACTIONS]);
+/** 合法 action 总集（create + 10 个推进 action）。 */
+const VALID_ACTIONS = new Set(["create", ...ADVANCE_ACTIONS]);
 
-/** v1 只读查询命令（tree/status/list）——不经 dispatch、不写 store。 */
-const V1_READONLY_QUERIES = new Set(["tree", "status", "list", "handoff"]);
+/** 只读查询命令（tree/status/list/handoff）——不经 dispatch、不写 store。 */
+const READONLY_QUERIES = new Set(["tree", "status", "list", "handoff"]);
+
+/** 全部合法 action（推进 + 只读），main 用此判断是否走 action 路由。 */
+const ALL_ACTIONS = new Set([...VALID_ACTIONS, ...READONLY_QUERIES]);
 
 // ── verbose / debug 日志 ─────────────────────────────────────
 
@@ -237,17 +241,17 @@ function parseJsonArg(name: string, value: unknown): unknown {
   }
 }
 
-// ── v1 命令辅助（参数构造 / deps 装配 / 子命令分发） ─────────
+// ── 命令辅助（参数构造 / deps 装配 / 子命令分发） ─────────
 //
-// v1 与 0.x 完全独立：独立的 params 联合（V1Params）、独立的 deps 接口（V1Deps）、
+// 与 0.x 完全独立：独立的 params 联合（V1Params）、独立的 deps 接口（V1Deps）、
 // 独立的 dispatch（src/dispatch.ts）、独立的 store（_v1.json，路径由 getV1JsonPath 算）。
 // 本节三个纯函数把 argv → V1Params、构造 V1Deps、跑 dispatch 并打印结果。
-// main 里 `argv[2] === "v1"` 时整体路由到 runV1，不触碰 0.x 代码路径。
+// main 里 `ALL_ACTIONS.has(action)` 为真时整体路由到 runWithAction。
 
 /**
- * readV1Input — 读取 v1 推进 action 的 input payload。
+ * readInput — 读取推进 action 的 input payload。
  *
- * 通道（与 0.x 的 readJsonPayload 类似但 v1 用 `--input` flag）：
+ * 通道（与 0.x 的 readJsonPayload 类似但用 `--input` flag）：
  *   - `--input @file.json` → 读文件内容 JSON.parse
  *   - `--input -` 或无 --input → 从 stdin 读
  *
@@ -255,7 +259,7 @@ function parseJsonArg(name: string, value: unknown): unknown {
  *
  * @returns 解析后的 input 对象（调用方按 action cast 成对应 Input 类型）
  */
-function readV1Input(
+function readInput(
   inputFlag: string | undefined,
   stdinData: string,
   isStdinTTY: boolean,
@@ -269,12 +273,12 @@ function readV1Input(
       : inputFlag;
     const filePath = resolve(flagged);
     if (!existsSync(filePath)) {
-      throw new CwError(`v1 --input 文件不存在: ${filePath}`);
+      throw new CwError(`--input 文件不存在: ${filePath}`);
     }
     const stat = statSync(filePath);
     if (stat.size > MAX_FILE_SIZE_BYTES) {
       throw new CwError(
-        `v1 --input 文件大小 ${(stat.size / BYTES_PER_MB).toFixed(1)}MB 超过限制 ${MAX_FILE_SIZE_BYTES / BYTES_PER_MB}MB`,
+        `--input 文件大小 ${(stat.size / BYTES_PER_MB).toFixed(1)}MB 超过限制 ${MAX_FILE_SIZE_BYTES / BYTES_PER_MB}MB`,
       );
     }
     const raw = readFileSync(filePath, "utf-8");
@@ -282,7 +286,7 @@ function readV1Input(
       return JSON.parse(raw);
     } catch (e) {
       throw new CwError(
-        `v1 --input JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+        `--input JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -291,24 +295,24 @@ function readV1Input(
   const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
   if (!hasStdin) {
     throw new CwError(
-      "v1 推进 action 需要 --input @file.json 或 stdin 传 JSON（stdin 为空）",
+      "推进 action 需要 --input @file.json 或 stdin 传 JSON（stdin 为空）",
     );
   }
   try {
     return JSON.parse(stdinData);
   } catch (e) {
     throw new CwError(
-      `v1 stdin JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+      `stdin JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
 }
 
 /**
- * buildV1Params — 把 v1 子命令的 flags 构造成 V1Params 联合。
+ * buildParams — 把子命令的 flags 构造成 V1Params 联合。
  *
  *   - create：layer 必填（wave/slice/feature/epic 四层均已实现）+ --slug + --objective
  *     必填，可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
- *     注意：layer 完全缺失（undefined）已在 runV1 早返回选层 guidance，不进入此函数；
+ *     注意：layer 完全缺失（undefined）已在 runWithAction 早返回选层 guidance，不进入此函数；
  *     此处只处理 layer 已给定（合法或非法字符串）的情况。dispatch 按 layer 路由
  *     （wave → handleCreate，slice → handleCreateSlice，feature → handleCreateFeature，
  *     epic → handleCreateEpic）。
@@ -317,46 +321,46 @@ function readV1Input(
  *   - replan/abort 的 input 也可用专门的 flag 构造（--abandonedIds/--note/--reason），
  *     作为 --input/stdin 的便捷替代。
  *
- * @param v1Action  v1 action 名（create/clarify/.../abort）
- * @param layer     仅 create 用（argv[4]）
+ * @param action  action 名（create/clarify/.../abort）
+ * @param layer     仅 create 用（argv[3]）
  * @param parsed    minimist 解析结果
  * @param stdinData 已读 stdin
  * @param isStdinTTY stdin 是否 TTY
  * @param scope     unit 的 scope（wave/slice/feature/epic），仅 execute 用以区分参数构造；
  *                  unit 不存在时 null（execute 会走 unit_not_found 错误路径）
  */
-function buildV1Params(
-  v1Action: string,
+function buildParams(
+  action: string,
   layer: string | undefined,
   parsed: ParsedArgs,
   stdinData: string,
   isStdinTTY: boolean,
   scope: string | null,
 ): V1Params {
-  if (v1Action === "create") {
+  if (action === "create") {
     if (layer === undefined) {
       throw new CwError(
-        `v1 create 需要指定 layer（${[...V1_CREATE_LAYERS].join("/")}）`,
+        `create 需要指定 layer（${[...CREATE_LAYERS].join("/")}）`,
       );
     }
-    if (!V1_CREATE_LAYERS.has(layer)) {
+    if (!CREATE_LAYERS.has(layer)) {
       throw new CwError(
-        `v1 create 的 layer "${layer}" 非法，合法值: ${[...V1_CREATE_LAYERS].join("/")}）`,
+        `create 的 layer "${layer}" 非法，合法值: ${[...CREATE_LAYERS].join("/")}）`,
       );
     }
-    // V1_CREATE_LAYERS 已保证 layer ∈ {wave,slice,feature,epic}（上方 has() 校验通过），
+    // CREATE_LAYERS 已保证 layer ∈ {wave,slice,feature,epic}（上方 has() 校验通过），
     // 四层均已实现。dispatch 按 input.layer 路由到对应 handler。
-    // 此处防御性判断保留：即便未来 V1_CREATE_LAYERS 与路由不一致也能 fail-fast。
+    // 此处防御性判断保留：即便未来 CREATE_LAYERS 与路由不一致也能 fail-fast。
     if (layer !== "wave" && layer !== "slice" && layer !== "feature" && layer !== "epic") {
       throw new CwError(
-        `v1 create ${layer} 尚未实现，当前 v1 支持 wave/slice/feature/epic 层`,
+        `create ${layer} 尚未实现，当前支持 wave/slice/feature/epic 层`,
       );
     }
     const slug = typeof parsed.slug === "string" ? parsed.slug : undefined;
     const objective =
       typeof parsed.objective === "string" ? parsed.objective : undefined;
-    if (!slug) throw new CwError("v1 create 需要 --slug");
-    if (!objective) throw new CwError("v1 create 需要 --objective");
+    if (!slug) throw new CwError("create 需要 --slug");
+    if (!objective) throw new CwError("create 需要 --objective");
     const input: CreateInput = { slug, objective, layer };
     const parent = flag(parsed, "parent");
     if (parent !== undefined) input.parentUnitId = parent;
@@ -372,14 +376,14 @@ function buildV1Params(
 
   // 推进 action：--unitId 必填
   const unitId = flag(parsed, "unitId");
-  if (!unitId) throw new CwError(`v1 ${v1Action} 需要 --unitId`);
+  if (!unitId) throw new CwError(`${action} 需要 --unitId`);
 
-  switch (v1Action) {
+  switch (action) {
     case "clarify":
       return {
         action: "clarify",
         unitId,
-        input: readV1Input(
+        input: readInput(
           flag(parsed, "input"),
           stdinData,
           isStdinTTY,
@@ -389,13 +393,13 @@ function buildV1Params(
       return {
         action: "plan",
         unitId,
-        input: readV1Input(flag(parsed, "input"), stdinData, isStdinTTY) as PlanInput,
+        input: readInput(flag(parsed, "input"), stdinData, isStdinTTY) as PlanInput,
       };
     case "design-review":
       return {
         action: "design-review",
         unitId,
-        input: readV1Input(
+        input: readInput(
           flag(parsed, "input"),
           stdinData,
           isStdinTTY,
@@ -418,13 +422,13 @@ function buildV1Params(
       }
       // wave（含 unit 不存在 / scope=null 的兼容路径，后续 dispatch 抛 unit_not_found）
       const commitHash = flag(parsed, "commitHash");
-      if (!commitHash) throw new CwError("v1 execute 需要 --commitHash");
+      if (!commitHash) throw new CwError("execute 需要 --commitHash");
       const input: ExecuteInput = { commitHash };
       // execute 允许 --input 传 { changedFiles: [...] }，非 TTY stdin 有内容时也接受
       const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
       const inputFlag = flag(parsed, "input");
       if (inputFlag !== undefined || hasStdin) {
-        const extra = readV1Input(inputFlag, stdinData, isStdinTTY) as Record<
+        const extra = readInput(inputFlag, stdinData, isStdinTTY) as Record<
           string,
           unknown
         >;
@@ -438,13 +442,13 @@ function buildV1Params(
       return {
         action: "test",
         unitId,
-        input: readV1Input(flag(parsed, "input"), stdinData, isStdinTTY) as TestInput,
+        input: readInput(flag(parsed, "input"), stdinData, isStdinTTY) as TestInput,
       };
     case "exec-review":
       return {
         action: "exec-review",
         unitId,
-        input: readV1Input(
+        input: readInput(
           flag(parsed, "input"),
           stdinData,
           isStdinTTY,
@@ -454,7 +458,7 @@ function buildV1Params(
       return {
         action: "retrospect",
         unitId,
-        input: readV1Input(
+        input: readInput(
           flag(parsed, "input"),
           stdinData,
           isStdinTTY,
@@ -464,7 +468,7 @@ function buildV1Params(
       return {
         action: "closeout",
         unitId,
-        input: readV1Input(
+        input: readInput(
           flag(parsed, "input"),
           stdinData,
           isStdinTTY,
@@ -484,7 +488,7 @@ function buildV1Params(
       return {
         action: "replan",
         unitId,
-        input: readV1Input(flag(parsed, "input"), stdinData, isStdinTTY) as ReplanInput,
+        input: readInput(flag(parsed, "input"), stdinData, isStdinTTY) as ReplanInput,
       };
     }
     case "abort": {
@@ -497,7 +501,7 @@ function buildV1Params(
       const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
       const inputFlag = flag(parsed, "input");
       if (inputFlag !== undefined || hasStdin) {
-        const extra = readV1Input(inputFlag, stdinData, isStdinTTY) as Record<
+        const extra = readInput(inputFlag, stdinData, isStdinTTY) as Record<
           string,
           unknown
         >;
@@ -509,8 +513,8 @@ function buildV1Params(
       return { action: "abort", unitId, input: {} };
     }
     default: {
-      // 上层已校验 V1_VALID_ACTIONS，此处不可达（v1Action 是 string，无法穷尽校验）。
-      throw new CwError(`v1 unknown action: ${v1Action}`);
+      // 上层已校验 VALID_ACTIONS，此处不可达（action 是 string，无法穷尽校验）。
+      throw new CwError(`unknown action: ${action}`);
     }
   }
 }
@@ -638,13 +642,13 @@ function isENOENT(e: unknown): boolean {
 }
 
 /**
- * runV1 — v1 子命令整体处理（main 里 argv[2]==="v1" 时调用）。
+ * runWithAction — 子命令整体处理（main 里 ALL_ACTIONS.has(action) 时调用）。
  *
  * 流程：
- *   1. argv 解析：v1Action = argv[3]，layer = argv[4]（仅 create）
- *   2. action 合法性校验（V1_VALID_ACTIONS）
+ *   1. argv 解析：action 由 main 传入（argv[2]），layer = argv[3]（仅 create）
+ *   2. action 合法性校验（VALID_ACTIONS）
  *   3. create 之外读 stdin（--input / stdin 传 JSON）
- *   4. buildV1Params 构造 V1Params（参数校验在此层）
+ *   4. buildParams 构造 V1Params（参数校验在此层）
  *   5. constructV1Deps（store + git + testRunner + fileExists + clock）
  *   6. v1Dispatch + 序列化 ActionResult → stdout
  *
@@ -652,42 +656,33 @@ function isENOENT(e: unknown): boolean {
  *
  * @param argv  完整 process.argv
  * @param workspacePath  当前工作目录（store/git/testRunner 都绑它）
+ * @param action  argv[2] 的 action 名（main 已校验 ∈ ALL_ACTIONS）
  */
-async function runV1(
+async function runWithAction(
   argv: string[],
   workspacePath: string,
+  action: string,
 ): Promise<void> {
-  // argv 位置语义：[0]=node, [1]=脚本, [2]="v1", [3]=v1Action, [4]=layer（仅 create），[5+]=flags。
-  // flags 用 minimist 解析（从 action 起切，让 --xxx 被正确识别；位置参数 action/layer 落入 _）。
-  const ARGV_V1_ACTION = ARGV_USER_PARAMS_START + 1; // argv[3]
-  const ARGV_V1_LAYER_OFFSET = 2;
-  const ARGV_V1_LAYER = ARGV_USER_PARAMS_START + ARGV_V1_LAYER_OFFSET; // argv[4]
-  const parsed = minimist(argv.slice(ARGV_V1_ACTION)) as ParsedArgs;
-  // 直接从原始 argv 取位置参数（minimist 的 _ 里也有，但原始 argv 更直观、不被 flag 解析干扰）。
-  const v1ActionRaw = argv[ARGV_V1_ACTION];
-  const layer = argv[ARGV_V1_LAYER];
+  // argv 位置语义：[0]=node, [1]=脚本, [2]=action, [3]=layer（仅 create），[4+]=flags。
+  // flags 用 minimist 解析（从 ARGV_USER_PARAMS_START 起切，让 --xxx 被正确识别；
+  // 位置参数 action/layer 落入 _）。
+  const parsed = minimist(argv.slice(ARGV_USER_PARAMS_START)) as ParsedArgs;
+  // 直接从原始 argv 取 layer（minimist 的 _ 里也有，但原始 argv 更直观、不被 flag 解析干扰）。
+  const layer = argv[ARGV_USER_PARAMS_START + 1];
 
-  if (v1ActionRaw === undefined) {
-    debugLog("runV1 missing action");
-    process.stderr.write(
-      `错误：v1 需要指定 action。用法：cw v1 <action> [layer] [options]\n`,
-    );
-    process.exit(EXIT_CW_ERROR);
-  }
-  const v1Action = String(v1ActionRaw);
-  debugLog("runV1 action", v1Action, "layer", layer);
+  debugLog("runWithAction action", action, "layer", layer);
 
-  // ── readonly 查询分支（tree/status/list）──
+  // ── readonly 查询分支（tree/status/list/handoff）──
   // 不经 dispatch、不写 store、不读 stdin。只 new V1Store 读数据 + render + console.log + 早返回。
-  if (V1_READONLY_QUERIES.has(v1Action)) {
-    await runV1Readonly(v1Action, parsed, workspacePath);
+  if (READONLY_QUERIES.has(action)) {
+    await runReadonly(action, parsed, workspacePath);
     return;
   }
 
-  if (!V1_VALID_ACTIONS.has(v1Action)) {
-    debugLog("runV1 unknown action", v1Action);
+  if (!VALID_ACTIONS.has(action)) {
+    debugLog("runWithAction unknown action", action);
     process.stderr.write(
-      `错误：未知 v1 action "${v1Action}"。合法: ${[...V1_VALID_ACTIONS].join(", ")}\n`,
+      `错误：未知 action "${action}"。合法: ${[...VALID_ACTIONS].join(", ")}\n`,
     );
     process.exit(EXIT_CW_ERROR);
   }
@@ -697,52 +692,52 @@ async function runV1(
   // layer 缺失时被引导选层，避免凭直觉选错层级。
   //
   // 「缺失」的两种形态都走 guidance：
-  //   1. layer === undefined：cw v1 create --slug x（create 后直接跟 flag）
-  //   2. layer 以 '-' 开头：argv[4] 被误占为 flag（如 cw v1 create --slug x），
+  //   1. layer === undefined：cw create --slug x（create 后直接跟 flag）
+  //   2. layer 以 '-' 开头：argv[3] 被误占为 flag（如 cw create --slug x），
   //      argv 位置解析拿到 "--slug"。两者都是 agent 省略了 layer。
   // 非法 layer 字符串（如 'bogus'，不以 '-' 开头但不在四层中）不在此分支，
-  // 仍由 buildV1Params 抛 CwError（exit 1）——那是真错误而非缺失。
-  if (v1Action === "create" && (layer === undefined || layer.startsWith("-"))) {
-    debugLog("runV1 create missing layer");
+  // 仍由 buildParams 抛 CwError（exit 1）——那是真错误而非缺失。
+  if (action === "create" && (layer === undefined || layer.startsWith("-"))) {
+    debugLog("runWithAction create missing layer");
     process.stdout.write(buildLayerPromptGuidance());
     return;
   }
 
   // 推进 action 读 stdin（create 不读 stdin）。
-  const stdinData = v1Action === "create" ? "" : await readStdin();
+  const stdinData = action === "create" ? "" : await readStdin();
   const isStdinTTY = process.stdin.isTTY === true;
-  debugLog("runV1 stdin length", stdinData.length, "isTTY", isStdinTTY);
+  debugLog("runWithAction stdin length", stdinData.length, "isTTY", isStdinTTY);
 
   // 构造 V1Params（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
   // 非 create action 先读 unit scope（wave 需 --commitHash，slice 不需要）。
   // store 用与 constructV1Deps 相同的 V1Store 实例化（绑 workspacePath，读 _v1.json）。
   const scope =
-    v1Action === "create" ? null : getUnitScope(new V1Store(workspacePath), flag(parsed, "unitId") ?? "");
-  const params = buildV1Params(
-    v1Action,
+    action === "create" ? null : getUnitScope(new V1Store(workspacePath), flag(parsed, "unitId") ?? "");
+  const params = buildParams(
+    action,
     layer,
     parsed,
     stdinData,
     isStdinTTY,
     scope,
   );
-  debugLog("runV1 params", params);
+  debugLog("runWithAction params", params);
 
   // 构造 V1Deps + 调 v1Dispatch。
   const testCwd = flag(parsed, "testCwd");
   const deps = constructV1Deps(workspacePath, testCwd);
-  debugLog("runV1 deps constructed");
+  debugLog("runWithAction deps constructed");
   const result: V1ActionResult = v1Dispatch(params, deps);
-  debugLog("runV1 dispatch result", result);
+  debugLog("runWithAction dispatch result", result);
 
   // 序列化 ActionResult → stdout JSON。
   process.stdout.write(JSON.stringify(result, null, JSON_INDENT) + "\n");
 }
 
-// ── v1 只读查询（tree/status/list） ──────────────────────────
+// ── 只读查询（tree/status/list/handoff） ──────────────────────────
 
 /**
- * runV1Readonly — v1 只读查询命令处理（tree/status/list）。
+ * runReadonly — 只读查询命令处理（tree/status/list/handoff）。
  *
  * 与 advance action 的根本区别：
  *   - 不调 dispatch、不写 store、不 append statusHistory
@@ -751,7 +746,7 @@ async function runV1(
  *
  * 输出是纯文本（tree/列表/handoff）或 JSON（status），不走 ActionResult 序列化。
  */
-async function runV1Readonly(
+async function runReadonly(
   action: string,
   parsed: ParsedArgs,
   workspacePath: string,
@@ -926,19 +921,18 @@ async function main(argv: string[]): Promise<void> {
   const workspacePath =
     typeof parsed.workspace === "string" ? parsed.workspace : process.cwd();
 
-  // ── v1 命令分支（`cw v1 <action> ...`）──
-  // cw 1.0 起唯一入口：所有命令都走 `cw v1 <action>`。不带 v1 前缀的旧 action 名
-  // （create/status/list/...）不再被识别，统一报「未知 action」并提示改用 `cw v1`。
-  if (action === "v1") {
-    await runV1(argv, workspacePath);
+  // ── 命令分支（`cw <action> ...`）──
+  // cw 唯一入口：所有命令都走 `cw <action>`（Wave 3 起去掉 v1 前缀）。
+  // ALL_ACTIONS = VALID_ACTIONS ∪ READONLY_QUERIES（create/推进 + tree/status/list/handoff）。
+  if (ALL_ACTIONS.has(action)) {
+    await runWithAction(argv, workspacePath, action);
     return;
   }
 
-  // 非 v1 命令一律拒绝。cw 1.0 起仅 `cw v1 <action>` 一种形态——不带前缀的旧 action
-  // 不再做向后兼容（legacy/ 与 0.x 状态机已整体删除）。提示用户改用 `cw v1`。
+  // 未识别的 action 一律拒绝（含旧的 `v1` 前缀——Wave 3 起彻底切断，不再做向后兼容）。
   process.stderr.write(
-    `错误：未知 action "${action}"。请改用：cw v1 <action> [layer] [options]\n` +
-      `（cw 1.0 起统一走 v1 前缀，详见 cw v1 --help 或 cw v1 create）\n`,
+    `错误：未知 action "${action}"。请改用：${buildCommand("<action>", "[layer]", "[options]")}\n` +
+      `（合法 action: ${[...ALL_ACTIONS].join(", ")}）\n`,
   );
   process.exit(EXIT_CW_ERROR);
 }

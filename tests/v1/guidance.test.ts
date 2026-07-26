@@ -178,9 +178,9 @@ describe("failure-hint: buildFailureHint", () => {
 
   it("failureCount == 3，plan 类 → 含三出口（clarify / replan / abort 重选）", () => {
     const hint = buildFailureHint(3, "wave:x", "plan");
-    expect(hint).toContain("cw v1 clarify");
-    expect(hint).toContain("cw v1 replan");
-    expect(hint).toContain("cw v1 abort");
+    expect(hint).toContain("cw clarify");
+    expect(hint).toContain("cw replan");
+    expect(hint).toContain("cw abort");
     // 第 3 次不含「强烈建议先 abort」。
     expect(hint).not.toContain("强烈建议");
   });
@@ -188,15 +188,15 @@ describe("failure-hint: buildFailureHint", () => {
   it("failureCount == 2 / 4 → 同三出口档位（容差，非死边界）", () => {
     for (const count of [2, 4]) {
       const hint = buildFailureHint(count, "wave:x", "plan");
-      expect(hint).toContain("cw v1 clarify");
-      expect(hint).toContain("cw v1 replan");
+      expect(hint).toContain("cw clarify");
+      expect(hint).toContain("cw replan");
       expect(hint).not.toContain("强烈建议");
     }
   });
 
   it("failureCount >= 5 → 加「强烈建议先 cw abort」一句", () => {
     const hint = buildFailureHint(5, "wave:x", "plan");
-    expect(hint).toContain("强烈建议先 cw v1 abort");
+    expect(hint).toContain("强烈建议先 cw abort");
     expect(hint).toContain("5");
     // 第 7 次同样含强烈建议。
     expect(buildFailureHint(7, "wave:x", "plan")).toContain("强烈建议");
@@ -211,9 +211,9 @@ describe("failure-hint: buildFailureHint", () => {
     expect(hint).toContain("--unitId wave:auth-w1");
     expect(hint).not.toContain("<unitId>");
     // 每条命令都必须带 v1 前缀。
-    expect(hint).toContain("cw v1 clarify");
-    expect(hint).toContain("cw v1 replan");
-    expect(hint).toContain("cw v1 abort");
+    expect(hint).toContain("cw clarify");
+    expect(hint).toContain("cw replan");
+    expect(hint).toContain("cw abort");
   });
 });
 
@@ -224,35 +224,35 @@ describe("failure-hint: buildFailureHint", () => {
 describe("failure-hint: action-aware 出口 (M10)", () => {
   it("clarify 类失败 → 不建议 replan（无 plan 可改），建议继续 clarify/abort 重选/重新拆 layer", () => {
     const hint = buildFailureHint(3, "feature:f1", "clarify");
-    expect(hint).toContain("cw v1 clarify");
-    expect(hint).toContain("cw v1 abort");
+    expect(hint).toContain("cw clarify");
+    expect(hint).toContain("cw abort");
     // clarify 阶段还没有 plan，不该建议 replan。
-    expect(hint).not.toContain("cw v1 replan");
+    expect(hint).not.toContain("cw replan");
     // 不该用「plan 有根本问题」类误导文案。
     expect(hint).not.toContain("plan 有根本问题");
   });
 
   it("plan 类失败 → 标准三出口（clarify / replan / abort 重选）", () => {
     const hint = buildFailureHint(3, "wave:p1", "plan");
-    expect(hint).toContain("cw v1 clarify");
-    expect(hint).toContain("cw v1 replan");
-    expect(hint).toContain("cw v1 abort");
+    expect(hint).toContain("cw clarify");
+    expect(hint).toContain("cw replan");
+    expect(hint).toContain("cw abort");
   });
 
   it("design-review / execute / test / exec-review / retrospect / closeout 类失败 → 同 plan 三出口", () => {
     for (const action of ["design-review", "execute", "test", "exec-review", "retrospect", "closeout"] as const) {
       const hint = buildFailureHint(3, "wave:x", action);
-      expect(hint).toContain("cw v1 clarify");
-      expect(hint).toContain("cw v1 replan");
-      expect(hint).toContain("cw v1 abort");
+      expect(hint).toContain("cw clarify");
+      expect(hint).toContain("cw replan");
+      expect(hint).toContain("cw abort");
     }
   });
 
   it("replan 类失败 → 不再建议 replan（已是修复手段本身），建议 abort 跳出重建", () => {
     const hint = buildFailureHint(3, "wave:r1", "replan");
     // replan 阶段连续失败说明这条路不通，不该再让用户重试 replan。
-    expect(hint).not.toContain("cw v1 replan");
-    expect(hint).toContain("cw v1 abort");
+    expect(hint).not.toContain("cw replan");
+    expect(hint).toContain("cw abort");
   });
 
   it("abort 类失败 → 提示确认状态已转 aborted，流程结束", () => {
@@ -262,7 +262,7 @@ describe("failure-hint: action-aware 出口 (M10)", () => {
 
   it("create 类失败 → 建议重试或换更高层创建", () => {
     const hint = buildFailureHint(3, "wave:c1", "create");
-    expect(hint).toContain("cw v1 create");
+    expect(hint).toContain("cw create");
   });
 });
 
@@ -493,7 +493,7 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
     const guidance = buildFailureGuidance({
       prefix: "[wave:auth-w1] 状态：planning（未变）",
       problem: "testCases 为空。design-review gate 要求 testCases 至少 1 条。",
-      fixCommand: "cw v1 plan --unitId wave:auth-w1 --input @plan.json",
+      fixCommand: "cw plan --unitId wave:auth-w1 --input @plan.json",
       failureHint: buildFailureHint(3, "wave:auth-w1", "plan"),
     });
 
@@ -501,19 +501,19 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
     expect(guidance).toContain("## 问题");
     expect(guidance).toContain("testCases 为空");
     expect(guidance).toContain("## 怎么修");
-    expect(guidance).toContain("cw v1 plan --unitId wave:auth-w1 --input @plan.json");
+    expect(guidance).toContain("cw plan --unitId wave:auth-w1 --input @plan.json");
     // failureCount=3 → 含递进提示段。
     expect(guidance).toContain("## 递进提示");
-    expect(guidance).toContain("cw v1 clarify");
-    expect(guidance).toContain("cw v1 replan");
-    expect(guidance).toContain("cw v1 abort");
+    expect(guidance).toContain("cw clarify");
+    expect(guidance).toContain("cw replan");
+    expect(guidance).toContain("cw abort");
   });
 
   it("failureHint 为空（第 1 次）→ 省略「递进提示」段", () => {
     const guidance = buildFailureGuidance({
       prefix: "[wave:auth-w1] 状态：planning（未变）",
       problem: "testCases 为空。",
-      fixCommand: "cw v1 plan --unitId wave:auth-w1 --input @plan.json",
+      fixCommand: "cw plan --unitId wave:auth-w1 --input @plan.json",
       failureHint: buildFailureHint(1, "wave:auth-w1", "plan"),
     });
 
@@ -539,14 +539,14 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
     expect(fixIdx).toBeLessThan(hintIdx);
   });
 
-  it("failureCount=5 → 递进提示含「强烈建议先 cw v1 abort」", () => {
+  it("failureCount=5 → 递进提示含「强烈建议先 cw abort」", () => {
     const guidance = buildFailureGuidance({
       prefix: "[wave:x] 状态：s",
       problem: "p",
       fixCommand: "cmd",
       failureHint: buildFailureHint(5, "wave:x", "plan"),
     });
-    expect(guidance).toContain("强烈建议先 cw v1 abort");
+    expect(guidance).toContain("强烈建议先 cw abort");
   });
 });
 

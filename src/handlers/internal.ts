@@ -31,6 +31,7 @@ import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
+import { buildCommand } from "../utils/command.js";
 import type { V1Deps,V1NextAction } from "./types.js";
 
 /**
@@ -247,7 +248,7 @@ export function buildNextAction(
   const schemaText = opts?.schemaTextOverride ?? getSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? ACTION_TO_NEXT[action];
-  const command = buildCommand(action, unit.id, nextAction);
+  const command = buildWaveNextCommand(action, unit.id, nextAction);
 
   const guidance = buildNormalGuidance({
     prefix,
@@ -308,7 +309,7 @@ export function buildFailureNextAction(
   const failureCount = deriveFailureCount(unit.statusHistory, action);
   const failureHint = buildFailureHint(failureCount, unit.id, action);
 
-  const fixCommand = buildCommand(action, unit.id, action);
+  const fixCommand = buildWaveNextCommand(action, unit.id, action);
 
   const guidance = buildFailureGuidance({
     prefix,
@@ -363,10 +364,11 @@ export function appendFailRecord(
 /**
  * 组装命令字符串（正常路径用 nextAction，异常路径 fixCommand 用 action 自身重提）。
  *
- * 格式（§4.x）：`cw v1 <action> --unitId <id>`（有 input 时附 `--input @<action>.json`）。
+ * 格式（§4.x）：`cw <action> --unitId <id>`（有 input 时附 `--input @<action>.json`），
+ * 命令本体由 buildCommand（utils/command.ts）统一构造。
  * 终态（nextAction=undefined）→ 仅给状态提示，命令为空。
  */
-function buildCommand(
+function buildWaveNextCommand(
   currentAction: WaveAction,
   unitId: string,
   nextAction: string | undefined,
@@ -376,6 +378,6 @@ function buildCommand(
   }
   const hasInput = ACTION_SCHEMA[nextAction] !== undefined ||
     FLAT_INPUT_HINT[nextAction] !== undefined;
-  const inputPart = hasInput ? ` --input @${nextAction}.json` : "";
-  return `cw v1 ${nextAction} --unitId ${unitId}${inputPart}`;
+  const inputPart = hasInput ? `--input @${nextAction}.json` : "";
+  return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
 }

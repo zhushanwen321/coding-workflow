@@ -12,6 +12,7 @@ import type { ExecutionUnit } from "../core/workunit.js";
 import { createWave } from "../core/workunit.js";
 import { buildNextAction, saveUnit } from "./internal.js";
 import type { ActionResult, CreateInput,V1Deps } from "./types.js";
+import { buildCommand } from "../utils/command.js";
 
 /** testRunner 配置提示（create 时提前告知 monorepo 用户）。 */
 const TEST_RUNNER_HINT = `
@@ -25,7 +26,7 @@ const TEST_RUNNER_HINT = `
     }
   }
 或使用 --testCwd 参数临时覆盖（优先级高于 config）：
-  cw v1 test --unitId <id> --testCwd packages/renderer
+  ${buildCommand("test", "--unitId <id>", "--testCwd packages/renderer")}
 配置后 cw 会在指定目录跑测试，解决 monorepo alias 等问题。
 
 ## command 强烈建议配置为 wave 范围测试

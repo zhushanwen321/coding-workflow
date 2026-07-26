@@ -47,11 +47,12 @@ const HINT_THRESHOLD_STRONG_ABORT = 5;
  * 故可直接作为 buildFailureHint 的 action 参数类型。
  */
 import type { WaveAction } from "../rules/state-machine.js";
+import { buildCommand } from "../utils/command.js";
 
 /**
  * 按 failureCount 渲染递进提示文本。
  *
- * 命令已嵌入真实 unitId（不占位），所有命令都带 `v1` 前缀——agent 可直接复制执行。
+ * 命令已嵌入真实 unitId（不占位），所有命令由 buildCommand 统一构造（`cw <action> ...`）——agent 可直接复制执行。
  *
  * @param failureCount 同一 action 的连续 fail 次数（从 statusHistory 派生，§5.1）
  * @param unitId 失败 unit 的 id（嵌入到命令里替代 `<unitId>` 占位）
@@ -77,7 +78,7 @@ export function buildFailureHint(
     return [
       ...exits,
       "",
-      `连续失败已达 ${failureCount} 次，强烈建议先 cw v1 abort --unitId ${unitId} --reason "..."，跳出当前层重新审视。`,
+      `连续失败已达 ${failureCount} 次，强烈建议先 ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')}，跳出当前层重新审视。`,
     ].join("\n");
   }
 
@@ -102,8 +103,8 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   if (action === "clarify") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- 表述不到位 → 继续用 cw v1 clarify 调整（cw v1 clarify --unitId ${unitId} --input @clarify.json）`,
-      `- 单元定位不对 → cw v1 abort --unitId ${unitId} --reason "..." 后在父单元拆 layer 重建`,
+      `- 表述不到位 → 继续用 cw clarify 调整（${buildCommand("clarify", `--unitId ${unitId}`, "--input @clarify.json")}）`,
+      `- 单元定位不对 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元拆 layer 重建`,
       `- 选错了层 → 在更高层（epic/feature）建单元`,
     ];
   }
@@ -112,8 +113,8 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   if (action === "replan") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- plan 反复改不动 → 重新拆 layer（cw v1 abort --unitId ${unitId} --reason "..." 后在父单元重建）`,
-      `- 当前单元无法推进 → cw v1 abort --unitId ${unitId} --reason "..." 终止`,
+      `- plan 反复改不动 → 重新拆 layer（${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元重建）`,
+      `- 当前单元无法推进 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 终止`,
     ];
   }
 
@@ -122,7 +123,7 @@ function buildExits(action: WaveAction, unitId: string): string[] {
     return [
       "abort 阶段连续失败。建议：",
       `- 检查 unit 状态是否已变 aborted —— 若是终态，流程结束`,
-      `- 若仍是异常状态，重跑 cw v1 abort --unitId ${unitId} --reason "..."`,
+      `- 若仍是异常状态，重跑 ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')}`,
     ];
   }
 
@@ -130,7 +131,7 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   if (action === "create") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- 单元创建参数不对 → 检查 slug/objective 合法性后重试（cw v1 create --input @create.json）`,
+      `- 单元创建参数不对 → 检查 slug/objective 合法性后重试（${buildCommand("create", "--input @create.json")}）`,
       `- 选错了层 → 在更高层（epic/feature/slice）创建`,
     ];
   }
@@ -139,9 +140,9 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   // 标准三出口——回到 clarify / replan / abort 重选
   return [
     "连续失败已超过 1 次。考虑：",
-    `- 需求本身不明确 → 回到 clarify（cw v1 clarify --unitId ${unitId} --input @clarify.json）`,
-    `- plan 有根本问题 → replan（cw v1 replan --unitId ${unitId} --abandonedIds '[...]' --note "..."）`,
-    `- 选错了层 → cw v1 abort --unitId ${unitId} --reason "..." 重选`,
+    `- 需求本身不明确 → 回到 clarify（${buildCommand("clarify", `--unitId ${unitId}`, "--input @clarify.json")}）`,
+    `- plan 有根本问题 → replan（${buildCommand("replan", `--unitId ${unitId}`, "--abandonedIds '[...]'", '--note "..."')}）`,
+    `- 选错了层 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 重选`,
   ];
 }
 

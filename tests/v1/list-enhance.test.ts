@@ -1,5 +1,5 @@
 /**
- * Wave B: cw v1 list 增强——跨 cwd/分页/分组/模糊匹配/--long 测试。
+ * Wave B: cw list 增强——跨 cwd/分页/分组/模糊匹配/--long 测试。
  *
  * 覆盖 12 个核心场景（对应 plan TC-B1 到 TC-B12）：
  *   - 默认参数 + 分页元信息（TC-B1）

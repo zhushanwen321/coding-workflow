@@ -3,7 +3,7 @@
  *
  * 只读聚合，不写 store。损坏的 _v1.json 跳过不抛（ES2）。
  *
- * 调用方：cli.ts 的 `cw v1 list --all` 分支用此函数把 V1_HOME 下全部 cwd 的
+ * 调用方：cli.ts 的 `cw list --all` 分支用此函数把 V1_HOME 下全部 cwd 的
  * workUnits 聚合为一组 AnnotatedUnit（带 cwd/repoMeta 标注），交给 renderList
  * 渲染 group header 表格。
  *

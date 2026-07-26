@@ -209,7 +209,7 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
     expect(failureCount).toBe(2);
     // >=2 出现递进提示段 + 三出口（clarify/replan/abort）
     expect(guidance).toContain("## 递进提示");
-    expect(guidance).toContain("cw v1 clarify");
+    expect(guidance).toContain("cw clarify");
     expect(guidance).toContain("replan");
     expect(guidance).toContain("abort");
   });

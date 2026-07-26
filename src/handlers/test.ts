@@ -32,6 +32,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, TestInput,V1Deps } from "./types.js";
+import { buildCommand } from "../utils/command.js";
 
 /**
  * 执行 test action。
@@ -76,7 +77,7 @@ export function handleTest(
       const hint = testRunResult.failedCount > MONOREPO_FAIL_HINT_THRESHOLD
         ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是 monorepo 测试目录问题。排查：
 1. 确认测试命令在正确目录跑：在项目根目录创建 cw.config.json 配置 testRunner.cwd
-2. 或使用 --testCwd 临时指定：cw v1 test --unitId ${unit.id} --testCwd <测试目录>
+2. 或使用 --testCwd 临时指定：${buildCommand("test", `--unitId ${unit.id}`, "--testCwd <测试目录>")}
 3. 配置后可在正确目录手动跑测试验证：cd <测试目录> && npx vitest run`
         : "\n\n如果测试目录不在仓库根，请在项目根目录创建 cw.config.json 配置 testRunner.cwd，或使用 --testCwd 参数";
       reason += hint;

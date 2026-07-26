@@ -35,6 +35,7 @@ import {
 } from "./internal.js";
 import type { ActionResult, ReplanInput,V1Deps } from "./types.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
+import { buildCommand } from "../utils/command.js";
 
 /**
  * 执行 replan action（旁路，不改 status）。
@@ -111,7 +112,7 @@ export function handleReplan(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: `cw v1 plan --unitId ${unit.id} --input @plan.json`,
+    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, "--input @plan.json"),
   });
 
   return {

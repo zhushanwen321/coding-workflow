@@ -22,6 +22,7 @@ import { buildSliceNextAction } from "../handlers/slice/slice-internal.js";
 import type { PlanningAction,WaveAction } from "../rules/state-machine.js";
 import type { RepoMeta, WorkUnitRecord } from "../store/schema.js";
 import type { V1Store } from "../store/v1-store.js";
+import { buildCommand } from "../utils/command.js";
 
 // ── 辅助：从宽松的 WorkUnitRecord 安全取字符串字段 ───────────
 
@@ -957,12 +958,12 @@ function renderNextStepSection(
 
   const resolved = buildGuidanceForScope(unit, scope, status);
   if (!resolved) {
-    lines.push(`（状态 ${status} 无已知下一步 action，请用 cw v1 status --unitId ${unit.id} 确认）`);
+    lines.push(`（状态 ${status} 无已知下一步 action，请用 ${buildCommand("status", `--unitId ${unit.id}`)} 确认）`);
     return lines;
   }
 
   // 明确告诉接手 agent「现在该跑什么命令」
-  lines.push(`下一步执行：cw v1 ${resolved.action} --unitId ${unit.id}`);
+  lines.push(`下一步执行：${buildCommand(resolved.action, `--unitId ${unit.id}`)}`);
 
   // 阶段 guidance（含 schema + 关键约束）——与实际跑 action 返回的 guidance 逐字一致
   if (resolved.guidance) {

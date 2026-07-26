@@ -24,7 +24,7 @@ export interface BuildNormalGuidanceArgs {
   nextAction: string;
   /** 一句话目标（来自 template.goal，描述当前阶段要做什么）。 */
   goal: string;
-  /** 完整命令（如 "cw v1 plan --unitId wave:x --input @plan.json"）。 */
+  /** 完整命令（如 "cw plan --unitId wave:x --input @plan.json"）。 */
   command: string;
   /** input schema 文本（来自 schema-injector）。 */
   schemaText: string;
@@ -146,7 +146,7 @@ export interface BuildReplanGuidanceArgs {
   replanCount: number;
   /** replan 影响面描述（aborted/preserved/pendingRebuild）。 */
   impactSummary: string;
-  /** 下一步命令（如 "cw v1 plan --unitId slice:auth --input @plan.json"）。 */
+  /** 下一步命令（如 "cw plan --unitId slice:auth --input @plan.json"）。 */
   nextCommand: string;
 }
 
