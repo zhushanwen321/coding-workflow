@@ -175,10 +175,41 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 | 命令 | 用途 |
 |------|------|
-| `cw v1 list [--layer <l>]` | 全部 unit 的表格（unitId/layer/status/objective），扫全局用 |
+| `cw v1 list [flags]` | unit 表格定位（见下方「list 定位 topic」），扫当前/跨 cwd 用 |
 | `cw v1 tree [--unitId <id>]` | 以某 unit 为根的父子树（缩进），看拆解结构用 |
 | `cw v1 status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传） |
 | `cw v1 handoff --unitId <id>` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
+
+### list 定位 topic（新 agent 接手的第一步）
+
+`cw v1 list` 是定位 topic 的命令。零参数默认 = 当前 cwd 最近 10 个 unit（updatedAt DESC）。
+
+**flags**：
+- 无参数 → 当前 cwd 最近 10 个（**90% 接手场景用这个**）
+- `--limit N` / `--offset N` → 分页（默认 limit=10）
+- `--grep <keyword>` → slug + objective 大小写不敏感 substring 过滤
+- `--all` → 跨所有 cwd 遍历（扫 V1_HOME 全部 store，按 repo/branch 分组带 group header）
+- `--cwd <path>` → 指定查别的 cwd（不 cd，与 `--all` 互斥）
+- `--long` → 追加 children/created 列
+- `--layer epic|feature|slice|wave` → 按 scope 过滤
+
+**防误用四条（必须遵守）**：
+
+1. **一般不加参数即可**。默认就是最近 10 个当前 cwd topic，覆盖 90% 接手场景。
+2. **看到 `Showing X–Y of Z` 时**，如果 Z 远大于当前页，**优先用 `--grep` 收窄**，不要无脑 `--offset` 翻页（浪费 token）。
+3. **当前 cwd 没命中时才用 `--all`**——它会扫整个 V1_HOME，开销大。
+4. **拿 unitId 后必须 handoff**——list 只给定位（unitId + status + objective），不给上下文。`cw v1 handoff --unitId <id>` 才是真正接手（五段式 markdown 重建认知）。
+
+**接手标准流程（≤ 3 次 cw 调用）**：
+
+```
+cw v1 list                          # 当前 cwd 最近 10 个，肉眼认
+  ↓ 没命中
+cw v1 list --grep "关键词"           # 或 --all 跨 cwd
+  ↓ 拿到 unitId（+ --all 的正确 cwd）
+[若提示需切 cwd] cd <正确 worktree>
+cw v1 handoff --unitId <id>         # 五段式 markdown，开干
+```
 
 **交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw v1 handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（clarify 问答 + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
 

@@ -19,7 +19,7 @@ import { buildFeatureNextAction } from "../handlers/feature/feature-internal.js"
 import { buildNextAction } from "../handlers/internal.js";
 import { buildSliceNextAction } from "../handlers/slice/slice-internal.js";
 import type { PlanningAction,WaveAction } from "../rules/state-machine.js";
-import type { WorkUnitRecord } from "../store/schema.js";
+import type { RepoMeta, WorkUnitRecord } from "../store/schema.js";
 import type { V1Store } from "../store/v1-store.js";
 
 // ── 辅助：从宽松的 WorkUnitRecord 安全取字符串字段 ───────────
@@ -103,65 +103,362 @@ export function renderStatus(unit: WorkUnitRecord): string {
   return JSON.stringify(unit, null, JSON_INDENT) + "\n";
 }
 
+// ═══════════════════════════════════════════════════════════════
+// renderList — 单 cwd / 跨 cwd 通用列表渲染
+// ═══════════════════════════════════════════════════════════════
+
+/** list 命令的渲染选项。 */
+export interface ListOptions {
+  /** 单页上限，默认 10 */
+  limit?: number;
+  /** 翻页偏移，默认 0 */
+  offset?: number;
+  /** 跨 cwd 模式（带 group header），默认 false */
+  all?: boolean;
+  /** scope 过滤（向后兼容旧 layer 参数） */
+  layer?: string;
+  /** slug + objective 大小写不敏感 substring 过滤 */
+  grep?: string;
+  /** 追加 children/created 列 */
+  verbose?: boolean;
+}
+
+/** 带 cwd 标注的 unit（--all 模式 group header 用）。单 cwd 模式 cwd/repoMeta 为 undefined。 */
+export interface AnnotatedUnit {
+  unit: WorkUnitRecord;
+  /** 该 unit 所属的 cwd 绝对路径（--all 模式注入） */
+  cwd?: string;
+  /** 该 unit 所属 cwd 的 repoMeta（--all 模式注入） */
+  repoMeta?: RepoMeta;
+}
+
+/** group header 与分页分隔行的宽度（视觉一致，不依赖终端宽度）。 */
+const LIST_SEPARATOR_WIDTH = 71;
+
+/** objective 列截断长度（超出加 …，总长 ≤ 51）。 */
+const LIST_OBJECTIVE_MAX = 50;
+
+/** 默认每页条数（ListOptions.limit 缺省值）。cli 层默认值与此一致。 */
+const DEFAULT_LIMIT = 10;
+
+/** 日期分量的两位补齐宽度（月/日/时/分）。 */
+const DATE_PAD_WIDTH = 2;
+
 /**
- * renderList — 全部 unit 的表格输出。
+ * renderList — unit 列表渲染，支持过滤 / 分页 / 分组。
  *
- * 列：unitId | layer | status | objective。
- * layer 给定时过滤 unit.scope === layer（大小写敏感，scope 本身是小写枚举）。
+ * 数据流（design-review 修正）：接收 AnnotatedUnit[]，每个 unit 可选携带 cwd/repoMeta
+ * 标注。单 cwd 模式 cwd/repoMeta 为 undefined；--all 模式由 cli 层从
+ * loadAllCwdsFromHome 注入，打通 group header 的 repo/branch/commit 数据流。
  *
- * @param units  全部 unit（通常来自 store.loadAll()）
- * @param layer  可选 layer 过滤（epic/feature/slice/wave）
+ * 处理顺序：layer（scope）+ grep 过滤 → updatedAt DESC 排序 → offset/limit 分页 → 渲染。
+ * all=true 按 cwd 分组（每组前加 repo/branch/cwd header），否则单表格。
+ *
+ * 第二个参数兼容旧签名（layer 字符串），现有调用方迁移到 ListOptions 后可删。
+ *
+ * @param annotated       全部 unit（带可选 cwd/repoMeta 标注）
+ * @param optionsOrLayer  渲染选项，或旧式 layer 字符串
  */
 export function renderList(
-  units: ReadonlyArray<WorkUnitRecord>,
-  layer?: string,
+  annotated: ReadonlyArray<AnnotatedUnit>,
+  optionsOrLayer?: ListOptions | string,
 ): string {
-  const filtered = layer
-    ? units.filter((u) => u.scope === layer)
-    : units;
+  // 向后兼容：第二个参数是 string 时视为 { layer: string }
+  const opts: ListOptions = typeof optionsOrLayer === "string"
+    ? { layer: optionsOrLayer }
+    : (optionsOrLayer ?? {});
 
-  if (filtered.length === 0) {
-    return layer
-      ? `(no units in layer: ${layer})\n`
-      : "(no units)\n";
+  const limit = opts.limit ?? DEFAULT_LIMIT;
+  const offset = opts.offset ?? 0;
+  const all = opts.all ?? false;
+  const verbose = opts.verbose ?? false;
+
+  // 1. 过滤：layer（scope）+ grep（slug+objective 大小写不敏感 substring）
+  let filtered = annotated.filter(({ unit }) => {
+    if (opts.layer && unit.scope !== opts.layer) return false;
+    if (opts.grep) {
+      const needle = opts.grep.toLowerCase();
+      const slug = (unit.slug ?? "").toString().toLowerCase();
+      const objective = (getStringField(unit, "objective")).toLowerCase();
+      if (!slug.includes(needle) && !objective.includes(needle)) return false;
+    }
+    return true;
+  });
+
+  const total = filtered.length;
+
+  // 2. 排序：updatedAt DESC（null 排最后）
+  filtered = [...filtered].sort((a, b) => {
+    const ta = getUpdatedAt(a.unit) ?? "";
+    const tb = getUpdatedAt(b.unit) ?? "";
+    return tb.localeCompare(ta);
+  });
+
+  // 2.5 children 索引：基于 filtered 全集反查 parentUnitId 外键，
+  //     key=parent 的 unitId，value=该 parent 的 children 数量。
+  //     WorkUnitRecord schema 只有 parentUnitId 外键（无 children 字段），
+  //     故 children 关系需在此反查构建（修复 renderTable 永远显示 0 的 bug）。
+  const childCountIndex = buildChildCountIndex(filtered);
+
+  // 3. 分页
+  const page = filtered.slice(offset, offset + limit);
+  const pageLen = page.length;
+
+  if (pageLen === 0) {
+    return total === 0
+      ? (opts.layer ? `(no units in layer: ${opts.layer})\n` : "(no units)\n")
+      : `(no units on this page; total ${total}, offset ${offset})\n`;
   }
 
-  // 列宽对齐：取每列最大宽度（与表头比较）。
-  const rows = filtered.map((u) => ({
-    unitId: u.id,
-    layer: u.scope,
-    status: getStringField(u, "status"),
-    objective: getStringField(u, "objective"),
-  }));
+  // 4. 渲染
+  if (all) {
+    return renderGrouped(page, filtered, childCountIndex, opts, total, offset, pageLen, verbose);
+  }
+  return renderSingleCwd(page, childCountIndex, opts, total, offset, pageLen, verbose);
+}
+
+/**
+ * 构建 childCountIndex：遍历全集，对每个 unit 的 parentUnitId 累加计数。
+ *
+ * key=parent 的 unitId，value=该 parent 拥有的 children 数量。
+ * WorkUnitRecord 只有 parentUnitId 外键（无 children 字段），
+ * children 关系必须反查此索引。
+ */
+function buildChildCountIndex(
+  units: ReadonlyArray<AnnotatedUnit>,
+): ReadonlyMap<string, number> {
+  const index = new Map<string, number>();
+  for (const { unit } of units) {
+    const pid = unit.parentUnitId;
+    if (typeof pid !== "string" || pid === "") continue;
+    index.set(pid, (index.get(pid) ?? 0) + 1);
+  }
+  return index;
+}
+
+/**
+ * renderSingleCwd — 普通 5 列表格（unitId/layer/status/objective/updated，
+ * verbose 时加 children/created）。尾部附分页元信息（total > pageLen 时）。
+ */
+function renderSingleCwd(
+  page: ReadonlyArray<AnnotatedUnit>,
+  childCountIndex: ReadonlyMap<string, number>,
+  opts: ListOptions,
+  total: number,
+  offset: number,
+  pageLen: number,
+  verbose: boolean,
+): string {
+  return renderTable(page, childCountIndex, verbose) + renderPagination(opts, total, offset, pageLen, 0);
+}
+
+/**
+ * renderGrouped — 按 cwd 分组。每组前加 group header（repo/branch/@commit/cwd），
+ * 组内是同一份表格（单组内分页元信息），尾部再附跨组总分页元信息。
+ *
+ * 同 repo 多 worktree 的 remoteUrl 去重（BC4）：首次出现的 remoteUrl 原样显示，
+ * 后续相同 remoteUrl 显示 "(same repo)"，便于在多 worktree 场景识别同一仓库。
+ */
+function renderGrouped(
+  page: ReadonlyArray<AnnotatedUnit>,
+  filtered: ReadonlyArray<AnnotatedUnit>,
+  childCountIndex: ReadonlyMap<string, number>,
+  opts: ListOptions,
+  total: number,
+  offset: number,
+  pageLen: number,
+  verbose: boolean,
+): string {
+  const out: string[] = [];
+  // 按 cwd 顺序保序分组（filtered 已按 updatedAt DESC 排序，page 是其切片）
+  const groupOrder: string[] = [];
+  const groupMap = new Map<string, AnnotatedUnit[]>();
+  for (const au of page) {
+    const key = au.cwd ?? "(unknown cwd)";
+    if (!groupMap.has(key)) {
+      groupMap.set(key, []);
+      groupOrder.push(key);
+    }
+    groupMap.get(key)!.push(au);
+  }
+
+  // BC4：跨组去重 remoteUrl（同 repo 多 worktree）
+  const seenRemoteUrls = new Set<string>();
+
+  // 为每组算该组在 page 内的起始 offset（组内分页元信息用）
+  let runningPageOffset = 0;
+  for (const cwd of groupOrder) {
+    const groupUnits = groupMap.get(cwd)!;
+    const head = groupUnits[0];
+    const meta = head.repoMeta;
+
+    out.push(renderGroupHeader(meta, cwd, seenRemoteUrls));
+    out.push(renderTable(groupUnits, childCountIndex, verbose));
+    // 组内分页：该组占总页的位置（runningPageOffset 基于全局 page 切片）
+    out.push(renderPagination(opts, groupUnits.length, runningPageOffset, groupUnits.length, 0, true));
+    runningPageOffset += groupUnits.length;
+  }
+
+  // 跨组分页元信息（基于 filtered 全量，区别于组内 page 切片）
+  out.push(renderPagination(opts, total, offset, pageLen, filtered.length));
+  return out.join("");
+}
+
+/** 渲染单组 group header（双横线 + repo/branch/cwd + 双横线）。 */
+function renderGroupHeader(
+  meta: RepoMeta | undefined,
+  cwd: string,
+  seenRemoteUrls: Set<string>,
+): string {
+  // BC4：remoteUrl 去重。空串视为 "(no repo meta)"，不参与去重。
+  const rawRemote = meta?.remoteUrl ?? "";
+  let remoteLine: string;
+  if (rawRemote === "") {
+    remoteLine = "(no repo meta)";
+  } else if (seenRemoteUrls.has(rawRemote)) {
+    remoteLine = "(same repo)";
+  } else {
+    remoteLine = rawRemote;
+    seenRemoteUrls.add(rawRemote);
+  }
+
+  const branch = meta?.branch || "-";
+  const headCommit = meta?.headCommit || "-";
+  const recorded = meta ? formatUpdatedAt(meta.recordedAt || null) : "-";
+
+  const bar = "═".repeat(LIST_SEPARATOR_WIDTH);
+  return (
+    `${bar}\n` +
+    ` repo   ${remoteLine}\n` +
+    ` branch ${branch}   @ ${headCommit}   (recorded ${recorded})\n` +
+    ` cwd    ${cwd}\n` +
+    `${bar}\n`
+  );
+}
+
+/**
+ * 渲染表格主体（表头 + 分隔行 + 数据行）。
+ *
+ * 列宽按数据动态对齐（与表头比较取最大）。verbose=true 时追加 children/created 两列。
+ * objective 列超 LIST_OBJECTIVE_MAX 字符截断加 …（不参与列宽对齐，最后列直接输出）。
+ */
+function renderTable(
+  annotated: ReadonlyArray<AnnotatedUnit>,
+  childCountIndex: ReadonlyMap<string, number>,
+  verbose: boolean,
+): string {
+  const rows = annotated.map((au) => {
+    const u = au.unit;
+    return {
+      unitId: u.id,
+      layer: u.scope,
+      status: getStringField(u, "status"),
+      objective: truncateObjective(getStringField(u, "objective")),
+      updated: formatUpdatedAt(getUpdatedAt(u)),
+      children: String(childCountIndex.get(u.id) ?? 0),
+      created: formatUpdatedAt(getCreatedAt(u)),
+    };
+  });
 
   const colWidths = {
     unitId: Math.max("unitId".length, ...rows.map((r) => r.unitId.length)),
     layer: Math.max("layer".length, ...rows.map((r) => r.layer.length)),
     status: Math.max("status".length, ...rows.map((r) => r.status.length)),
+    updated: Math.max("updated".length, ...rows.map((r) => r.updated.length)),
   };
 
   const header =
     pad("unitId", colWidths.unitId) + "  " +
     pad("layer", colWidths.layer) + "  " +
     pad("status", colWidths.status) + "  " +
-    "objective";
+    pad("updated", colWidths.updated) + "  " +
+    "objective" +
+    (verbose ? "  children  created" : "");
 
   const separator =
     "-".repeat(colWidths.unitId) + "  " +
     "-".repeat(colWidths.layer) + "  " +
     "-".repeat(colWidths.status) + "  " +
-    "----------";
+    "-".repeat(colWidths.updated) + "  " +
+    "----------" +
+    (verbose ? "  --------  -------" : "");
 
   const body = rows
     .map((r) =>
       pad(r.unitId, colWidths.unitId) + "  " +
       pad(r.layer, colWidths.layer) + "  " +
       pad(r.status, colWidths.status) + "  " +
-      r.objective,
+      pad(r.updated, colWidths.updated) + "  " +
+      r.objective +
+      (verbose ? `  ${pad(r.children, "children".length)}  ${r.created}` : ""),
     )
     .join("\n");
 
-  return `${header}\n${separator}\n${body}\n`;
+  return rows.length === 0 ? "" : `${header}\n${separator}\n${body}\n`;
+}
+
+/**
+ * 渲染分页元信息。
+ *
+ * total > pageLen 时输出分隔行 + "Showing <start>–<end> of <total>" + 翻页提示。
+ * total ≤ pageLen 时不输出（单页内无需分页提示）。groupInternal=true 时强制不输出
+ *（组内已按组长度计算，避免误导；组级分页由调用方单独输出）。
+ */
+function renderPagination(
+  opts: ListOptions,
+  total: number,
+  offset: number,
+  pageLen: number,
+  _filteredTotal: number,
+  groupInternal = false,
+): string {
+  if (groupInternal) return "";
+  if (total <= pageLen) return "";
+  const limit = opts.limit ?? DEFAULT_LIMIT;
+  const start = offset + 1;
+  const end = offset + pageLen;
+  const bar = "─".repeat(LIST_SEPARATOR_WIDTH);
+  return (
+    `${bar}\n` +
+    ` Showing ${start}–${end} of ${total}  (use --offset ${offset + limit} for next page, --grep to filter)\n`
+  );
+}
+
+/** 从 statusHistory 末条 at 推导 updatedAt（RK-B3：不改 schema）。无 history 返回 null。 */
+function getUpdatedAt(unit: WorkUnitRecord): string | null {
+  const history = asArray(unit.statusHistory);
+  if (history.length === 0) return null;
+  const last = history[history.length - 1];
+  const at = (last as Record<string, unknown>)["at"];
+  return typeof at === "string" && at.length > 0 ? at : null;
+}
+
+/**
+ * 从 statusHistory 首条 at 推导 createdAt（verbose 列）。
+ *
+ * 复用 statusHistory 而非新增 createdAt 字段（RK-B3：不改 schema）。
+ * 无 history 返回 null（renderTable 进一步转 "-"）。
+ */
+function getCreatedAt(unit: WorkUnitRecord): string | null {
+  const history = asArray(unit.statusHistory);
+  if (history.length === 0) return null;
+  const first = history[0];
+  const at = (first as Record<string, unknown>)["at"];
+  return typeof at === "string" && at.length > 0 ? at : null;
+}
+
+/** 格式化绝对时间（本地时区 YYYY-MM-DD HH:mm）。null/无效返回 "-"。 */
+function formatUpdatedAt(iso: string | null): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  const pad2 = (n: number): string => String(n).padStart(DATE_PAD_WIDTH, "0");
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** 截断 objective 到 LIST_OBJECTIVE_MAX 字符 + …（超长时）。 */
+function truncateObjective(s: string): string {
+  return s.length > LIST_OBJECTIVE_MAX ? s.slice(0, LIST_OBJECTIVE_MAX) + "…" : s;
 }
 
 /** 右侧补齐到 width（超过不截断，表格列对齐用）。 */

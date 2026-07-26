@@ -103,6 +103,11 @@ import {
   type V1Params,
   V1Store,
 } from "./v1/index.js";
+import {
+  type AnnotatedUnit,
+  loadAllCwdsFromHome,
+} from "./v1/readonly/index.js";
+import { getV1Home } from "./v1/store/schema.js";
 import { parseFailedTestNames, parseVitestCounts } from "./v1/utils/parse-vitest-output.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
@@ -116,6 +121,9 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * BYTES_PER_MB;
 
 /** JSON 序列化缩进空格数。 */
 const JSON_INDENT = 2;
+
+/** v1 list 默认每页条数（与 render.ts DEFAULT_LIMIT 一致）。 */
+const V1_LIST_DEFAULT_LIMIT = 10;
 
 /** process.argv 中用户参数的起始索引（[0]=node, [1]=脚本路径）。 */
 const ARGV_USER_PARAMS_START = 2;
@@ -1494,8 +1502,41 @@ async function runV1Readonly(
 
   // action === "list"
   const layer = flag(parsed, "layer");
-  const units = store.loadAll();
-  process.stdout.write(renderList(units, layer));
+  const grep = flag(parsed, "grep");
+  const cwdFlag = flag(parsed, "cwd");
+  const isAll = parsed.all === true;
+  const isLong = parsed.long === true;
+  // limit/offset 是 number 类型，不能用 flag() helper（它只返回 string，会过滤掉 number）。
+  // minimist 把 --limit 2 解析成 {limit: 2}（number），直接读 parsed 字段。
+  const rawLimit = typeof parsed.limit === "number" ? parsed.limit : Number(parsed.limit);
+  const rawOffset = typeof parsed.offset === "number" ? parsed.offset : Number(parsed.offset);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : V1_LIST_DEFAULT_LIMIT;
+  const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+  // ES3：--all 与 --cwd 互斥（--all 跨 cwd 遍历，--cwd 锁定单 cwd，语义冲突）
+  if (isAll && cwdFlag !== undefined) {
+    throw new CwError("--all and --cwd are mutually exclusive");
+  }
+
+  if (isAll) {
+    // 跨 cwd 模式：loadAllCwdsFromHome + 注入 cwd/repoMeta 到 AnnotatedUnit
+    const v1Home = getV1Home();
+    const loaded = loadAllCwdsFromHome(v1Home);
+    const annotated: AnnotatedUnit[] = [];
+    for (const { cwd, data } of loaded) {
+      for (const unit of data.workUnits) {
+        annotated.push({ unit, cwd, repoMeta: data.repoMeta });
+      }
+    }
+    process.stdout.write(renderList(annotated, { limit, offset, all: true, layer, grep, verbose: isLong }));
+    return;
+  }
+
+  // 单 cwd 模式：--cwd 覆盖默认 workspacePath（不指定时复用上方已构造的 store，避免重复 new）
+  const singleStore = cwdFlag ? new V1Store(cwdFlag) : store;
+  const units = singleStore.loadAll();
+  const annotated = units.map((unit) => ({ unit }));
+  process.stdout.write(renderList(annotated, { limit, offset, layer, grep, verbose: isLong }));
 }
 
 /**
