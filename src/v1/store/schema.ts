@@ -24,7 +24,7 @@ import { isAbsolute, join } from "node:path";
 
 /** v1 持久化文件的顶层 schema（扁平集合 + parentUnitId 外键）。 */
 export interface V1JsonFile {
-  /** schema 版本，初始 = 1。读取侧按版本走分支，缺失视为 0（最旧） */
+  /** schema 版本，初始 = 1。缺失/非数字时 loadFileData 补 1（旧 store 向前兼容） */
   schemaVersion?: number;
   /** git repo 元信息，可选（旧 store 缺失时降级，首次推进类 action 时回填） */
   repoMeta?: RepoMeta;

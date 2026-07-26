@@ -163,7 +163,7 @@ export function extractChangedFiles(
 export function collectRepoMeta(cwd: string): RepoMeta {
   const runGit = (args: string[]): string => {
     const result = spawnSync("git", args, { ...GIT_SPAWN_OPTS, cwd });
-    if (result.status !== 0 || result.error) {
+    if (result.status !== 0 || result.error || typeof result.stdout !== "string") {
       return "";
     }
     return result.stdout.trim();

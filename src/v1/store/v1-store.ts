@@ -115,7 +115,7 @@ export class V1Store {
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
     // schema 迁移：旧 store 无 schemaVersion 视为已迁移到 v1（向前兼容）
-    if (data.schemaVersion === undefined) data.schemaVersion = 1;
+    if (typeof data.schemaVersion !== "number") data.schemaVersion = 1;
     // repoMeta 缺失留 undefined，首次推进类 save 时回填（不在只读 loadFileData 调 git）
     return data;
   }

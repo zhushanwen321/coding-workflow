@@ -21,7 +21,7 @@ cw v1 的状态库 `~/.v1/<encodedCwd>/_v1.json` 顶层只有 `{workUnits: [...]
 
 ```ts
 interface V1JsonFile {
-  schemaVersion?: number;   // 缺失视为 0（最旧）
+  schemaVersion?: number;   // 缺失/非数字时补 1
   repoMeta?: RepoMeta;      // 缺失时降级，首次推进类 action 时回填
   workUnits: WorkUnitRecord[];
 }
