@@ -130,7 +130,7 @@ const ACTION_TO_NEXT: Readonly<Record<string, string | undefined>> = {
  * schema 文本缓存（按 action，模块级，整个进程只读一次源文件）。
  *
  * 优先读取 build 阶段预生成的 dist/v1/guidance/schemas.gen.json；未命中时降级到
- * injectSchema 实时解析 src/v1/core/*.ts（开发时无 build 产物仍可工作）。
+ * injectSchema 实时解析 src/core/*.ts（开发时无 build 产物仍可工作）。
  */
 const schemaCache = new Map<string, string>();
 
@@ -142,7 +142,7 @@ interface SchemaGenFile {
 /**
  * 定位预计算 schema 产物路径。
  *
- * 本文件在 src/v1/handlers/internal.ts 或 dist/v1/handlers/internal.js 中运行，
+ * 本文件在 src/handlers/internal.ts 或 dist/v1/handlers/internal.js 中运行，
  * 向上三层即项目根目录，再拼 dist/v1/guidance/schemas.gen.json。
  */
 function getSchemaGenFilePath(): string {
@@ -155,7 +155,7 @@ function getSchemaGenFilePath(): string {
  * 取某 action 的 input schema 文本（带缓存 + 优先读预计算产物 + 降级）。
  *
  * - 命中 dist/v1/guidance/schemas.gen.json 中对应 action → 直接返回产物中的 schemaText。
- * - 产物缺失或损坏 → 降级到 injectSchema 实时解析 src/v1/core/*.ts。
+ * - 产物缺失或损坏 → 降级到 injectSchema 实时解析 src/core/*.ts。
  * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错，guidance 不应因 schema 生成失败而中断；
  *   schema 是给 agent 看的辅助信息，缺失只降级体验）。
  * - 同一 action 第二次调用命中缓存。

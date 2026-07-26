@@ -21,10 +21,10 @@ import {
   vi,
 } from "vitest";
 
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { createWave } from "../../src/v1/core/workunit.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
-import { encodeCwd, getV1JsonPath } from "../../src/v1/store/schema.js";
+import type { ExecutionUnit } from "../../src/core/workunit.js";
+import { createWave } from "../../src/core/workunit.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
+import { encodeCwd, getV1JsonPath } from "../../src/store/schema.js";
 import {
   createV1Env,
   STUB_NOW,

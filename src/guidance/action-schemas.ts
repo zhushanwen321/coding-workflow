@@ -10,7 +10,7 @@
 
 /** 单个 action 的 schema 来源描述。 */
 export interface SchemaSource {
-  /** core 源文件路径（相对于项目根目录，如 "src/v1/core/plan.ts"）。 */
+  /** core 源文件路径（相对于项目根目录，如 "src/core/plan.ts"）。 */
   sourceFilePath: string;
   /** 要提取的 interface 名（如 "PlanInput"）。 */
   interfaceName: string;
@@ -25,14 +25,14 @@ export interface SchemaSource {
  */
 export const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "PlanInput" },
-  "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
+  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanInput" },
+  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
   execute: undefined,
-  test: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "TestJudgment" },
-  "exec-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "ExecReviewJudgment" },
-  retrospect: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "RetrospectData" },
-  closeout: { sourceFilePath: "src/v1/core/evidence.ts", interfaceName: "ArtifactRef" },
+  test: { sourceFilePath: "src/core/judgments.ts", interfaceName: "TestJudgment" },
+  "exec-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "ExecReviewJudgment" },
+  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "RetrospectData" },
+  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
   replan: undefined,
   abort: undefined,
 };

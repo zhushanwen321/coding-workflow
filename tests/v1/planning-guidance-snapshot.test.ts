@@ -16,27 +16,27 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { Epic,Feature, Slice } from "../../src/v1/core/workunit.js";
-import { createEpic,createFeature, createSlice } from "../../src/v1/core/workunit.js";
+import type { Epic,Feature, Slice } from "../../src/core/workunit.js";
+import { createEpic,createFeature, createSlice } from "../../src/core/workunit.js";
 import {
   appendEpicFailRecord,
   buildEpicFailureNextAction,
   buildEpicNextAction,
   getEpicSchemaText,
-} from "../../src/v1/handlers/epic/epic-internal.js";
+} from "../../src/handlers/epic/epic-internal.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
   buildFeatureNextAction,
   getFeatureSchemaText,
-} from "../../src/v1/handlers/feature/feature-internal.js";
+} from "../../src/handlers/feature/feature-internal.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
   buildSliceNextAction,
   getSliceSchemaText,
-} from "../../src/v1/handlers/slice/slice-internal.js";
-import type { PlanningAction } from "../../src/v1/rules/state-machine.js";
+} from "../../src/handlers/slice/slice-internal.js";
+import type { PlanningAction } from "../../src/rules/state-machine.js";
 import { makeStubDeps } from "./helpers/v1-env.js";
 
 /**

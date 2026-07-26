@@ -28,9 +28,9 @@ import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
 
-import { CwError } from "./v1/core/errors.js";
-import type { TestRunResult } from "./v1/core/evidence.js";
-import type { ExecutionUnit } from "./v1/core/workunit.js";
+import { CwError } from "./core/errors.js";
+import type { TestRunResult } from "./core/evidence.js";
+import type { ExecutionUnit } from "./core/workunit.js";
 import type {
   AbortInput,
   ActionResult as V1ActionResult,
@@ -45,7 +45,7 @@ import type {
   RetrospectInput,
   TestInput,
   V1Deps,
-} from "./v1/handlers/index.js";
+} from "./handlers/index.js";
 import {
   dispatch as v1Dispatch,
   getUnitScope,
@@ -56,13 +56,13 @@ import {
   V1Error,
   type V1Params,
   V1Store,
-} from "./v1/index.js";
+} from "./index.js";
 import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
-} from "./v1/readonly/index.js";
-import { getV1Home } from "./v1/store/schema.js";
-import { parseFailedTestNames, parseVitestCounts } from "./v1/utils/parse-vitest-output.js";
+} from "./readonly/index.js";
+import { getV1Home } from "./store/schema.js";
+import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ const EXIT_INTERNAL_ERROR = 2;
 
 // ── v1 命令常量 ──────────────────────────────────────────────
 //
-// v1 是 cw 1.0 的唯一命令形态：`cw v1 <action> [layer] --flags`，走 src/v1/dispatch.ts。
+// v1 是 cw 1.0 的唯一命令形态：`cw v1 <action> [layer] --flags`，走 src/dispatch.ts。
 // 0.x（legacy/）已删除，不带 v1 前缀的旧 action 名不再被识别。
 //
 // create 需要 layer 参数（wave/slice/feature/epic），其他 action 靠 --unitId 路由。
@@ -240,7 +240,7 @@ function parseJsonArg(name: string, value: unknown): unknown {
 // ── v1 命令辅助（参数构造 / deps 装配 / 子命令分发） ─────────
 //
 // v1 与 0.x 完全独立：独立的 params 联合（V1Params）、独立的 deps 接口（V1Deps）、
-// 独立的 dispatch（src/v1/dispatch.ts）、独立的 store（_v1.json，路径由 getV1JsonPath 算）。
+// 独立的 dispatch（src/dispatch.ts）、独立的 store（_v1.json，路径由 getV1JsonPath 算）。
 // 本节三个纯函数把 argv → V1Params、构造 V1Deps、跑 dispatch 并打印结果。
 // main 里 `argv[2] === "v1"` 时整体路由到 runV1，不触碰 0.x 代码路径。
 
@@ -608,7 +608,7 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
       });
       const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
       const passed = r.status === 0;
-      // 解析逻辑 extract 到纯函数（src/v1/utils/parse-vitest-output.ts）以便直接单测。
+      // 解析逻辑 extract 到纯函数（src/utils/parse-vitest-output.ts）以便直接单测。
       // [HISTORICAL] 计数解析的历史 bug 见该纯函数 JSDoc（取最后一个 match 拿 Tests 行用例数）。
       const { passedCount, failedCount } = parseVitestCounts(out);
       const failedTests = parseFailedTestNames(out);

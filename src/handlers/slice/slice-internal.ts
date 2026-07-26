@@ -54,12 +54,12 @@ interface SchemaSource {
 
 export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/v1/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/v1/core/plan.ts", interfaceName: "PlanSliceInput" },
-  "design-review": { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
+  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanSliceInput" },
+  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
   execute: undefined, // 下沉创建 child wave，不接收 input
-  retrospect: { sourceFilePath: "src/v1/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/v1/core/evidence.ts", interfaceName: "ArtifactRef" },
+  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
+  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
   replan: undefined,
   abort: undefined,
 };

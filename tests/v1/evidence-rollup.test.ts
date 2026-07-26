@@ -1,7 +1,7 @@
 /**
  * v1 slice evidence rollup 测试。
  *
- * 测 rollupChildDelivery（src/v1/handlers/rollup.ts）+ wave handler 接入：
+ * 测 rollupChildDelivery（src/handlers/rollup.ts）+ wave handler 接入：
  * - slice execute 后 childDelivery 初始 childStatus='pending'
  * - child wave closeout → rollup → childStatus='closed'
  * - child wave abort → rollup → childStatus='aborted'
@@ -12,15 +12,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ChildDeliveryRecord } from "../../src/v1/core/evidence.js";
-import type { ExecutionUnit, Slice } from "../../src/v1/core/workunit.js";
-import { createWave } from "../../src/v1/core/workunit.js";
-import { handleAbort } from "../../src/v1/handlers/abort.js";
-import { rollupChildDelivery } from "../../src/v1/handlers/rollup.js";
-import { handleCloseoutSlice } from "../../src/v1/handlers/slice/closeout.js";
-import { handleExecuteSlice } from "../../src/v1/handlers/slice/execute.js";
-import { handleRetrospectSlice } from "../../src/v1/handlers/slice/retrospect.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
+import type { ChildDeliveryRecord } from "../../src/core/evidence.js";
+import type { ExecutionUnit, Slice } from "../../src/core/workunit.js";
+import { createWave } from "../../src/core/workunit.js";
+import { handleAbort } from "../../src/handlers/abort.js";
+import { rollupChildDelivery } from "../../src/handlers/rollup.js";
+import { handleCloseoutSlice } from "../../src/handlers/slice/closeout.js";
+import { handleExecuteSlice } from "../../src/handlers/slice/execute.js";
+import { handleRetrospectSlice } from "../../src/handlers/slice/retrospect.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 import {
   advanceWaveToClosed,
   createV1Env,

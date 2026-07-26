@@ -17,8 +17,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { DesignReviewJudgment } from "../../src/v1/core/judgments.js";
-import type { Epic } from "../../src/v1/core/workunit.js";
+import type { DesignReviewJudgment } from "../../src/core/judgments.js";
+import type { Epic } from "../../src/core/workunit.js";
 import {
   designReviewAlternativesNonEmpty,
   designReviewNecessityNonEmpty,
@@ -29,7 +29,7 @@ import {
   epicSplitDagValid,
   epicSplitNonEmpty,
   runEpicDesignReviewGates,
-} from "../../src/v1/rules/gates/design-review.js";
+} from "../../src/rules/gates/design-review.js";
 import {
   makeEpicUnit,
   makeValidClarification,

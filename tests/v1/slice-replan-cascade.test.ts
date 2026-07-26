@@ -2,7 +2,7 @@
  * v1 slice replan 级联影响面测试。
  *
  * 两部分：
- * 1. computeImpactCascade 纯函数测试（src/v1/rules/replan.ts）—— mock loadChildren（手写 stub，非 mock 框架）
+ * 1. computeImpactCascade 纯函数测试（src/rules/replan.ts）—— mock loadChildren（手写 stub，非 mock 框架）
  *    - 命中规则：child.basedOnParent 含废弃条目 → aborted
  *    - 级联传播：parent 受影响 → child 也 abort
  *    - pendingRebuild：失去承接的条目
@@ -11,11 +11,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { WorkUnitBase } from "../../src/v1/core/workunit.js";
-import { handleExecuteSlice } from "../../src/v1/handlers/slice/execute.js";
-import { handleReplanSlice } from "../../src/v1/handlers/slice/replan.js";
-import { computeImpactCascade } from "../../src/v1/rules/replan.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
+import type { WorkUnitBase } from "../../src/core/workunit.js";
+import { handleExecuteSlice } from "../../src/handlers/slice/execute.js";
+import { handleReplanSlice } from "../../src/handlers/slice/replan.js";
+import { computeImpactCascade } from "../../src/rules/replan.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 import {
   createV1Env,
   setupSliceWithClosedWaves,

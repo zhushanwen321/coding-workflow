@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   extractCommitMessage,
   parseAbandonMarkers,
-} from "../../src/v1/core/git.js";
+} from "../../src/core/git.js";
 
 let repoDir: string;
 let commitHash: string;
@@ -124,13 +124,13 @@ describe("parseAbandonMarkers", () => {
 
 describe("工厂初始化 abandonedParentItems", () => {
   it("TC5: createWave → abandonedParentItems = []", async () => {
-    const { createWave } = await import("../../src/v1/core/workunit.js");
+    const { createWave } = await import("../../src/core/workunit.js");
     const wave = createWave({ slug: "test-w1", objective: "test" });
     expect(wave.abandonedParentItems).toEqual([]);
   });
 
   it("TC6: createSlice → abandonedParentItems = []", async () => {
-    const { createSlice } = await import("../../src/v1/core/workunit.js");
+    const { createSlice } = await import("../../src/core/workunit.js");
     const slice = createSlice({ slug: "test-s1", objective: "test" });
     expect(slice.abandonedParentItems).toEqual([]);
   });

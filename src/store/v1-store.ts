@@ -9,7 +9,7 @@
  *
  * 来源：v5 store 层独立实现。POSIX 原子写 / lockfile 的 Node API 调用方式参考
  * 0.x 的 src/store.ts，但本文件零 0.x 依赖（不 import 任何 src/ 下 0.x 文件），
- * 仅 import src/v1/core 类型 + node:fs / node:path 内置模块。
+ * 仅 import src/core 类型 + node:fs / node:path 内置模块。
  *
  * 事务等价性（沿用 POSIX 文件持久化的标准不变式）：
  *   - 原子性：内存深拷贝操作 → temp + fsync + rename 一次性落盘（POSIX rename 原子）

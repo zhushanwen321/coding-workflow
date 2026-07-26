@@ -12,9 +12,9 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { createEpic, createFeature, createSlice, createWave } from "../../src/v1/core/workunit.js";
-import { renderHandoff } from "../../src/v1/readonly/render.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
+import { createEpic, createFeature, createSlice, createWave } from "../../src/core/workunit.js";
+import { renderHandoff } from "../../src/readonly/render.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 
 /** 把强类型 unit 当 WorkUnitRecord 传（兼容：core unit 是 store record 的超集）。 */
 function asRecord(unit: unknown): WorkUnitRecord {

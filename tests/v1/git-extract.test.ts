@@ -19,7 +19,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { extractChangedFiles } from "../../src/v1/core/git.js";
+import { extractChangedFiles } from "../../src/core/git.js";
 
 /** 临时 git 仓库管理：init + 配置 user.email/name + 清理。 */
 function makeTempRepo(): string {

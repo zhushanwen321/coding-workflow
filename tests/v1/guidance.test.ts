@@ -12,21 +12,21 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { createWave } from "../../src/v1/core/workunit.js";
-import { buildFailureGuidance, buildNormalGuidance } from "../../src/v1/guidance/build-guidance.js";
+import type { ExecutionUnit } from "../../src/core/workunit.js";
+import { createWave } from "../../src/core/workunit.js";
+import { buildFailureGuidance, buildNormalGuidance } from "../../src/guidance/build-guidance.js";
 import {
   computeCrossLayerAfterCloseout,
   isTerminalStatus,
-} from "../../src/v1/guidance/cross-layer.js";
-import { buildFailureHint, deriveFailureCount } from "../../src/v1/guidance/failure-hint.js";
-import { buildPrefix } from "../../src/v1/guidance/prefix-builder.js";
-import { injectSchema } from "../../src/v1/guidance/schema-injector.js";
+} from "../../src/guidance/cross-layer.js";
+import { buildFailureHint, deriveFailureCount } from "../../src/guidance/failure-hint.js";
+import { buildPrefix } from "../../src/guidance/prefix-builder.js";
+import { injectSchema } from "../../src/guidance/schema-injector.js";
 import {
   WAVE_PLAN_TEMPLATE,
   WAVE_REPLAN_TEMPLATE,
-} from "../../src/v1/guidance/templates/wave.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
+} from "../../src/guidance/templates/wave.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 import { createV1Env, STUB_NOW, type V1Env } from "./helpers/v1-env.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ import { createV1Env, STUB_NOW, type V1Env } from "./helpers/v1-env.js";
 // ═══════════════════════════════════════════════════════════════
 
 describe("schema-injector: WaveTestCase", () => {
-  const schema = injectSchema("src/v1/core/plan.ts", "WaveTestCase");
+  const schema = injectSchema("src/core/plan.ts", "WaveTestCase");
 
   it("含 type 联合枚举值（4 种 test 类型）", () => {
     expect(schema).toContain(
@@ -66,7 +66,7 @@ describe("schema-injector: WaveTestCase", () => {
 });
 
 describe("schema-injector: WaveTask", () => {
-  const schema = injectSchema("src/v1/core/plan.ts", "WaveTask");
+  const schema = injectSchema("src/core/plan.ts", "WaveTask");
 
   it("含 type 联合枚举值（6 种 task 类型）", () => {
     expect(schema).toContain(
@@ -91,26 +91,26 @@ describe("schema-injector: WaveTask", () => {
 
 describe("schema-injector: 其他 interface", () => {
   it("WaveFile 含 action 枚举（3 种）", () => {
-    const schema = injectSchema("src/v1/core/plan.ts", "WaveFile");
+    const schema = injectSchema("src/core/plan.ts", "WaveFile");
     expect(schema).toContain('"action": "create" | "modify" | "delete"');
     expect(schema).toContain('"path": string');
     expect(schema).toContain('"description": string');
   });
 
   it("WaveContract 含 type 枚举（6 种）", () => {
-    const schema = injectSchema("src/v1/core/plan.ts", "WaveContract");
+    const schema = injectSchema("src/core/plan.ts", "WaveContract");
     expect(schema).toContain(
       '"type": "function" | "api" | "class" | "event" | "schema" | "other"',
     );
   });
 
   it("Split 含可选字段 inheritedItemIds?（标注）", () => {
-    const schema = injectSchema("src/v1/core/plan.ts", "Split");
+    const schema = injectSchema("src/core/plan.ts", "Split");
     expect(schema).toContain('"inheritedItemIds（可选）": string[]');
   });
 
   it("不存在的 interface → 抛错（fail-fast，不静默返回空）", () => {
-    expect(() => injectSchema("src/v1/core/plan.ts", "NotExist")).toThrow(
+    expect(() => injectSchema("src/core/plan.ts", "NotExist")).toThrow(
       /not found/,
     );
   });

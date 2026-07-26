@@ -19,10 +19,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { collectRepoMeta } from "../../src/v1/core/git.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
-import { getV1JsonPath } from "../../src/v1/store/schema.js";
-import { V1Store } from "../../src/v1/store/v1-store.js";
+import { collectRepoMeta } from "../../src/core/git.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
+import { getV1JsonPath } from "../../src/store/schema.js";
+import { V1Store } from "../../src/store/v1-store.js";
 
 /** 临时 git 仓库：init + 配置 user + 可选 remote + 初始 commit。 */
 function makeGitRepo(opts: { remoteUrl?: string } = {}): string {

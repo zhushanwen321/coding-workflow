@@ -11,9 +11,9 @@
  */
 import { describe, expect,it } from "vitest";
 
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { createWave } from "../../src/v1/core/workunit.js";
-import { computeImpact } from "../../src/v1/rules/replan.js";
+import type { ExecutionUnit } from "../../src/core/workunit.js";
+import { createWave } from "../../src/core/workunit.js";
+import { computeImpact } from "../../src/rules/replan.js";
 
 function wave(slug: string, basedOnParent: string[] = []): ExecutionUnit {
   return createWave({

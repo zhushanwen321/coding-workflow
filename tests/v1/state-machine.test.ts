@@ -1,19 +1,19 @@
 /**
  * v1 wave 状态机测试（TDD 红灯骨架）。
  *
- * 对应 test.json U1-U7。src/v1/ 实现前这些测试因 import 失败而红灯。
+ * 对应 test.json U1-U7。src/ 实现前这些测试因 import 失败而红灯。
  * dev 阶段 W1（core 类型）+ W2（state-machine）实现后转绿。
  */
 import { describe, expect,it } from "vitest";
 
-import type { ExecutionStatus } from "../../src/v1/core/status.js";
-import { createWave } from "../../src/v1/core/workunit.js";
-import type { GuardVerdict } from "../../src/v1/rules/state-machine.js";
+import type { ExecutionStatus } from "../../src/core/status.js";
+import { createWave } from "../../src/core/workunit.js";
+import type { GuardVerdict } from "../../src/rules/state-machine.js";
 import {
   guardWave,
   isWaveTerminal,
   nextWaveStatus,
-} from "../../src/v1/rules/state-machine.js";
+} from "../../src/rules/state-machine.js";
 
 /**
  * 从 GuardVerdict 取出 error branch 的 code（type narrowing helper）。

@@ -13,25 +13,25 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { TestRunResult } from "../../../src/v1/core/evidence.js";
+import type { TestRunResult } from "../../../src/core/evidence.js";
 import type {
   DesignReviewJudgment,
   ExecReviewJudgment,
   RetrospectData,
   TestJudgment,
-} from "../../../src/v1/core/judgments.js";
+} from "../../../src/core/judgments.js";
 import type {
   WaveContract,
   WaveFile,
   WaveTask,
   WaveTestCase,
-} from "../../../src/v1/core/plan.js";
+} from "../../../src/core/plan.js";
 import type {
   ExecutionUnit,
-} from "../../../src/v1/core/workunit.js";
-import { createWave } from "../../../src/v1/core/workunit.js";
-import type { V1Deps } from "../../../src/v1/handlers/types.js";
-import { V1Store } from "../../../src/v1/store/v1-store.js";
+} from "../../../src/core/workunit.js";
+import { createWave } from "../../../src/core/workunit.js";
+import type { V1Deps } from "../../../src/handlers/types.js";
+import { V1Store } from "../../../src/store/v1-store.js";
 
 /** stub clock 固定返回的 ISO 时间（确定性测试）。 */
 export const STUB_NOW = "2026-07-22T00:00:00.000Z";

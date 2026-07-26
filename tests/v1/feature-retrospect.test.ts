@@ -14,10 +14,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { PlanningRetrospectData } from "../../src/v1/core/judgments.js";
-import { createFeature, type Feature } from "../../src/v1/core/workunit.js";
-import { dispatch } from "../../src/v1/dispatch.js";
-import { runFeatureRetrospectGates } from "../../src/v1/handlers/feature/feature-internal.js";
+import type { PlanningRetrospectData } from "../../src/core/judgments.js";
+import { createFeature, type Feature } from "../../src/core/workunit.js";
+import { dispatch } from "../../src/dispatch.js";
+import { runFeatureRetrospectGates } from "../../src/handlers/feature/feature-internal.js";
 import {
   createV1Env,
   makeValidFeatureDesignReviewJudgment,

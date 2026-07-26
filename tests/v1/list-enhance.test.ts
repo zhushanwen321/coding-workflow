@@ -29,11 +29,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { renderList, type AnnotatedUnit } from "../../src/v1/readonly/render.js";
-import { loadAllCwdsFromHome } from "../../src/v1/readonly/cross-cwd.js";
-import { V1Store } from "../../src/v1/store/v1-store.js";
-import { encodeCwd } from "../../src/v1/store/schema.js";
-import type { RepoMeta, WorkUnitRecord } from "../../src/v1/store/schema.js";
+import { renderList, type AnnotatedUnit } from "../../src/readonly/render.js";
+import { loadAllCwdsFromHome } from "../../src/readonly/cross-cwd.js";
+import { V1Store } from "../../src/store/v1-store.js";
+import { encodeCwd } from "../../src/store/schema.js";
+import type { RepoMeta, WorkUnitRecord } from "../../src/store/schema.js";
 
 /** 造一个最小 WorkUnitRecord（靠索引签名 [key: string]: unknown 过类型，不强转）。 */
 function makeUnit(

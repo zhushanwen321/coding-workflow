@@ -3,7 +3,7 @@
  *
  * 来源：v5 cli-and-guidance §3.6「schema 自动生成」+ §4.x 各示例的 schema 段。
  *
- * 职责：用 typescript 官方 createSourceFile 解析 src/v1/core/*.ts 的 interface，
+ * 职责：用 typescript 官方 createSourceFile 解析 src/core/*.ts 的 interface，
  *      提取字段名/类型/可选/枚举/JSDoc 注释，渲染成 markdown schema block。
  *      避免类型改了 guidance 漂移（schema 从源码自动提取，不手写）。
  *
@@ -22,7 +22,7 @@
  *   若 core 未来引入这些写法，需扩展 renderMember 的类型分支
  *
  * IO 说明：本函数读源文件是构建时/测试时调用（不是运行时 IO）。
- *      sourceFilePath 相对于 cwd（调用方保证指向 src/v1/core/*.ts）。
+ *      sourceFilePath 相对于 cwd（调用方保证指向 src/core/*.ts）。
  */
 import { readFileSync } from "node:fs";
 import * as ts from "typescript";
@@ -72,7 +72,7 @@ interface NodeWithJsDoc {
 /**
  * 从 core 源码提取指定 interface 的 schema 文本。
  *
- * @param sourceFilePath core 源文件路径（相对 cwd，如 "src/v1/core/plan.ts"）
+ * @param sourceFilePath core 源文件路径（相对 cwd，如 "src/core/plan.ts"）
  * @param interfaceName 要提取的 interface 名（如 "WaveTestCase"）
  * @returns 渲染后的 schema 文本（含继承补字段 + 内联展开引用类型 + 注释 + 可选标注）。
  *          interface 不存在时抛错（fail-fast，避免静默返回空 schema 导致 guidance 漂移）。
@@ -116,7 +116,7 @@ export interface SchemaGenEntry {
 /**
  * 为所有 ACTION_SCHEMA 中声明的 action 预计算 schema 文本，输出可序列化的 JSON 对象。
  *
- * 设计：npm pack 只发布 dist/ 目录，运行时 src/v1/core/*.ts 可能不存在。
+ * 设计：npm pack 只发布 dist/ 目录，运行时 src/core/*.ts 可能不存在。
  * 因此在 build 阶段调用本函数生成 dist/v1/guidance/schemas.gen.json，
  * 运行时优先读该 JSON 产物，命中则直接返回 schema 文本；未命中再降级回
  * injectSchema（开发时无 build 产物仍可工作）。

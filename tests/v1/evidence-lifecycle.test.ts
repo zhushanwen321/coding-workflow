@@ -10,15 +10,15 @@
  */
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { handleCloseout } from "../../src/v1/handlers/closeout.js";
-import { handleDesignReview } from "../../src/v1/handlers/design-review.js";
-import { handleExecReview } from "../../src/v1/handlers/exec-review.js";
-import { handleExecute } from "../../src/v1/handlers/execute.js";
-import { handlePlan } from "../../src/v1/handlers/plan.js";
-import { handleRetrospect } from "../../src/v1/handlers/retrospect.js";
-import { handleTest } from "../../src/v1/handlers/test.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
+import type { ExecutionUnit } from "../../src/core/workunit.js";
+import { handleCloseout } from "../../src/handlers/closeout.js";
+import { handleDesignReview } from "../../src/handlers/design-review.js";
+import { handleExecReview } from "../../src/handlers/exec-review.js";
+import { handleExecute } from "../../src/handlers/execute.js";
+import { handlePlan } from "../../src/handlers/plan.js";
+import { handleRetrospect } from "../../src/handlers/retrospect.js";
+import { handleTest } from "../../src/handlers/test.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 import {
   commitWithFiles,
   createV1Env,
