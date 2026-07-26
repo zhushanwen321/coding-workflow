@@ -12,7 +12,7 @@
  *     objective / status 字段需类型收窄为 string（store 不裁剪 core 字段，
  *     但渲染层只关心可读字符串，未知字段降级为空串）。
  */
-import { CwError } from "../../legacy/types.js";
+import { CwError } from "../core/errors.js";
 import type { Clarification } from "../core/clarifications.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
 import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";

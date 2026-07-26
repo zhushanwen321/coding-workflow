@@ -8,8 +8,7 @@
  *   - 推进 action（clarify）的 --input @file.json 管道
  *   - unit not found → exit 1 + V1Error 语义
  *
- * 复用 tests/helpers/e2e.ts 的 runCli / parseStdout / setupGitRepo
- * （这些 helper 是 v1/0.x 无关的通用子进程基建）。
+ * 复用 tests/v1/helpers/git.ts 的 setupGitRepo（git 仓库初始化，v1/0.x 无关的通用基建）。
  *
  * 注意：e2e 测试需要先 npm run build（dist/cli.js 存在）。测试文件顶部断言。
  */
@@ -30,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { buildLayerPromptGuidance } from "../../src/cli.js";
-import { setupGitRepo } from "../helpers/git.js";
+import { setupGitRepo } from "./helpers/git.js";
 import {
   makeValidSliceDesignReviewJudgment,
   makeValidSlicePlan,
@@ -425,17 +424,17 @@ describe("W8: cw v1 unit not found → exit 1（V1Error 语义）", () => {
   });
 });
 
-describe("W8: 0.x 命令与 v1 并存（向后兼容）", () => {
-  it("cw create（不带 v1 前缀）在 cw 1.0 被拒（0.x 状态机入口已切断）→ exit 1 + 提示改用 v1", () => {
-    // cw 1.0 起切断 0.x 状态机入口：`cw create`（不带 v1）被拒，提示改用 `cw v1 create`。
-    // 只读查询（status/list/stats/report）与基建命令（init/gen-spec/skill）不受影响。
+describe("W8: 不带 v1 前缀的命令一律拒绝（cw 1.0 仅 v1 一种形态）", () => {
+  it("cw create（不带 v1 前缀）被拒为「未知 action」→ exit 1 + 提示改用 v1", () => {
+    // cw 1.0 起仅 `cw v1 <action>` 一种形态：0.x legacy 已整体删除，不带 v1 前缀的
+    // 旧 action 名不再被识别，统一报「未知 action」并提示改用 `cw v1 <action>`。
     const result = runV1Cli(
       ["create", "--slug", "legacy-coexist", "--objective", "0.x"],
       e,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("0.x 状态机命令");
-    expect(result.stderr).toContain("cw v1 create");
+    expect(result.stderr).toContain("未知 action");
+    expect(result.stderr).toContain("cw v1");
   });
 
   it("v1 和 0.x 写各自的存储（V1_HOME vs CW_HOME）互不污染", () => {

@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { setupGitRepo } from "../helpers/git.js";
+import { setupGitRepo } from "./helpers/git.js";
 
 // ── 路径常量 ────────────────────────────────────────────────
 

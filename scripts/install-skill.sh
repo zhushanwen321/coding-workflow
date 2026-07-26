@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-skill.sh — 把 cw-cli + cw-cli-archive skill 安装到 ~/.agents/skills/ 和 ~/.claude/skills/
+# install-skill.sh — 把 cw-cli skill 安装到 ~/.agents/skills/ 和 ~/.claude/skills/
 #
 # 触发场景：
 #   1. npm install -g @zhushanwen/coding-workflow（postinstall 自动调用）
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # 要安装的 skill 列表
-SKILL_NAMES=("cw-cli" "cw-cli-archive")
+SKILL_NAMES=("cw-cli")
 
 # 找到 skill 源目录（脚本所在仓库的 skill/），resolve 到绝对路径无 /../
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
