@@ -3,16 +3,16 @@ name: cw-cli
 description: >-
   Use when the user says "编码流程", "coding workflow", "开始编码", "走 CW",
   "建 topic", "create topic", "开发功能", or wants to start/advance a structured
-  coding task through the cw v1 CLI. 唯一入口：bash 调 `cw v1 create <layer>`，
+  coding task through the cw CLI. 唯一入口：bash 调 `cw create <layer>`，
   之后按返回的 nextAction.guidance 驱动全流程。guidance 是唯一导航——每步只给
   当前决策需要的最小信息（渐进式），agent 不需要记忆 action 列表。
   Not for pure analysis/research/design. 不适合纯分析/调研任务——
   只有要写代码+测试的编码任务才用 CW。
 ---
 
-# cw v1 CLI（编码流程编排器）
+# cw CLI（编码流程编排器）
 
-> **唯一入口**：`cw v1 create <layer>`。不需要记忆任何 action 列表。
+> **唯一入口**：`cw create <layer>`。不需要记忆任何 action 列表。
 > create 之后，CLI 返回的 `nextAction.guidance` 携带当前步骤需要的最小信息，
 > agent 按 guidance 一步步推进，直到 `nextAction.action` 为空（流程结束）。
 
@@ -29,13 +29,13 @@ description: >-
 
 ## 核心理念
 
-[强制] **只暴露 create 入口**：只需调 `cw v1 create <layer>`，后续全靠 `nextAction` 驱动。
+[强制] **只暴露 create 入口**：只需调 `cw create <layer>`，后续全靠 `nextAction` 驱动。
 
-[强制] **guidance 是唯一导航**：每次 `cw v1` 返回的 `nextAction.guidance` 含当前步骤需要的最小信息（位置 + 下一步命令 + input schema + 关键约束）。按 guidance 走，不自决下一阶段。**guidance 是渐进式的**——正常走时只给当前步骤信息，gate fail 时才聚焦问题。
+[强制] **guidance 是唯一导航**：每次 `cw` 返回的 `nextAction.guidance` 含当前步骤需要的最小信息（位置 + 下一步命令 + input schema + 关键约束）。按 guidance 走，不自决下一阶段。**guidance 是渐进式的**——正常走时只给当前步骤信息，gate fail 时才聚焦问题。
 
-[强制] **通过 bash 调 `cw v1` 命令**：agent 用 bash 工具执行 `cw v1 <action> [flags]`，读 stdout 的 JSON。
+[强制] **通过 bash 调 `cw` 命令**：agent 用 bash 工具执行 `cw <action> [flags]`，读 stdout 的 JSON。
 
-[强制] **create 即承诺走完全流程**：`cw v1 create` 后，所有编码工作必须通过 cw 命令推进。发现任务不适合走 CW 时，和用户确认后放弃（`cw v1 abort`），不要静默跳过。
+[强制] **create 即承诺走完全流程**：`cw create` 后，所有编码工作必须通过 cw 命令推进。发现任务不适合走 CW 时，和用户确认后放弃（`cw abort`），不要静默跳过。
 
 ## 唯一入口：选层 + create
 
@@ -83,10 +83,10 @@ epic    （战略目标）       execute → 拆出多个 feature
 
 ```bash
 # 任一层都可起步（--parent 可选，挂到已有树上）
-cw v1 create wave    --slug <kebab-case-slug> --objective "<一句话目标>" [--parent <parentId>]
-cw v1 create slice   --slug <slug> --objective "..." [--parent <featureId>]
-cw v1 create feature --slug <slug> --objective "..." [--parent <epicId>]
-cw v1 create epic    --slug <slug> --objective "..."
+cw create wave    --slug <kebab-case-slug> --objective "<一句话目标>" [--parent <parentId>]
+cw create slice   --slug <slug> --objective "..." [--parent <featureId>]
+cw create feature --slug <slug> --objective "..." [--parent <epicId>]
+cw create epic    --slug <slug> --objective "..."
 ```
 
 `--parent` 可选——任何一层都能无 parent 独立起步。有 parent 时挂到已有树上。
@@ -95,7 +95,7 @@ cw v1 create epic    --slug <slug> --objective "..."
 
 ## 推进流程（按 nextAction 驱动）
 
-每次 `cw v1` 调用返回 JSON：
+每次 `cw` 调用返回 JSON：
 
 ```json
 {
@@ -104,15 +104,15 @@ cw v1 create epic    --slug <slug> --objective "..."
   "ok": true,
   "nextAction": {
     "action": "clarify",
-    "guidance": "## 位置\n[wave:auth-w1] 状态：created\n\n## 下一步\n澄清需求...\n命令：cw v1 clarify --unitId wave:auth-w1 --input @clarify.json\n\n## input schema\n...",
+    "guidance": "## 位置\n[wave:auth-w1] 状态：created\n\n## 下一步\n澄清需求...\n命令：cw clarify --unitId wave:auth-w1 --input @clarify.json\n\n## input schema\n...",
     "unitPath": { "layer": "wave", "unitId": "wave:auth-w1", "rootUnitId": "wave:auth-w1" }
   }
 }
 ```
 
-**ALWAYS 按 `nextAction.action` 调下一次 `cw v1`**。
+**ALWAYS 按 `nextAction.action` 调下一次 `cw`**。
 
-- `action` 非空 → 同层下一步，调 `cw v1 <action> --unitId <id>`
+- `action` 非空 → 同层下一步，调 `cw <action> --unitId <id>`
 - `action` 为空（undefined）→ 读 `crossLayer` 字段：
   - `crossLayer` 非空 → 跨层（下一个 unitId = `crossLayer.targetUnitId`）
   - `crossLayer` 为空 + status 终态（closed/aborted）→ 流程结束
@@ -129,16 +129,16 @@ create → clarify → plan → design-review → execute → test → exec-revi
 
 | action | 命令 | input 方式 |
 |--------|------|-----------|
-| `clarify` | `cw v1 clarify --unitId <id> --input @clarify.json` | JSON 文件或 stdin |
-| `plan` | `cw v1 plan --unitId <id> --input @plan.json` | JSON 文件或 stdin |
-| `design-review` | `cw v1 design-review --unitId <id> --input @review.json` | JSON 文件或 stdin |
-| `execute` | `cw v1 execute --unitId <id> --commitHash <sha>` | flags |
-| `test` | `cw v1 test --unitId <id> --input @test.json` | JSON 文件或 stdin |
-| `exec-review` | `cw v1 exec-review --unitId <id> --input @review.json` | JSON 文件或 stdin |
-| `retrospect` | `cw v1 retrospect --unitId <id> --input @retrospect.json` | JSON 文件或 stdin |
-| `closeout` | `cw v1 closeout --unitId <id> --input @closeout.json` | JSON 文件或 stdin |
-| `replan` | `cw v1 replan --unitId <id> --abandonedIds '["T2"]' --note "原因"` | flags |
-| `abort` | `cw v1 abort --unitId <id> [--reason "原因"]` | flags |
+| `clarify` | `cw clarify --unitId <id> --input @clarify.json` | JSON 文件或 stdin |
+| `plan` | `cw plan --unitId <id> --input @plan.json` | JSON 文件或 stdin |
+| `design-review` | `cw design-review --unitId <id> --input @review.json` | JSON 文件或 stdin |
+| `execute` | `cw execute --unitId <id> --commitHash <sha>` | flags |
+| `test` | `cw test --unitId <id> --input @test.json` | JSON 文件或 stdin |
+| `exec-review` | `cw exec-review --unitId <id> --input @review.json` | JSON 文件或 stdin |
+| `retrospect` | `cw retrospect --unitId <id> --input @retrospect.json` | JSON 文件或 stdin |
+| `closeout` | `cw closeout --unitId <id> --input @closeout.json` | JSON 文件或 stdin |
+| `replan` | `cw replan --unitId <id> --abandonedIds '["T2"]' --note "原因"` | flags |
+| `abort` | `cw abort --unitId <id> [--reason "原因"]` | flags |
 
 `--input` 支持 `@file.json`（读文件）、`-`（stdin）、或直接传 JSON 字符串。
 
@@ -166,23 +166,22 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 ## 数据存储
 
-- v1 状态库：`~/.cw/<encoded-cwd>/_v1.json`（per-cwd 隔离）
-- 0.x 状态库：`~/.cw/<encoded-cwd>/_cw.json`（0.x 命令用，与 v1 隔离）
+- 状态库：`~/.cw/<encoded-cwd>/_v1.json`（per-cwd 隔离）
 - unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`）
-- 跨 session 接续 / 交接：`cw v1 handoff --unitId <id>`（首选，见下方只读查询）
+- 跨 session 接续 / 交接：`cw handoff --unitId <id>`（首选，见下方只读查询）
 
 ## 只读查询命令（不经 dispatch、不写 store）
 
 | 命令 | 用途 |
 |------|------|
-| `cw v1 list [flags]` | unit 表格定位（见下方「list 定位 topic」），扫当前/跨 cwd 用 |
-| `cw v1 tree [--unitId <id>]` | 以某 unit 为根的父子树（缩进），看拆解结构用 |
-| `cw v1 status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传） |
-| `cw v1 handoff --unitId <id>` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
+| `cw list [flags]` | unit 表格定位（见下方「list 定位 topic」），扫当前/跨 cwd 用 |
+| `cw tree [--unitId <id>]` | 以某 unit 为根的父子树（缩进），看拆解结构用 |
+| `cw status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传） |
+| `cw handoff --unitId <id>` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
 
 ### list 定位 topic（新 agent 接手的第一步）
 
-`cw v1 list` 是定位 topic 的命令。零参数默认 = 当前 cwd 最近 10 个 unit（updatedAt DESC）。
+`cw list` 是定位 topic 的命令。零参数默认 = 当前 cwd 最近 10 个 unit（updatedAt DESC）。
 
 **flags**：
 - 无参数 → 当前 cwd 最近 10 个（**90% 接手场景用这个**）
@@ -198,20 +197,20 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 1. **一般不加参数即可**。默认就是最近 10 个当前 cwd topic，覆盖 90% 接手场景。
 2. **看到 `Showing X–Y of Z` 时**，如果 Z 远大于当前页，**优先用 `--grep` 收窄**，不要无脑 `--offset` 翻页（浪费 token）。
 3. **当前 cwd 没命中时才用 `--all`**——它会扫整个 V1_HOME，开销大。
-4. **拿 unitId 后必须 handoff**——list 只给定位（unitId + status + objective），不给上下文。`cw v1 handoff --unitId <id>` 才是真正接手（五段式 markdown 重建认知）。
+4. **拿 unitId 后必须 handoff**——list 只给定位（unitId + status + objective），不给上下文。`cw handoff --unitId <id>` 才是真正接手（五段式 markdown 重建认知）。
 
 **接手标准流程（≤ 3 次 cw 调用）**：
 
 ```
-cw v1 list                          # 当前 cwd 最近 10 个，肉眼认
+cw list                          # 当前 cwd 最近 10 个，肉眼认
   ↓ 没命中
-cw v1 list --grep "关键词"           # 或 --all 跨 cwd
+cw list --grep "关键词"           # 或 --all 跨 cwd
   ↓ 拿到 unitId（+ --all 的正确 cwd）
 [若提示需切 cwd] cd <正确 worktree>
-cw v1 handoff --unitId <id>         # 五段式 markdown，开干
+cw handoff --unitId <id>         # 五段式 markdown，开干
 ```
 
-**交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw v1 handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（clarify 问答 + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
+**交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（clarify 问答 + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
 
 - wave / slice / feature / epic 四层均完整支持（handoff 按 scope 调对应的 build{Scope}NextAction 生成 guidance）
 - handoff 不落盘文件（守「store 是唯一真相」不变量），需保存输出自己 redirect
@@ -234,10 +233,10 @@ cw v1 handoff --unitId <id>         # 五段式 markdown，开干
 - `design-review`：`{designReviewJudgment:{...}}`
 - `execute`（wave）：`{commitHash,...}`；`execute`（slice）：无 input（按 plan.split 自动创建 child wave，忽略 input）
 - `retrospect`（wave）：`{retrospectData:{...}}`；`retrospect`（slice）：`{retrospectData:{...}}`（但 retrospectData 是 PlanningRetrospectData，含 deliveryVerdict/childUnitIdsEvidence/splitFulfillment，比 wave 宽）
-cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/v1/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.v1/<encodedCwd>/_v1.json` 的 workUnits[0].plan 确认实际存储结构。
+cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.v1/<encodedCwd>/_v1.json` 的 workUnits[0].plan 确认实际存储结构。
 
 ### illegal_transition（跳阶段）
-调了状态机不允许的 action → V1Error（exit 1）。看 `cw v1 status --unitId <id>` 确认当前 status，按 nextAction 重来。
+调了状态机不允许的 action → V1Error（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。
 
 ### gate fail
 返回 `ok: false` + `gateResults` + 异常 guidance（四段式）。**不要慌**——guidance 的「问题」段会告诉你具体哪里错了，「怎么修」段告诉你修正后重提什么命令。
@@ -246,19 +245,15 @@ cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... �
 unitId 不对（跨 worktree/子目录/session）。`node -p "process.cwd()"` 确认实际路径，回到创建 unit 时的目录。
 
 ### 任务不适合走 CW（abort）
-发现任务走偏、不适用时，和用户确认后调 `cw v1 abort --unitId <id>`。status 流到 aborted 终态。
+发现任务走偏、不适用时，和用户确认后调 `cw abort --unitId <id>`。status 流到 aborted 终态。
 
 ## Self-Check
 
 [MANDATORY] 以下全部满足才算流程走完：
-- [ ] 从 `cw v1 create` 开始，没有绕过状态机
-- [ ] 每次 `cw v1` 调用后读 `nextAction`，按它的 `action` 调下一次
+- [ ] 从 `cw create` 开始，没有绕过状态机
+- [ ] 每次 `cw` 调用后读 `nextAction`，按它的 `action` 调下一次
 - [ ] closeout 后 `nextAction.action` 为空（终态）
 - [ ] `nextAction.guidance` 每步都非空
-
-## 0.x 兼容
-
-`cw create`（不带 v1）仍走 0.x 流程（单层 topic 模型）。0.x 代码在 `src/legacy/`，功能不变。旧版 skill 见 `cw-cli-archive`。新任务推荐用 `cw v1`。
 
 ## 标记说明
 

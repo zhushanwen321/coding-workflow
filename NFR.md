@@ -51,7 +51,7 @@
 
 - **约束**：replan 操作必须 append-only——已 committed 的 wave 和已 passed 的 testCase 不可删改，只能在其后追加。replan 仅允许替换 uncommitted 的 wave 和 unpassed 的 testCase。
 - **为什么**：committed wave 代表已落盘到 git 历史的工作，passed testCase 代表已验证的验收点。允许 replan 删除这些等于篡改历史——agent 可能"改计划来掩盖未完成的工作"，破坏 TDD 流程的可追溯性。append-only 保证计划只能向前演进，历史不可逆。
-- **验证**：`validateAppendOnly`（src/actions.ts）+ `replaceUncommittedWaves`（src/store.ts）+ `replaceUnpassedTestCases`（src/store.ts）
+- **验证**：`checkFreeze`（src/rules/freeze.ts，wave append-only 校验）+ `checkFreezePlanning`（src/rules/freeze.ts，slice append-only 校验）
 - **例外**：无
 
 ## 稳定性·高可用
@@ -83,7 +83,7 @@
 
 - **约束**：旧版 plan.json（同时含 `waves` 和 `testCases` 两个字段，新版拆分）必须被兼容——`cw plan` 自动从旧结构提取 testCases，行为与新结构等价。
 - **为什么**：plan.json 由人或 agent 手写，历史 plan 文件用的是旧的双字段结构。若新版拒绝旧结构，用户无法复用历史 plan，需手动迁移。自动提取保证旧 plan 无感升级，迁移成本为零。
-- **验证**：`validateAppendOnly`（src/actions.ts，replan 路径兼容 legacy testCases 提取）+ `parseDevPlan`
+- **验证**：~~`validateAppendOnly`（src/actions.ts，replan 路径兼容 legacy testCases 提取）+ `parseDevPlan`~~（0.x 删除后两函数均已移除；v1 不再从 plan.json 文件解析 plan，改为通过 `--input` JSON 程序化消费，无 legacy 双字段兼容需求）
 - **例外**：无
 
 ## 可观测性
