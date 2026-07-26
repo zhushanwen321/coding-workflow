@@ -34,6 +34,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, ReplanInput,V1Deps } from "./types.js";
+import { buildReplanGuidance } from "../guidance/build-guidance.js";
 
 /**
  * 执行 replan action（旁路，不改 status）。
@@ -96,11 +97,28 @@ export function handleReplan(
   transitionStatus(unit, "replan", deps.clock.now(), input.note);
 
   saveUnit(deps, unit);
+
+  // ── 构造含审视引导的 replan guidance ──
+  const replanCount = unit.statusHistory.filter((e) => e.action === "replan").length;
+  const impactSummary = [
+    `aborted: ${replanImpact.aborted.length > 0 ? replanImpact.aborted.join(", ") : "（无）"}`,
+    `preserved: ${replanImpact.preserved.length > 0 ? replanImpact.preserved.join(", ") : "（无）"}`,
+    `pendingRebuild: ${replanImpact.pendingRebuild.length > 0 ? replanImpact.pendingRebuild.join(", ") : "（无）"}`,
+  ].join("\n");
+  const base = buildNextAction(unit, "replan");
+  base.guidance = buildReplanGuidance({
+    prefix: `[wave:${unit.slug}] 状态：${unit.status}（replan 后原地）`,
+    abandonedIds: input.abandonedIds,
+    replanCount,
+    impactSummary,
+    nextCommand: `cw v1 plan --unitId ${unit.id} --input @plan.json`,
+  });
+
   return {
     unitId: unit.id,
     status: unit.status,
     ok: true,
     replanImpact,
-    nextAction: buildNextAction(unit, "replan"),
+    nextAction: base,
   };
 }

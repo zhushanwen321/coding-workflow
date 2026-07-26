@@ -131,3 +131,72 @@ export function buildFailureGuidance(args: BuildFailureGuidanceArgs): string {
 
   return sections.join("\n");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// replan guidance（审视引导 + 影响面 + 下一步）
+// ═══════════════════════════════════════════════════════════════
+
+/** buildReplanGuidance 入参。 */
+export interface BuildReplanGuidanceArgs {
+  /** 位置前缀（来自 prefix-builder）。 */
+  prefix: string;
+  /** 本次废弃的条目 id 列表。 */
+  abandonedIds: string[];
+  /** replan 次数（渐进式提示用）。 */
+  replanCount: number;
+  /** replan 影响面描述（aborted/preserved/pendingRebuild）。 */
+  impactSummary: string;
+  /** 下一步命令（如 "cw v1 plan --unitId slice:auth --input @plan.json"）。 */
+  nextCommand: string;
+}
+
+/**
+ * 组装 replan guidance（审视引导 + 影响面 + 下一步）。
+ *
+ * 输出结构：
+ * ```
+ * ## 位置
+ * {prefix}
+ *
+ * ## 你刚发起了 replan
+ * 审视引导（单点 vs 方向性 + 三维度）
+ *
+ * ## 影响面
+ * {impactSummary}
+ *
+ * ## 下一步
+ * {nextCommand}
+ * ```
+ *
+ * 审视引导文本来自 replan-review.ts 模板（渐进式：第 2 次加警告，第 3 次建议 abort）。
+ */
+export function buildReplanGuidance(args: BuildReplanGuidanceArgs): string {
+  const { prefix, abandonedIds, replanCount, impactSummary, nextCommand } = args;
+
+  // 审视引导来自模板
+  const reviewText = buildReplanReviewTextInner(abandonedIds, replanCount);
+
+  return [
+    "## 位置",
+    prefix,
+    "",
+    reviewText,
+    "",
+    "## 影响面",
+    impactSummary,
+    "",
+    "## 下一步",
+    "审视完后重新提交方案：",
+    `命令：${nextCommand}`,
+  ].join("\n");
+}
+
+// 内部函数：直接调模板（避免循环依赖——模板是纯文本，这里直接 import）
+import { buildReplanReviewText } from "./templates/replan-review.js";
+
+function buildReplanReviewTextInner(
+  abandonedIds: string[],
+  replanCount: number,
+): string {
+  return buildReplanReviewText({ abandonedIds, replanCount });
+}

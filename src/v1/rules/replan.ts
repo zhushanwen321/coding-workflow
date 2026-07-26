@@ -72,8 +72,12 @@ export function computeImpact(
   const preserved: string[] = [];
 
   // Step 1：分类每个 unit（命中规则：basedOnParent 含废弃条目 → aborted）
+  // 例外：wave 主动声明废弃的 parent 条目不触发 abort（abandonedParentItems）
   for (const unit of allUnits) {
-    const hits = unit.basedOnParent.some((id) => abandonedSet.has(id));
+    const waveAbandoned = new Set(unit.abandonedParentItems ?? []);
+    const hits = unit.basedOnParent.some(
+      (id) => abandonedSet.has(id) && !waveAbandoned.has(id),
+    );
     if (hits) {
       aborted.push(unit.id);
     } else {
@@ -173,7 +177,11 @@ export function computeImpactCascade(
     changed = false;
     for (const d of allDescendants) {
       if (affected.has(d.id)) continue;
-      const hitByAbandoned = d.basedOnParent.some((id) => abandonedSet.has(id));
+      // 例外：wave 主动声明废弃的 parent 条目不触发 abort
+      const waveAbandoned = new Set(d.abandonedParentItems ?? []);
+      const hitByAbandoned = d.basedOnParent.some(
+        (id) => abandonedSet.has(id) && !waveAbandoned.has(id),
+      );
       const parentId = parentOf.get(d.id);
       const parentAffected = parentId !== undefined && affected.has(parentId);
       if (hitByAbandoned || parentAffected) {

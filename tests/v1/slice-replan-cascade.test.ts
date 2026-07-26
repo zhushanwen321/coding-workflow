@@ -206,8 +206,7 @@ describe("computeImpactCascade: 纯函数（mock loadChildren）", () => {
 
   // ── abandonedParentItems 例外：wave 主动声明脱离的 parent 条目不触发 abort ──
 
-  // TODO: unskip after wave 2 implements replan.ts cascade exception (computeImpactCascade)
-  it.skip("abandonedParentItems 例外：wave 声明废弃 TC3 → slice replan 废弃 TC3 时 wave preserved", () => {
+  it("abandonedParentItems 例外：wave 声明废弃 TC3 → slice replan 废弃 TC3 时 wave preserved", () => {
     const slice = wub("slice:s", undefined, []);
     const w1 = wub("wave:w1", "slice:s", ["TC1", "TC3"]); // 含 TC3，但未声明废弃
     const w2 = wub("wave:w2", "slice:s", ["TC1", "TC3"], ["TC3"]); // 含 TC3，已声明废弃

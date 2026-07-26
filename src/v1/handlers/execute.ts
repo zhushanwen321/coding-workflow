@@ -15,7 +15,7 @@
  */
 import type { WaveEvidence } from "../core/evidence.js";
 import { assertEvidenceNotFrozen } from "../core/evidence.js";
-import { extractChangedFiles } from "../core/git.js";
+import { extractChangedFiles, parseAbandonMarkers } from "../core/git.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, saveUnit, transitionStatus } from "./internal.js";
 import type { ActionResult, ExecuteInput, V1Deps } from "./types.js";
@@ -61,6 +61,16 @@ export function handleExecute(
     // 提取失败记入 evidence 供人审（不阻断 execute——commit 存在性由 test gate commitExists 兜底）
     (unit.evidence as WaveEvidence).extractionNote = extractNote;
   }
+
+  // ── Cw-Abandon trailer 解析：从 commit message 提取 wave 声明废弃的 parent 条目 id ──
+  // 失败降级返回空数组（不阻断 execute）。append-only：已有值时 Set 去重追加。
+  const abandonMarkers = parseAbandonMarkers(deps.workspacePath, input.commitHash);
+  if (abandonMarkers.length > 0) {
+    const existing = new Set(unit.abandonedParentItems ?? []);
+    for (const id of abandonMarkers) existing.add(id);
+    unit.abandonedParentItems = [...existing];
+  }
+
   // generatedAt 首次生成时间（已填则保留，不覆盖——progressive 场景下 execute 可能重跑）
   if (!unit.evidence.generatedAt) {
     unit.evidence.generatedAt = at;
