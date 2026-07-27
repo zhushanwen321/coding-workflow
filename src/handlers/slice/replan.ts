@@ -29,22 +29,25 @@ import type {
   SliceInterface,
   SliceTechChoice,
 } from "../../core/plan.js";
-import type { AbandonedRef, WorkUnitStatus } from "../../core/status.js";
-import type { Slice, WorkUnitBase } from "../../core/workunit.js";
+import type { WorkUnitStatus } from "../../core/status.js";
+import type { Slice } from "../../core/workunit.js";
+import { buildReplanGuidance } from "../../guidance/build-guidance.js";
 import { checkFreezePlanning } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
-import type { WorkUnitRecord } from "../../store/schema.js";
-import type { V1Store } from "../../store/v1-store.js";
+import { buildCommand } from "../../utils/command.js";
+import {
+  loadChildrenAsWorkUnitBase,
+  mergeAbandonParentItems,
+  readAbandonedRefs,
+  readRecordStatusHistory,
+} from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
-import { buildReplanGuidance } from "../../guidance/build-guidance.js";
-import { buildCommand } from "../../utils/command.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
   buildSliceNextAction,
   readRecordStatus,
-  readRecordStatusHistory,
   saveSlice,
   sliceTransition,
 } from "./slice-internal.js";
@@ -79,6 +82,10 @@ export function handleReplanSlice(
     abandonedSet.has(it.id) ? ({ ...it, status: "abandoned" } as SliceErrorSpec) : it,
   );
 
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
+  // 放在 freeze 校验之前——freeze 只校验 plan 条目不校验此字段，不会误报 violation。
+  mergeAbandonParentItems(unit, input);
+
   // ── checkFreezePlanning：验 abandoned 条目核心字段未被改/未删 ──
   const freezeViolations = checkFreezePlanning(before, unit);
 
@@ -102,7 +109,7 @@ export function handleReplanSlice(
   const replanImpact = computeImpactCascade({
     unit,
     abandonedIds: input.abandonedIds,
-    loadChildren: (parentId) => loadChildrenAsWorkUnitBase(deps.store, parentId),
+    loadChildren: (parentId) => loadChildrenAsWorkUnitBase(deps.store, parentId, "wave"),
   });
 
   // ── replan 旁路：status 不变，append statusHistory（from=to=current, action='replan', note）──
@@ -139,42 +146,6 @@ export function handleReplanSlice(
     replanImpact,
     nextAction: base,
   };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 辅助：store.findChildren → WorkUnitBase[]（computeImpactCascade 的 loadChildren 注入）
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * 把 store.findChildren 返回的 WorkUnitRecord[] 映射为 WorkUnitBase[]。
- *
- * computeImpactCascade 只读 id / parentUnitId / basedOnParent（影响面计算基础），从 WorkUnitRecord
- * 的 unknown 字段安全提取这三个字段。
- */
-function loadChildrenAsWorkUnitBase(
-  store: V1Store,
-  parentId: string,
-): WorkUnitBase[] {
-  const records = store.findChildren(parentId);
-  return records.map((r) => ({
-    id: r.id,
-    scope: typeof r.scope === "string" ? (r.scope as WorkUnitBase["scope"]) : "wave",
-    slug: typeof r.slug === "string" ? r.slug : r.id,
-    parentUnitId: r.parentUnitId,
-    status: typeof r.status === "string" ? (r.status as WorkUnitBase["status"]) : "created",
-    statusHistory: readRecordStatusHistory(r),
-    basedOnParent: readBasedOnParent(r),
-    abandonedRefs: readAbandonedRefs(r),
-    objective: typeof r.objective === "string" ? r.objective : "",
-  }));
-}
-
-/**
- * 从 WorkUnitRecord 安全读 basedOnParent（string[]，默认空数组）。
- */
-function readBasedOnParent(record: WorkUnitRecord): string[] {
-  const v = record.basedOnParent;
-  return Array.isArray(v) ? (v as string[]) : [];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -237,12 +208,4 @@ function cascadeAbortUnit(
   for (const desc of descendants) {
     cascadeAbortUnit(deps, desc.id, at, abandonedIds);
   }
-}
-
-/**
- * 从 WorkUnitRecord 安全读 abandonedRefs（AbandonedRef[]，默认空数组）。
- */
-function readAbandonedRefs(record: WorkUnitRecord): AbandonedRef[] {
-  const v = record.abandonedRefs;
-  return Array.isArray(v) ? [...(v as AbandonedRef[])] : [];
 }

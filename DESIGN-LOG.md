@@ -9,6 +9,7 @@
 
 | Topic | 主题 | 开始 | 归档 | 沉淀去向 | 状态 |
 |-------|------|------|------|---------|------|
+| cw-1-0-lifecycle-redesign | cw 1.0 生命周期重构：4 层 WorkUnit 模型（epic/feature/slice/wave）+ V5 设计文档集 + ADR 0006-0010 | 07-19 | — | `.xyz-harness/cw-1-0-lifecycle-redesign/design-v5-*.md`, `docs/adr/0006-0010`, `src/{core,rules,store,handlers,dispatch}` 五层架构 | in-progress |
 | metrics-eval-waves | 评估指标体系 Wave 1-5：changedFiles 持久化 + retrospect 结构化 + 三层指标 + review 3-subagent 架构 + assess post-closeout | 07-14 | — | `docs/metrics-design.md`, `docs/metrics-usage.md`, `cw assess` 动作, review 3-subagent 架构 | in-progress |
 | issue-tracking-fix-loop | review_fix / test_fix loop：issue tracking + fix loop 闭环追踪（reviewIssues / testFixLog） | 07-14 | — | `.xyz-harness/issue-tracking-fix-loop/`, types.reviewIssues/testFixLog | in-progress |
 | clarify-adr-mechanism | clarify 阶段 + ADR 机制：create→plan 之间的需求/技术澄清 | 07-14 | — | `cw clarify` 动作, ADR 机制（非正式，见下表） | in-progress |
@@ -24,11 +25,20 @@
 
 ## 活跃 ADR 索引
 
-> 当前无正式 ADR（项目尚未走 full 工作流的 clarify+ADR 机制，无 `docs/adr/` 目录）。
-> `cw-cli-extract` 产出过 `decisions.md`（D-001~D-006，非正式 ADR），其余里程碑留下了若干重要的非正式架构决策，列如下：
+> 正式 ADR 在 `docs/adr/`（0001-0010）。`cw-cli-extract` 早期产出过 `decisions.md`（D-001~D-006，非正式 ADR），其余里程碑留下了若干重要的非正式架构决策，列如下：
 
 | ADR | 标题 | 状态 | 溯源 |
 |-----|------|------|------|
+| [0001](./docs/adr/0001-expected-multi-mode.md) | expected 字段多模式判定（exact/exists/regex） | Accepted | cw-1-0-lifecycle-redesign |
+| [0002](./docs/adr/0002-taskshape-unified-axis.md) | TaskShape 统一配置轴（verification ⊕ review） | Accepted | cw-1-0-lifecycle-redesign |
+| [0003](./docs/adr/0003-existence-and-review-only-strategies.md) | existence + review-only 验证策略 | Accepted | cw-1-0-lifecycle-redesign |
+| [0004](./docs/adr/0004-review-stage-pruning.md) | Review 阶段裁剪机制 | Accepted | cw-1-0-lifecycle-redesign |
+| [0005](./docs/adr/0005-replanguard-shape-routing.md) | replanGuard 按 shape 路由 | Accepted | cw-1-0-lifecycle-redesign |
+| [0006](./docs/adr/0006-v5-build-on-engine-abstraction.md) | v5 建在 engine/ 抽象层之上 | **Superseded by 0007** | cw-1-0-lifecycle-redesign |
+| [0007](./docs/adr/0007-v1-isolation-no-engine.md) | v5 新建 src/v1/ 隔离层（不参考 engine） | Accepted（被 0009 部分取代：src/v1 上移到 src/） | cw-1-0-lifecycle-redesign |
+| [0008](./docs/adr/0008-v1-schema-version-and-repometa.md) | _v1.json 加 schemaVersion + repoMeta | Accepted | cw-1-0-lifecycle-redesign |
+| [0009](./docs/adr/0009-remove-0x-and-v1-prefix.md) | 彻底清理 0.x + 重组 src/v1 到根级 + 去掉 cw v1 前缀 | Accepted | cw-1-0-lifecycle-redesign |
+| [0010](./docs/adr/0010-cross-layer-abandon-parent-items.md) | 跨层跨时机的 abandon parent items 声明能力 | Accepted | cw-1-0-lifecycle-redesign |
 | D-001 | CLI 协议用子命令风格（cw create --slug X）+ 大 JSON 走 stdin pipe 或 --xxx-file | confirmed | [from: cw-cli-extract] |
 | D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/_cw.json，env CW_HOME 可覆盖；pi 数据留 ~/.pi/ 不迁移 | confirmed | [from: cw-cli-extract] |
 | D-003 | 产物为独立 npm 包 @zhushanwen/coding-workflow，bin 名 cw；engine+CLI 同包 | confirmed | [from: cw-cli-extract] |

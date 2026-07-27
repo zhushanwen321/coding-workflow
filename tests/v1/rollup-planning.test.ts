@@ -19,9 +19,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ChildDeliveryRecord } from "../../src/core/evidence.js";
 import type { Epic, Feature, Slice } from "../../src/core/workunit.js";
-import { rollupChildDelivery } from "../../src/handlers/rollup.js";
 import { handleAbortEpic } from "../../src/handlers/epic/abort.js";
 import { handleAbortFeature } from "../../src/handlers/feature/abort.js";
+import { rollupChildDelivery } from "../../src/handlers/rollup.js";
 import { handleAbortSlice } from "../../src/handlers/slice/abort.js";
 import { handleCloseoutSlice } from "../../src/handlers/slice/closeout.js";
 import { handleExecuteSlice } from "../../src/handlers/slice/execute.js";

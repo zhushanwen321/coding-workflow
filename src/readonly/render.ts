@@ -12,8 +12,8 @@
  *     objective / status 字段需类型收窄为 string（store 不裁剪 core 字段，
  *     但渲染层只关心可读字符串，未知字段降级为空串）。
  */
-import { CwError } from "../core/errors.js";
 import type { Clarification } from "../core/clarifications.js";
+import { CwError } from "../core/errors.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
 import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";
 import { buildFeatureNextAction } from "../handlers/feature/feature-internal.js";
@@ -912,6 +912,7 @@ function asUnit<T extends { scope: string }>(
   expectedScope: string,
 ): T | undefined {
   if (unit.scope !== expectedScope) return undefined;
+  // eslint-disable-next-line taste/no-unsafe-cast -- scope 已校验，WorkUnitRecord 是具名 Unit 类型的超集（字段透传存储），断言安全；详见函数上方注释
   return unit as unknown as T;
 }
 

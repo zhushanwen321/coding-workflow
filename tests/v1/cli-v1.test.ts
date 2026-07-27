@@ -34,6 +34,12 @@ import {
   makeValidSliceDesignReviewJudgment,
   makeValidSlicePlan,
 } from "./helpers/slice-env.js";
+import {
+  makeValidContract,
+  makeValidFile,
+  makeValidTask,
+  makeValidTestCase,
+} from "./helpers/v1-env.js";
 
 // ── 路径常量 ────────────────────────────────────────────────
 
@@ -535,6 +541,151 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     const result = runV1Cli(["execute", "--unitId", unitId], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--commitHash");
+  });
+});
+
+describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道）", () => {
+  // 共享辅助：create wave → clarify → 返回 unitId（plan.from 需 clarifying，必须先 clarify）。
+  function createWaveToClarifying(slug: string): string {
+    const created = parseStdout(
+      runV1Cli(["create", "wave", "--slug", slug, "--objective", "o"], e),
+    );
+    expect(created.ok).toBe(true);
+    const unitId = created.unitId as string;
+    const clarifyInput = join(e.workspaceDir, `${slug}-clarify.json`);
+    writeFileSync(clarifyInput, JSON.stringify({ clarifications: [] }));
+    parseStdout(
+      runV1Cli(
+        ["clarify", "--unitId", unitId, "--input", `@${clarifyInput}`],
+        e,
+      ),
+    );
+    return unitId;
+  }
+
+  // 共享辅助：写合法 WavePlan 到文件，返回路径。
+  function writeWavePlan(fileName: string): string {
+    const planInput = join(e.workspaceDir, fileName);
+    writeFileSync(
+      planInput,
+      JSON.stringify({
+        testCases: [makeValidTestCase()],
+        tasks: [makeValidTask()],
+        files: [makeValidFile()],
+        contracts: [makeValidContract()],
+      }),
+    );
+    return planInput;
+  }
+
+  // 共享辅助：从 store 读某 unit 的 abandonedParentItems。
+  function readAbandonedParentItems(unitId: string): string[] {
+    const v1Json = findV1Json(e.v1Home);
+    expect(v1Json).not.toBeNull();
+    const data = JSON.parse(readV1Json(v1Json!)) as {
+      workUnits: Array<{ id: string; abandonedParentItems?: string[] }>;
+    };
+    const persisted = data.workUnits.find((u) => u.id === unitId);
+    expect(persisted).toBeDefined();
+    return persisted!.abandonedParentItems ?? [];
+  }
+
+  it("wave plan 带 --abandonParentItems '[\"TC1\"]' → input.abandonParentItems 被解析并落盘到 wave.abandonedParentItems", () => {
+    const unitId = createWaveToClarifying("w8-abandon-flag");
+    const planInput = writeWavePlan("wave-plan-abandon.json");
+
+    const planned = parseStdout(
+      runV1Cli(
+        [
+          "plan",
+          "--unitId",
+          unitId,
+          "--input",
+          `@${planInput}`,
+          "--abandonParentItems",
+          '["TC1"]',
+        ],
+        e,
+      ),
+    );
+    expect(planned.ok).toBe(true);
+    expect(planned.status).toBe("planning");
+
+    // flag 经 parseJsonArg 解析 → handler 写入 store
+    expect(readAbandonedParentItems(unitId)).toEqual(["TC1"]);
+  });
+
+  it("wave plan 带 --abandon-parent-items（kebab-case）→ 与 camelCase 等价（flag 兼容两种写法）", () => {
+    // flag() 同时查 camelCase 和 kebab-case，验证 kebab-case 也能解析。
+    const unitId = createWaveToClarifying("w8-abandon-kebab");
+    const planInput = writeWavePlan("wave-plan-kebab.json");
+
+    const planned = parseStdout(
+      runV1Cli(
+        [
+          "plan",
+          "--unitId",
+          unitId,
+          "--input",
+          `@${planInput}`,
+          "--abandon-parent-items",
+          '["TC2","TC3"]',
+        ],
+        e,
+      ),
+    );
+    expect(planned.ok).toBe(true);
+
+    expect(readAbandonedParentItems(unitId)).toEqual(["TC2", "TC3"]);
+  });
+
+  it("wave plan 不带 --abandonParentItems → wave.abandonedParentItems 保持 [] （工厂初始化值）", () => {
+    const unitId = createWaveToClarifying("w8-abandon-none");
+    const planInput = writeWavePlan("wave-plan-none.json");
+
+    const planned = parseStdout(
+      runV1Cli(
+        ["plan", "--unitId", unitId, "--input", `@${planInput}`],
+        e,
+      ),
+    );
+    expect(planned.ok).toBe(true);
+
+    expect(readAbandonedParentItems(unitId)).toEqual([]);
+  });
+
+  it("--abandonParentItems 非 JSON 字符串 → exit 1 + JSON 解析失败提示", () => {
+    // parseJsonArg 对非 JSON 字符串抛 CwError → exit 1（在 plan 落到 handler 之前）
+    const unitId = createWaveToClarifying("w8-abandon-bad");
+    const planInput = writeWavePlan("wave-plan-bad.json");
+
+    const result = runV1Cli(
+      [
+        "plan",
+        "--unitId",
+        unitId,
+        "--input",
+        `@${planInput}`,
+        "--abandonParentItems",
+        "not-valid-json",
+      ],
+      e,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("abandonParentItems");
+    expect(result.stderr).toContain("JSON");
+  });
+});
+
+describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
+  it("--all + --cwd 同时传 → exit 1 + 互斥错误信息", () => {
+    // cli.ts:841-843 的互斥检查：--all 跨 cwd 遍历，--cwd 锁定单 cwd，语义冲突
+    const result = runV1Cli(
+      ["list", "--all", "--cwd", e.workspaceDir],
+      e,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("mutually exclusive");
   });
 });
 

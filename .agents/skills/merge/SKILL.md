@@ -51,9 +51,11 @@ gh pr merge <PR_NUM> --merge --delete-branch
 
 ```bash
 cd /Users/zhushanwen/Code/coding-workflow-workspace/main
-git fetch origin main
+git fetch origin          # 走 refspec 更新 origin/main（不带分支名，确保 tracking ref 更新）
 git merge --ff-only origin/main
 ```
+
+**[HISTORICAL] 禁止用 `git fetch origin main`**：带显式分支参数的 fetch 只写 `FETCH_HEAD`，不更新 `refs/remotes/origin/main`，后续 `merge --ff-only origin/main` 会读到陈旧 ref 导致静默同步失败。2026-07-27 事故：`git fetch origin main` 后 origin/main 仍停在旧 commit，本地 main 碰巧等于旧 commit 被 ff-only 判为 "already up to date" 跳过，远程新 commit 完全没同步进来。根因是 bare repo 初始化时 `remote.origin.fetch` refspec 为空，已修复补 `+refs/heads/*:refs/remotes/origin/*`；此处 fetch 命令也必须走 refspec（不带分支名）。
 
 #### 3.2 确定版本类型
 
@@ -241,13 +243,23 @@ gh run list --workflow=release.yml --limit=1
 
 ### 阶段 6: 清理
 
-用 `remove-worktree` skill 清理 feature worktree（会检查分支已合并到 main）。或手动：
+用项目内 `remove-worktree` skill 清理 feature worktree（会检查分支已合并到 main，并同步其他 worktree）：
+
+```bash
+cd /Users/zhushanwen/Code/coding-workflow-workspace
+bash .agents/skills/remove-worktree/remove-worktree.sh <branch-name>
+# 例: bash .agents/skills/remove-worktree/remove-worktree.sh feat-replan-process-refactor
+```
+
+脚本内部会：检查已合并 → 同步其他 worktree（`git fetch origin` 走 refspec）→ 删除 worktree + 本地分支。冲突时脚本不 abort，保留冲突状态，按 remove-worktree skill 的"冲突处理"步骤解决。
+
+若需手动逐条执行（不推荐，绕过合并检查）：
 
 ```bash
 cd /Users/zhushanwen/Code/coding-workflow-workspace
 git worktree remove <feature-worktree>   # 删 worktree 目录
 git branch -d <branch-name>               # 删本地分支（远程分支阶段 2 已删）
-# 同步其他 worktree 的 main 引用
+# 同步其他 worktree（fetch 必须不带分支名，走 refspec 更新 origin/main）
 cd main && git fetch origin && git merge --ff-only origin/main
 ```
 

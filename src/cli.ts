@@ -389,12 +389,19 @@ function buildParams(
           isStdinTTY,
         ) as ClarifyInput,
       };
-    case "plan":
-      return {
-        action: "plan",
-        unitId,
-        input: readInput(flag(parsed, "input"), stdinData, isStdinTTY) as PlanInput,
-      };
+    case "plan": {
+      // plan input 类型因 scope 而异（PlanInput / PlanSliceInput / PlanFeatureInput），
+      // 但都 extends AbandonParentItemsInput（ADR-0010），故 --abandonParentItems flag 统一注入。
+      const input = readInput(flag(parsed, "input"), stdinData, isStdinTTY) as PlanInput;
+      const abandonParentItemsRaw = flag(parsed, "abandonParentItems");
+      if (abandonParentItemsRaw !== undefined) {
+        input.abandonParentItems = parseJsonArg(
+          "abandonParentItems",
+          abandonParentItemsRaw,
+        ) as string[];
+      }
+      return { action: "plan", unitId, input };
+    }
     case "design-review":
       return {
         action: "design-review",
@@ -476,20 +483,31 @@ function buildParams(
       };
     case "replan": {
       // replan 优先用 --abandonedIds + --note；缺省从 --input/stdin 读
+      // --abandonParentItems 两条路径都支持（ADR-0010 跨层跨时机声明通道）
       const abandonedIdsRaw = flag(parsed, "abandonedIds");
       const note = flag(parsed, "note");
+      const abandonParentItemsRaw = flag(parsed, "abandonParentItems");
       if (abandonedIdsRaw !== undefined && note !== undefined) {
         const input: ReplanInput = {
           abandonedIds: parseJsonArg("abandonedIds", abandonedIdsRaw) as string[],
           note,
         };
+        if (abandonParentItemsRaw !== undefined) {
+          input.abandonParentItems = parseJsonArg(
+            "abandonParentItems",
+            abandonParentItemsRaw,
+          ) as string[];
+        }
         return { action: "replan", unitId, input };
       }
-      return {
-        action: "replan",
-        unitId,
-        input: readInput(flag(parsed, "input"), stdinData, isStdinTTY) as ReplanInput,
-      };
+      const input = readInput(flag(parsed, "input"), stdinData, isStdinTTY) as ReplanInput;
+      if (abandonParentItemsRaw !== undefined) {
+        input.abandonParentItems = parseJsonArg(
+          "abandonParentItems",
+          abandonParentItemsRaw,
+        ) as string[];
+      }
+      return { action: "replan", unitId, input };
     }
     case "abort": {
       // abort 可选 --reason，或从 --input/stdin 读 { reason }

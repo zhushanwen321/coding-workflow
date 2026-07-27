@@ -24,6 +24,7 @@ import {
   testReferencesDesignReview,
   testsAllPass,
 } from "../rules/gates/test.js";
+import { buildCommand } from "../utils/command.js";
 import {
   appendFailRecord,
   buildFailureNextAction,
@@ -32,7 +33,6 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, TestInput,V1Deps } from "./types.js";
-import { buildCommand } from "../utils/command.js";
 
 /**
  * 执行 test action。

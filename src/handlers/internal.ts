@@ -16,8 +16,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExecutionStatus } from "../core/status.js";
-import type { ExecutionUnit } from "../core/workunit.js";
+
+import type { AbandonedRef, ExecutionStatus, StatusChange } from "../core/status.js";
+import type { ExecutionUnit, WorkUnitBase } from "../core/workunit.js";
+import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import {
   buildFailureGuidance,
   buildFailureHint,
@@ -27,10 +29,10 @@ import {
   injectSchema,
   WAVE_STAGE_TEMPLATES,
 } from "../guidance/index.js";
-import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
+import type { V1Store } from "../store/v1-store.js";
 import { buildCommand } from "../utils/command.js";
 import type { V1Deps,V1NextAction } from "./types.js";
 
@@ -77,6 +79,29 @@ export function saveUnit(deps: { store: { save: (u: WorkUnitRecord) => void } },
   // 的 WorkUnitRecord。store 按 schema.ts 设计直接序列化全字段，语义安全。
   // eslint-disable-next-line taste/no-unsafe-cast
   deps.store.save(unit as unknown as WorkUnitRecord);
+}
+
+/**
+ * append-only 合并 input.abandonParentItems 到 unit.abandonedParentItems（Set 去重）。
+ *
+ * 跨层跨时机的 abandon parent 条目声明通道（ADR-0010）：
+ *   - 任何层的 plan/replan handler 调一次（显式 input 通道）
+ *   - wave execute handler 用 commit trailer 解析结果调（顺便通道）
+ *
+ * input 无 abandonParentItems 或为空数组时是 no-op（null/undefined 安全）。
+ * 空字符串、纯空白、非字符串值会被过滤（避免 trailer 解析噪声或空 input 污染集合）。
+ * 一旦声明不可撤回（append-only，符合 model §5.6）。
+ */
+export function mergeAbandonParentItems(
+  unit: { abandonedParentItems?: string[] },
+  input: { abandonParentItems?: string[] },
+): void {
+  if (!input.abandonParentItems || input.abandonParentItems.length === 0) return;
+  const existing = new Set(unit.abandonedParentItems ?? []);
+  for (const id of input.abandonParentItems) {
+    if (typeof id === "string" && id.trim() !== "") existing.add(id);
+  }
+  unit.abandonedParentItems = [...existing];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -380,4 +405,76 @@ function buildWaveNextCommand(
     FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input @${nextAction}.json` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PlanningUnit replan 共享 helper（loadChildrenAsWorkUnitBase 的字段映射，
+// 供 slice/feature/epic replan handler 的 computeImpactCascade 使用）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 从 WorkUnitRecord 安全读 statusHistory（返回可 mutate 的副本）。
+ *
+ * 供 loadChildrenAsWorkUnitBase 和 cascadeAbortUnit 复用——原本三个 PlanningUnit 各自
+ * 的 *-internal.ts 有一份完全相同的实现，搬到此处统一导出。
+ */
+export function readRecordStatusHistory(record: WorkUnitRecord): StatusChange[] {
+  const h = record.statusHistory;
+  return Array.isArray(h) ? [...(h as StatusChange[])] : [];
+}
+
+/**
+ * 从 WorkUnitRecord 安全读 basedOnParent（string[]，默认空数组）。
+ * 供 loadChildrenAsWorkUnitBase 复用。
+ */
+export function readBasedOnParent(record: WorkUnitRecord): string[] {
+  const v = record.basedOnParent;
+  return Array.isArray(v) ? (v as string[]) : [];
+}
+
+/**
+ * 从 WorkUnitRecord 安全读 abandonedRefs（AbandonedRef[]，默认空数组）。
+ * 返回浅拷贝避免外部 mutate 污染 record。
+ */
+export function readAbandonedRefs(record: WorkUnitRecord): AbandonedRef[] {
+  const v = record.abandonedRefs;
+  return Array.isArray(v) ? [...(v as AbandonedRef[])] : [];
+}
+
+/**
+ * 从 WorkUnitRecord 安全读 abandonedParentItems（string[]，默认空数组）。
+ * 返回浅拷贝。
+ */
+export function readAbandonedParentItems(record: WorkUnitRecord): string[] {
+  const v = record.abandonedParentItems;
+  return Array.isArray(v) ? [...(v as string[])] : [];
+}
+
+/**
+ * 把 store.findChildren 返回的 WorkUnitRecord[] 映射为 WorkUnitBase[]。
+ *
+ * computeImpactCascade 只读 id/parentUnitId/basedOnParent/abandonedParentItems
+ * （影响面计算基础），从 WorkUnitRecord 的 unknown 字段安全提取。
+ *
+ * defaultScope 用于 record.scope 缺失时的回退（slice 的 child 默认 wave、
+ * feature 的 child 默认 slice、epic 的 child 默认 feature）。
+ */
+export function loadChildrenAsWorkUnitBase(
+  store: V1Store,
+  parentId: string,
+  defaultScope: WorkUnitBase["scope"],
+): WorkUnitBase[] {
+  const records = store.findChildren(parentId);
+  return records.map((r) => ({
+    id: r.id,
+    scope: typeof r.scope === "string" ? (r.scope as WorkUnitBase["scope"]) : defaultScope,
+    slug: typeof r.slug === "string" ? r.slug : r.id,
+    parentUnitId: r.parentUnitId,
+    status: typeof r.status === "string" ? (r.status as WorkUnitBase["status"]) : "created",
+    statusHistory: readRecordStatusHistory(r),
+    basedOnParent: readBasedOnParent(r),
+    abandonedRefs: readAbandonedRefs(r),
+    abandonedParentItems: readAbandonedParentItems(r),
+    objective: typeof r.objective === "string" ? r.objective : "",
+  }));
 }

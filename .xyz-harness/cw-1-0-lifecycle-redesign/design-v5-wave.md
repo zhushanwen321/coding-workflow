@@ -907,10 +907,38 @@ wave 对状态机的特化点：**`plan` 的 from 加 `design-reviewed`**（不�
 | 层 | replan 角色 | 影响面 |
 |---|---|---|
 | epic | 纯发起者（顶层，basedOnParent 永远为空）| 大（级联 feature / slice / wave）|
-| feature / slice | 双向（既发起标下游，又承受上游标记）| 中（级联到下层子孙）|
-| **wave** | **承受者 + 叶子发起者** | **空**（叶子，无下游级联；自己 replan 只影响自己，承受上游 replan 时被 abort）|
+| feature / slice | 双向（既发起标下游，又承受上游标记）+ 主动声明脱离 parent 条目（model §5.6.6）| 中（级联到下层子孙）|
+| **wave** | **承受者 + 叶子发起者 + 主动声明脱离 parent 条目**（model §5.6.6 / §8.7）| **空**（叶子，无下游级联；自己 replan 只影响自己，承受上游 replan 时被 abort——除非已主动声明脱离）|
 
 **wave 是 DAG 的叶子节点**——replan 影响面传播到 wave 为止（不再往下传，没下游了）。这是 wave 区别于 PlanningUnit 的重要特性：PlanningUnit 的 replan 有级联下游的语义，wave 的 replan 是「自闭环」（改自己的 WavePlan + 重新 design-review）。
+
+### 8.7 wave 主动声明脱离 parent 条目（ADR-0010 / model §5.6.6）
+
+除了 §8.1 的「叶子发起者」（replan 自己的 WavePlan 条目）和 §8.2 的「承受者」（被上游 slice replan 级联 abort），wave 还有第三种 replan 相关行为：**主动声明脱离 parent（slice）的某个条目**，使得后续 slice replan 废弃该条目时，cw 的级联 abort 判定会跳过这个 wave（不误 abort）。
+
+**场景**：slice 在 plan 里选了某个 TechChoice（如「用 electron.net 做网络请求」），wave basedOnParent 引用了它。但 wave 实际实现时发现 electron.net 不可行，改用了全局 fetch——wave 已经换了技术路径，实际不再依赖那个 TechChoice。此时如果不声明脱离，后续 slice replan 废弃该 TechChoice 时，cw 会基于 basedOnParent 历史快照误判「这个 wave 依赖废弃条目」→ 误 abort。
+
+**机制（model §5.6.6 的 wave 体现）**：
+
+wave 有两条声明通道：
+
+| 通道 | 时机 | 形式 | 说明 |
+|---|---|---|---|
+| **显式 input**（推荐）| plan / replan（design-review 规划中，未实现） | input 带 `abandonParentItems: ["<TechChoice id>"]`（CLI: `--abandonParentItems '["techChoice_1"]'`）| 主通道，设计阶段就能用 |
+| **commit message trailer**（顺便）| execute | git commit message 末尾加 `Cw-Abandon: <TechChoice id>` | wave execute 特有，agent 写 commit 时顺手带，零额外 CLI 参数 |
+
+**设计阶段优先**：如果 wave 在 plan 阶段（写 testCases 时）就发现 slice 的某个 TechChoice 定义错了（如上方场景的 electron.net 不可行），应该在 plan input 里就用显式通道声明脱离，不必等到 execute。早声明早豁免。
+
+两条通道都 append-only 合并到 `wave.abandonedParentItems`（Set 去重，一旦声明不可撤回）。后续 slice replan 的 `computeImpactCascade` 命中判定会检查：`basedOnParent 命中废弃条目 && 该条目不在 abandonedParentItems 里` 才触发 abort（model §5.6.2 Step 2 例外）。
+
+**与 §8.2 承受者角色的关系**：
+- §8.2 的「被 abort」是**被动**的——cw 检测命中后直接 abort，wave 无法干预
+- §8.7 的「声明脱离」是**主动**的——wave 提前声明，使得本该命中的 abort 被豁免
+- 两者都基于 basedOnParent：§8.2 读取 basedOnParent 做命中判定，§8.7 用 abandonedParentItems 做白名单排除
+
+**为什么 wave 需要这个能力而 PlanningUnit 的承受场景不需要**：PlanningUnit（feature/slice）承受上游 replan 时，被 abort 后由 agent 重建（`cw create` 新建子层），重建成本相对可控。但 wave 是叶子，被 abort 意味着已写的代码 commit 作废要重做——如果 wave 实际没受影响（换了技术路径），误 abort 的代价是浪费已完成的实现。所以 wave 特别需要「主动声明脱离」来避免误伤。
+
+**guidance 体现**（`src/guidance/templates/wave.ts` WAVE_EXECUTE_TEMPLATE）：execute guidance 会教 agent「如果实际用了和 slice 原方案不同的技术实现」，推荐方式 1（plan 阶段显式 input）+ 方式 2（execute commit trailer）。
 
 ---
 

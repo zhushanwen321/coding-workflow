@@ -10,9 +10,9 @@
  */
 import type { ExecutionUnit } from "../core/workunit.js";
 import { createWave } from "../core/workunit.js";
+import { buildCommand } from "../utils/command.js";
 import { buildNextAction, saveUnit } from "./internal.js";
 import type { ActionResult, CreateInput,V1Deps } from "./types.js";
-import { buildCommand } from "../utils/command.js";
 
 /** testRunner 配置提示（create 时提前告知 monorepo 用户）。 */
 const TEST_RUNNER_HINT = `
