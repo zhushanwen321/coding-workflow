@@ -1,0 +1,5 @@
+{
+  "testRunner": {
+    "command": "npx vitest run tests/v1/"
+  }
+}

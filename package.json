@@ -1,10 +1,10 @@
 {
   "name": "@zhushanwen/coding-workflow",
-  "version": "0.1.4",
+  "version": "1.0.3",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",
-  "main": "./dist/types.js",
-  "types": "./dist/types.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -13,7 +13,7 @@
     "cw": "./dist/cli.js"
   },
   "exports": {
-    ".": "./dist/types.js",
+    ".": "./dist/index.js",
     "./dispatch": "./dist/dispatch.js"
   },
   "files": [
@@ -35,7 +35,7 @@
     "url": "https://github.com/zhushanwen321/coding-workflow/issues"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/generate-schemas.js",
     "check": "tsc --noEmit",
     "check:tests": "tsc --noEmit -p tsconfig.test.json",
     "check:all": "npm run check && npm run check:tests",

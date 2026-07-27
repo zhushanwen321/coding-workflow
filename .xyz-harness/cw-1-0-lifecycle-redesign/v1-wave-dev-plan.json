@@ -1,0 +1,83 @@
+{
+  "format": "lite",
+  "objective": "实现 cw 1.0 v5 wave 层（ExecutionUnit）完整功能：core 领域模型 + rules 状态机/gates/freeze/replan + store 持久化 + handlers 11个action编排 + evidence跨阶段 + dispatch + 测试。src/v1/ 隔离层，不参考 engine/。",
+  "waves": [
+    {
+      "id": "W1",
+      "dependsOn": [],
+      "changes": [
+        { "file": "src/v1/core/status.ts", "action": "create", "description": "PlanningStatus(8状态)/ExecutionStatus(10状态)联合类型 + StatusChange/AbandonedRef 接口" },
+        { "file": "src/v1/core/plan.ts", "action": "create", "description": "Plan/Split/WorkUnitItem基类 + WavePlan(+4字段)/WaveTestCase/WaveTask/WaveFile/WaveContract" },
+        { "file": "src/v1/core/evidence.ts", "action": "create", "description": "Evidence基类/WaveEvidence/TestRunResult/ArtifactRef/ChildDeliveryRecord(预留Planning类型)" },
+        { "file": "src/v1/core/judgments.ts", "action": "create", "description": "DesignReviewJudgment+WaveDesignReviewLayerSpecific/TestJudgment/ExecReviewJudgment+ExecReviewLayerSpecific/RetrospectData/FollowupAction" },
+        { "file": "src/v1/core/clarifications.ts", "action": "create", "description": "Clarification(extends WorkUnitItem)/Decision/FeatureClarification+FeatureSpec(类型预留)" },
+        { "file": "src/v1/core/workunit.ts", "action": "create", "description": "WorkUnitBase/PlanningUnit(接口预留)/ExecutionUnit/createWave工厂" },
+        { "file": "src/v1/core/index.ts", "action": "create", "description": "core 模块统一导出" }
+      ]
+    },
+    {
+      "id": "W2",
+      "dependsOn": ["W1"],
+      "changes": [
+        { "file": "src/v1/rules/state-machine.ts", "action": "create", "description": "WAVE_TRANSITIONS(附录A原样:9步+abort+replan bypass) + WaveAction类型 + guardWave(查表校验expectedStatuses) + nextWaveStatus(progressive+replan to=undefined原地) + isWaveTerminal + GuardVerdict类型" },
+        { "file": "src/v1/rules/gates/design-review.ts", "action": "create", "description": "test-cases-non-empty/have-expected/necessity/sufficiency/alternatives/tradeoffs-present/risks-present 纯函数gate" },
+        { "file": "src/v1/rules/gates/test.ts", "action": "create", "description": "commit-exists/tests-all-pass/test-references-design-review 纯函数gate（commit/tests结果由外部注入）" },
+        { "file": "src/v1/rules/gates/exec-review.ts", "action": "create", "description": "readability/architecture/overall-verdict非空 + followup-actions-when-needed gate" },
+        { "file": "src/v1/rules/gates/retrospect.ts", "action": "create", "description": "lessons-learned-non-empty + retrospect-covers-judgments gate" },
+        { "file": "src/v1/rules/freeze.ts", "action": "create", "description": "checkFreeze纯函数：replan改WavePlan时校验abandoned的WorkUnitItem不可删/改核心字段" },
+        { "file": "src/v1/rules/replan.ts", "action": "create", "description": "computeImpact纯函数：输入WorkUnit树+废弃条目id→输出aborted/preserved/pendingRebuild。wave叶子影响面恒空但机制跑通" },
+        { "file": "src/v1/rules/index.ts", "action": "create", "description": "rules 模块统一导出" }
+      ]
+    },
+    {
+      "id": "W3",
+      "dependsOn": ["W1"],
+      "changes": [
+        { "file": "src/v1/store/schema.ts", "action": "create", "description": "V1JsonFile schema(扁平workUnits集合+parentUnitId外键) + WorkUnitRecord + encodeCwd" },
+        { "file": "src/v1/store/v1-store.ts", "action": "create", "description": "V1Store类：JSON读写 + tmp+fsync+rename+lockfile(O_EXCL)+stale检测原子写 + 内存深拷贝snapshot回滚事务 + load/save/findChildren" },
+        { "file": "src/v1/store/index.ts", "action": "create", "description": "store 模块统一导出" }
+      ]
+    },
+    {
+      "id": "W4",
+      "dependsOn": ["W2", "W3"],
+      "changes": [
+        { "file": "src/v1/handlers/create.ts", "action": "create", "description": "handleCreate：createWave工厂调用 + 初始化statusHistory首条 + save" },
+        { "file": "src/v1/handlers/clarify.ts", "action": "create", "description": "handleClarify：progressive append clarifications + status流转 + save" },
+        { "file": "src/v1/handlers/plan.ts", "action": "create", "description": "handlePlan：写WavePlan条目(testCases/tasks/files/contracts) + status流转 + save" },
+        { "file": "src/v1/handlers/design-review.ts", "action": "create", "description": "handleDesignReview：跑design-review gates + 写designReviewJudgment + status流转 + save" },
+        { "file": "src/v1/handlers/execute.ts", "action": "create", "description": "handleExecute：验commitHash(git cat-file注入) + 填WaveEvidence客观(commitHash/changedFiles) + status流转 + save" },
+        { "file": "src/v1/handlers/test.ts", "action": "create", "description": "handleTest：注入测试结果 + 跑test gates + 填WaveEvidence.testRunResult + 写testJudgment + status流转 + save" },
+        { "file": "src/v1/handlers/exec-review.ts", "action": "create", "description": "handleExecReview：跑exec-review gates + 写execReviewJudgment + status流转 + save" },
+        { "file": "src/v1/handlers/retrospect.ts", "action": "create", "description": "handleRetrospect：跑retrospect gates + 写retrospectData + status流转 + save" },
+        { "file": "src/v1/handlers/closeout.ts", "action": "create", "description": "handleCloseout：补evidence主观(summary/artifacts) + drift检查(文件存在) + 冻结frozenAt + status→closed + save" },
+        { "file": "src/v1/handlers/replan.ts", "action": "create", "description": "handleReplan：编排computeImpact + checkFreeze + append statusHistory(from=to) + 返回影响面给agent + save" },
+        { "file": "src/v1/handlers/abort.ts", "action": "create", "description": "handleAbort：级联abort子孙(wave叶子无子孙但机制跑通) + append abandonedRefs + status→aborted + save" },
+        { "file": "src/v1/handlers/index.ts", "action": "create", "description": "handlers 模块统一导出 + V1Deps类型(store/git/testRunner/clock注入接口)" }
+      ]
+    },
+    {
+      "id": "W5",
+      "dependsOn": ["W4"],
+      "changes": [
+        { "file": "src/v1/dispatch.ts", "action": "create", "description": "dispatch统一入口：loadWorkUnit(非create) → guardWave → handler路由 → ActionResult" },
+        { "file": "src/v1/types.ts", "action": "create", "description": "v1对外类型：re-export core + handler params(V1Params联合) + ActionResult + V1Deps" },
+        { "file": "src/v1/index.ts", "action": "create", "description": "包入口：导出dispatch + 全部公开类型" }
+      ]
+    },
+    {
+      "id": "W6",
+      "dependsOn": ["W5"],
+      "changes": [
+        { "file": "tests/v1/helpers/v1-env.ts", "action": "create", "description": "测试基建：createV1Env(mkdtemp独立CW_HOME) + makeWaveUnit + 阶段推进helper(setupToExecuted/setupToClosed等)" },
+        { "file": "tests/v1/state-machine.test.ts", "action": "create", "description": "WAVE_TRANSITIONS主链9步流转 + guard拒绝跳步(illegal_transition) + progressive语义 + replan bypass(status不变append history) + 终态判定" },
+        { "file": "tests/v1/gates.test.ts", "action": "create", "description": "每步gate pass+fail: design-review(7个gate)/test(3个gate)/exec-review(4个gate)/retrospect(2个gate)" },
+        { "file": "tests/v1/freeze.test.ts", "action": "create", "description": "checkFreeze: abandoned条目不可删/改核心字段 + active条目可改" },
+        { "file": "tests/v1/replan.test.ts", "action": "create", "description": "computeImpact: wave叶子影响面恒空 + 废弃条目匹配逻辑" },
+        { "file": "tests/v1/evidence-lifecycle.test.ts", "action": "create", "description": "evidence跨阶段: execute填客观→test补testRunResult→closeout补主观+drift检查+冻结后不可改" },
+        { "file": "tests/v1/store.test.ts", "action": "create", "description": "V1Store: 原子写 + load/save往返 + findChildren + 事务回滚" },
+        { "file": "tests/v1/dispatch-e2e.test.ts", "action": "create", "description": "通过dispatch跑完整wave生命周期: create→clarify→plan→design-review→execute→test→exec-review→retrospect→closeout" }
+      ]
+    }
+  ]
+}
