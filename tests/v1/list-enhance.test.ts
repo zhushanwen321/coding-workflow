@@ -427,8 +427,8 @@ describe("Wave B: V1Store 集成 + --cwd", () => {
     expect(unitsB.map((u) => u.id)).toEqual(["wave:b"]);
   });
 
-  it.skip("TC-B6: --all 与 --cwd 互斥（cli 层，需 e2e，smoke test 已验证）", () => {
-    // 由 `node dist/cli.js v1 list --all --cwd /tmp` → exit 1 + 错误信息 验证过
-    // cli 层逻辑在 src/cli.ts，e2e 测试成本高，暂跳过
-  });
+  // TC-B6: --all 与 --cwd 互斥——cli 层 e2e 测试，已移至 cli-v1.test.ts
+  // 「W8: cw list --all 与 --cwd 互斥」describe 覆盖（runV1Cli 跑真实 dist/cli.js 子进程，
+  // 断言 exit 1 + mutually exclusive）。本文件测 renderList 纯函数，互斥检查在 cli.ts
+  // 入口层（line 841-843），不适合纯函数测试。
 });

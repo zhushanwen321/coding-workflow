@@ -677,6 +677,18 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
   });
 });
 
+describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
+  it("--all + --cwd 同时传 → exit 1 + 互斥错误信息", () => {
+    // cli.ts:841-843 的互斥检查：--all 跨 cwd 遍历，--cwd 锁定单 cwd，语义冲突
+    const result = runV1Cli(
+      ["list", "--all", "--cwd", e.workspaceDir],
+      e,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("mutually exclusive");
+  });
+});
+
 // ── 辅助：在 V1_HOME 树里找 _v1.json ────────────────────────
 
 function findV1Json(dir: string): string | null {

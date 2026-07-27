@@ -912,6 +912,7 @@ function asUnit<T extends { scope: string }>(
   expectedScope: string,
 ): T | undefined {
   if (unit.scope !== expectedScope) return undefined;
+  // eslint-disable-next-line taste/no-unsafe-cast -- scope 已校验，WorkUnitRecord 是具名 Unit 类型的超集（字段透传存储），断言安全；详见函数上方注释
   return unit as unknown as T;
 }
 

@@ -446,7 +446,7 @@ export function readAbandonedRefs(record: WorkUnitRecord): AbandonedRef[] {
  * 返回浅拷贝。
  */
 export function readAbandonedParentItems(record: WorkUnitRecord): string[] {
-  const v = (record as { abandonedParentItems?: unknown }).abandonedParentItems;
+  const v = record.abandonedParentItems;
   return Array.isArray(v) ? [...(v as string[])] : [];
 }
 

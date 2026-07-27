@@ -39,13 +39,15 @@ export function buildReplanReviewText(args: {
   sections.push("");
   sections.push("审视完后，重新 plan 并重新 design-review（plan → design-review → execute 完整重走）。");
 
-  // 渐进式递进提示
-  if (replanCount >= 2) {
+  // 渐进式递进提示（阈值：第 2 次起加系统性问题警告，第 3 次起强烈建议 abort）
+  const REPLAN_WARN_THRESHOLD = 2;
+  const REPLAN_ABORT_THRESHOLD = 3;
+  if (replanCount >= REPLAN_WARN_THRESHOLD) {
     sections.push("");
     sections.push("⚠️ 你已经 replan 过一次了。如果又要 replan，说明方案层面有系统性问题。");
     sections.push("考虑回到 clarify 重新澄清需求/技术约束，或 abort 整个 unit 重新设计。");
   }
-  if (replanCount >= 3) {
+  if (replanCount >= REPLAN_ABORT_THRESHOLD) {
     sections.push("");
     sections.push("🚨 已 replan 3 次。强烈建议 abort 整个 unit——反复 replan 说明方案根基有问题。");
   }
