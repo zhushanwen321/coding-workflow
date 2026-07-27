@@ -21,17 +21,17 @@ import type {
   Clarification,
   FeatureSpec,
   FunctionalRequirement,
-} from "../../../src/v1/core/clarifications.js";
+} from "../../../src/core/clarifications.js";
 import type {
   DesignReviewJudgment,
   FeatureDesignReviewLayerSpecific,
   PlanningRetrospectData,
-} from "../../../src/v1/core/judgments.js";
-import type { Split } from "../../../src/v1/core/plan.js";
-import type { Feature } from "../../../src/v1/core/workunit.js";
-import { createFeature } from "../../../src/v1/core/workunit.js";
-import { dispatch } from "../../../src/v1/dispatch.js";
-import type { V1Deps } from "../../../src/v1/handlers/types.js";
+} from "../../../src/core/judgments.js";
+import type { Split } from "../../../src/core/plan.js";
+import type { Feature } from "../../../src/core/workunit.js";
+import { createFeature } from "../../../src/core/workunit.js";
+import { dispatch } from "../../../src/dispatch.js";
+import type { V1Deps } from "../../../src/handlers/types.js";
 import {
   advanceWaveToClosed,
   makeValidPlanningRetrospectData,

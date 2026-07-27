@@ -11,10 +11,10 @@ import type {
   ExecReviewJudgment,
   RetrospectData,
   TestJudgment,
-} from "../../src/v1/core/judgments.js";
-import type { WaveTestCase } from "../../src/v1/core/plan.js";
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { createWave } from "../../src/v1/core/workunit.js";
+} from "../../src/core/judgments.js";
+import type { WaveTestCase } from "../../src/core/plan.js";
+import type { ExecutionUnit } from "../../src/core/workunit.js";
+import { createWave } from "../../src/core/workunit.js";
 import {
   designReviewAlternativesNonEmpty,
   designReviewNecessityNonEmpty,
@@ -23,23 +23,23 @@ import {
   designReviewTradeoffsPresent,
   testCasesHaveExpected,
   testCasesNonEmpty,
-} from "../../src/v1/rules/gates/design-review.js";
+} from "../../src/rules/gates/design-review.js";
 import {
   execReviewArchitectureNonEmpty,
   execReviewFollowupActionsWhenNeeded,
   execReviewOverallVerdictNonEmpty,
   execReviewReadabilityNonEmpty,
-} from "../../src/v1/rules/gates/exec-review.js";
+} from "../../src/rules/gates/exec-review.js";
 import {
   lessonsLearnedNonEmpty,
   retrospectCoversJudgments,
-} from "../../src/v1/rules/gates/retrospect.js";
+} from "../../src/rules/gates/retrospect.js";
 import {
   commitExists,
   testCasesExecuted,
   testReferencesDesignReview,
   testsAllPass,
-} from "../../src/v1/rules/gates/test.js";
+} from "../../src/rules/gates/test.js";
 
 // ── 辅助构造 ─────────────────────────────────────────────────
 

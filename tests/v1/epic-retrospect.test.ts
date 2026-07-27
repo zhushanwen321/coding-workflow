@@ -14,11 +14,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { PlanningRetrospectData } from "../../src/v1/core/judgments.js";
-import { createEpic, type Epic } from "../../src/v1/core/workunit.js";
-import { dispatch } from "../../src/v1/dispatch.js";
-import { runEpicRetrospectGates } from "../../src/v1/handlers/epic/epic-internal.js";
-import type { V1Deps } from "../../src/v1/handlers/types.js";
+import type { PlanningRetrospectData } from "../../src/core/judgments.js";
+import { createEpic, type Epic } from "../../src/core/workunit.js";
+import { dispatch } from "../../src/dispatch.js";
+import { runEpicRetrospectGates } from "../../src/handlers/epic/epic-internal.js";
+import type { V1Deps } from "../../src/handlers/types.js";
 import {
   createV1Env,
   makeValidClarification,

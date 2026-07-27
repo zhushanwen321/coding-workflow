@@ -2,14 +2,13 @@
  * v1 CLI 接入 e2e 测试（W8）。
  *
  * 通过真实子进程跑 `dist/cli.js v1 <action>`，验证：
- *   - cw v1 create wave → JSON 含 nextAction.guidance 非空
+ *   - cw create wave → JSON 含 nextAction.guidance 非空
  *   - 缺少必填参数 → exit 1 + 错误信息
- *   - v1 与 0.x 命令并存互不干扰（cw create 走 0.x，cw v1 create 走 v1）
+ *   - v1 与 0.x 命令并存互不干扰（cw create 走 0.x，cw create 走 v1）
  *   - 推进 action（clarify）的 --input @file.json 管道
  *   - unit not found → exit 1 + V1Error 语义
  *
- * 复用 tests/helpers/e2e.ts 的 runCli / parseStdout / setupGitRepo
- * （这些 helper 是 v1/0.x 无关的通用子进程基建）。
+ * 复用 tests/v1/helpers/git.ts 的 setupGitRepo（git 仓库初始化，v1/0.x 无关的通用基建）。
  *
  * 注意：e2e 测试需要先 npm run build（dist/cli.js 存在）。测试文件顶部断言。
  */
@@ -30,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { buildLayerPromptGuidance } from "../../src/cli.js";
-import { setupGitRepo } from "../helpers/git.js";
+import { setupGitRepo } from "./helpers/git.js";
 import {
   makeValidSliceDesignReviewJudgment,
   makeValidSlicePlan,
@@ -64,7 +63,7 @@ export interface V1CliEnv {
 }
 
 /**
- * runV1Cli — 真实子进程调 dist/cli.js（args 可带或不带 "v1" 前缀）。
+ * runV1Cli — 真实子进程调 dist/cli.js（args 直接是 action 起的参数，无 v1 前缀）。
  *
  * cwd 默认 env.workspaceDir（CLI 默认 workspacePath=process.cwd()，
  * v1 store 的 encodeCwd(workspacePath) 必须与落盘路径一致）。
@@ -142,12 +141,11 @@ afterAll(() => {
 
 // ── 测试 ────────────────────────────────────────────────────
 
-describe("W8: cw v1 create wave（happy path）", () => {
+describe("W8: cw create wave（happy path）", () => {
   it("返回 JSON 含 status=created + nextAction.guidance 非空", () => {
     const result = parseStdout(
       runV1Cli(
         [
-          "v1",
           "create",
           "wave",
           "--slug",
@@ -188,7 +186,6 @@ describe("W8: cw v1 create wave（happy path）", () => {
     const result = parseStdout(
       runV1Cli(
         [
-          "v1",
           "create",
           "wave",
           "--slug",
@@ -209,10 +206,10 @@ describe("W8: cw v1 create wave（happy path）", () => {
   });
 });
 
-describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
+describe("W8: cw create 缺必填参数 → exit 1", () => {
   it("缺 --objective → exit 1 + 错误信息含 objective", () => {
     const result = runV1Cli(
-      ["v1", "create", "wave", "--slug", "no-obj"],
+      ["create", "wave", "--slug", "no-obj"],
       e,
     );
     expect(result.exitCode).toBe(1);
@@ -221,7 +218,7 @@ describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
 
   it("缺 --slug → exit 1 + 错误信息含 slug", () => {
     const result = runV1Cli(
-      ["v1", "create", "wave", "--objective", "x"],
+      ["create", "wave", "--objective", "x"],
       e,
     );
     expect(result.exitCode).toBe(1);
@@ -232,28 +229,28 @@ describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
     // layer 完全缺失（create 后无位置参数）：返回选层 guidance 引导 agent 选层。
     // 与下方「非法 layer 字符串 → exit 1」区分：缺失走 guidance，非法值走 throw。
     const result = runV1Cli(
-      ["v1", "create", "--slug", "x", "--objective", "y"],
+      ["create", "--slug", "x", "--objective", "y"],
       e,
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("规模");
     expect(result.stdout).toContain("epic → feature → slice → wave");
     expect(result.stdout).toContain("反模式");
-    expect(result.stdout).toContain("cw v1 create <layer>");
+    expect(result.stdout).toContain("cw create <layer>");
     // 不应进 dispatch：stdout 不是 JSON（无 unitId/nextAction）。
     expect(result.stdout).not.toContain("unitId");
   });
 
   it("create 后无任何参数 → exit 0 + 选层 guidance", () => {
-    // argv[4] === undefined 的形态（cw v1 create 后什么都不跟）。
-    const result = runV1Cli(["v1", "create"], e);
+    // argv[3] === undefined 的形态（cw create 后什么都不跟）。
+    const result = runV1Cli(["create"], e);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("选择 layer");
   });
 
   it("非法 layer → exit 1 + 错误信息", () => {
     const result = runV1Cli(
-      ["v1", "create", "bogus", "--slug", "x", "--objective", "y"],
+      ["create", "bogus", "--slug", "x", "--objective", "y"],
       e,
     );
     expect(result.exitCode).toBe(1);
@@ -263,7 +260,7 @@ describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
   it("非法 layer 名 → exit 1 + 明确提示非法", () => {
     // epic 已实现，改用虚构 layer 名验证「未知 layer 被拒」防御逻辑
     const result = runV1Cli(
-      ["v1", "create", "bogus-layer", "--slug", "x", "--objective", "y"],
+      ["create", "bogus-layer", "--slug", "x", "--objective", "y"],
       e,
     );
     expect(result.exitCode).toBe(1);
@@ -271,25 +268,26 @@ describe("W8: cw v1 create 缺必填参数 → exit 1", () => {
   });
 });
 
-describe("W8: cw v1 <action> 未知/缺 unitId → exit 1", () => {
+describe("W8: cw <action> 未知/缺 unitId → exit 1", () => {
   it("未知 v1 action → exit 1 + 错误信息", () => {
     const result = runV1Cli(
-      ["v1", "frobnicate", "--unitId", "wave:x"],
+      ["frobnicate", "--unitId", "wave:x"],
       e,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("未知 v1 action");
+    expect(result.stderr).toContain("未知 action");
   });
 
-  it("只打 cw v1 不带 action → exit 1 + 错误信息", () => {
+  it("只打 cw v1（旧前缀）→ exit 1 + 错误信息（v1 不再是合法 action）", () => {
     const result = runV1Cli(["v1"], e);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("action");
+    expect(result.stderr).toContain("未知 action");
+    expect(result.stderr).toContain("v1");
   });
 
   it("推进 action 缺 --unitId → exit 1", () => {
     const result = runV1Cli(
-      ["v1", "clarify", "--input", "-"],
+      ["clarify", "--input", "-"],
       e,
       { input: JSON.stringify({ clarifications: [] }) },
     );
@@ -298,12 +296,12 @@ describe("W8: cw v1 <action> 未知/缺 unitId → exit 1", () => {
   });
 });
 
-describe("W8: cw v1 clarify（推进 action，--input @file 管道）", () => {
+describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
   it("create → clarify（--input @file.json）→ status=clarifying + clarifications 落盘", () => {
     // 1. 先 create 一个 wave
     const created = parseStdout(
       runV1Cli(
-        ["v1", "create", "wave", "--slug", "w8-clarify", "--objective", "o"],
+        ["create", "wave", "--slug", "w8-clarify", "--objective", "o"],
         e,
       ),
     );
@@ -328,7 +326,7 @@ describe("W8: cw v1 clarify（推进 action，--input @file 管道）", () => {
     );
     const clarified = parseStdout(
       runV1Cli(
-        ["v1", "clarify", "--unitId", unitId, "--input", `@${inputFile}`],
+        ["clarify", "--unitId", unitId, "--input", `@${inputFile}`],
         e,
       ),
     );
@@ -355,14 +353,14 @@ describe("W8: cw v1 clarify（推进 action，--input @file 管道）", () => {
   it("clarify 用 stdin 传 input 也能跑通", () => {
     const created = parseStdout(
       runV1Cli(
-        ["v1", "create", "wave", "--slug", "w8-stdin", "--objective", "o"],
+        ["create", "wave", "--slug", "w8-stdin", "--objective", "o"],
         e,
       ),
     );
     const unitId = created.unitId as string;
     const clarified = parseStdout(
       runV1Cli(
-        ["v1", "clarify", "--unitId", unitId, "--input", "-"],
+        ["clarify", "--unitId", unitId, "--input", "-"],
         e,
         { input: JSON.stringify({ clarifications: [] }) },
       ),
@@ -374,25 +372,24 @@ describe("W8: cw v1 clarify（推进 action，--input @file 管道）", () => {
   it("推进 action 无 input（stdin 空 + 无 --input）→ exit 1", () => {
     const created = parseStdout(
       runV1Cli(
-        ["v1", "create", "wave", "--slug", "w8-noinput", "--objective", "o"],
+        ["create", "wave", "--slug", "w8-noinput", "--objective", "o"],
         e,
       ),
     );
     const unitId = created.unitId as string;
     // stdin 为空（runV1Cli 不传 input 且子进程 stdin 无 pipe）→ 报缺 input
-    const result = runV1Cli(["v1", "plan", "--unitId", unitId], e);
+    const result = runV1Cli(["plan", "--unitId", unitId], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("input");
   });
 });
 
-describe("W8: cw v1 unit not found → exit 1（V1Error 语义）", () => {
+describe("W8: cw unit not found → exit 1（V1Error 语义）", () => {
   it("clarify 一个不存在的 unitId → exit 1 + unit_not_found", () => {
     const inputFile = join(e.workspaceDir, "ghost-input.json");
     writeFileSync(inputFile, JSON.stringify({ clarifications: [] }));
     const result = runV1Cli(
       [
-        "v1",
         "clarify",
         "--unitId",
         "wave:ghost",
@@ -409,13 +406,13 @@ describe("W8: cw v1 unit not found → exit 1（V1Error 语义）", () => {
   it("create 后直接 execute（非法跳步）→ exit 1 + illegal_transition", () => {
     const created = parseStdout(
       runV1Cli(
-        ["v1", "create", "wave", "--slug", "w8-illegal", "--objective", "o"],
+        ["create", "wave", "--slug", "w8-illegal", "--objective", "o"],
         e,
       ),
     );
     const unitId = created.unitId as string;
     const result = runV1Cli(
-      ["v1", "execute", "--unitId", unitId, "--commitHash", e.commitHash],
+      ["execute", "--unitId", unitId, "--commitHash", e.commitHash],
       e,
     );
     expect(result.exitCode).toBe(1);
@@ -425,23 +422,22 @@ describe("W8: cw v1 unit not found → exit 1（V1Error 语义）", () => {
   });
 });
 
-describe("W8: 0.x 命令与 v1 并存（向后兼容）", () => {
-  it("cw create（不带 v1 前缀）在 cw 1.0 被拒（0.x 状态机入口已切断）→ exit 1 + 提示改用 v1", () => {
-    // cw 1.0 起切断 0.x 状态机入口：`cw create`（不带 v1）被拒，提示改用 `cw v1 create`。
-    // 只读查询（status/list/stats/report）与基建命令（init/gen-spec/skill）不受影响。
+describe("W8: v1 前缀已切断（Wave 3 起 cw 直接跟 action）", () => {
+  it("cw v1 create（旧前缀）被拒为「未知 action v1」→ exit 1 + 提示改用 cw <action>", () => {
+    // Wave 3 起去掉 v1 前缀：v1 不再是合法 action，走 main 的「未知 action」分支。
     const result = runV1Cli(
-      ["create", "--slug", "legacy-coexist", "--objective", "0.x"],
+      ["v1", "create", "--slug", "legacy-coexist", "--objective", "0.x"],
       e,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("0.x 状态机命令");
-    expect(result.stderr).toContain("cw v1 create");
+    expect(result.stderr).toContain("未知 action");
+    expect(result.stderr).toContain("v1");
   });
 
   it("v1 和 0.x 写各自的存储（V1_HOME vs CW_HOME）互不污染", () => {
     // v1 create 写 _v1.json（V1_HOME 下）
     runV1Cli(
-      ["v1", "create", "wave", "--slug", "iso-v1", "--objective", "o"],
+      ["create", "wave", "--slug", "iso-v1", "--objective", "o"],
       e,
     );
     // v1 存储存在
@@ -458,13 +454,13 @@ describe("W8: 0.x 命令与 v1 并存（向后兼容）", () => {
   });
 });
 
-describe("W8: cw v1 execute slice（无 --commitHash，按 plan.split 创建 child wave）", () => {
+describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child wave）", () => {
   it("slice create→clarify→plan→design-review→execute（无 commitHash）→ status=executing + childUnitIds", () => {
     // slice execute 不需 --commitHash（wave 才需），CLI 需按 scope 区分。
     // 1. create slice
     const created = parseStdout(
       runV1Cli(
-        ["v1", "create", "slice", "--slug", "cli-slice-exec", "--objective", "o"],
+        ["create", "slice", "--slug", "cli-slice-exec", "--objective", "o"],
         e,
       ),
     );
@@ -483,7 +479,7 @@ describe("W8: cw v1 execute slice（无 --commitHash，按 plan.split 创建 chi
       }),
     );
     const clarified = parseStdout(
-      runV1Cli(["v1", "clarify", "--unitId", unitId, "--input", `@${clarifyInput}`], e),
+      runV1Cli(["clarify", "--unitId", unitId, "--input", `@${clarifyInput}`], e),
     );
     expect(clarified.status).toBe("clarifying");
 
@@ -491,7 +487,7 @@ describe("W8: cw v1 execute slice（无 --commitHash，按 plan.split 创建 chi
     const planInput = join(e.workspaceDir, "slice-plan.json");
     writeFileSync(planInput, JSON.stringify(makeValidSlicePlan()));
     const planned = parseStdout(
-      runV1Cli(["v1", "plan", "--unitId", unitId, "--input", `@${planInput}`], e),
+      runV1Cli(["plan", "--unitId", unitId, "--input", `@${planInput}`], e),
     );
     expect(planned.status).toBe("planning");
 
@@ -502,13 +498,13 @@ describe("W8: cw v1 execute slice（无 --commitHash，按 plan.split 创建 chi
       JSON.stringify({ designReviewJudgment: makeValidSliceDesignReviewJudgment() }),
     );
     const dr = parseStdout(
-      runV1Cli(["v1", "design-review", "--unitId", unitId, "--input", `@${drInput}`], e),
+      runV1Cli(["design-review", "--unitId", unitId, "--input", `@${drInput}`], e),
     );
     expect(dr.status).toBe("design-reviewed");
 
     // 5. execute（slice，不传 --commitHash）——核心修复验证点
     const executed = parseStdout(
-      runV1Cli(["v1", "execute", "--unitId", unitId], e),
+      runV1Cli(["execute", "--unitId", unitId], e),
     );
     expect(executed.ok).toBe(true);
     expect(executed.status).toBe("executing");
@@ -532,11 +528,11 @@ describe("W8: cw v1 execute slice（无 --commitHash，按 plan.split 创建 chi
 
   it("wave execute 仍要求 --commitHash（slice 修复不影响 wave）", () => {
     const created = parseStdout(
-      runV1Cli(["v1", "create", "wave", "--slug", "w8-wave-exec", "--objective", "o"], e),
+      runV1Cli(["create", "wave", "--slug", "w8-wave-exec", "--objective", "o"], e),
     );
     const unitId = created.unitId as string;
     // wave execute 不传 --commitHash → exit 1
-    const result = runV1Cli(["v1", "execute", "--unitId", unitId], e);
+    const result = runV1Cli(["execute", "--unitId", unitId], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--commitHash");
   });

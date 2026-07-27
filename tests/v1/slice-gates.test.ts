@@ -14,8 +14,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { DesignReviewJudgment, PlanningRetrospectData } from "../../src/v1/core/judgments.js";
-import type { Slice } from "../../src/v1/core/workunit.js";
+import type { DesignReviewJudgment, PlanningRetrospectData } from "../../src/core/judgments.js";
+import type { Slice } from "../../src/core/workunit.js";
 import {
   designReviewAlternativesNonEmpty,
   designReviewNecessityNonEmpty,
@@ -27,14 +27,14 @@ import {
   splitDagValid,
   splitNonEmpty,
   techChoiceNonEmpty,
-} from "../../src/v1/rules/gates/design-review.js";
+} from "../../src/rules/gates/design-review.js";
 import {
   allWavesClosed,
   reviewedItemsCoverDesignReview,
   runSliceRetrospectGates,
   sliceLessonsLearnedNonEmpty,
   splitFulfillmentCoversPlan,
-} from "../../src/v1/rules/gates/retrospect.js";
+} from "../../src/rules/gates/retrospect.js";
 import {
   makeSliceUnit,
   makeValidSliceDesignReviewJudgment,

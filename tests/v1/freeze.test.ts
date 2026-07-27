@@ -10,16 +10,16 @@
  */
 import { describe, expect,it } from "vitest";
 
-import type { AcceptanceCriterion, BusinessCase, FunctionalRequirement } from "../../src/v1/core/clarifications.js";
+import type { AcceptanceCriterion, BusinessCase, FunctionalRequirement } from "../../src/core/clarifications.js";
 import type {
   WaveContract,
   WaveFile,
   WaveTask,
   WaveTestCase,
-} from "../../src/v1/core/plan.js";
-import type { ExecutionUnit, Feature } from "../../src/v1/core/workunit.js";
-import { createFeature, createWave } from "../../src/v1/core/workunit.js";
-import { checkFreeze, checkFreezeFeatureSpec } from "../../src/v1/rules/freeze.js";
+} from "../../src/core/plan.js";
+import type { ExecutionUnit, Feature } from "../../src/core/workunit.js";
+import { createFeature, createWave } from "../../src/core/workunit.js";
+import { checkFreeze, checkFreezeFeatureSpec } from "../../src/rules/freeze.js";
 
 // ── 辅助构造带 abandoned 条目的 wave ─────────────────────────
 

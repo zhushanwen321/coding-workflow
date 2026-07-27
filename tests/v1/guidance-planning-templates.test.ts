@@ -14,16 +14,16 @@ import {
   PLANNING_ACTION_TO_NEXT,
   PLANNING_STAGE_TEMPLATES,
   PLANNING_STATUS_DISPLAY,
-} from "../../src/v1/guidance/index.js";
-import { EPIC_ACTION_SCHEMA, getEpicSchemaText } from "../../src/v1/handlers/epic/epic-internal.js";
+} from "../../src/guidance/index.js";
+import { EPIC_ACTION_SCHEMA, getEpicSchemaText } from "../../src/handlers/epic/epic-internal.js";
 import {
   FEATURE_ACTION_SCHEMA,
   getFeatureSchemaText,
-} from "../../src/v1/handlers/feature/feature-internal.js";
+} from "../../src/handlers/feature/feature-internal.js";
 import {
   getSliceSchemaText,
   SLICE_ACTION_SCHEMA,
-} from "../../src/v1/handlers/slice/slice-internal.js";
+} from "../../src/handlers/slice/slice-internal.js";
 
 const PLANNING_ACTIONS = [
   "clarify",
@@ -88,23 +88,23 @@ describe("PLANNING_STATUS_DISPLAY / PLANNING_ACTION_TO_NEXT 公共表", () => {
 describe("slice ACTION_SCHEMA（IF5 映射）", () => {
   it("clarify → Clarification@clarifications.ts", () => {
     expect(SLICE_ACTION_SCHEMA.clarify).toEqual({
-      sourceFilePath: "src/v1/core/clarifications.ts",
+      sourceFilePath: "src/core/clarifications.ts",
       interfaceName: "Clarification",
     });
   });
 
   it("plan → PlanSliceInput@plan.ts", () => {
     expect(SLICE_ACTION_SCHEMA.plan).toEqual({
-      sourceFilePath: "src/v1/core/plan.ts",
+      sourceFilePath: "src/core/plan.ts",
       interfaceName: "PlanSliceInput",
     });
   });
 
   it("design-review/retrospect/closeout 指向 core 源文件", () => {
-    expect(SLICE_ACTION_SCHEMA["design-review"]?.sourceFilePath).toBe("src/v1/core/judgments.ts");
+    expect(SLICE_ACTION_SCHEMA["design-review"]?.sourceFilePath).toBe("src/core/judgments.ts");
     expect(SLICE_ACTION_SCHEMA["design-review"]?.interfaceName).toBe("DesignReviewJudgment");
     expect(SLICE_ACTION_SCHEMA.retrospect?.interfaceName).toBe("PlanningRetrospectData");
-    expect(SLICE_ACTION_SCHEMA.closeout?.sourceFilePath).toBe("src/v1/core/evidence.ts");
+    expect(SLICE_ACTION_SCHEMA.closeout?.sourceFilePath).toBe("src/core/evidence.ts");
   });
 
   it("create/execute/replan/abort 无结构化 schema（undefined）", () => {
@@ -118,14 +118,14 @@ describe("slice ACTION_SCHEMA（IF5 映射）", () => {
 describe("feature ACTION_SCHEMA（IF5 映射）", () => {
   it("clarify → FeatureClarification@clarifications.ts", () => {
     expect(FEATURE_ACTION_SCHEMA.clarify).toEqual({
-      sourceFilePath: "src/v1/core/clarifications.ts",
+      sourceFilePath: "src/core/clarifications.ts",
       interfaceName: "FeatureClarification",
     });
   });
 
   it("plan → PlanFeatureInput@plan.ts", () => {
     expect(FEATURE_ACTION_SCHEMA.plan).toEqual({
-      sourceFilePath: "src/v1/core/plan.ts",
+      sourceFilePath: "src/core/plan.ts",
       interfaceName: "PlanFeatureInput",
     });
   });
@@ -140,14 +140,14 @@ describe("feature ACTION_SCHEMA（IF5 映射）", () => {
 describe("epic ACTION_SCHEMA（IF5 映射）", () => {
   it("clarify → Clarification@clarifications.ts（与 slice 同，裸数组）", () => {
     expect(EPIC_ACTION_SCHEMA.clarify).toEqual({
-      sourceFilePath: "src/v1/core/clarifications.ts",
+      sourceFilePath: "src/core/clarifications.ts",
       interfaceName: "Clarification",
     });
   });
 
   it("plan → PlanEpicInput@plan.ts（与 feature 同，Plan 基类只 split）", () => {
     expect(EPIC_ACTION_SCHEMA.plan).toEqual({
-      sourceFilePath: "src/v1/core/plan.ts",
+      sourceFilePath: "src/core/plan.ts",
       interfaceName: "PlanEpicInput",
     });
   });

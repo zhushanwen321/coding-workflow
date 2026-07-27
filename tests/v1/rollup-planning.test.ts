@@ -17,16 +17,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ChildDeliveryRecord } from "../../src/v1/core/evidence.js";
-import type { Epic, Feature, Slice } from "../../src/v1/core/workunit.js";
-import { rollupChildDelivery } from "../../src/v1/handlers/rollup.js";
-import { handleAbortEpic } from "../../src/v1/handlers/epic/abort.js";
-import { handleAbortFeature } from "../../src/v1/handlers/feature/abort.js";
-import { handleAbortSlice } from "../../src/v1/handlers/slice/abort.js";
-import { handleCloseoutSlice } from "../../src/v1/handlers/slice/closeout.js";
-import { handleExecuteSlice } from "../../src/v1/handlers/slice/execute.js";
-import { handleReplanSlice } from "../../src/v1/handlers/slice/replan.js";
-import { handleRetrospectSlice } from "../../src/v1/handlers/slice/retrospect.js";
+import type { ChildDeliveryRecord } from "../../src/core/evidence.js";
+import type { Epic, Feature, Slice } from "../../src/core/workunit.js";
+import { rollupChildDelivery } from "../../src/handlers/rollup.js";
+import { handleAbortEpic } from "../../src/handlers/epic/abort.js";
+import { handleAbortFeature } from "../../src/handlers/feature/abort.js";
+import { handleAbortSlice } from "../../src/handlers/slice/abort.js";
+import { handleCloseoutSlice } from "../../src/handlers/slice/closeout.js";
+import { handleExecuteSlice } from "../../src/handlers/slice/execute.js";
+import { handleReplanSlice } from "../../src/handlers/slice/replan.js";
+import { handleRetrospectSlice } from "../../src/handlers/slice/retrospect.js";
 import {
   setupEpicWithClosedFeatures,
 } from "./helpers/epic-env.js";
@@ -101,7 +101,7 @@ describe("child slice closeout 带 summary → childEvidenceSummary 填入", () 
     const child = loadSlice(childSliceId);
     child.status = "retrospected";
     child.evidence.summary = ""; // closeout 前清空
-    env.store.save(child as unknown as import("../../src/v1/store/schema.js").WorkUnitRecord);
+    env.store.save(child as unknown as import("../../src/store/schema.js").WorkUnitRecord);
 
     handleCloseoutSlice(loadSlice(childSliceId), { artifacts: [], summary: "slice done summary" }, env.deps);
 

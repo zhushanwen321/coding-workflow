@@ -17,17 +17,17 @@
  */
 import type {
   Clarification,
-} from "../../../src/v1/core/clarifications.js";
+} from "../../../src/core/clarifications.js";
 import type {
   DesignReviewJudgment,
   EpicDesignReviewLayerSpecific,
   PlanningRetrospectData,
-} from "../../../src/v1/core/judgments.js";
-import type { Split } from "../../../src/v1/core/plan.js";
-import type { Epic } from "../../../src/v1/core/workunit.js";
-import { createEpic } from "../../../src/v1/core/workunit.js";
-import { dispatch } from "../../../src/v1/dispatch.js";
-import type { V1Deps } from "../../../src/v1/handlers/types.js";
+} from "../../../src/core/judgments.js";
+import type { Split } from "../../../src/core/plan.js";
+import type { Epic } from "../../../src/core/workunit.js";
+import { createEpic } from "../../../src/core/workunit.js";
+import { dispatch } from "../../../src/dispatch.js";
+import type { V1Deps } from "../../../src/handlers/types.js";
 import {
   createV1Env,
   makeFeatureClarifyInput,

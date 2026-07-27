@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { validateFeatureSpec } from "../../src/v1/rules/spec-schema.js";
+import { validateFeatureSpec } from "../../src/rules/spec-schema.js";
 import { makeFeatureSpec } from "./helpers/feature-env.js";
 
 describe("validateFeatureSpec", () => {

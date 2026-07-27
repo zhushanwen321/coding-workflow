@@ -16,8 +16,8 @@ import { describe, expect, it } from "vitest";
 
 import type {
   DesignReviewJudgment,
-} from "../../src/v1/core/judgments.js";
-import type { Feature } from "../../src/v1/core/workunit.js";
+} from "../../src/core/judgments.js";
+import type { Feature } from "../../src/core/workunit.js";
 import {
   acNonEmpty,
   acReachableFromFr,
@@ -31,7 +31,7 @@ import {
   featureSplitNonEmpty,
   frAcCoverage,
   runFeatureDesignReviewGates,
-} from "../../src/v1/rules/gates/design-review.js";
+} from "../../src/rules/gates/design-review.js";
 import {
   makeFeatureUnit,
   makeValidFeatureDesignReviewJudgment,

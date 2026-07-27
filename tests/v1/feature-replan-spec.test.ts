@@ -14,7 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { dispatch, V1Error } from "../../src/v1/dispatch.js";
+import { dispatch, V1Error } from "../../src/dispatch.js";
 import {
   createV1Env,
   makeFeatureClarifyInput,

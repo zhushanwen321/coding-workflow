@@ -12,9 +12,9 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { createEpic, createFeature, createSlice, createWave } from "../../src/v1/core/workunit.js";
-import { renderHandoff } from "../../src/v1/readonly/render.js";
-import type { WorkUnitRecord } from "../../src/v1/store/schema.js";
+import { createEpic, createFeature, createSlice, createWave } from "../../src/core/workunit.js";
+import { renderHandoff } from "../../src/readonly/render.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 
 /** 把强类型 unit 当 WorkUnitRecord 传（兼容：core unit 是 store record 的超集）。 */
 function asRecord(unit: unknown): WorkUnitRecord {
@@ -42,7 +42,7 @@ describe("TC1: renderHandoff 空态 wave（刚 create）", () => {
     expect(out).toContain("## 当前位置与下一步");
     expect(out).toContain("状态：created");
     // 明确的执行命令
-    expect(out).toContain("下一步执行：cw v1 clarify --unitId wave:auth-w1");
+    expect(out).toContain("下一步执行：cw clarify --unitId wave:auth-w1");
     // buildNextAction(unit, "clarify") 生成的阶段 guidance（含 schema + 约束）
     expect(out).toContain("阶段提示");
     expect(out).toContain("input schema");
@@ -121,7 +121,7 @@ describe("TC2: renderHandoff 走到 design-reviewed 的 wave", () => {
 
   it("下一步段明确指向 execute 命令 + buildNextAction(execute) 阶段 guidance", () => {
     expect(out).toContain("状态：design-reviewed");
-    expect(out).toContain("下一步执行：cw v1 execute --unitId wave:feat-w1");
+    expect(out).toContain("下一步执行：cw execute --unitId wave:feat-w1");
     expect(out).toContain("阶段提示");
   });
 
@@ -142,7 +142,7 @@ describe("TC2: renderHandoff 走到 design-reviewed 的 wave", () => {
 // ── TC2b: wave executing 状态→test（原 bug 回归：曾错写成 execute）──
 
 describe("TC2b: renderHandoff wave executing 下一步是 test", () => {
-  it("wave executing → cw v1 test（不是 execute）", () => {
+  it("wave executing → cw test（不是 execute）", () => {
     const unit = asRecord({
       ...createWave({ slug: "exec-w1", objective: "执行中" }),
       status: "executing",
@@ -152,8 +152,8 @@ describe("TC2b: renderHandoff wave executing 下一步是 test", () => {
     const out = renderHandoff(unit);
     expect(out).toContain("状态：executing");
     // 关键回归：executing 状态的下一步是 test（execute 已完成），原 bug 错写成 execute
-    expect(out).toContain("下一步执行：cw v1 test --unitId wave:exec-w1");
-    expect(out).not.toContain("下一步执行：cw v1 execute");
+    expect(out).toContain("下一步执行：cw test --unitId wave:exec-w1");
+    expect(out).not.toContain("下一步执行：cw execute");
   });
 });
 
@@ -202,7 +202,7 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     expect(out).toContain("create → created");
     // planning 层现在输出真实 guidance，不再是降级提示
     expect(out).not.toContain("handler 暂未实现");
-    expect(out).toContain("下一步执行：cw v1 clarify --unitId slice:tech-s1");
+    expect(out).toContain("下一步执行：cw clarify --unitId slice:tech-s1");
     expect(out).toContain("阶段提示（含 input schema + 关键约束）");
     // slice guidance 应含 planning 特有内容（clarify 阶段的 spec 约束提示）
     expect(out).toContain("clarifications");
@@ -215,8 +215,8 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     });
     const out = renderHandoff(unit);
     // 关键：planning 的 executing → retrospect，不是 wave 的 executing → test
-    expect(out).toContain("下一步执行：cw v1 retrospect --unitId slice:exec-s1");
-    expect(out).not.toContain("cw v1 test");
+    expect(out).toContain("下一步执行：cw retrospect --unitId slice:exec-s1");
+    expect(out).not.toContain("cw test");
   });
 
   it("feature 空态：不 crash + clarifications 容器对象不报错 + 输出 guidance", () => {
@@ -226,7 +226,7 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     expect(out).toContain("需求规格");
     // feature 的 clarifications 是 {clarifications:[], spec:{...}} 容器，不应 crash
     expect(out).toContain("## 当前位置与下一步");
-    expect(out).toContain("下一步执行：cw v1 clarify --unitId feature:req-f1");
+    expect(out).toContain("下一步执行：cw clarify --unitId feature:req-f1");
   });
 
   it("epic 空态：不 crash + 有目标 + 输出 guidance", () => {
@@ -234,6 +234,6 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     const out = renderHandoff(unit);
     expect(out).toContain("# Handoff: epic:big-e1 [created]");
     expect(out).toContain("战略目标");
-    expect(out).toContain("下一步执行：cw v1 clarify --unitId epic:big-e1");
+    expect(out).toContain("下一步执行：cw clarify --unitId epic:big-e1");
   });
 });

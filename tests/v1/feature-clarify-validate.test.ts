@@ -13,8 +13,8 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { FeatureSpec } from "../../src/v1/core/clarifications.js";
-import { dispatch } from "../../src/v1/dispatch.js";
+import type { FeatureSpec } from "../../src/core/clarifications.js";
+import { dispatch } from "../../src/dispatch.js";
 import {
   createV1Env,
   makeFeatureClarifyInput,

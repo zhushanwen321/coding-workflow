@@ -1,7 +1,7 @@
 /**
  * v1 slice（PlanningUnit）状态机测试。
  *
- * 对应 PLANNING_TRANSITIONS（src/v1/rules/state-machine.ts）：主链 7 步流转、guard 拒绝跳步、
+ * 对应 PLANNING_TRANSITIONS（src/rules/state-machine.ts）：主链 7 步流转、guard 拒绝跳步、
  * progressive 语义、replan bypass、D1 关键差异（replan.from 不含 retrospected）、终态判定。
  *
  * 与 wave state-machine.test.ts 同构（照其结构写 slice 版），区别只在于：
@@ -10,13 +10,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { PlanningStatus } from "../../src/v1/core/status.js";
-import type { GuardVerdict } from "../../src/v1/rules/state-machine.js";
+import type { PlanningStatus } from "../../src/core/status.js";
+import type { GuardVerdict } from "../../src/rules/state-machine.js";
 import {
   guardPlanning,
   isPlanningTerminal,
   nextPlanningStatus,
-} from "../../src/v1/rules/state-machine.js";
+} from "../../src/rules/state-machine.js";
 
 /**
  * 从 GuardVerdict 取出 error branch 的 code（type narrowing helper）。

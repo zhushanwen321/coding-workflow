@@ -10,16 +10,16 @@
 import type {
   DesignReviewJudgment,
   PlanningRetrospectData,
-} from "../../../src/v1/core/judgments.js";
+} from "../../../src/core/judgments.js";
 import type {
   SliceDataModel,
   SliceErrorSpec,
   SliceInterface,
   SliceTechChoice,
   Split,
-} from "../../../src/v1/core/plan.js";
-import type { ExecutionUnit, Slice } from "../../../src/v1/core/workunit.js";
-import { createSlice } from "../../../src/v1/core/workunit.js";
+} from "../../../src/core/plan.js";
+import type { ExecutionUnit, Slice } from "../../../src/core/workunit.js";
+import { createSlice } from "../../../src/core/workunit.js";
 import {
   handleClarify,
   handleCloseout,
@@ -29,14 +29,14 @@ import {
   handlePlan,
   handleRetrospect,
   handleTest,
-} from "../../../src/v1/handlers/index.js";
-import { handleClarifySlice } from "../../../src/v1/handlers/slice/clarify.js";
-import { handleDesignReviewSlice } from "../../../src/v1/handlers/slice/design-review.js";
-import { handleExecuteSlice } from "../../../src/v1/handlers/slice/execute.js";
-import { handlePlanSlice } from "../../../src/v1/handlers/slice/plan.js";
-import type { V1Deps } from "../../../src/v1/handlers/types.js";
-import type { WorkUnitRecord } from "../../../src/v1/store/schema.js";
-import type { V1Store } from "../../../src/v1/store/v1-store.js";
+} from "../../../src/handlers/index.js";
+import { handleClarifySlice } from "../../../src/handlers/slice/clarify.js";
+import { handleDesignReviewSlice } from "../../../src/handlers/slice/design-review.js";
+import { handleExecuteSlice } from "../../../src/handlers/slice/execute.js";
+import { handlePlanSlice } from "../../../src/handlers/slice/plan.js";
+import type { V1Deps } from "../../../src/handlers/types.js";
+import type { WorkUnitRecord } from "../../../src/store/schema.js";
+import type { V1Store } from "../../../src/store/v1-store.js";
 import {
   createV1Env,
   makeStubDeps,

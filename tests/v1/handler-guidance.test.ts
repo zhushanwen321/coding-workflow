@@ -12,8 +12,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ExecutionUnit } from "../../src/v1/core/workunit.js";
-import { dispatch } from "../../src/v1/dispatch.js";
+import type { ExecutionUnit } from "../../src/core/workunit.js";
+import { dispatch } from "../../src/dispatch.js";
 import {
   createV1Env,
   makeValidContract,
@@ -174,7 +174,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("## 位置");
     expect(r.nextAction!.guidance).toContain("[wave:wave:g-create]");
     expect(r.nextAction!.guidance).toContain("## 下一步");
-    expect(r.nextAction!.guidance).toContain("cw v1 clarify --unitId wave:g-create");
+    expect(r.nextAction!.guidance).toContain("cw clarify --unitId wave:g-create");
     // create 时追加 testRunner 配置提示
     expect(r.nextAction!.guidance).toContain("## testRunner 配置（可选）");
     expect(r.nextAction!.guidance).toContain("cw.config.json");
@@ -192,7 +192,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.action).toBe("plan");
     expect(r.nextAction!.guidance).toContain("## 位置");
     expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
-    expect(r.nextAction!.guidance).toContain("cw v1 plan --unitId wave:g-clarify");
+    expect(r.nextAction!.guidance).toContain("cw plan --unitId wave:g-clarify");
   });
 
   it("plan → nextAction.guidance 非空 + action=design-review + 含 plan 关键约束", () => {
@@ -214,7 +214,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.action).toBe("design-review");
     expect(r.nextAction!.guidance).toContain("testCases 不能为空");
     expect(r.nextAction!.guidance).toContain("冻结");
-    expect(r.nextAction!.guidance).toContain("cw v1 design-review --unitId wave:g-plan");
+    expect(r.nextAction!.guidance).toContain("cw design-review --unitId wave:g-plan");
   });
 
   it("execute → nextAction.guidance 非空 + action=test", () => {
@@ -225,7 +225,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     );
     expect(r.ok).toBe(true);
     expect(r.nextAction!.action).toBe("test");
-    expect(r.nextAction!.guidance).toContain("cw v1 test --unitId wave:g-exec");
+    expect(r.nextAction!.guidance).toContain("cw test --unitId wave:g-exec");
   });
 
   it("unitPath 含 layer=wave + unitId + parentUnitId + rootUnitId", () => {
@@ -335,7 +335,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
     expect(r2.failureCount).toBe(2);
     // 第 2 次含「递进提示」段（failureCount=2 > 1）
     expect(r2.nextAction!.guidance).toContain("## 递进提示");
-    expect(r2.nextAction!.guidance).toContain("cw v1 clarify");
+    expect(r2.nextAction!.guidance).toContain("cw clarify");
   });
 
   it("gate fail 后 statusHistory 尾部含 fail 记录（note 含 'gate fail'）", () => {

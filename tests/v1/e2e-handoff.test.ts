@@ -1,5 +1,5 @@
 /**
- * cw v1 handoff 端到端测试（TC5-TC7）。
+ * cw handoff 端到端测试（TC5-TC7）。
  *
  * 通过真实子进程跑 dist/cli.js v1 handoff，验证：
  *   TC5: create 后 handoff → 五段式纯文本 + 含下一步 guidance
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { setupGitRepo } from "../helpers/git.js";
+import { setupGitRepo } from "./helpers/git.js";
 
 // ── 路径常量 ────────────────────────────────────────────────
 
@@ -88,17 +88,17 @@ afterAll(() => {
 
 // ── TC5: create 后 handoff → 五段式纯文本 ───────────────────
 
-describe("TC5: cw v1 handoff --unitId <id> 端到端", () => {
+describe("TC5: cw handoff --unitId <id> 端到端", () => {
   it("create 后 handoff 输出五段式 + 含下一步 guidance，exit 0", () => {
     // 先 create 一个 wave
     const created = runV1Cli(
-      ["v1", "create", "wave", "--slug", "tc5-wave", "--objective", "TC5 交接测试"],
+      ["create", "wave", "--slug", "tc5-wave", "--objective", "TC5 交接测试"],
       e,
     );
     expect(created.exitCode).toBe(0);
 
     // handoff
-    const result = runV1Cli(["v1", "handoff", "--unitId", "wave:tc5-wave"], e);
+    const result = runV1Cli(["handoff", "--unitId", "wave:tc5-wave"], e);
 
     expect(result.exitCode).toBe(0);
     const out = result.stdout;
@@ -111,7 +111,7 @@ describe("TC5: cw v1 handoff --unitId <id> 端到端", () => {
     // 当前位置与下一步段（含明确命令 + 阶段 guidance）
     expect(out).toContain("## 当前位置与下一步");
     expect(out).toContain("状态：created");
-    expect(out).toContain("下一步执行：cw v1 clarify --unitId wave:tc5-wave");
+    expect(out).toContain("下一步执行：cw clarify --unitId wave:tc5-wave");
     expect(out).toContain("阶段提示");
     // 历史段
     expect(out).toContain("## 历史与变更");
@@ -121,9 +121,9 @@ describe("TC5: cw v1 handoff --unitId <id> 端到端", () => {
 
 // ── TC6: handoff 缺 --unitId → exit 1 ───────────────────────
 
-describe("TC6: cw v1 handoff 缺 --unitId 报错", () => {
+describe("TC6: cw handoff 缺 --unitId 报错", () => {
   it("不带 --unitId → exit 1 + stderr 含 handoff 需要 --unitId", () => {
-    const result = runV1Cli(["v1", "handoff"], e);
+    const result = runV1Cli(["handoff"], e);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("handoff 需要 --unitId");
   });
@@ -131,9 +131,9 @@ describe("TC6: cw v1 handoff 缺 --unitId 报错", () => {
 
 // ── TC7: handoff 不存在的 unitId → exit 1 ──────────────────
 
-describe("TC7: cw v1 handoff 不存在的 unitId 报错", () => {
+describe("TC7: cw handoff 不存在的 unitId 报错", () => {
   it("wave:nope → exit 1 + stderr 含 unit not found", () => {
-    const result = runV1Cli(["v1", "handoff", "--unitId", "wave:nope"], e);
+    const result = runV1Cli(["handoff", "--unitId", "wave:nope"], e);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("unit not found");
   });

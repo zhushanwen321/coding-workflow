@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { parseFailedTestNames, parseVitestCounts } from "../../src/v1/utils/parse-vitest-output.js";
+import { parseFailedTestNames, parseVitestCounts } from "../../src/utils/parse-vitest-output.js";
 
 describe("parseVitestCounts", () => {
   it("标准 vitest 输出（Test Files 行 + Tests 行）取 Tests 行用例数（非文件数）", () => {
