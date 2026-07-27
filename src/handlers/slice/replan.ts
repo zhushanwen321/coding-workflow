@@ -31,14 +31,15 @@ import type {
 } from "../../core/plan.js";
 import type { AbandonedRef, WorkUnitStatus } from "../../core/status.js";
 import type { Slice, WorkUnitBase } from "../../core/workunit.js";
+import { buildReplanGuidance } from "../../guidance/build-guidance.js";
 import { checkFreezePlanning } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Store } from "../../store/v1-store.js";
+import { buildCommand } from "../../utils/command.js";
+import { mergeAbandonParentItems } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
-import { buildReplanGuidance } from "../../guidance/build-guidance.js";
-import { buildCommand } from "../../utils/command.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -78,6 +79,10 @@ export function handleReplanSlice(
   unit.plan.errorSpecs = unit.plan.errorSpecs.map((it) =>
     abandonedSet.has(it.id) ? ({ ...it, status: "abandoned" } as SliceErrorSpec) : it,
   );
+
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
+  // 放在 freeze 校验之前——freeze 只校验 plan 条目不校验此字段，不会误报 violation。
+  mergeAbandonParentItems(unit, input);
 
   // ── checkFreezePlanning：验 abandoned 条目核心字段未被改/未删 ──
   const freezeViolations = checkFreezePlanning(before, unit);

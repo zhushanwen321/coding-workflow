@@ -20,7 +20,7 @@ import type {
 } from "../../core/judgments.js";
 import type { Split } from "../../core/plan.js";
 import type { Epic, ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
-import { runGateSafely, type GateResult } from "./types.js";
+import { type GateResult,runGateSafely } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/design-review.js"`
 export type { GateResult };

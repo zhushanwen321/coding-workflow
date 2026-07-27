@@ -16,8 +16,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import type { ExecutionStatus } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
+import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import {
   buildFailureGuidance,
   buildFailureHint,
@@ -27,7 +29,6 @@ import {
   injectSchema,
   WAVE_STAGE_TEMPLATES,
 } from "../guidance/index.js";
-import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
@@ -77,6 +78,26 @@ export function saveUnit(deps: { store: { save: (u: WorkUnitRecord) => void } },
   // 的 WorkUnitRecord。store 按 schema.ts 设计直接序列化全字段，语义安全。
   // eslint-disable-next-line taste/no-unsafe-cast
   deps.store.save(unit as unknown as WorkUnitRecord);
+}
+
+/**
+ * append-only 合并 input.abandonParentItems 到 unit.abandonedParentItems（Set 去重）。
+ *
+ * 跨层跨时机的 abandon parent 条目声明通道（ADR-0010）：
+ *   - 任何层的 plan/replan handler 调一次（显式 input 通道）
+ *   - wave execute handler 用 commit trailer 解析结果调（顺便通道）
+ *
+ * input 无 abandonParentItems 或为空数组时是 no-op（null/undefined 安全）。
+ * 一旦声明不可撤回（append-only，符合 model §5.6）。
+ */
+export function mergeAbandonParentItems(
+  unit: { abandonedParentItems?: string[] },
+  input: { abandonParentItems?: string[] },
+): void {
+  if (!input.abandonParentItems || input.abandonParentItems.length === 0) return;
+  const existing = new Set(unit.abandonedParentItems ?? []);
+  for (const id of input.abandonParentItems) existing.add(id);
+  unit.abandonedParentItems = [...existing];
 }
 
 // ═══════════════════════════════════════════════════════════════

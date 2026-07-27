@@ -456,6 +456,7 @@ epic 是顶层：
 
 - `basedOnParent` 永远是 `[]`（没有上游）
 - `abandonedRefs` 永远是 `[]`（没有上游会给 epic 废弃引用）
+- `abandonedParentItems` 永远是 `[]`（没有 parent 条目可声明脱离，model §5.6.6 的矩阵里 epic 是「不适用」——字段挂在 WorkUnitBase 通用接口上仅为类型统一，工厂初始化为 `[]` 后永不被写入）
 
 所以 epic 永远不在「被上游 replan 影响 → 进入 aborted」的链路里——epic 的 abort 只来自自己主动 `cw abort epic:<id>`，或 epic 自己被更高层级的流程终结（没有更高层级，所以实际只有前者）。
 

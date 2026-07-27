@@ -40,6 +40,7 @@ import { checkFreezeFeatureSpec } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Store } from "../../store/v1-store.js";
+import { mergeAbandonParentItems } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import {
@@ -127,6 +128,10 @@ export function handleReplanFeature(
         ...ucs.map((it) => ({ ...it, status: "active" as const })),
       );
   }
+
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
+  // 放在 freeze 校验之前——freeze 只校验 spec 条目不校验此字段，不会误报 violation。
+  mergeAbandonParentItems(unit, input);
 
   // ── checkFreezeFeatureSpec：验 abandoned 条目未被删/核心字段未被改/status 未复活 ──
   const freezeViolations = checkFreezeFeatureSpec(before, unit);

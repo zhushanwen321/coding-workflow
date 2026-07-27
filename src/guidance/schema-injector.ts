@@ -25,6 +25,7 @@
  *      sourceFilePath 相对于 cwd（调用方保证指向 src/core/*.ts）。
  */
 import { readFileSync } from "node:fs";
+
 import * as ts from "typescript";
 
 import { ACTION_SCHEMA } from "./action-schemas.js";

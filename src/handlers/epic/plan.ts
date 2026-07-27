@@ -16,6 +16,7 @@
  * 不跑独立 gate（split 结构在 design-review 阶段验，见 design-review.ts）。
  */
 import type { Epic } from "../../core/workunit.js";
+import { mergeAbandonParentItems } from "../internal.js";
 import type { ActionResult, PlanFeatureInput, V1Deps } from "../types.js";
 import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.js";
 
@@ -32,6 +33,9 @@ export function handlePlanEpic(
   deps: V1Deps,
 ): ActionResult {
   unit.plan = { split: input.split };
+
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems
+  mergeAbandonParentItems(unit, input);
 
   epicTransition(unit, "plan", deps.clock.now());
 

@@ -10,7 +10,7 @@
  * 不变量：plan 无独立 gate（testCases 结构在 design-review 阶段才验，见 design-review.ts）。
  */
 import type { ExecutionUnit } from "../core/workunit.js";
-import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
+import { buildNextAction, mergeAbandonParentItems, saveUnit,transitionStatus } from "./internal.js";
 import type { ActionResult, PlanInput,V1Deps } from "./types.js";
 
 /**
@@ -33,6 +33,9 @@ export function handlePlan(
     files: input.files,
     contracts: input.contracts,
   };
+
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems
+  mergeAbandonParentItems(unit, input);
 
   // status 流转 → planning（progressive 原地）+ append statusHistory
   transitionStatus(unit, "plan", deps.clock.now());

@@ -31,6 +31,7 @@ import type { Epic, WorkUnitBase } from "../../core/workunit.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import type { V1Store } from "../../store/v1-store.js";
+import { mergeAbandonParentItems } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import {
@@ -64,6 +65,10 @@ export function handleReplanEpic(
       abandonedSet.has(c.id) ? { ...c, status: "abandoned" as const } : c,
     );
   }
+
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
+  // epic 无 freeze 校验（plan 是 Plan 基类无可废弃条目），合并位置不敏感。
+  mergeAbandonParentItems(unit, input);
 
   // ── computeImpactCascade：多层级联影响面 ──
   // （epic plan 无可标 abandoned 的 plan 条目，跳过 slice 的 plan 改动 + checkFreezePlanning 步骤）

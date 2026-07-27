@@ -182,13 +182,27 @@ export interface CreateInput {
   layer?: "wave" | "slice" | "feature" | "epic";
 }
 
+/**
+ * 声明脱离 parent 条目的通用能力（跨层跨时机）。
+ *
+ * 任何层的 plan/replan 都能传——append-only 合并到 unit.abandonedParentItems。
+ * 语义：本 WorkUnit 声明「不再依赖 parent 的这些条目」，后续 parent replan 废弃这些条目时
+ * 不触发对本 WorkUnit 的级联 abort（model §5.6.2 命中规则的例外）。
+ *
+ * 一旦声明不可撤回（append-only）。详见 ADR-0010。
+ */
+export interface AbandonParentItemsInput {
+  /** 声明脱离的 parent 条目 id 列表。handler 用 Set 去重 append 到 unit.abandonedParentItems。 */
+  abandonParentItems?: string[];
+}
+
 /** clarify handler 输入（progressive append clarifications）。 */
 export interface ClarifyInput {
   clarifications: Clarification[];
 }
 
 /** plan handler 输入（写 WavePlan 4 类条目）。 */
-export interface PlanInput {
+export interface PlanInput extends AbandonParentItemsInput {
   testCases: WaveTestCase[];
   tasks: WaveTask[];
   files: WaveFile[];
@@ -234,7 +248,7 @@ export interface CloseoutInput {
 }
 
 /** replan handler 输入。 */
-export interface ReplanInput {
+export interface ReplanInput extends AbandonParentItemsInput {
   /** 本次废弃的 WavePlan 条目 id（testCases/tasks/files/contracts 的 WorkUnitItem.id）。 */
   abandonedIds: string[];
   /**
@@ -276,7 +290,7 @@ export interface AbortInput {
  *
  * decisions 可选——不传时由 handler 从本层 Clarification 投影（model §5.10）。
  */
-export interface PlanSliceInput {
+export interface PlanSliceInput extends AbandonParentItemsInput {
   techChoices: SliceTechChoice[];
   interfaces: SliceInterface[];
   dataModels: SliceDataModel[];
@@ -322,7 +336,7 @@ export interface FeatureClarifyInput {
  *
  * 与 slice 的 PlanSliceInput 完全不同：feature 不产技术方案，plan 只拆 slice 清单。
  */
-export interface PlanFeatureInput {
+export interface PlanFeatureInput extends AbandonParentItemsInput {
   split: Split[];
 }
 

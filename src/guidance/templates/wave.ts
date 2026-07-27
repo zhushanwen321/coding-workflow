@@ -102,8 +102,10 @@ export const WAVE_EXECUTE_TEMPLATE: WaveStageTemplate = {
   goal: "写代码并提交，把 commitHash 关联到 wave（evidence 客观字段同时生成）。",
   constraint:
     "关键约束：execute 是 plan 的冻结点——条目从此被冻结（append-only），修改只能走 replan；commitHash 必须真实存在（cw 会校验）；" +
-    "如果你实际用了和 slice 原方案不同的技术实现（如 slice 选了 electron.net 但你发现不可行改用了全局 fetch），在 git commit message 末尾加 trailer 行 `Cw-Abandon: <slice条目id>`（多个 id 逗号分隔）。" +
-    "这样后续 slice replan 废弃该条目时，cw 不会误 abort 你的 wave。不确定要不要标记时就不标记——宁可被 abort 后重建，也不要错误标记；" +
+    "如果你实际用了和 slice 原方案不同的技术实现（如 slice 选了 electron.net 但你发现不可行改用了全局 fetch），声明脱离 slice 的该条目，这样后续 slice replan 废弃该条目时 cw 不会误 abort 你：" +
+    "方式 1（推荐，plan 阶段就能用）：cw plan 的 input 里带 abandonParentItems: [\"<条目id>\"]（CLI: --abandonParentItems '[\"TC1\"]'）；" +
+    "方式 2（execute 时顺便）：git commit message 末尾加 trailer 行 `Cw-Abandon: <slice条目id>`（多个 id 逗号分隔）。" +
+    "推荐在 plan 阶段就用方式 1——设计阶段发现就该声明，不必等到 execute。不确定要不要标记时就不标记——宁可被 abort 后重建，也不要错误标记；" +
     SUBAGENT_HINT_STRONG_IMPL,
 };
 

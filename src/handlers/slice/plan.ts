@@ -15,6 +15,7 @@
  */
 import type { Decision } from "../../core/clarifications.js";
 import type { Slice } from "../../core/workunit.js";
+import { mergeAbandonParentItems } from "../internal.js";
 import type { ActionResult, PlanSliceInput, V1Deps } from "../types.js";
 import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-internal.js";
 
@@ -40,6 +41,9 @@ export function handlePlanSlice(
     errorSpecs: input.errorSpecs,
     decisions,
   };
+
+  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems
+  mergeAbandonParentItems(unit, input);
 
   sliceTransition(unit, "plan", deps.clock.now());
 

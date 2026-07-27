@@ -649,6 +649,12 @@ epic replan 废弃 epic 的 Clarification 时，cw 沿同样的机制处理 feat
 
 feature 被 abort 后，agent 看 cw 返回的 `pendingRebuild` 决定是否重建 feature（场景类似 §7.4 的重建）。
 
+#### 7.3.1 feature 主动声明脱离 parent 条目（ADR-0010 / model §5.6.6）
+
+除了 §7.3 的「被 epic replan 被动 abort」，feature 也可以**主动声明脱离 epic 的某个条目**——在 plan/design-review/replan 时，如果发现 epic 的某个 BC（BusinessCase）/FR 实际不适用，在 input 里带 `abandonParentItems: ["<BC/FR id>"]`（CLI: `--abandonParentItems '["BC2"]'`）声明脱离。
+
+声明后，后续 epic replan 废弃该 BC/FR 时，cw 的级联 abort 命中判定会跳过这个 feature（基于 basedOnParent 命中但 abandonedParentItems 白名单排除，model §5.6.2 Step 2 例外）。设计阶段发现就该声明，不必等到 feature execute 后由 slice/wave 来承担——早声明早豁免。详见 model §5.6.6 和 ADR-0010。
+
 ### 7.4 feature → slice 的 replan 场景（最典型，abort + 重建）
 
 > **说明**：model §7.1 已定采用 abort + appendOnly 方案（方案 e）。本节是 feature 层对该机制在最典型场景下的展开描述，不再讨论候选方案，也不待 slice 文档评审——slice/wave 文档直接复用本节的流程。

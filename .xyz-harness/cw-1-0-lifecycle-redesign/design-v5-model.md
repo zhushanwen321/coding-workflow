@@ -506,6 +506,7 @@ v5 的 replan 机制用 **abort + appendOnly** 策略：上层 replan 废弃条�
 |---|---|---|
 | `basedOnParent` | 下层引用父层哪些条目 id（`string[]`，创建时的历史快照，append-only 永不重写）| execute 时按 `Split.inheritedItemIds` 写入，之后不动 |
 | `abandonedRefs` | 这个 WorkUnit 被上游 replan 影响到的废弃记录（`AbandonedRef[]`，append-only，用于 report 追溯「什么时候、因为哪个上游条目废弃而被影响」）| cw 在级联 abort 时自动追加 |
+| `abandonedParentItems` | 本 WorkUnit **主动声明**已脱离的 parent 条目 id（`string[]`，append-only，详见 §5.6.6）| 任何层的 plan/replan 时 agent 通过 `abandonParentItems` input 写入；wave execute 时也可从 commit message `Cw-Abandon:` trailer 解析写入（顺便通道）。cw 用 Set 去重合并，一旦声明不可撤回 |
 
 ```typescript
 interface AbandonedRef {
@@ -530,6 +531,8 @@ Step 1 [本地变更]: 上层 WorkUnit 本地处理 replan
 Step 2 [影响面计算]: cw 递归遍历上层所有子孙
   - 对比每个子孙的 basedOnParent × 上游当前 spec 条目状态
   - 命中规则: 子孙.basedOnParent 含已废弃条目 → 子孙标记受影响
+  - **例外（§5.6.6）**：若该废弃条目在该子孙的 abandonedParentItems 里，则不命中——
+    子孙已主动声明脱离该 parent 条目，不该被它的废弃影响
   - 级联规则: 父标记受影响 → 所有子孙级联受影响（父废弃，子无意义）
 
 Step 3 [级联 abort]: cw 自动执行
@@ -580,6 +583,43 @@ cw v1 create slice --parent=feature --inheritedItemIds=[FR1b]
 | `replacedBy` | v5 删除（cw 不在条目层面维护替代关系，详见 §4.1）|
 | `accept-replan` action | v5 删除（cw 直接 abort，无中间态）|
 | `AbandonedRef.resolvedAt` / `resolvedAction` | v5 删除（cw 直接 abort，无「待处理→已处理」转换）；AbandonedRef 简化为 2 个子字段（workUnitItemId / abandonedAt）|
+
+#### 5.6.6 abandonedParentItems：跨层跨时机的主动声明脱离（ADR-0010）
+
+`abandonedParentItems` 是 §5.6 abort+appendOnly 机制的补充能力：**下层 WorkUnit 主动声明「我不再依赖 parent 的这些条目了」**，使得后续 parent replan 废弃这些条目时，cw 的级联 abort 判定会跳过该下层（不误 abort）。
+
+**与 abandonedRefs 的对照**：
+- `abandonedRefs`：**被动记录**——parent replan 时 cw 标记「你被上游废弃影响了」
+- `abandonedParentItems`：**主动声明**——下层告诉 cw「我已经脱离了这些 parent 条目」
+
+**为什么需要这个能力**（不只用 basedOnParent 做命中判定）：
+- `basedOnParent` 是创建时的历史快照，append-only 永不重写（§5.6.1）——它记录「我曾经基于这些 parent 条目」，但实际实现中下层可能换了技术路径（如 slice 选了 electron.net 但 wave 发现不可行改用全局 fetch），此时 wave 虽然历史上 basedOnParent 引用了那个 interface，但实际已不依赖它
+- 若没有 `abandonedParentItems`，parent replan 废弃该 interface 时会无脑 abort 这个 wave——但这个 wave 实际没受影响，abort 是误伤
+- `abandonedParentItems` 就是「我主动声明已脱离」的白名单，让 cascade 命中判定更精准
+
+**声明时机（跨层跨时机）**：
+
+| 层 | 可声明的时机 | 场景 |
+|---|---|---|
+| epic | （无 parent，不适用）| — |
+| feature | plan / design-review / replan | 设计 feature spec 时发现 epic 的某个 BC/FR 不合理 |
+| slice | plan / design-review / replan | 设计 techChoices 时发现 feature 的某个 AC 不可行 |
+| wave | plan / design-review / replan / execute | 写 testCases 时发现 slice 的 interface 错了；或 execute 时发现 TC 不可行改了替代方案 |
+
+**设计阶段就能声明**——不必等到 execute。设计 plan 时发现 parent 条目不适用就该声明，早声明早豁免后续 parent replan 的级联误伤。
+
+**信号通道（两条，主辅）**：
+
+| 通道 | 适用层 | 适用时机 | 形式 |
+|---|---|---|---|
+| **显式 input**（主通道）| 所有层 | plan / replan | input 带 `abandonParentItems: ["<条目id>"]`（CLI: `--abandonParentItems '["TC1"]'`）|
+| **commit message trailer**（辅助通道）| 仅 wave | execute | git commit message 末尾加 `Cw-Abandon: <条目id>`（多个 id 逗号分隔），cw execute handler 解析 |
+
+commit trailer 是 wave execute 的「顺便通道」——agent 写 commit 时自然带上，零额外 CLI 参数。但它的覆盖面窄（只 wave execute），主通道是显式 input（覆盖所有层所有时机）。两条通道都 append-only 合并到同一个 `abandonedParentItems` 字段。
+
+**append-only 不可撤回**：一旦声明，该条目 id 永久在该 WorkUnit 的 abandonedParentItems 里。这是单向的——声明脱离后不能「撤回脱离」。符合 §5.6 的 append-only 原则。
+
+**为什么字段挂在 WorkUnitBase（4 层都有）但语义只对有 parent 的层有意义**：epic 无 parent，其 abandonedParentItems 永远为空 `[]`（工厂初始化）。字段挂通用接口是为了类型统一（plan/replan input 的 `AbandonParentItemsInput` 共享基础接口，4 层都能传），运行时只有 feature/slice/wave 会实际写入。
 
 ### 5.7 plan 内部条目类型（各层）
 

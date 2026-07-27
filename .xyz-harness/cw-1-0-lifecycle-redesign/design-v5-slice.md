@@ -518,6 +518,12 @@ slice 不是顶层（epic 才是），可能被上游 feature replan 影响—�
 
 **slice 不需要做任何动作解锁**——cw 直接 abort，没有「待 agent 确认」的中间态（model §5.6.4 已否决「等下层自行决定」类机制）。slice 被废弃就是被废弃，由 agent 决定是否通过 **`cw v1 create slice`** 新建承接新 FR/AC 的 slice（见 §6.3）。
 
+#### 6.2.1 slice 主动声明脱离 parent 条目（ADR-0010 / model §5.6.6）
+
+除了 §6.2 的「被 feature replan 被动 abort」，slice 也可以**主动声明脱离 feature 的某个条目**——在 plan/design-review/replan 时，如果发现 feature 的某个 FR/AC 实际不适用（如 slice 设计 techChoices 时发现 AC 的验收标准根本不可行），在 input 里带 `abandonParentItems: ["<FR/AC id>"]`（CLI: `--abandonParentItems '["AC3"]'`）声明脱离。
+
+声明后，后续 feature replan 废弃该 FR/AC 时，cw 的级联 abort 命中判定会跳过这个 slice（基于 basedOnParent 命中但 abandonedParentItems 白名单排除，model §5.6.2 Step 2 例外）。设计阶段发现就该声明，不必等到 slice execute 后由 wave 来承担——早声明早豁免。详见 model §5.6.6 和 ADR-0010。
+
 ### 6.3 slice 的重建（agent 通过 `cw v1 create slice`）
 
 slice 被 abort 后（无论是 §6.1 的发起者场景还是 §6.2 的承受者场景），承接新上游条目的重建都走 **`cw v1 create slice`**，不是 slice replan。
