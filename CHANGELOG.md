@@ -25,3 +25,15 @@
 
 ### Tests
 - test(v1): add parseAbandonMarkers unit tests + cascade exception tests (7d0615a)
+
+## [v1.0.4] - 2026-07-27
+
+### Features
+- Merge pull request #3 from zhushanwen321/feat-replan-process-refactor (9b78b2d)
+- feat(replan): cross-layer abandon parent items declaration (ADR-0010) (2ff1158)
+
+### Bug Fixes
+- fix(lint): zero warnings + implement skipped TC-B6 test (437c127)
+- fix(replan): address all CR findings (C1-C2, M1-M8, m1-m8) (a15ab53)
+- fix(skills): inline remove-worktree + fix merge skill fetch tracking-ref bug (46a0148)
+
