@@ -679,6 +679,9 @@ async function runWithAction(
     return;
   }
 
+  // 防御性 dead code：main() 已用 ALL_ACTIONS（= VALID_ACTIONS ∪ READONLY_QUERIES）把关，
+  // 且上方 READONLY_QUERIES 分支已早返回，正常流程到不了这里。
+  // 保留以防未来新增 readonly query 时漏改 main 的 dispatch / 上方早返回。
   if (!VALID_ACTIONS.has(action)) {
     debugLog("runWithAction unknown action", action);
     process.stderr.write(

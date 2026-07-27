@@ -46,7 +46,12 @@ export interface RepoMeta {
   worktreePath: string;
   /** git rev-parse --short HEAD，7 位短 hash，失败 "" */
   headCommit: string;
-  /** 写入那一刻的 ISO 时间戳，判断 repoMeta 新鲜度 */
+  /**
+   * 写入那一刻的 ISO 时间戳，判断 repoMeta 新鲜度。
+   *
+   * 语义：空串 `""` 表示记录失败（git 命令出错或 cwd 非 git 目录，所有字段降级为 ""）；
+   * 非空 ISO 串表示成功记录的时间戳。
+   */
   recordedAt: string;
 }
 
@@ -75,13 +80,27 @@ export interface WorkUnitRecord {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 把 cwd 编码为目录名：把路径里的 `/` 替换为 `__`。
+ * 把 cwd 编码为目录名：把路径分隔符（POSIX `/` 和 Windows `\`）替换为 `__`。
  *
- * 例：`/Users/x/proj` → `__Users__x__proj`。
- * 全局替换保留前导分隔符的痕迹（前导 `__` 即原前导 `/`），确定性、可逆。
+ * 例：`/Users/x/proj` → `__Users__x__proj`；`C:\Users\x\proj` → `C:__Users__x__proj`。
+ * 全局替换保留前导分隔符的痕迹（前导 `__` 即原前导分隔符），确定性。
+ * 同时处理两种分隔符，确保跨平台 per-cwd 隔离（Windows `\` 路径不会与 POSIX 路径冲突）。
  */
 export function encodeCwd(cwd: string): string {
-  return cwd.replace(/\//g, "__");
+  // 同时处理 POSIX `/` 和 Windows `\`，确保跨平台 per-cwd 隔离。
+  return cwd.replace(/[\\/]/g, "__");
+}
+
+/**
+ * encodeCwd 的逆函数：把 `__` 还原为路径分隔符。
+ *
+ * 与 encodeCwd 必须成对维护。注意：encodeCwd 把 `/` 和 `\` 都映射为 `__`，
+ * decode 时无法区分原串里的 `__` 来自 `/` 还是 `\`，因此统一还原为 `/`（POSIX 风格）。
+ * 这对 decode 的用途（显示、日志）足够；decode 不用于反向定位文件系统路径，
+ * 真正的 cwd 路径优先取 repoMeta.worktreePath（创建时记录的原值）。
+ */
+export function decodeCwd(encodedCwd: string): string {
+  return encodedCwd.replace(/__/g, "/");
 }
 
 // ═══════════════════════════════════════════════════════════════

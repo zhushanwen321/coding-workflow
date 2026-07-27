@@ -213,25 +213,26 @@ describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
     expect(rawOnDisk.repoMeta).toBeUndefined();
   });
 
-  it("推进类 save 后再次 save → repoMeta 刷新（branch 变化能反映）", () => {
+  it("再次 save 不刷新 repoMeta（M1：首次记录后冻结，避免批量 save N*3 git 进程 + cwd 迁移覆盖）", () => {
     const store = new V1Store(cwd);
     const unit = makeUnit("wave:test-refresh");
     store.save(unit);
 
-    // 首次 save 后记录 branch
+    // 首次 save 后记录 branch（创建时的 git 快照）
     const raw1 = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
     const branchBefore = raw1.repoMeta.branch;
 
     // 切新分支
     spawnSync("git", ["checkout", "-b", "changed-branch"], { cwd, encoding: "utf-8" });
 
-    // 再次 save（推进类写入）
+    // 再次 save（推进类写入）——repoMeta 不应刷新，保持首次记录的快照
     unit.status = "clarifying";
     store.save(unit);
 
     const raw2 = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
-    expect(raw2.repoMeta.branch).toBe("changed-branch");
-    expect(raw2.repoMeta.branch).not.toBe(branchBefore);
+    // repoMeta 整体冻结（深比较），branch 仍是首次记录值
+    expect(raw2.repoMeta).toEqual(raw1.repoMeta);
+    expect(raw2.repoMeta.branch).toBe(branchBefore);
   });
 
   it("readonly query 不刷新 repoMeta 整体（不只 recordedAt）", () => {

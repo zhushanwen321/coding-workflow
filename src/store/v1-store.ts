@@ -121,8 +121,8 @@ export class V1Store {
   }
 
   private emptyFile(): V1JsonFile {
-    return { schemaVersion: 1, workUnits: [] };
-    // repoMeta 首次 save 时由 save() 填充，emptyFile 不调 git
+    // 显式 repoMeta: undefined 表明该键存在但尚未回填（首次 save 时由 save() 填充）。
+    return { schemaVersion: 1, repoMeta: undefined, workUnits: [] };
   }
 
   /**
@@ -365,8 +365,14 @@ export class V1Store {
   save(unit: WorkUnitRecord): void {
     this.executeWrite(() => {
       const data = this.fileData!;
-      // 推进类写入刷新 repoMeta（readonly query 不走 save，不会触发）
-      data.repoMeta = collectRepoMeta(this.cwd);
+      // repoMeta 记录 topic 创建时的 git 快照（remote/branch/worktree/headCommit），
+      // 用于跨 cwd 接手定位；同一 topic 不跨 repo，首次记录后无需刷新。
+      // 仅在 repoMeta === undefined（首次 save）时回填，避免：
+      //   1. 批量 save 时 N*3 个 git 子进程的性能开销
+      //   2. cwd 迁移到非 git 目录时旧有效 repoMeta 被全空值覆盖（数据退化）
+      if (data.repoMeta === undefined) {
+        data.repoMeta = collectRepoMeta(this.cwd);
+      }
       const idx = data.workUnits.findIndex((u) => u.id === unit.id);
       if (idx >= 0) {
         data.workUnits[idx] = unit;

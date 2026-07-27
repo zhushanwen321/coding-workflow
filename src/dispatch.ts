@@ -1,14 +1,14 @@
 /**
  * v1 dispatch — 统一入口（guard → handler 路由 → ActionResult）。
  *
- * 职责：create 按 input.layer 路由（wave/slice），非 create 按 record.scope
+ * 职责：create 按 input.layer 路由（wave/slice/feature/epic），非 create 按 record.scope
  *       loadWorkUnit → 对应层 guard（guardWave / guardPlanning）→ handler 分派 → ActionResult。
  *
  * 多 scope 路由（W6）：dispatch 不再 wave 专属。create 按 `input.layer`（默认 'wave'）
  * 选 handleCreate / handleCreateSlice；非 create 按 `record.scope` 返回 ExecutionUnit / Slice，
  * 再分别走 dispatchWave / dispatchSlice。
  *
- * 与 0.x dispatch.ts 结构相似，但路由到 v1 handlers、用 v1 store、守卫各层状态机。
+ * 守卫各层（wave/slice/feature/epic）状态机，路由到对应 handler、用 v1 store。
  *
  * 数据流：params → (create: layer 路由 | 非 create: load → scope 路由 → guard → handler) → ActionResult。
  * 失败路径：
@@ -493,8 +493,8 @@ export function getUnitScope(store: V1Store, unitId: string): string | null {
  * 从 store 加载 WorkUnitRecord 并按 record.scope 返回 ExecutionUnit | Slice。
  *
  * WorkUnitRecord 是 `[key: string]: unknown` 的透传记录，store 不解释字段。这里按 scope
- * 判别层类型并转为 ExecutionUnit（scope='wave'）/ Slice（scope='slice'）/ Feature（scope='feature'）。
- * 其他 scope（epic 未实现）抛 unsupported_scope。
+ * 判别层类型并转为 ExecutionUnit（scope='wave'）/ Slice（scope='slice'）/ Feature（scope='feature'）/ Epic（scope='epic'）。
+ * 其他 scope 抛 unsupported_scope。
  *
  * @returns ExecutionUnit | Slice | Feature | null（unitId 不存在时 null）
  */
@@ -523,6 +523,6 @@ function loadWorkUnit(
   }
   throw new V1Error(
     "unsupported_scope",
-    `unsupported scope: ${record.scope} (only wave/slice/feature/epic implemented)`,
+    `unsupported scope: ${record.scope} (expected wave/slice/feature/epic)`,
   );
 }

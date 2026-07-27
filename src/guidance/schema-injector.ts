@@ -117,7 +117,7 @@ export interface SchemaGenEntry {
  * 为所有 ACTION_SCHEMA 中声明的 action 预计算 schema 文本，输出可序列化的 JSON 对象。
  *
  * 设计：npm pack 只发布 dist/ 目录，运行时 src/core/*.ts 可能不存在。
- * 因此在 build 阶段调用本函数生成 dist/v1/guidance/schemas.gen.json，
+ * 因此在 build 阶段调用本函数生成 dist/guidance/schemas.gen.json，
  * 运行时优先读该 JSON 产物，命中则直接返回 schema 文本；未命中再降级回
  * injectSchema（开发时无 build 产物仍可工作）。
  *

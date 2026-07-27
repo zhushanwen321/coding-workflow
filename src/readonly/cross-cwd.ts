@@ -17,6 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { V1JsonFile } from "../store/schema.js";
+import { decodeCwd } from "../store/schema.js";
 
 /** 单个 cwd 的加载结果。 */
 export interface LoadedCwd {
@@ -60,16 +61,18 @@ export function loadAllCwdsFromHome(v1Home: string): LoadedCwd[] {
     } catch {
       continue; // JSON 损坏，跳过（ES2）
     }
-    // 反解 cwd：encodedCwd（__ → /）。repoMeta 存在时优先用 worktreePath（更精确）
-    const decoded = encodedCwd.replace(/__/g, "/");
+    // 反解 cwd：encodedCwd → cwd。repoMeta 存在时优先用 worktreePath（更精确）
+    const decoded = decodeCwd(encodedCwd);
     const cwd = data.repoMeta?.worktreePath ?? decoded;
     results.push({ cwd, data });
   }
 
-  // 按 repoMeta.recordedAt DESC（无 repoMeta 排最后，空串 localeCompare 排在非空前）
+  // 按 repoMeta.recordedAt DESC（无 repoMeta / 空串排最后）。
+  // 空串映射为 "0000"（比任何 ISO 日期 "20xx-..." 都小），降序排时空串自然到最后，
+  // 避免 localeCompare 字典序下空串与日期比较的歧义。
   results.sort((a, b) => {
-    const ta = a.data.repoMeta?.recordedAt ?? "";
-    const tb = b.data.repoMeta?.recordedAt ?? "";
+    const ta = a.data.repoMeta?.recordedAt ?? "0000";
+    const tb = b.data.repoMeta?.recordedAt ?? "0000";
     return tb.localeCompare(ta);
   });
 

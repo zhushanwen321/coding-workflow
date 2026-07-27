@@ -43,7 +43,8 @@ const BYTES_PER_KB = 1024;
 /** 截断为「首一半 + 尾一半」时的除数。 */
 const HALF_DIVISOR = 2;
 const GIT_SPAWN_OPTS: SpawnSyncOptionsWithStringEncoding = {
-  cwd: undefined, // 由调用方按 workspacePath 注入
+  // cwd 不在此设——每个 spawnSync 调用点都必须显式传 cwd（workspacePath），
+  // 否则会用进程默认 cwd，导致跨 worktree 场景读错仓库。
   encoding: "utf-8",
   stdio: ["ignore", "pipe", "pipe"],
   shell: false,

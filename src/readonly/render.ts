@@ -898,12 +898,20 @@ function readClarifications(unit: WorkUnitRecord): Clarification[] {
   return [];
 }
 
-/** 把宽松的 WorkUnitRecord 视为具名 unit 类型（handoff 只读访问）。
+/** 把宽松的 WorkUnitRecord 安全断言为具名 unit 类型 T（handoff 只读访问）。
  *
  * WorkUnitRecord 有 `[key:string]:unknown` 索引签名，具名 unit（ExecutionUnit/Slice/Feature/Epic）
  * 字段都是具体的；结构上后者是前者的超集，但 TS 认为索引签名与具名字段不兼容，需双重断言。
- * 集中到此处，避免调用点重复 `as unknown as T`（品味 + 消除多处 lint warning）。 */
-function asUnit<T>(unit: WorkUnitRecord): T {
+ * 集中到此处，避免调用点重复 `as unknown as T`（品味 + 消除多处 lint warning）。
+ *
+ * 运行时校验 unit.scope 与 expectedScope 匹配，避免把一个 scope 的 unit 错当成另一个 scope
+ * 的具名类型（否则下游访问 unit.evidence.commitHash 等字段会拿到 undefined，静默错误）。
+ * 不匹配时返回 undefined，调用方降级处理（返回 undefined 让 buildGuidanceForScope 跳过该分支）。 */
+function asUnit<T extends { scope: string }>(
+  unit: WorkUnitRecord,
+  expectedScope: string,
+): T | undefined {
+  if (unit.scope !== expectedScope) return undefined;
   return unit as unknown as T;
 }
 
@@ -923,13 +931,21 @@ function buildGuidanceForScope(
   try {
     let next: { guidance: string };
     if (scope === "wave") {
-      next = buildNextAction(asUnit<ExecutionUnit>(unit), action as WaveAction);
+      const exec = asUnit<ExecutionUnit>(unit, "wave");
+      if (!exec) return undefined;
+      next = buildNextAction(exec, action as WaveAction);
     } else if (scope === "slice") {
-      next = buildSliceNextAction(asUnit<Slice>(unit), action as PlanningAction);
+      const slice = asUnit<Slice>(unit, "slice");
+      if (!slice) return undefined;
+      next = buildSliceNextAction(slice, action as PlanningAction);
     } else if (scope === "feature") {
-      next = buildFeatureNextAction(asUnit<Feature>(unit), action as PlanningAction);
+      const feature = asUnit<Feature>(unit, "feature");
+      if (!feature) return undefined;
+      next = buildFeatureNextAction(feature, action as PlanningAction);
     } else if (scope === "epic") {
-      next = buildEpicNextAction(asUnit<Epic>(unit), action as PlanningAction);
+      const epic = asUnit<Epic>(unit, "epic");
+      if (!epic) return undefined;
+      next = buildEpicNextAction(epic, action as PlanningAction);
     } else {
       return undefined;
     }
@@ -1100,7 +1116,10 @@ function renderHistorySection(unit: WorkUnitRecord): string[] {
 
 // ── 通用类型收窄 helper（从 WorkUnitRecord 宽松字段安全取值）──
 
-/** 从 unit 取一个字段并断言为 T（unknown 时返回 undefined）。 */
+/** 从 unit 取一个字段并断言为 T（null/非 object 时返回 undefined）。
+ *
+ * 仅做 null/object 降级校验，不保证 T 结构完整——磁盘数据缺字段时下游需自行防御。
+ * 设计目标是"安全降级不崩溃"，而非结构断言。 */
 function readField<T>(unit: WorkUnitRecord, field: string): T | undefined {
   const v = unit[field];
   return (v !== null && typeof v === "object") ? (v as T) : undefined;

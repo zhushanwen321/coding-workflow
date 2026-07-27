@@ -103,7 +103,7 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   if (action === "clarify") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- 表述不到位 → 继续用 cw clarify 调整（${buildCommand("clarify", `--unitId ${unitId}`, "--input @clarify.json")}）`,
+      `- 表述不到位 → 继续调整 clarify（${buildCommand("clarify", `--unitId ${unitId}`, "--input @clarify.json")}）`,
       `- 单元定位不对 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元拆 layer 重建`,
       `- 选错了层 → 在更高层（epic/feature）建单元`,
     ];

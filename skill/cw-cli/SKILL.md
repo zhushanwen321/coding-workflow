@@ -166,7 +166,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 ## 数据存储
 
-- 状态库：`~/.cw/<encoded-cwd>/_v1.json`（per-cwd 隔离）
+- 状态库：`~/.v1/<encodedCwd>/_v1.json`（per-cwd 隔离）
 - unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`）
 - 跨 session 接续 / 交接：`cw handoff --unitId <id>`（首选，见下方只读查询）
 
