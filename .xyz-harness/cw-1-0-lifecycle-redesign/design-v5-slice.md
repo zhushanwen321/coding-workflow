@@ -520,7 +520,7 @@ slice 不是顶层（epic 才是），可能被上游 feature replan 影响—�
 
 #### 6.2.1 slice 主动声明脱离 parent 条目（ADR-0010 / model §5.6.6）
 
-除了 §6.2 的「被 feature replan 被动 abort」，slice 也可以**主动声明脱离 feature 的某个条目**——在 plan/design-review/replan 时，如果发现 feature 的某个 FR/AC 实际不适用（如 slice 设计 techChoices 时发现 AC 的验收标准根本不可行），在 input 里带 `abandonParentItems: ["<FR/AC id>"]`（CLI: `--abandonParentItems '["AC3"]'`）声明脱离。
+除了 §6.2 的「被 feature replan 被动 abort」，slice 也可以**主动声明脱离 feature 的某个条目**——在 plan/replan 时（design-review 通道规划中，未实现），如果发现 feature 的某个 FR/AC 实际不适用（如 slice 设计 techChoices 时发现 AC 的验收标准根本不可行），在 input 里带 `abandonParentItems: ["<FR/AC id>"]`（CLI: `--abandonParentItems '["AC3"]'`）声明脱离。
 
 声明后，后续 feature replan 废弃该 FR/AC 时，cw 的级联 abort 命中判定会跳过这个 slice（基于 basedOnParent 命中但 abandonedParentItems 白名单排除，model §5.6.2 Step 2 例外）。设计阶段发现就该声明，不必等到 slice execute 后由 wave 来承担——早声明早豁免。详见 model §5.6.6 和 ADR-0010。
 

@@ -98,5 +98,6 @@ input，commit message trailer 作为 wave execute 的辅助通道保留。
   通道的完整描述，4 层 × 多时机矩阵
 - **wave §8.7**（`design-v5-wave.md`）：wave 的第三种 replan 相关行为（主动声明脱离）
 - **slice §6.2.1 / feature §7.3.1 / epic §6.6**：各层对本能力的引用或「不适用」说明
-- **ADR 0009**：`abandonedParentItems` 字段最初随 cw-abandon 扩展引入（wave execute trailer
-  通道），本 ADR 是该扩展的正规化——从 wave 专属提升为跨层通用，并补全设计文档
+- **commit 3841f6e / 7d0615a 等（feat-read-design 分支）**：`abandonedParentItems` 字段 +
+  `Cw-Abandon:` commit trailer 最初在这些 commit 引入（wave execute 唯一通道，无独立 ADR）。
+  本 ADR 是该扩展的正规化——从 wave 专属提升为跨层通用，并补全设计文档

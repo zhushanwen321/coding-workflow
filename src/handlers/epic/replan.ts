@@ -26,19 +26,20 @@
  *   故废弃的 Clarification id 通过 basedOnParent 链路被 computeImpactCascade 命中，触发相关 child feature
  *   级联 abort（核心机制与 feature 一致）。
  */
-import type { AbandonedRef, WorkUnitStatus } from "../../core/status.js";
-import type { Epic, WorkUnitBase } from "../../core/workunit.js";
+import type { WorkUnitStatus } from "../../core/status.js";
+import type { Epic } from "../../core/workunit.js";
 import { computeImpactCascade } from "../../rules/replan.js";
-import type { WorkUnitRecord } from "../../store/schema.js";
-import type { V1Store } from "../../store/v1-store.js";
-import { mergeAbandonParentItems } from "../internal.js";
+import {
+  loadChildrenAsWorkUnitBase,
+  readAbandonedRefs,
+  readRecordStatusHistory,
+} from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
 import {
   buildEpicNextAction,
   epicTransition,
   readRecordStatus,
-  readRecordStatusHistory,
   saveEpic,
 } from "./epic-internal.js";
 
@@ -66,16 +67,12 @@ export function handleReplanEpic(
     );
   }
 
-  // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
-  // epic 无 freeze 校验（plan 是 Plan 基类无可废弃条目），合并位置不敏感。
-  mergeAbandonParentItems(unit, input);
-
   // ── computeImpactCascade：多层级联影响面 ──
   // （epic plan 无可标 abandoned 的 plan 条目，跳过 slice 的 plan 改动 + checkFreezePlanning 步骤）
   const replanImpact = computeImpactCascade({
     unit,
     abandonedIds: input.abandonedIds,
-    loadChildren: (parentId) => loadChildrenAsWorkUnitBase(deps.store, parentId),
+    loadChildren: (parentId) => loadChildrenAsWorkUnitBase(deps.store, parentId, "feature"),
   });
 
   // ── replan 旁路：status 不变，append statusHistory（from=to=current, action='replan', note）──
@@ -95,42 +92,6 @@ export function handleReplanEpic(
     replanImpact,
     nextAction: buildEpicNextAction(unit, "replan"),
   };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 辅助：store.findChildren → WorkUnitBase[]（computeImpactCascade 的 loadChildren 注入）
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * 把 store.findChildren 返回的 WorkUnitRecord[] 映射为 WorkUnitBase[]。
- *
- * computeImpactCascade 只读 id / parentUnitId / basedOnParent（影响面计算基础），从 WorkUnitRecord
- * 的 unknown 字段安全提取这些字段。epic 的 child 是 feature，scope 字段回退默认 'feature'。
- */
-function loadChildrenAsWorkUnitBase(
-  store: V1Store,
-  parentId: string,
-): WorkUnitBase[] {
-  const records = store.findChildren(parentId);
-  return records.map((r) => ({
-    id: r.id,
-    scope: typeof r.scope === "string" ? (r.scope as WorkUnitBase["scope"]) : "feature",
-    slug: typeof r.slug === "string" ? r.slug : r.id,
-    parentUnitId: r.parentUnitId,
-    status: typeof r.status === "string" ? (r.status as WorkUnitBase["status"]) : "created",
-    statusHistory: readRecordStatusHistory(r),
-    basedOnParent: readBasedOnParent(r),
-    abandonedRefs: readAbandonedRefs(r),
-    objective: typeof r.objective === "string" ? r.objective : "",
-  }));
-}
-
-/**
- * 从 WorkUnitRecord 安全读 basedOnParent（string[]，默认空数组）。
- */
-function readBasedOnParent(record: WorkUnitRecord): string[] {
-  const v = record.basedOnParent;
-  return Array.isArray(v) ? (v as string[]) : [];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -193,12 +154,4 @@ function cascadeAbortUnit(
   for (const desc of descendants) {
     cascadeAbortUnit(deps, desc.id, at, abandonedIds);
   }
-}
-
-/**
- * 从 WorkUnitRecord 安全读 abandonedRefs（AbandonedRef[]，默认空数组）。
- */
-function readAbandonedRefs(record: WorkUnitRecord): AbandonedRef[] {
-  const v = record.abandonedRefs;
-  return Array.isArray(v) ? [...(v as AbandonedRef[])] : [];
 }

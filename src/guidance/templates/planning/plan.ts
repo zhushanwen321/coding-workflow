@@ -26,6 +26,6 @@ export const PLANNING_PLAN_TEMPLATE: PlanningStageTemplate = {
     "关键约束：split 不能为空；条目一旦 execute 就被冻结（append-only），修改只能走 replan（replan 是改 plan 的唯一途径）。" +
     "如果你设计 plan 时发现 parent 的某个条目实际不适用（如 slice 发现 feature 的某个 AC 不可行、wave 发现 slice 的 interface 定义错了），" +
     "在 plan input 里带 abandonParentItems: [\"<条目id>\"] 声明脱离（CLI 用 --abandonParentItems '[\"TC1\"]'）。" +
-    "这是 append-only 的——一旦声明不可撤回。声明后后续 parent replan 废弃该条目时，cw 不会误 abort 你（基于历史 basedOnParent 的级联判定会跳过你）。" +
+    "这是 append-only 的——一旦声明不可撤回。不确定是否需要脱离时不要声明——错误声明不可撤回，会让本该被 abort 的单元逃过级联。声明后后续 parent replan 废弃该条目时，cw 不会误 abort 你（基于历史 basedOnParent 的级联判定会跳过你）。" +
     "设计阶段（plan/design-review）发现就该声明，不必等到 execute——早声明早豁免，避免后续 parent replan 的级联误伤。",
 };

@@ -42,7 +42,7 @@ export function handleExecute(
       note: `commitHash changed: ${oldCommitHash} → ${input.commitHash}`,
     });
   }
-  
+
   // 写 executeResult（commitHash 记录，存在性在 test gate 验）
   unit.executeResult = { commitHash: input.commitHash };
 

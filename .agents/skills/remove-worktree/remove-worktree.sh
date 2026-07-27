@@ -59,8 +59,13 @@ remove_worktree() {
     if $delete_branch; then
         if git -C "$workspace_root/.bare" rev-parse --verify "$branch_name" >/dev/null 2>&1; then
             echo "删除本地分支 '$branch_name'..."
-            git -C "$workspace_root/.bare" branch -d "$branch_name" 2>/dev/null || \
-                git -C "$workspace_root/.bare" branch -D "$branch_name"
+            # 非强制模式：git branch -d 安全检查失败时不 fallback 到 -D（--force 路径另用 -D），
+            # 避免 --force 语义泄漏。
+            if ! git -C "$workspace_root/.bare" branch -d "$branch_name" 2>/dev/null; then
+                echo "错误：分支 $branch_name 未通过 git branch -d 安全检查（可能未真正合并）。" >&2
+                echo "如确认要强制删除，请用 --force 参数重试。" >&2
+                return 1
+            fi
         fi
     fi
 }
@@ -112,9 +117,15 @@ if [[ "$FORCE" != "true" ]]; then
     git -C .bare fetch origin --prune 2>&1 | tail -1
 
     MAIN_BRANCH=$(git -C .bare remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}') || true
-    MAIN_BRANCH="${MAIN_BRANCH:-main}"
+    if [ -z "$MAIN_BRANCH" ]; then
+        echo "错误：无法探测远程默认分支（git remote show origin 失败，可能离线）。" >&2
+        echo "请检查网络或手动指定。" >&2
+        exit 1
+    fi
 
-    if git -C .bare branch --merged "origin/$MAIN_BRANCH" 2>/dev/null | grep -q "$BRANCH_NAME"; then
+    # 用 fixed-string + 整行锚定匹配，避免子串误匹配（feat/foo 误匹配 feat/foo-bar）
+    # 及正则元字符（. + 等）问题。先 strip 行首的星号和空格（git branch 输出格式）。
+    if git -C .bare branch --merged "origin/$MAIN_BRANCH" 2>/dev/null | sed 's/^[* ]*//' | grep -Fxq "$BRANCH_NAME"; then
         echo "✓ 分支 '$BRANCH_NAME' 已合并到 origin/$MAIN_BRANCH"
     else
         echo "✗ 分支 '$BRANCH_NAME' 尚未合并到 origin/$MAIN_BRANCH"
@@ -156,7 +167,11 @@ if [[ "$SKIP_SYNC" != "true" ]]; then
     echo "=== 同步其他 worktree 到 origin/main ==="
 
     MAIN_BRANCH=$(git -C .bare remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}') || true
-    MAIN_BRANCH="${MAIN_BRANCH:-main}"
+    if [ -z "$MAIN_BRANCH" ]; then
+        echo "错误：无法探测远程默认分支（git remote show origin 失败，可能离线）。" >&2
+        echo "请检查网络或手动指定。" >&2
+        exit 1
+    fi
 
     for _wt_entry in */; do
         _wt_name="${_wt_entry%/}"
@@ -178,15 +193,15 @@ if [[ "$SKIP_SYNC" != "true" ]]; then
         # [HISTORICAL] git fetch origin（不带分支名）走 refspec，确保 origin/main 更新
         git fetch origin 2>&1 | tail -1
 
-        if git merge --no-ff "origin/$MAIN_BRANCH"; then
+        if git merge --ff-only "origin/$MAIN_BRANCH" 2>/dev/null; then
             echo "  OK: $_wt_name 已同步到最新 $MAIN_BRANCH"
             SYNCED=$((SYNCED + 1))
         else
-            echo "  CONFLICT: $_wt_name merge 冲突:"
-            git diff --name-only --diff-filter=U 2>/dev/null | sed 's/^/    - /'
+            # ff-only 失败说明 feature 分支有独立 commit（不能快进），跳过不阻塞当前删除。
+            # 真正的 merge 冲突场景由人工/AI 在该 worktree 单独处理。
+            echo "  警告: $_wt_name 无法快进同步（可能有独立 commit），跳过。" >&2
             CONFLICTS=$((CONFLICTS + 1))
             CONFLICT_WTS="${CONFLICT_WTS:+$CONFLICT_WTS }$_wt_name"
-            # 不 abort — 保留冲突状态让 AI/用户来处理
         fi
         cd "$WORKSPACE_ROOT"
     done

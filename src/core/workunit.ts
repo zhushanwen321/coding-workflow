@@ -71,14 +71,17 @@ export interface WorkUnitBase {
   /** 被上游 replan 影响的废弃记录（纯历史记录）。 */
   abandonedRefs: AbandonedRef[];
   /**
-   * wave 主动声明已脱离的 parent 条目 id（execute 时从 commit message 解析，append-only）。
+   * 本 WorkUnit 主动声明已脱离的 parent 条目 id（append-only）。
    *
-   * 与 abandonedRefs 的对照：
-   * - abandonedRefs：parent replan 时 cw 被动标记 wave（"你的 parent 废弃了你"）
-   * - abandonedParentItems：wave 主动声明（"我不再依赖这些 parent 条目"）
+   * 跨层跨时机声明通道（ADR-0010 / model §5.6.6）：
+   * - 任何层的 plan/replan 时通过 input 的 abandonParentItems 字段写入（主通道）
+   * - wave execute 时从 commit message `Cw-Abandon:` trailer 解析写入（辅助通道）
+   * - cw 用 Set 去重合并，一旦声明不可撤回
    *
-   * 用途：slice replan cascade abort 时，wave 声明过的 parent 条目不触发 abort。
-   * 来源：execute handler 从 commit message `Cw-Abandon:` trailer 解析写入。
+   * 用途：slice/feature replan cascade abort 时，本单元声明过的 parent 条目不触发 abort
+   *（基于 basedOnParent 历史快照的命中判定会跳过 abandonedParentItems 白名单）。
+   *
+   * 注意：epic 无 parent，此字段永远为 []（工厂初始化，epic handler 不写入）。
    */
   abandonedParentItems?: string[];
 

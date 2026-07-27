@@ -12,6 +12,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { WorkUnitBase } from "../../src/core/workunit.js";
+import { createWave } from "../../src/core/workunit.js";
+import { handleClarify } from "../../src/handlers/clarify.js";
+import { handlePlan } from "../../src/handlers/plan.js";
 import { handleExecuteSlice } from "../../src/handlers/slice/execute.js";
 import { handleReplanSlice } from "../../src/handlers/slice/replan.js";
 import { computeImpactCascade } from "../../src/rules/replan.js";
@@ -22,6 +25,12 @@ import {
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
 import type { V1Env } from "./helpers/v1-env.js";
+import {
+  makeValidContract,
+  makeValidFile,
+  makeValidTask,
+  makeValidTestCase,
+} from "./helpers/v1-env.js";
 
 let env: V1Env;
 
@@ -445,5 +454,128 @@ describe("handleReplanSlice 集成：closed child 不再跳过（slice §6.1）"
     // 幂等：IF1 abandonedRef 数量不变，statusHistory 不追加
     expect(refsAfterSecond).toBe(refsAfterFirst);
     expect(afterSecond.history.length).toBe(historyAfterFirst);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnitBase）
+// ═══════════════════════════════════════════════════════════════
+//
+// 防回归：C1 bug 是 handleReplanSlice 用的 loadChildrenAsWorkUnitBase 映射器曾遗漏
+// abandonedParentItems 字段——纯函数测试（上方 wub() stub 直接注入字段）测不出，
+// 必须用真实 store + 真实 handler 写入 + 真实映射器读取才能覆盖端到端路径。
+//
+// 链路：wave plan input 声明脱离 parent 条目 → slice replan 废弃该条目 → 级联 abort 时
+// 该 wave 应被 preserved（例外生效），而不是被 abort。
+
+describe("abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnitBase）", () => {
+  it("wave 先 plan 声明脱离 TC1 → slice replan 废弃 TC1 → 该 wave 被 preserved（不是 aborted）", () => {
+    // 1. 建 slice（design-reviewed 状态，含 TechChoice TC1 from makeValidSlicePlan）
+    const slice = setupToSliceDesignReviewed(env.deps, "e2e-abandon");
+    const sliceId = slice.id;
+
+    // 2. 建 child wave：parentUnitId 指向 slice + basedOnParent 含 TC1（承接 slice 的 TC1）
+    const wave = createWave({
+      slug: "e2e-child-wave",
+      objective: "child wave that declares abandoning TC1",
+      parentUnitId: sliceId,
+      basedOnParent: ["TC1"],
+      createdAt: "2026-07-22T00:00:00.000Z",
+    });
+    env.store.save(wave as unknown as WorkUnitRecord);
+    const waveId = wave.id;
+
+    // 前置：wave 已落盘 + basedOnParent 含 TC1 + abandonedParentItems 初始空
+    const waveBefore = env.store.load(waveId)!;
+    expect((waveBefore as unknown as { basedOnParent: string[] }).basedOnParent).toContain("TC1");
+    expect((waveBefore as unknown as { abandonedParentItems: string[] }).abandonedParentItems).toEqual([]);
+
+    // 3. wave 先 plan 声明脱离 TC1（plan input 带 abandonParentItems: ["TC1"]）
+    //    经 mergeAbandonParentItems 写入 wave.abandonedParentItems。
+    //    wave 必须在 plan.from ∈ {clarifying, planning, design-reviewed} 才合法——
+    //    createWave 初始 created，先 handleClarify 推进到 clarifying，再 handlePlan。
+    handleClarify(wave, { clarifications: [] }, env.deps);
+    handlePlan(
+      wave,
+      {
+        testCases: [makeValidTestCase()],
+        tasks: [makeValidTask()],
+        files: [makeValidFile()],
+        contracts: [makeValidContract()],
+        abandonParentItems: ["TC1"],
+      },
+      env.deps,
+    );
+
+    // 验证 wave.abandonedParentItems 已落盘含 TC1（端到端真实写入路径）
+    const waveDeclared = env.store.load(waveId)!;
+    expect((waveDeclared as unknown as { abandonedParentItems: string[] }).abandonedParentItems).toEqual(["TC1"]);
+
+    // 4. slice replan 废弃 TC1（真实 handleReplanSlice → computeImpactCascade
+    //    → loadChildrenAsWorkUnitBase 从 store 读 wave 并映射）
+    const result = handleReplanSlice(
+      slice,
+      { abandonedIds: ["TC1"], note: "TC1 obsolete, verify wave preserved" },
+      env.deps,
+    );
+
+    // 5. 断言：例外生效——wave 被 preserved，不被 abort
+    expect(result.ok).toBe(true);
+    expect(result.replanImpact!.preserved).toContain(waveId);
+    expect(result.replanImpact!.aborted).not.toContain(waveId);
+
+    // wave status 保持不变（未被 cascadeAbortUnit 触及）
+    const waveAfter = env.store.load(waveId)!;
+    expect((waveAfter as unknown as { status: string }).status).not.toBe("aborted");
+    // wave.abandonedRefs 不应被追加 TC1（没被级联 abort）
+    const abandonedRefs = (waveAfter as unknown as { abandonedRefs: Array<{ workUnitItemId: string }> }).abandonedRefs;
+    expect(abandonedRefs.some((r) => r.workUnitItemId === "TC1")).toBe(false);
+  });
+
+  it("wave 未声明脱离 TC1 → slice replan 废弃 TC1 → 该 wave 被 abort（对照组）", () => {
+    // 对照组：同样的 setup，但 wave 不声明 abandonParentItems → 正常被级联 abort。
+    // 验证上一条用例的 preserved 不是「巧合永远 preserved」，而是例外真正生效。
+    const slice = setupToSliceDesignReviewed(env.deps, "e2e-abandon-ctrl");
+    const sliceId = slice.id;
+
+    const wave = createWave({
+      slug: "e2e-child-wave-ctrl",
+      objective: "child wave that does NOT declare abandoning",
+      parentUnitId: sliceId,
+      basedOnParent: ["TC1"],
+      createdAt: "2026-07-22T00:00:00.000Z",
+    });
+    env.store.save(wave as unknown as WorkUnitRecord);
+    const waveId = wave.id;
+
+    // wave plan 不带 abandonParentItems
+    handleClarify(wave, { clarifications: [] }, env.deps);
+    handlePlan(
+      wave,
+      {
+        testCases: [makeValidTestCase()],
+        tasks: [makeValidTask()],
+        files: [makeValidFile()],
+        contracts: [makeValidContract()],
+      },
+      env.deps,
+    );
+    // 确认 abandonedParentItems 仍空（未声明脱离）
+    const waveDeclared = env.store.load(waveId)!;
+    expect((waveDeclared as unknown as { abandonedParentItems: string[] }).abandonedParentItems).toEqual([]);
+
+    const result = handleReplanSlice(
+      slice,
+      { abandonedIds: ["TC1"], note: "TC1 obsolete, control group" },
+      env.deps,
+    );
+
+    // 对照：未声明脱离 → 正常被 abort
+    expect(result.ok).toBe(true);
+    expect(result.replanImpact!.aborted).toContain(waveId);
+    expect(result.replanImpact!.preserved).not.toContain(waveId);
+
+    const waveAfter = env.store.load(waveId)!;
+    expect((waveAfter as unknown as { status: string }).status).toBe("aborted");
   });
 });

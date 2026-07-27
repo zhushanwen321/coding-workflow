@@ -602,9 +602,9 @@ cw v1 create slice --parent=feature --inheritedItemIds=[FR1b]
 | 层 | 可声明的时机 | 场景 |
 |---|---|---|
 | epic | （无 parent，不适用）| — |
-| feature | plan / design-review / replan | 设计 feature spec 时发现 epic 的某个 BC/FR 不合理 |
-| slice | plan / design-review / replan | 设计 techChoices 时发现 feature 的某个 AC 不可行 |
-| wave | plan / design-review / replan / execute | 写 testCases 时发现 slice 的 interface 错了；或 execute 时发现 TC 不可行改了替代方案 |
+| feature | plan / replan（design-review 规划中，未实现） | 设计 feature spec 时发现 epic 的某个 BC/FR 不合理 |
+| slice | plan / replan（design-review 规划中，未实现） | 设计 techChoices 时发现 feature 的某个 AC 不可行 |
+| wave | plan / replan / execute（design-review 规划中，未实现） | 写 testCases 时发现 slice 的 interface 错了；或 execute 时发现 TC 不可行改了替代方案 |
 
 **设计阶段就能声明**——不必等到 execute。设计 plan 时发现 parent 条目不适用就该声明，早声明早豁免后续 parent replan 的级联误伤。
 

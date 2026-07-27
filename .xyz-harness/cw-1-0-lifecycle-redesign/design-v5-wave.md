@@ -924,10 +924,10 @@ wave 有两条声明通道：
 
 | 通道 | 时机 | 形式 | 说明 |
 |---|---|---|---|
-| **显式 input**（推荐）| plan / design-review / replan | input 带 `abandonParentItems: ["<TC id>"]`（CLI: `--abandonParentItems '["TC1"]'`）| 主通道，设计阶段就能用 |
-| **commit message trailer**（顺便）| execute | git commit message 末尾加 `Cw-Abandon: <TC id>` | wave execute 特有，agent 写 commit 时顺手带，零额外 CLI 参数 |
+| **显式 input**（推荐）| plan / replan（design-review 规划中，未实现） | input 带 `abandonParentItems: ["<TechChoice id>"]`（CLI: `--abandonParentItems '["techChoice_1"]'`）| 主通道，设计阶段就能用 |
+| **commit message trailer**（顺便）| execute | git commit message 末尾加 `Cw-Abandon: <TechChoice id>` | wave execute 特有，agent 写 commit 时顺手带，零额外 CLI 参数 |
 
-**设计阶段优先**：如果 wave 在 plan 阶段（写 testCases 时）就发现 slice 的 interface 定义错了，应该在 plan input 里就用显式通道声明脱离，不必等到 execute。早声明早豁免。
+**设计阶段优先**：如果 wave 在 plan 阶段（写 testCases 时）就发现 slice 的某个 TechChoice 定义错了（如上方场景的 electron.net 不可行），应该在 plan input 里就用显式通道声明脱离，不必等到 execute。早声明早豁免。
 
 两条通道都 append-only 合并到 `wave.abandonedParentItems`（Set 去重，一旦声明不可撤回）。后续 slice replan 的 `computeImpactCascade` 命中判定会检查：`basedOnParent 命中废弃条目 && 该条目不在 abandonedParentItems 里` 才触发 abort（model §5.6.2 Step 2 例外）。
 

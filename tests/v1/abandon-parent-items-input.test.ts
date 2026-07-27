@@ -4,16 +4,23 @@
  * 覆盖核心契约：plan/replan input 的 abandonParentItems 字段被正确 append-only 合并到
  * unit.abandonedParentItems（model §5.6.6）。
  *
- * 三部分：
+ * 四部分：
  * 1. mergeAbandonParentItems 纯函数（单元）：空 input / 单 id / 多 id / 去重 / undefined 安全
  * 2. plan handler 集成：slice plan（PlanningUnit 代表）+ wave plan 通过 input 写入
  * 3. replan handler 集成：slice replan + wave replan 通过 input 写入
+ * 4. execute handler trailer 集成：wave execute 解析 commit message 的 Cw-Abandon trailer →
+ *    mergeAbandonParentItems 写入 unit.abandonedParentItems（顺便通道，ADR-0010）
  *
- * trailer 通道（wave execute 解析 commit message）由 parse-abandon-markers.test.ts 覆盖，
- * 本文件不重复。
+ * trailer 的纯函数解析（extractCommitMessage / parseAbandonMarkers）由 parse-abandon-markers.test.ts
+ * 覆盖；本文件 Part 4 覆盖 execute handler 端到端集成（trailer → handler → store 落盘）。
  */
+import { spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { handleExecute } from "../../src/handlers/execute.js";
 import { mergeAbandonParentItems } from "../../src/handlers/internal.js";
 import { handlePlan } from "../../src/handlers/plan.js";
 import { handleReplan } from "../../src/handlers/replan.js";
@@ -217,5 +224,120 @@ describe("replan handler 通过 input 写入 abandonedParentItems", () => {
 
     const reloaded = env.deps.store.load(slice.id);
     expect(reloaded?.abandonedParentItems).toEqual(["FR1"]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Part 4: execute handler trailer 集成
+// ═══════════════════════════════════════════════════════════════
+//
+// wave execute handler 的「顺便通道」（ADR-0010）：从 commit message 解析 Cw-Abandon trailer
+// → parseAbandonMarkers → mergeAbandonParentItems 写入 wave.abandonedParentItems。
+// parse-abandon-markers.test.ts 覆盖了纯函数解析；这里覆盖 handler 端到端（trailer → handler → store）。
+
+/**
+ * 在 env.cwd 造一个 git 仓库 + 含指定 commit message 的 commit，返回 commit hash。
+ *
+ * 与 v1-env.ts 的 commitWithFiles 区别：后者 message 固定为 "add <files>"，
+ * 本 helper 允许自定义 message（用于塞 Cw-Abandon trailer）。
+ *
+ * @param env    createV1Env() 产出的环境（cwd = git 仓库工作目录 = deps.workspacePath）
+ * @param relPath 本次 commit 新增的文件相对路径（需有文件改动才能 commit）
+ * @param content 文件内容
+ * @param commitMessage commit message（可含多行 + trailer）
+ */
+function commitWithMessage(
+  env: V1Env,
+  relPath: string,
+  content: string,
+  commitMessage: string,
+): string {
+  const cwd = env.cwd;
+  // 首次调用初始化仓库
+  const isRepo =
+    spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd, encoding: "utf-8" }).status === 0;
+  if (!isRepo) {
+    spawnSync("git", ["init"], { cwd, encoding: "utf-8" });
+    spawnSync("git", ["config", "user.email", "test@cw.local"], { cwd, encoding: "utf-8" });
+    spawnSync("git", ["config", "user.name", "cw-test"], { cwd, encoding: "utf-8" });
+    // 造一个空的 initial commit 作为父提交（extractChangedFiles 需要 <commit>^ 存在）
+    spawnSync("git", ["commit", "--allow-empty", "-m", "initial"], { cwd, encoding: "utf-8" });
+  }
+  const abs = join(cwd, relPath);
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, content, "utf-8");
+  spawnSync("git", ["add", relPath], { cwd, encoding: "utf-8" });
+  spawnSync("git", ["commit", "-m", commitMessage], { cwd, encoding: "utf-8" });
+  const r = spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" });
+  return r.stdout.trim();
+}
+
+describe("handleExecute trailer 解析集成（顺便通道）", () => {
+  it("commit message 含 Cw-Abandon: TC3 → wave.abandonedParentItems 含 TC3", () => {
+    // 1. 造 tmp git repo + 含 trailer 的 commit
+    const commitHash = commitWithMessage(
+      env,
+      "src/feature.ts",
+      "export const x = 1;",
+      "feat: implement fetch\n\nCw-Abandon: TC3",
+    );
+
+    // 2. 建一个 design-reviewed 状态的 wave（execute.from = ["design-reviewed"]）
+    const wave = makeWaveUnit("exec-trailer-wave");
+    wave.status = "design-reviewed";
+    env.deps.store.save(wave);
+
+    // 前置：wave.abandonedParentItems 初始空
+    expect(
+      env.deps.store.load(wave.id)?.abandonedParentItems ?? [],
+    ).toEqual([]);
+
+    // 3. 调 handleExecute 传 commitHash（真实 handler：extractChangedFiles + parseAbandonMarkers + mergeAbandonParentItems）
+    handleExecute(wave, { commitHash }, env.deps);
+
+    // 4. 断言：trailer 被解析并写入 wave.abandonedParentItems
+    const reloaded = env.deps.store.load(wave.id);
+    expect(reloaded?.abandonedParentItems).toEqual(["TC3"]);
+    // execute 成功推进到 executing
+    expect((reloaded as unknown as { status: string }).status).toBe("executing");
+  });
+
+  it("commit message 无 Cw-Abandon trailer → wave.abandonedParentItems 保持空", () => {
+    const commitHash = commitWithMessage(
+      env,
+      "src/other.ts",
+      "export const y = 2;",
+      "feat: regular commit, no abandon marker",
+    );
+
+    const wave = makeWaveUnit("exec-no-trailer-wave");
+    wave.status = "design-reviewed";
+    env.deps.store.save(wave);
+
+    handleExecute(wave, { commitHash }, env.deps);
+
+    const reloaded = env.deps.store.load(wave.id);
+    expect(reloaded?.abandonedParentItems).toEqual([]);
+  });
+
+  it("多个 trailer id（逗号分隔）→ 全部写入并去重", () => {
+    const commitHash = commitWithMessage(
+      env,
+      "src/multi.ts",
+      "export const z = 3;",
+      "feat: multi abandon\n\nCw-Abandon: TC3, TC5",
+    );
+
+    const wave = makeWaveUnit("exec-multi-trailer-wave");
+    wave.status = "design-reviewed";
+    // 预先有 TC3（验证 append-only 去重，不重复）
+    wave.abandonedParentItems = ["TC3"];
+    env.deps.store.save(wave);
+
+    handleExecute(wave, { commitHash }, env.deps);
+
+    const reloaded = env.deps.store.load(wave.id);
+    // TC3 去重 + TC5 新增
+    expect(reloaded?.abandonedParentItems).toEqual(["TC3", "TC5"]);
   });
 });

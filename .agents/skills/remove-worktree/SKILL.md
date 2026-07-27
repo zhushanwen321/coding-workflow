@@ -56,7 +56,7 @@ bash .agents/skills/remove-worktree/remove-worktree.sh feat-done --skip-sync
    **依赖前提**：GitHub PR 必须使用 **Create a merge commit** 合并。如果仓库使用 Squash merge 或 Rebase merge，`git branch --merged` 会误判为"未合并"（原始 commit hash 不会进入 main）。此时需用 `--force`，或通过 `gh pr list --state merged --json headRefName` 确认 PR 状态。
 3. **未合并 → 拒绝删除**，显示未合并 commits，提示使用 `--force`
 4. 检查未提交变更（有变更 → 拒绝删除）
-5. 同步其他 worktree：`git fetch origin && git merge --no-ff origin/main`
+5. 同步其他 worktree：`git fetch origin && git merge --ff-only origin/main`
 6. 冲突时不 abort，保留冲突状态供 AI 处理
 7. 删除目标 worktree 和本地分支
 
