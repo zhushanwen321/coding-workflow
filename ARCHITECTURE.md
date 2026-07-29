@@ -56,30 +56,31 @@ agent bash 调 cw <action> [flags]
 
 ## 关键状态机
 
-CW 状态机定义在 `state-machine.ts` 的 `TRANSITIONS` 表中，8 个 status：
+CW 状态机定义在 `rules/state-machine.ts` 的 `WAVE_TRANSITIONS`（ExecutionUnit/wave）与 `PLANNING_TRANSITIONS`（PlanningUnit：slice/feature/epic）两张表中。wave 主链 9 步 + abort/replan 两个旁路：
 
 ```mermaid
 stateDiagram-v2
     [*] --> created: create
-    created --> planned: plan
-    created --> created: clarify
-    planned --> pre_dev_verified: tdd_plan
-    pre_dev_verified --> developed: dev
-    developed --> reviewed: review
-    reviewed --> reviewed: review_fix
-    reviewed --> post_dev_verified: test
-    post_dev_verified --> post_dev_verified: test_fix
-    post_dev_verified --> retrospected: retrospect
+    created --> clarifying: clarify
+    clarifying --> clarifying: clarify
+    clarifying --> planning: plan
+    planning --> planning: plan
+    planning --> design-reviewed: design-review
+    design-reviewed --> design-reviewed: design-review
+    design-reviewed --> planning: plan
+    design-reviewed --> executing: execute
+    executing --> tested: test
+    tested --> exec-reviewed: exec-review
+    exec-reviewed --> retrospected: retrospect
     retrospected --> closed: closeout
-    closed --> closed: assess
-    planned --> planned: replan
-    pre_dev_verified --> planned: replan
-    developed --> planned: replan
-    reviewed --> planned: replan
-    post_dev_verified --> planned: replan
+    design-reviewed --> design-reviewed: replan
+    executing --> executing: replan
+    tested --> tested: replan
+    exec-reviewed --> exec-reviewed: replan
+    retrospected --> retrospected: replan
 ```
 
-progressive action（dev/review/review_fix/test/test_fix/clarify/assess）可在同一 status 下多次调用。replan 从 planned~post_dev_verified 回退到 planned（append-only 约束）。
+progressive action（clarify/plan/design-review/replan）可在同一 status 下多次调用。replan 是旁路 action（`to=undefined`），不改 status，从 design-reviewed 之后的任一状态都可触发，要求 agent 回 planning 重走 design-review。
 
 ### fix loop（review / test）
 
@@ -109,7 +110,6 @@ gate 是 CW 的核心价值——不信任 agent 的声明，只信机器验证�
 | action | gate 名 | 校验内容 |
 |--------|---------|---------|
 | plan | lite-plan-schema | dev-plan.json 结构（format=lite + waves≥1 + 依赖无环 + 范围守门） |
-| tdd_plan | tdd-red-light + test-json-schema | 红灯确认（测试文件 exit≠0）+ test.json 结构 |
 | dev | medium-git | commit 存在 + commit 改动文件覆盖 plan 声明的文件 |
 | review | file-exists+non-empty | review.md 存在 + 非空 |
 | test | judgeByExpected | 机器按 expected 精确比较 actual（不信任 agent 声明的 status） |

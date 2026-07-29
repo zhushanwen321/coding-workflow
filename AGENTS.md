@@ -1,7 +1,7 @@
 # coding-workflow (CW-CLI)
 
 > Agent-agnostic 编码流程编排 CLI。状态机 + 机器检查 gate，强制 AI 编码任务走
-> create → clarify → plan → tdd_plan → dev → review → test → retrospect → closeout。
+> create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout。
 > agent 只需通过 bash 调 `cw` 命令，按返回的 `nextAction.guidance` 推进全流程。
 
 ## 常用命令
