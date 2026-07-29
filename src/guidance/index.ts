@@ -118,4 +118,8 @@ export type {
   BuildFailureGuidanceArgs,
   BuildNormalGuidanceArgs,
 } from "./build-guidance.js";
-export { buildFailureGuidance,buildNormalGuidance } from "./build-guidance.js";
+export { buildFailureGuidance, buildNormalGuidance } from "./build-guidance.js";
+
+// subagent 调度引导（guidance 第 4 段「## subagent 调度」的内容源）
+export type { GuidanceLayer } from "./subagent-guidance.js";
+export { buildSubagentGuidance } from "./subagent-guidance.js";

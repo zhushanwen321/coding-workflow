@@ -24,6 +24,7 @@ import {
   buildFailureHint,
   buildNormalGuidance,
   buildPrefix,
+  buildSubagentGuidance,
   deriveFailureCount,
   injectSchema,
   PLANNING_ACTION_TO_NEXT,
@@ -226,6 +227,7 @@ export function buildFeatureNextAction(
     command,
     schemaText,
     templateText,
+    commonGuidance: buildSubagentGuidance("planning", action),
   });
 
   return {

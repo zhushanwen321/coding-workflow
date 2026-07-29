@@ -25,6 +25,7 @@ import {
   buildFailureHint,
   buildNormalGuidance,
   buildPrefix,
+  buildSubagentGuidance,
   deriveFailureCount,
   injectSchema,
   WAVE_STAGE_TEMPLATES,
@@ -282,6 +283,7 @@ export function buildNextAction(
     command,
     schemaText,
     templateText,
+    commonGuidance: buildSubagentGuidance("wave", action),
   });
 
   return {
