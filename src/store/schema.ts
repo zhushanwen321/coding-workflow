@@ -4,7 +4,7 @@
  * 职责：
  *   - 定义 _v1.json 的顶层 schema（扁平集合 + parentUnitId 外键）
  *   - cwd → 目录名的编码（per-cwd 隔离）
- *   - v1 存储根目录解析（V1_HOME 环境变量覆盖）
+ *   - v1 存储根目录解析（CW_HOME 环境变量覆盖）
  *
  * 来源：v5 store 层独立实现。POSIX 文件系统最佳实践参考 0.x 的 src/path-encoding.ts，
  * 但本文件零 0.x 依赖（不 import 任何 src/ 下 0.x 文件），仅按 v1 契约独立实现。
@@ -108,29 +108,29 @@ export function decodeCwd(encodedCwd: string): string {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * v1 存储根目录。
+ * 存储根目录。
  *
- * 默认 `~/.v1`，可通过 `V1_HOME` 环境变量覆盖。
+ * 默认 `~/.cw`，可通过 `CW_HOME` 环境变量覆盖。
  * 覆盖值必须是绝对路径（契约要求），否则抛错——per-cwd 隔离依赖稳定、唯一的根。
  */
-export function getV1Home(): string {
-  const override = process.env.V1_HOME;
+export function getCwHome(): string {
+  const override = process.env.CW_HOME;
   if (override !== undefined && override !== "") {
     if (!isAbsolute(override)) {
       throw new Error(
-        `V1_HOME must be an absolute path, got: ${override}`,
+        `CW_HOME must be an absolute path, got: ${override}`,
       );
     }
     return override;
   }
-  return join(homedir(), ".v1");
+  return join(homedir(), ".cw");
 }
 
 /**
  * 给定 cwd，返回对应的 _v1.json 路径。
  *
- * `<v1Home>/<encodedCwd>/_v1.json`，per-cwd 隔离。
+ * `<cwHome>/<encodedCwd>/_v1.json`，per-cwd 隔离。
  */
 export function getV1JsonPath(cwd: string): string {
-  return join(getV1Home(), encodeCwd(cwd), "_v1.json");
+  return join(getCwHome(), encodeCwd(cwd), "_v1.json");
 }

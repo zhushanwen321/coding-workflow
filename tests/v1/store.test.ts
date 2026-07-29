@@ -1,7 +1,7 @@
 /**
  * v1 V1Store 持久化测试（U18-U21）。
  *
- * 真实文件 IO（mkdtemp 临时目录 + V1_HOME 隔离），零 mock。
+ * 真实文件 IO（mkdtemp 临时目录 + CW_HOME 隔离），零 mock。
  * - save + load 往返一致
  * - 原子写（写后文件存在且 JSON 合法）
  * - findChildren 按 parentUnitId 外键查询

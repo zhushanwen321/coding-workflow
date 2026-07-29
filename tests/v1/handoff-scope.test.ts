@@ -5,7 +5,7 @@
  * scope=self 的向后兼容由现有 readonly-handoff.test.ts 的 18 个测试覆盖。
  *
  * 测试策略：真实 V1Store + mkdtemp + 真实父子 unit（zero mock）。
- * V1_HOME 隔离（吸取 Wave A/B 教训）。
+ * CW_HOME 隔离（吸取 Wave A/B 教训）。
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -84,22 +84,22 @@ describe("Wave C: renderHandoff --scope self（向后兼容）", () => {
 });
 
 describe("Wave C: renderHandoff --scope upstream", () => {
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
   let store: V1Store;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
     store = new V1Store(cwd);
     for (const u of makeFourLayerTree()) store.save(u);
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
   });
 
   it("TC-C3: scope=upstream 焦点是 wave，输出含父链（epic/feature/slice）不含子树", () => {
@@ -138,22 +138,22 @@ describe("Wave C: renderHandoff --scope upstream", () => {
 });
 
 describe("Wave C: renderHandoff --scope full", () => {
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
   let store: V1Store;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
     store = new V1Store(cwd);
     for (const u of makeFourLayerTree()) store.save(u);
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
   });
 
   it("TC-C2: scope=full 焦点是 slice，输出含父链（epic/feature）+ FOCUS + 子树（wave w1/w2）", () => {
@@ -202,21 +202,21 @@ describe("Wave C: renderHandoff --scope full", () => {
 });
 
 describe("Wave C: size warning", () => {
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
   let store: V1Store;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
     store = new V1Store(cwd);
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
   });
 
   it("TC-C4: 超过 500 行时尾部追加 size warning，不截断内容", () => {
