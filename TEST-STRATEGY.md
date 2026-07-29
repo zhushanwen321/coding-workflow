@@ -26,7 +26,7 @@
 | `state-machine.test.ts` | 单元 | — | checkLinear / computeNextStatus / computeGatePassed |
 | `stats.test.ts` | 单元 | 39 | compute* 评估指标 |
 | `store.test.ts` | 集成 | 51 | store DAO（真实 tmp 文件系统） |
-| `gate.test.ts` | 集成 | 52 \| 1 skipped | gate 检查（devCheck / tddPlanCheck / testCheck 等） |
+| `gate.test.ts` | 集成 | 52 \| 1 skipped | gate 检查（devCheck / testCheck 等） |
 | `dispatch.test.ts` | 集成 | 63 | dispatch 层全 handler 测试 |
 | `e2e.test.ts` | e2e | 6 | 主链路 happy path（E1-E4：全链跑通 / 渐进式 dev / 非法跳步 / replan） |
 | `e2e-clarify.test.ts` | e2e | 5 | clarify action（pending/resolved/progressive/不阻断 plan/非法状态） |
@@ -36,7 +36,7 @@
 | `e2e-readonly.test.ts` | e2e | 6 | stats/status/list 只读子命令 |
 | `e2e-init.test.ts` | e2e | 6 | init 基建诊断（空目录/补齐 ready/骨架态/骨架闭环自洽/create 引导接线 ×2） |
 | `e2e-gate-fail.test.ts` | e2e | 3 | gate fail retry / 5 次熔断 / fail 后重试成功 |
-| `expected-multi-mode.test.ts` | 集成 | 27 | expected 多模式（exact/exit_zero/script）：judgeByExpected 分支、tddPlanCheck schema+沙箱、handleTest 执行 |
+| `expected-multi-mode.test.ts` | 集成 | 27 | expected 多模式（exact/exit_zero/script）：judgeByExpected 分支、handleTest 执行 |
 
 > 用例数取自 `npm test` 实跑的 per-file 统计；标「—」的文件用例数未逐项核对，以实跑为准。
 
@@ -121,7 +121,7 @@ npx vitest run tests/e2e*.test.ts
 | `disposeE2eEnv(e)` | 清理 tmp 目录 | `afterAll` 调一次 |
 | `runCli(args, e, options?)` | 真实子进程跑 `dist/cli.js`，cwd 自动设为 `e.workspaceDir` | **所有** cw 命令调用都走这个 |
 | `parseStdout(result)` | 解析 stdout 为 JSON，校验 exitCode=0 | 期望命令成功的断言 |
-| `setupToDeveloped(e, slug)` | 一行走到 developed（create+plan+tdd_plan+dev） | 测 review / review_fix 前 |
+| `setupToDeveloped(e, slug)` | 一行走到 executing（create+clarify+plan+design-review+execute） | 测 test 前 |
 | `setupToReviewed(e, slug)` | 走到 reviewed（+review 无 issue） | 测 test / test_fix 前 |
 | `setupToTested(e, slug)` | 走到 tested（+test 全 pass） | 测 retrospect / closeout 前 |
 | `setupToClosed(e, slug)` | 走到 closed（完整链路） | 测 assess 前 |
@@ -171,7 +171,6 @@ describe("E<编号><action>: <场景描述>", () => {
 |---|---|---|
 | `clarify` | clarifyJson（对象或数组） | `--topicId` |
 | `plan` | planJson（dev-plan.json） | `--topicId` |
-| `tdd_plan` | testJson（test.json） | `--topicId` |
 | `replan` | planJson（默认）/ testJson（`--test` 时） | `--topicId` / `--test` / `--testJsonFile` |
 | `dev` | — | `--topicId` / `--tasks '[...]'`（JSON 字符串） |
 | `review` | issues 数组（可选，无 stdin=空=无问题） | `--topicId` / `--reviewPath`（可选，不传=fileCheck pass） |
@@ -185,7 +184,7 @@ describe("E<编号><action>: <场景描述>", () => {
 
 **ID 格式约定**（写 fix/case 引用时要对应）：
 - review 的 issueId：cw 自增分配 `R1` / `R2`...（按已存在数量 +1）。首轮提交 N 条 issue → `R1`..`R{N}`
-- test 的 caseId：来自 tdd_plan 阶段 test.json 的 `testCase.id`（测试代码自定，如 `E1` / `E2`）
+- test 的 caseId：来自 plan 阶段 testCases 字段的 `testCase.id`（测试代码自定，如 `E1` / `E2`）
 - assess 的 assessmentId：cw 自增 `AS1` / `AS2`...
 
 ### expected 值约定
@@ -253,6 +252,6 @@ expected 是判别联合（`type` 字段必填），3 种判定模式：
 ### RB-4 e2e 完整流程跑通  [from: cw-cli-extract]
 
 - **用例来源**：`tests/e2e.test.ts` E1（主链路）+ `tests/e2e-*.test.ts` 系列（全部 13 action 的分支路径，共 38 个 E2E 测试）
-- **断言**：`create → plan → tdd_plan → dev → review → test → retrospect → closeout` 全链真实子进程跑通，最终 `status=closed`，evidence 写入；各分支路径（clarify / review_fix / test_fix / assess loop、turn 上限熔断、gate fail/circuit breaker、非法状态/参数、只读子命令、init 诊断）端到端验证
+- **断言**：`create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout` 全链真实子进程跑通，最终 `status=closed`，evidence 写入；各分支路径（clarify / review_fix / test_fix / assess loop、turn 上限熔断、gate fail/circuit breaker、非法状态/参数、只读子命令、init 诊断）端到端验证
 - **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂，或某个 action 的分支路径在子进程层断裂，agent 无法完成或无法正确推进编码任务
 - **关联约束**：NFR V-1

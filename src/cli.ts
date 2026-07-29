@@ -61,7 +61,7 @@ import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { getV1Home } from "./store/schema.js";
+import { getCwHome } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
@@ -576,7 +576,7 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
 /**
  * constructV1Deps — 组装 v1 dispatch 所需的 V1Deps。
  *
- *   - store：V1Store，绑定 cwd（getV1JsonPath 用 V1_HOME + encodeCwd(cwd) 定位 _v1.json）
+ *   - store：V1Store，绑定 cwd（getV1JsonPath 用 CW_HOME + encodeCwd(cwd) 定位 _v1.json）
  *   - gitValidator：用 git cat-file 验 commit hash 真实存在（绑定 workspacePath）
  *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
@@ -845,8 +845,8 @@ async function runReadonly(
 
   if (isAll) {
     // 跨 cwd 模式：loadAllCwdsFromHome + 注入 cwd/repoMeta 到 AnnotatedUnit
-    const v1Home = getV1Home();
-    const loaded = loadAllCwdsFromHome(v1Home);
+    const cwHome = getCwHome();
+    const loaded = loadAllCwdsFromHome(cwHome);
     const annotated: AnnotatedUnit[] = [];
     for (const { cwd, data } of loaded) {
       for (const unit of data.workUnits) {

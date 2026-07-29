@@ -2,11 +2,11 @@
  * v1 测试基建 — 隔离环境 + stub V1Deps + wave unit 工厂 + 合法产物工厂。
  *
  * 零 mock 框架：
- *   - V1Store 用 mkdtemp 临时目录 + V1_HOME 环境变量隔离（真实文件 IO，不用 InMemoryStore）
+ *   - V1Store 用 mkdtemp 临时目录 + CW_HOME 环境变量隔离（真实文件 IO，不用 InMemoryStore）
  *   - V1Deps 是手写 stub 对象（gitValidator/testRunner/fileExists/clock 是外部依赖注入接口，
  *     不是 v1 内部代码——spec 明确允许 stub）
  *
- * 每个 createV1Env() 产出独立隔离的环境，cleanup() 清理临时目录 + 还原 V1_HOME。
+ * 每个 createV1Env() 产出独立隔离的环境，cleanup() 清理临时目录 + 还原 CW_HOME。
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -39,47 +39,47 @@ export const STUB_NOW = "2026-07-22T00:00:00.000Z";
 /** V1Env：一次隔离测试环境的全部句柄。 */
 export interface V1Env {
   cwd: string;
-  v1Home: string;
+  cwHome: string;
   store: V1Store;
   deps: V1Deps;
-  /** 清理临时目录 + 还原 V1_HOME。 */
+  /** 清理临时目录 + 还原 CW_HOME。 */
   cleanup: () => void;
 }
 
 /**
  * 创建独立隔离的 v1 测试环境。
  *
- * - mkdtemp 临时目录作为 cwd（也作为 V1_HOME）
- * - 设置 process.env.V1_HOME 指向临时目录（getV1JsonPath 读它做 per-cwd 隔离）
+ * - mkdtemp 临时目录作为 cwd（也作为 CW_HOME）
+ * - 设置 process.env.CW_HOME 指向临时目录（getV1JsonPath 读它做 per-cwd 隔离）
  * - 构造真实 V1Store（走真实文件 IO）
  * - 构造 stub V1Deps（gitValidator/testRunner/fileExists 始终成功，clock 固定时间）
  *
- * 注意：V1_HOME 是进程级环境变量，并行测试会互相干扰。本 helper 通过 beforeEach
+ * 注意：CW_HOME 是进程级环境变量，并行测试会互相干扰。本 helper 通过 beforeEach
  * 串行创建 + cleanup 还原避免泄漏（vitest 默认测试文件内 it 串行）。
  */
 export function createV1Env(): V1Env {
   const root = mkdtempSync(join(tmpdir(), "cw-v1-test-"));
   const cwd = join(root, "cwd");
-  const v1Home = join(root, "v1home");
+  const cwHome = join(root, "v1home");
   mkdirSync(cwd, { recursive: true }); // cwd 作为仓库工作目录（execute 提取 changedFiles 时绑 git cwd）
-  mkdirSync(v1Home, { recursive: true }); // V1Store 会在此下写 _v1.json
+  mkdirSync(cwHome, { recursive: true }); // V1Store 会在此下写 _v1.json
 
-  const prevV1Home = process.env.V1_HOME;
-  process.env.V1_HOME = v1Home;
+  const prevV1Home = process.env.CW_HOME;
+  process.env.CW_HOME = cwHome;
 
   const store = new V1Store(cwd);
   const deps = makeStubDeps(store, cwd);
 
   const cleanup = (): void => {
     if (prevV1Home === undefined) {
-      delete process.env.V1_HOME;
+      delete process.env.CW_HOME;
     } else {
-      process.env.V1_HOME = prevV1Home;
+      process.env.CW_HOME = prevV1Home;
     }
     rmSync(root, { recursive: true, force: true });
   };
 
-  return { cwd, v1Home, store, deps, cleanup };
+  return { cwd, cwHome, store, deps, cleanup };
 }
 
 /**

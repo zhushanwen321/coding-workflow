@@ -1,6 +1,6 @@
 # coding-workflow
 
-Agent-agnostic CLI that keeps AI coding agents on track through a state-machine pipeline: `create → clarify → plan → tdd_plan → dev → review → test → retrospect → closeout`.
+Agent-agnostic CLI that keeps AI coding agents on track through a state-machine pipeline: `create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout`.
 
 CW 不假设调用方有任何特定 agent harness 的能力（无 skill 加载、无 workflow 引擎）。agent 只需通过 bash 调用 `cw`，按返回的 `nextAction.guidance` 推进。guidance 内嵌完整阶段提示词（spec / plan / execute / review / retrospect 方法论），agent 不需要记忆命令列表。
 
@@ -22,9 +22,9 @@ npm install -g @zhushanwen/coding-workflow
 ## 它怎么工作
 
 ```
-created → planned → pre_dev_verified → developed → reviewed → post_dev_verified → retrospected → closed
-              ↑                    |       |
-              └────── replan ──────┘       │
+created → clarifying → planning → design-reviewed → executing → tested → exec-reviewed → retrospected → closed
+                                  ↑       |
+                                  └── replan ──┘
 ```
 
 agent 调 `cw create` 建一个 topic，之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。

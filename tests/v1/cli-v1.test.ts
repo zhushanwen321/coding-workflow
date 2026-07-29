@@ -47,7 +47,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CLI_PATH = join(__dirname, "..", "..", "dist", "cli.js");
 
-// ── 子进程辅助（v1 专用，与 0.x 的 E2eEnv 隔离用独立 V1_HOME） ──
+// ── 子进程辅助（v1 专用，与 0.x 的 E2eEnv 隔离用独立 CW_HOME） ──
 
 export interface CliResult {
   exitCode: number;
@@ -58,9 +58,7 @@ export interface CliResult {
 export interface V1CliEnv {
   /** 工作目录（cwd）：v1 store/git/testRunner 都绑它。 */
   workspaceDir: string;
-  /** v1 存储根（V1_HOME），per-cwd 隔离。 */
-  v1Home: string;
-  /** 0.x 存储根（CW_HOME），并存测试隔离用（避免污染真实 ~/.cw）。 */
+  /** v1 存储根（CW_HOME），per-cwd 隔离。 */
   cwHome: string;
   /** 传给子进程的环境变量。 */
   env: Record<string, string>;
@@ -110,7 +108,7 @@ function parseStdout(result: CliResult): Record<string, unknown> {
 }
 
 /**
- * 创建独立隔离的 v1 测试环境（独立 tmp workspace + V1_HOME + git repo）。
+ * 创建独立隔离的 v1 测试环境（独立 tmp workspace + CW_HOME + git repo）。
  *
  * git repo 仅 execute/test 的真实 git 校验需要；create/clarify 等不依赖 git。
  */
@@ -119,17 +117,15 @@ function createV1CliEnv(): V1CliEnv {
     throw new Error(`dist/cli.js 不存在，请先 npm run build。路径: ${CLI_PATH}`);
   }
   const workspaceDir = realpathSync(mkdtempSync(join(tmpdir(), "cw-v1cli-ws-")));
-  const v1Home = realpathSync(mkdtempSync(join(tmpdir(), "cw-v1cli-home-")));
-  const cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-v1cli-cwh-")));
-  // 同时设 V1_HOME + CW_HOME：v1 命令写 V1_HOME，0.x 命令写 CW_HOME，两套并存互不污染。
-  const env = { V1_HOME: v1Home, CW_HOME: cwHome };
+  const cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-v1cli-home-")));
+  // 设 CW_HOME：v1 命令写 CW_HOME
+  const env = { CW_HOME: cwHome };
   const commitHash = setupGitRepo(workspaceDir);
-  return { workspaceDir, v1Home, cwHome, env, commitHash };
+  return { workspaceDir, cwHome, env, commitHash };
 }
 
 function disposeV1CliEnv(e: V1CliEnv): void {
   rmSync(e.workspaceDir, { recursive: true, force: true });
-  rmSync(e.v1Home, { recursive: true, force: true });
   rmSync(e.cwHome, { recursive: true, force: true });
 }
 
@@ -181,8 +177,8 @@ describe("W8: cw create wave（happy path）", () => {
     expect(unitPath.layer).toBe("wave");
     expect(unitPath.unitId).toBe("wave:w8-create");
 
-    // store 落盘验证：_v1.json 在 V1_HOME/<encodedCwd>/_v1.json
-    const v1Json = findV1Json(e.v1Home);
+    // store 落盘验证：_v1.json 在 CW_HOME/<encodedCwd>/_v1.json
+    const v1Json = findV1Json(e.cwHome);
     expect(v1Json).not.toBeNull();
     const data = JSON.parse(readV1Json(v1Json!)) as { workUnits: unknown[] };
     expect(data.workUnits.length).toBeGreaterThan(0);
@@ -345,7 +341,7 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
     expect(typeof nextAction.guidance).toBe("string");
     expect((nextAction.guidance as string).length).toBeGreaterThan(0);
     // 落盘验证：store 里该 unit 的 clarifications 应有 1 条
-    const v1Json = findV1Json(e.v1Home);
+    const v1Json = findV1Json(e.cwHome);
     expect(v1Json).not.toBeNull();
     const data = JSON.parse(readV1Json(v1Json!)) as {
       workUnits: Array<{ id: string; clarifications?: unknown[] }>;
@@ -440,18 +436,18 @@ describe("W8: v1 前缀已切断（Wave 3 起 cw 直接跟 action）", () => {
     expect(result.stderr).toContain("v1");
   });
 
-  it("v1 和 0.x 写各自的存储（V1_HOME vs CW_HOME）互不污染", () => {
-    // v1 create 写 _v1.json（V1_HOME 下）
+  it("v1 和 0.x 写各自的存储（CW_HOME）互不污染", () => {
+    // v1 create 写 _v1.json（CW_HOME 下）
     runV1Cli(
       ["create", "wave", "--slug", "iso-v1", "--objective", "o"],
       e,
     );
     // v1 存储存在
-    expect(findV1Json(e.v1Home)).not.toBeNull();
+    expect(findV1Json(e.cwHome)).not.toBeNull();
 
-    // 0.x 存储路径不同（CW_HOME，未设则默认 ~/.cw），不会写到 V1_HOME。
+    // 存储路径在 CW_HOME 下，不会写到其他地方。
     // 这里只验证 v1 侧 _v1.json 里只有 v1 的 workUnits（无 0.x topic 字段）。
-    const v1Data = JSON.parse(readV1Json(findV1Json(e.v1Home)!)) as Record<
+    const v1Data = JSON.parse(readV1Json(findV1Json(e.cwHome)!)) as Record<
       string,
       unknown
     >;
@@ -521,7 +517,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     expect(nextAction.crossLayer!.targetLayer).toBe("wave");
     expect(typeof nextAction.crossLayer!.targetUnitId).toBe("string");
     // 落盘验证：slice 的 executeResult.childUnitIds 非空
-    const v1Json = findV1Json(e.v1Home);
+    const v1Json = findV1Json(e.cwHome);
     expect(v1Json).not.toBeNull();
     const data = JSON.parse(readV1Json(v1Json!)) as {
       workUnits: Array<{ id: string; executeResult?: { childUnitIds?: string[] } }>;
@@ -580,7 +576,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
 
   // 共享辅助：从 store 读某 unit 的 abandonedParentItems。
   function readAbandonedParentItems(unitId: string): string[] {
-    const v1Json = findV1Json(e.v1Home);
+    const v1Json = findV1Json(e.cwHome);
     expect(v1Json).not.toBeNull();
     const data = JSON.parse(readV1Json(v1Json!)) as {
       workUnits: Array<{ id: string; abandonedParentItems?: string[] }>;
@@ -689,7 +685,7 @@ describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
   });
 });
 
-// ── 辅助：在 V1_HOME 树里找 _v1.json ────────────────────────
+// ── 辅助：在 CW_HOME 树里找 _v1.json ────────────────────────
 
 function findV1Json(dir: string): string | null {
   const entries = readdirSync(dir, { withFileTypes: true });

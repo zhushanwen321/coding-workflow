@@ -30,10 +30,15 @@ export interface BuildNormalGuidanceArgs {
   schemaText: string;
   /** 模板文本（来自 templates/wave.ts 的关键约束段）。 */
   templateText: string;
+  /**
+   * 通用引导段（来自 subagent-guidance.buildSubagentGuidance，描述本 action 的 subagent 委派建议）。
+   * 为空/undefined 时不渲染第 4 段，保持三段式（§3.1 最小信息原则）。
+   */
+  commonGuidance?: string;
 }
 
 /**
- * 组装正常 guidance（三段式：位置 / 下一步 / input schema + 关键约束）。
+ * 组装正常 guidance（三段式：位置 / 下一步 / input schema + 关键约束；commonGuidance 非空时追加第 4 段）。
  *
  * 输出结构（§3.4 / §4.x）：
  * ```
@@ -47,19 +52,23 @@ export interface BuildNormalGuidanceArgs {
  * ## input schema + 关键约束
  * {schemaText}
  * {templateText 的关键约束段}
+ *
+ * ## subagent 调度        ← 仅当 commonGuidance 非空时才输出此段
+ * {commonGuidance}
  * ```
  *
  * 注：goal 来自 template.goal（一句话目标），由调用方从 template 取出后传入。
  *      templateText 是 constraint 段（关键约束），整段附在 schema 后。
+ *      commonGuidance 是 subagent 委派建议（按 action 性质分强制/建议/禁止三档），为空时省略。
  */
 export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
-  const { prefix, goal, command, schemaText, templateText } = args;
+  const { prefix, goal, command, schemaText, templateText, commonGuidance } = args;
   // 约束段为空时不留空行；非空时前缀换行。
   const constraintSection = templateText.trim() !== ""
     ? `\n${templateText.trim()}`
     : "";
 
-  return [
+  const sections = [
     "## 位置",
     prefix,
     "",
@@ -70,7 +79,15 @@ export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
     "## input schema + 关键约束",
     schemaText,
     constraintSection,
-  ].join("\n");
+  ];
+
+  // 通用引导段为空时省略此段（§3.1 最小信息原则）。
+  const common = commonGuidance?.trim() ?? "";
+  if (common !== "") {
+    sections.push("", "## subagent 调度", common);
+  }
+
+  return sections.join("\n");
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -69,7 +69,7 @@ git merge --ff-only origin/main
 - 不影响 CLI 行为的改动（日志优化、错误信息文案、内部工具函数）
 
 **minor**：
-- 新增 action（状态机新增可执行动作，如 `tdd_plan`、`retrospect`）
+- 新增 action（状态机新增可执行动作，如 `retrospect`）
 - 新增 gate（新增机器检查门，如新增一个 `code-review-gate`）
 - 新增 handler（实现新的 action handler）
 - CLI 新增子命令（如 `cw v1 stats`、`cw v1 export`）

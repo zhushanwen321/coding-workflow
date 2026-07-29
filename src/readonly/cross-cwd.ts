@@ -1,9 +1,9 @@
 /**
- * 跨 cwd 遍历——读取 V1_HOME 下所有 encodedCwd 子目录的 _v1.json。
+ * 跨 cwd 遍历——读取 CW_HOME 下所有 encodedCwd 子目录的 _v1.json。
  *
  * 只读聚合，不写 store。损坏的 _v1.json 跳过不抛（ES2）。
  *
- * 调用方：cli.ts 的 `cw list --all` 分支用此函数把 V1_HOME 下全部 cwd 的
+ * 调用方：cli.ts 的 `cw list --all` 分支用此函数把 CW_HOME 下全部 cwd 的
  * workUnits 聚合为一组 AnnotatedUnit（带 cwd/repoMeta 标注），交给 renderList
  * 渲染 group header 表格。
  *
@@ -28,27 +28,27 @@ export interface LoadedCwd {
 }
 
 /**
- * 遍历 V1_HOME 下所有子目录，各读 _v1.json。
+ * 遍历 CW_HOME 下所有子目录，各读 _v1.json。
  *
  * - 子目录名是 encodedCwd（encodeCwd: / → __），反解为 cwd 绝对路径
  * - _v1.json 不存在 / JSON parse 失败 → 跳过该子目录（不抛，ES2）
  * - 按 data.repoMeta?.recordedAt DESC 排序（无 repoMeta 排最后）
  *
- * @param v1Home V1_HOME 绝对路径
+ * @param cwHome CW_HOME 绝对路径
  */
-export function loadAllCwdsFromHome(v1Home: string): LoadedCwd[] {
+export function loadAllCwdsFromHome(cwHome: string): LoadedCwd[] {
   let entries: string[] = [];
   try {
-    entries = readdirSync(v1Home, { withFileTypes: true })
+    entries = readdirSync(cwHome, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
   } catch {
-    return []; // V1_HOME 不存在或无权限
+    return []; // CW_HOME 不存在或无权限
   }
 
   const results: LoadedCwd[] = [];
   for (const encodedCwd of entries) {
-    const v1JsonPath = join(v1Home, encodedCwd, "_v1.json");
+    const v1JsonPath = join(cwHome, encodedCwd, "_v1.json");
     let raw: string;
     try {
       raw = readFileSync(v1JsonPath, "utf-8");

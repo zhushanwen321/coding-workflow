@@ -9,8 +9,8 @@
  *
  * 测试策略：真 git 子进程 + mkdtempSync 真实 tmp 目录（zero mock 基线）。
  *
- * 隔离：每个 describe 的 beforeEach 把 process.env.V1_HOME 指向独立 tmp 目录，
- * afterEach 还原 + 清理。不污染用户真实 ~/.v1/（C1 修复）。
+ * 隔离：每个 describe 的 beforeEach 把 process.env.CW_HOME 指向独立 tmp 目录，
+ * afterEach 还原 + 清理。不污染用户真实 ~/.cw/（C1 修复）。
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -73,19 +73,19 @@ function makeUnit(id: string): WorkUnitRecord {
 
 describe("Wave A: collectRepoMeta", () => {
   let cwd: string;
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-repometa-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-repometa-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
     cwd = mkdtempSync(join(tmpdir(), "cw-repometa-"));
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });
 
@@ -163,19 +163,19 @@ describe("Wave A: collectRepoMeta", () => {
 
 describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
   let cwd: string;
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-repometa-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-repometa-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
     cwd = makeGitRepo({ remoteUrl: "git@github.com:foo/bar.git" });
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });
 

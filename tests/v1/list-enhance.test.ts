@@ -16,7 +16,7 @@
  *   - 损坏 _v1.json 跳过（TC-B12）
  *
  * 测试策略：真实 fs + 真实 V1Store + 真实 JSON 文件（zero mock）。
- * V1_HOME 隔离：每个 describe 的 beforeEach 设独立 tmp V1_HOME（吸取 Wave A C1 教训）。
+ * CW_HOME 隔离：每个 describe 的 beforeEach 设独立 tmp CW_HOME（吸取 Wave A C1 教训）。
  */
 import {
   mkdirSync,
@@ -294,28 +294,28 @@ describe("Wave B: renderList 边界", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// loadAllCwdsFromHome + cli 层（真实 fs，需 V1_HOME 隔离）
+// loadAllCwdsFromHome + cli 层（真实 fs，需 CW_HOME 隔离）
 // ═══════════════════════════════════════════════════════════════
 
 describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-list-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-list-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
   });
 
-  /** 在 v1Home 下造一个 cwd 的 _v1.json。 */
+  /** 在 cwHome 下造一个 cwd 的 _v1.json。 */
   function writeCwdStore(cwd: string, units: WorkUnitRecord[], repoMeta?: RepoMeta): void {
     const encoded = encodeCwd(cwd);
-    const dir = join(v1Home, encoded);
+    const dir = join(cwHome, encoded);
     mkdirSync(dir, { recursive: true });
     const data: Record<string, unknown> = { schemaVersion: 1, workUnits: units };
     if (repoMeta) data.repoMeta = repoMeta;
@@ -326,7 +326,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     writeCwdStore("/fake/a", [makeUnit("wave:a")], makeRepoMeta({ recordedAt: "2026-07-26T10:00:00.000Z", worktreePath: "/fake/a" }));
     writeCwdStore("/fake/b", [makeUnit("wave:b")], makeRepoMeta({ recordedAt: "2026-07-26T12:00:00.000Z", worktreePath: "/fake/b" }));
 
-    const loaded = loadAllCwdsFromHome(v1Home);
+    const loaded = loadAllCwdsFromHome(cwHome);
     expect(loaded.length).toBe(2);
     // b 的 recordedAt 更新（12:00），排前面
     expect(loaded[0].data.workUnits[0].id).toBe("wave:b");
@@ -336,18 +336,18 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
   it("TC-B12: 损坏的 _v1.json 被跳过，不影响其他 cwd", () => {
     writeCwdStore("/fake/good", [makeUnit("wave:good")], makeRepoMeta({ worktreePath: "/fake/good" }));
     // 造一个损坏的
-    const badDir = join(v1Home, encodeCwd("/fake/bad"));
+    const badDir = join(cwHome, encodeCwd("/fake/bad"));
     mkdirSync(badDir, { recursive: true });
     writeFileSync(join(badDir, "_v1.json"), "corrupted{{{invalid json");
 
-    const loaded = loadAllCwdsFromHome(v1Home);
+    const loaded = loadAllCwdsFromHome(cwHome);
     expect(loaded.length).toBe(1); // 损坏的跳过
     expect(loaded[0].data.workUnits[0].id).toBe("wave:good");
   });
 
   it("TC-B7fs: 无 repoMeta 的旧 store 仍能加载（cwd 从 encodedCwd 反解）", () => {
     writeCwdStore("/fake/old", [makeUnit("wave:old")]); // 无 repoMeta
-    const loaded = loadAllCwdsFromHome(v1Home);
+    const loaded = loadAllCwdsFromHome(cwHome);
     expect(loaded.length).toBe(1);
     expect(loaded[0].cwd).toBe("/fake/old"); // 从 encodedCwd 反解
     expect(loaded[0].data.repoMeta).toBeUndefined();
@@ -360,12 +360,12 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
       [makeUnit("wave:x")],
       makeRepoMeta({ worktreePath: "/real/path" }),
     );
-    const loaded = loadAllCwdsFromHome(v1Home);
+    const loaded = loadAllCwdsFromHome(cwHome);
     expect(loaded[0].cwd).toBe("/real/path"); // 优先 worktreePath
   });
 
-  it("TC-B12b: V1_HOME 不存在时返回空数组（不抛）", () => {
-    const loaded = loadAllCwdsFromHome(join(v1Home, "nonexistent-subdir"));
+  it("TC-B12b: CW_HOME 不存在时返回空数组（不抛）", () => {
+    const loaded = loadAllCwdsFromHome(join(cwHome, "nonexistent-subdir"));
     expect(loaded).toEqual([]);
   });
 
@@ -374,7 +374,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     writeCwdStore("/repo/ws-a", [makeUnit("wave:a")], makeRepoMeta({ worktreePath: "/repo/ws-a" }));
     writeCwdStore("/repo/ws-b", [makeUnit("wave:b")], makeRepoMeta({ worktreePath: "/repo/ws-b" }));
 
-    const loaded = loadAllCwdsFromHome(v1Home);
+    const loaded = loadAllCwdsFromHome(cwHome);
     const annotated: AnnotatedUnit[] = [];
     for (const { cwd, data } of loaded) {
       for (const unit of data.workUnits) {
@@ -391,22 +391,22 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
 });
 
 describe("Wave B: V1Store 集成 + --cwd", () => {
-  let v1Home: string;
+  let cwHome: string;
   let prevV1Home: string | undefined;
   let cwdA: string;
   let cwdB: string;
 
   beforeEach(() => {
-    v1Home = mkdtempSync(join(tmpdir(), "cw-list-v1home-"));
-    prevV1Home = process.env.V1_HOME;
-    process.env.V1_HOME = v1Home;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-list-v1home-"));
+    prevV1Home = process.env.CW_HOME;
+    process.env.CW_HOME = cwHome;
     cwdA = mkdtempSync(join(tmpdir(), "cw-list-cwdA-"));
     cwdB = mkdtempSync(join(tmpdir(), "cw-list-cwdB-"));
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.V1_HOME;
-    else process.env.V1_HOME = prevV1Home;
-    rmSync(v1Home, { recursive: true, force: true });
+    if (prevV1Home === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevV1Home;
+    rmSync(cwHome, { recursive: true, force: true });
     rmSync(cwdA, { recursive: true, force: true });
     rmSync(cwdB, { recursive: true, force: true });
   });

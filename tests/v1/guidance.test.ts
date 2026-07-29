@@ -556,14 +556,20 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
 
 describe("templates/wave: 关键约束", () => {
   it("plan 模板含冻结契约关键约束（§4.1）", () => {
-    expect(WAVE_PLAN_TEMPLATE.constraint).toBe(
-      "关键约束：testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan；如需扫较多代码/资料，考虑派专门做代码探索方向的 subagent 隔离上下文。",
-    );
+    // constraint 只保留纯阶段约束——subagent 调度提示已抽离到 subagent-guidance.ts
+    // （由 buildNextAction 经 buildSubagentGuidance 生成，渲染为 guidance 第 4 段）。
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("testCases 不能为空");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("冻结");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("replan");
+    // 验证 subagent 文案已从 constraint 剥离干净
+    expect(WAVE_PLAN_TEMPLATE.constraint).not.toContain("subagent");
     expect(WAVE_PLAN_TEMPLATE.goal).toContain("执行计划");
   });
 
   it("replan 模板含「重走 design-review」提示（§6.1 / wave §8.3）", () => {
     expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("重新 design-review");
     expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("plan → design-review → execute");
+    // replan constraint 也不应含 subagent 文案
+    expect(WAVE_REPLAN_TEMPLATE.constraint).not.toContain("subagent");
   });
 });

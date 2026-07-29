@@ -35,7 +35,6 @@ interface CliResult {
 
 interface V1CliEnv {
   workspaceDir: string;
-  v1Home: string;
   cwHome: string;
   env: Record<string, string>;
   commitHash: string;
@@ -61,16 +60,14 @@ function createV1CliEnv(): V1CliEnv {
     throw new Error(`dist/cli.js 不存在，请先 npm run build。路径: ${CLI_PATH}`);
   }
   const workspaceDir = realpathSync(mkdtempSync(join(tmpdir(), "cw-handoff-ws-")));
-  const v1Home = realpathSync(mkdtempSync(join(tmpdir(), "cw-handoff-home-")));
-  const cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-handoff-cwh-")));
-  const env = { V1_HOME: v1Home, CW_HOME: cwHome };
+  const cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-handoff-home-")));
+  const env = { CW_HOME: cwHome };
   const commitHash = setupGitRepo(workspaceDir);
-  return { workspaceDir, v1Home, cwHome, env, commitHash };
+  return { workspaceDir, cwHome, env, commitHash };
 }
 
 function disposeV1CliEnv(e: V1CliEnv): void {
   rmSync(e.workspaceDir, { recursive: true, force: true });
-  rmSync(e.v1Home, { recursive: true, force: true });
   rmSync(e.cwHome, { recursive: true, force: true });
 }
 
