@@ -124,8 +124,9 @@ if [[ "$FORCE" != "true" ]]; then
     fi
 
     # 用 fixed-string + 整行锚定匹配，避免子串误匹配（feat/foo 误匹配 feat/foo-bar）
-    # 及正则元字符（. + 等）问题。先 strip 行首的星号和空格（git branch 输出格式）。
-    if git -C .bare branch --merged "origin/$MAIN_BRANCH" 2>/dev/null | sed 's/^[* ]*//' | grep -Fxq "$BRANCH_NAME"; then
+    # 及正则元字符（. + 等）问题。先 strip 行首的标记符（git branch 输出格式）：
+    #   '* ' = 当前 HEAD 分支，'+ ' = 其他 worktree checkout 的分支，'  ' = 普通分支。
+    if git -C .bare branch --merged "origin/$MAIN_BRANCH" 2>/dev/null | sed 's/^[*+ ]*//' | grep -Fxq "$BRANCH_NAME"; then
         echo "✓ 分支 '$BRANCH_NAME' 已合并到 origin/$MAIN_BRANCH"
     else
         echo "✗ 分支 '$BRANCH_NAME' 尚未合并到 origin/$MAIN_BRANCH"
