@@ -10,7 +10,7 @@
  * FeatureClarification 容器对象（含空 spec），plan 为 Plan 基类（只 split）。
  */
 import { createFeature } from "../../core/workunit.js";
-import type { ActionResult, CreateInput, V1Deps } from "../types.js";
+import type { ActionResult, CreateInput, CwDeps } from "../types.js";
 import { buildFeatureNextAction, saveFeature } from "./feature-internal.js";
 
 /**
@@ -22,7 +22,7 @@ import { buildFeatureNextAction, saveFeature } from "./feature-internal.js";
  */
 export function handleCreateFeature(
   args: CreateInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult & { unit: import("../../core/workunit.js").Feature } {
   const unit = createFeature({
     slug: args.slug,

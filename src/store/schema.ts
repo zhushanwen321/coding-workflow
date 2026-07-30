@@ -2,18 +2,14 @@
  * v1 持久化层 — 存储格式定义与路径编码。
  *
  * 职责：
- *   - 定义 _v1.json 的顶层 schema（扁平集合 + parentUnitId 外键）
+ *   - 定义 store.json 的顶层 schema（扁平集合 + parentUnitId 外键）
  *   - cwd → 目录名的编码（per-cwd 隔离）
  *   - v1 存储根目录解析（CW_HOME 环境变量覆盖）
  *
- * 来源：v5 store 层独立实现。POSIX 文件系统最佳实践参考 0.x 的 src/path-encoding.ts，
- * 但本文件零 0.x 依赖（不 import 任何 src/ 下 0.x 文件），仅按 v1 契约独立实现。
- *
- * 设计要点（vs 0.x）：
- *   - 0.x 一个 CwJsonFile 含 topics/waves/testCases/gateHistory/... 多集合；v1 只用
- *     单个 workUnits 集合（ExecutionUnit / PlanningUnit 直接扁平存，子 unit 通过
+ * 设计要点：
+ *   - 单个 workUnits 集合（ExecutionUnit / PlanningUnit 直接扁平存，子 unit 通过
  *     parentUnitId 外键关联，不嵌套）。
- *   - encodeCwd 规则：把路径里的 `/` 替换为 `__`（独立于 0.x 的 `--...--` 规则）。
+ *   - encodeCwd 规则：把路径里的 `/` 替换为 `__`。
  */
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -23,7 +19,7 @@ import { isAbsolute, join } from "node:path";
 // ═══════════════════════════════════════════════════════════════
 
 /** v1 持久化文件的顶层 schema（扁平集合 + parentUnitId 外键）。 */
-export interface V1JsonFile {
+export interface CwJsonFile {
   /** schema 版本，初始 = 1。缺失/非数字时 loadFileData 补 1（旧 store 向前兼容） */
   schemaVersion?: number;
   /** git repo 元信息，可选（旧 store 缺失时降级，首次推进类 action 时回填） */
@@ -34,7 +30,7 @@ export interface V1JsonFile {
 /**
  * git repo 元信息（跨 cwd 接手时消歧同名 topic）。
  *
- * 一个 _v1.json 对应一个 cwd，RepoMeta 一对一存顶层（不存每个 unit 内，避免冗余）。
+ * 一个 store.json 对应一个 cwd，RepoMeta 一对一存顶层（不存每个 unit 内，避免冗余）。
  * 所有字段允许空字符串——git 命令失败时降级，不抛。
  */
 export interface RepoMeta {
@@ -127,10 +123,10 @@ export function getCwHome(): string {
 }
 
 /**
- * 给定 cwd，返回对应的 _v1.json 路径。
+ * 给定 cwd，返回对应的 store.json 路径。
  *
- * `<cwHome>/<encodedCwd>/_v1.json`，per-cwd 隔离。
+ * `<cwHome>/<encodedCwd>/store.json`，per-cwd 隔离。
  */
-export function getV1JsonPath(cwd: string): string {
-  return join(getCwHome(), encodeCwd(cwd), "_v1.json");
+export function getCwJsonPath(cwd: string): string {
+  return join(getCwHome(), encodeCwd(cwd), "store.json");
 }

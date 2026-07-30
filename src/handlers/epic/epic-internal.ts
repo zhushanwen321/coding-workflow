@@ -44,8 +44,8 @@ import type { GateResult } from "../../rules/gates/types.js";
 import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import { buildCommand } from "../../utils/command.js";
-import type { V1Deps, V1NextAction } from "../types.js";
+import { buildCommand, inputFilePath } from "../../utils/command.js";
+import type { CwDeps, CwNextAction } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
 // guidance 填充静态基建（w1 新增，w2 接入 buildEpicNextAction 主体）
@@ -185,11 +185,11 @@ export interface BuildEpicNextActionOpts {
   /** 覆盖默认下一步 action（execute/终态时调用方传 undefined 表示停留）。 */
   nextActionOverride?: string;
   /** 跨层建议（execute 下沉 / closeout 回溯）。 */
-  crossLayer?: V1NextAction["crossLayer"];
+  crossLayer?: CwNextAction["crossLayer"];
 }
 
 /**
- * 构建 epic handler 正常路径的 V1NextAction（w2：接入 buildNormalGuidance 三段式）。
+ * 构建 epic handler 正常路径的 CwNextAction（w2：接入 buildNormalGuidance 三段式）。
  *
  * 照 wave internal.ts 的 buildNextAction 流水线：
  *   prefix → PLANNING_STAGE_TEMPLATES 查约束 → getEpicSchemaText 取 schema → buildNormalGuidance 组装。
@@ -202,7 +202,7 @@ export function buildEpicNextAction(
   unit: Epic,
   action: PlanningAction,
   opts?: BuildEpicNextActionOpts,
-): V1NextAction {
+): CwNextAction {
   const statusDisplay = EPIC_STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "epic",
@@ -217,7 +217,7 @@ export function buildEpicNextAction(
   const schemaText = getEpicSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? EPIC_ACTION_TO_NEXT_PUBLIC[action];
-  const command = buildEpicCommand(action, unit.id, nextAction);
+  const command = buildEpicCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({
     prefix,
@@ -244,19 +244,20 @@ export function buildEpicNextAction(
 
 /**
  * 组装 epic 命令字符串（照 wave internal.ts 的 buildWaveNextCommand）。
- * 命令本体由 buildCommand（utils/command.ts）统一构造。
+ * 命令本体由 buildCommand（utils/command.ts）统一构造，input 路径由 inputFilePath 算出。
  */
 function buildEpicCommand(
   currentAction: PlanningAction,
   unitId: string,
   nextAction: string | undefined,
+  slug: string,
 ): string {
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
   const hasInput = EPIC_ACTION_SCHEMA[nextAction] !== undefined ||
     EPIC_FLAT_INPUT_HINT[nextAction] !== undefined;
-  const inputPart = hasInput ? `--input @${nextAction}.json` : "";
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
 }
 
@@ -271,7 +272,7 @@ function buildEpicCommand(
  * 不改 status（fail 诊断记录不是状态转换）。
  */
 export function appendEpicFailRecord(
-  deps: V1Deps,
+  deps: CwDeps,
   unit: Epic,
   action: PlanningAction,
   reason: string,
@@ -286,7 +287,7 @@ export function appendEpicFailRecord(
 }
 
 /**
- * 构建 epic handler fail 路径的 V1NextAction + failureCount（w2：接入 buildFailureGuidance 四段式）。
+ * 构建 epic handler fail 路径的 CwNextAction + failureCount（w2：接入 buildFailureGuidance 四段式）。
  *
  * 照 wave internal.ts 的 buildFailureNextAction 流水线：
  *   prefix（status 标注「未变」）→ deriveFailureCount（含本次）→ buildFailureHint → buildFailureGuidance。
@@ -299,7 +300,7 @@ export function buildEpicFailureNextAction(
   unit: Epic,
   action: PlanningAction,
   problem: string,
-): { nextAction: V1NextAction; failureCount: number } {
+): { nextAction: CwNextAction; failureCount: number } {
   const statusDisplay = EPIC_STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "epic",
@@ -309,8 +310,8 @@ export function buildEpicFailureNextAction(
   });
 
   const failureCount = deriveFailureCount(unit.statusHistory, action);
-  const failureHint = buildFailureHint(failureCount, unit.id, action);
-  const fixCommand = buildEpicCommand(action, unit.id, action);
+  const failureHint = buildFailureHint(failureCount, unit.id, action, unit.slug);
+  const fixCommand = buildEpicCommand(action, unit.id, action, unit.slug);
 
   const guidance = buildFailureGuidance({
     prefix,

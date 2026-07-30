@@ -27,7 +27,7 @@ import type { ExecutionUnit } from "../core/workunit.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
 import { checkFreeze } from "../rules/freeze.js";
 import { computeImpact } from "../rules/replan.js";
-import { buildCommand } from "../utils/command.js";
+import { buildCommand, inputFilePath } from "../utils/command.js";
 import {
   appendFailRecord,
   buildFailureNextAction,
@@ -36,7 +36,7 @@ import {
   saveUnit,
   transitionStatus,
 } from "./internal.js";
-import type { ActionResult, ReplanInput,V1Deps } from "./types.js";
+import type { ActionResult, CwDeps,ReplanInput } from "./types.js";
 
 /**
  * 执行 replan action（旁路，不改 status）。
@@ -48,7 +48,7 @@ import type { ActionResult, ReplanInput,V1Deps } from "./types.js";
 export function handleReplan(
   unit: ExecutionUnit,
   input: ReplanInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── before 快照（structuredClone 保证深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
@@ -117,7 +117,7 @@ export function handleReplan(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, "--input @plan.json"),
+    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
   });
 
   return {

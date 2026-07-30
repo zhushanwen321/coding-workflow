@@ -20,7 +20,7 @@
  * - gate 子函数完全复用（PlanningRetrospectData / Split[] / DesignReviewJudgment 类型与 feature 同型）
  */
 import type { Epic } from "../../core/workunit.js";
-import type { ActionResult, RetrospectFeatureInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,RetrospectFeatureInput } from "../types.js";
 import {
   appendEpicFailRecord,
   buildEpicFailureNextAction,
@@ -40,7 +40,7 @@ import {
 export function handleRetrospectEpic(
   unit: Epic,
   input: RetrospectFeatureInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 查 child feature 状态（rules 层零 IO，由 handler 注入 gate）──
   const children = deps.store.findChildren(unit.id);

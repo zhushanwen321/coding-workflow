@@ -12,8 +12,8 @@
  *
  * 数据流：params → (create: layer 路由 | 非 create: load → scope 路由 → guard → handler) → ActionResult。
  * 失败路径：
- *   - unit not found（非 create）→ throw V1Error（CLI 映射 exit 1）
- *   - guard fail（illegal_transition）→ throw V1Error（含 code/reason）
+ *   - unit not found（非 create）→ throw CwEngineError（CLI 映射 exit 1）
+ *   - guard fail（illegal_transition）→ throw CwEngineError（含 code/reason）
  *   - handler gate fail → 返回 ActionResult(ok=false)（不抛错，由调用方决定）
  *
  * 关键约束：guard fail 和 unit not found 抛错（不可恢复），gate fail 返回结果（可 retry）。
@@ -47,6 +47,7 @@ import {
   type ClarifyInput,
   type CloseoutInput,
   type CreateInput,
+  type CwDeps,
   type DesignReviewInput,
   type ExecReviewInput,
   type ExecuteInput,
@@ -65,7 +66,6 @@ import {
   type ReplanInput,
   type RetrospectInput,
   type TestInput,
-  type V1Deps,
 } from "./handlers/index.js";
 import {
   handleAbortSlice,
@@ -93,19 +93,19 @@ import {
   type PlanningAction,
   type WaveAction,
 } from "./rules/state-machine.js";
+import type { CwStore } from "./store/cw-store.js";
 import type { WorkUnitRecord } from "./store/schema.js";
-import type { V1Store } from "./store/v1-store.js";
 
-// ── V1Error（guard 拒绝 / unit not found，走 exit 1）──
+// ── CwEngineError（guard 拒绝 / unit not found，走 exit 1）──
 
 /** dispatch 层错误（guard fail / unit not found）。CLI 映射 exit 1。 */
-export class V1Error extends Error {
+export class CwEngineError extends Error {
   constructor(
     public readonly code: string,
     message: string,
   ) {
     super(message);
-    this.name = "V1Error";
+    this.name = "CwEngineError";
   }
 }
 
@@ -115,13 +115,13 @@ export class V1Error extends Error {
  * 穷尽检查辅助——用于 switch 的 default 分支，确保联合已被穷尽覆盖。
  *
  * 参数类型为 `never`：若 switch 漏了某个 union 成员，调用处传入的值不是 never，TS 报错。
- * 运行时若真的到达（不应发生），抛 V1Error 兠底（比静默返回 undefined 安全）。
+ * 运行时若真的到达（不应发生），抛 CwEngineError 兠底（比静默返回 undefined 安全）。
  */
 function assertUnreachable(_: never): never {
-  throw new V1Error("unknown_action", `unreachable: unhandled params branch`);
+  throw new CwEngineError("unknown_action", `unreachable: unhandled params branch`);
 }
 
-// ── V1Params 联合类型（所有 action 的入参）──
+// ── CwParams 联合类型（所有 action 的入参）──
 
 /**
  * dispatch 入参的联合类型。每个 action 对应一个 { action, unitId?, input }。
@@ -136,7 +136,7 @@ function assertUnreachable(_: never): never {
  *   其中 test/exec-review 是 wave 专属，slice/feature dispatch 收到时抛 illegal_transition。
  * - create：input.layer 决定建哪个层（默认 'wave'，向后兼容；feature 在后续 dispatch wave 接入）。
  */
-export type V1Params =
+export type CwParams =
   | { action: "create"; input: CreateInput }
   | { action: "clarify"; unitId: string; input: ClarifyInput | FeatureClarifyInput }
   | { action: "plan"; unitId: string; input: PlanInput | PlanSliceInput | PlanFeatureInput | PlanEpicInput }
@@ -150,13 +150,13 @@ export type V1Params =
   | { action: "abort"; unitId: string; input: AbortInput };
 
 /**
- * 排除 create 的 V1Params——dispatchWave/dispatchSlice 的入参类型。
+ * 排除 create 的 CwParams——dispatchWave/dispatchSlice 的入参类型。
  *
  * create 已在 dispatch 顶层提前 return（不走 loadWorkUnit / 不进 dispatchWave/dispatchSlice），
  * 故这两个子函数只处理非 create action。收窄后 `switch(params.action)` 的 default 才是 never
- *（否则 create 是 V1Params 合法 action 值，default 里 params.action 残留 "create" 无法穷尽）。
+ *（否则 create 是 CwParams 合法 action 值，default 里 params.action 残留 "create" 无法穷尽）。
  */
-export type V1ParamsExcludingCreate = Exclude<V1Params, { action: "create" }>;
+export type CwParamsExcludingCreate = Exclude<CwParams, { action: "create" }>;
 
 // ── dispatch（统一入口）──
 
@@ -167,16 +167,16 @@ export type V1ParamsExcludingCreate = Exclude<V1Params, { action: "create" }>;
  * 非 create：loadWorkUnit（按 scope 返回 ExecutionUnit | Slice）→ null 则 throw
  *           → 对应层 guard → 对应层 dispatchWave/dispatchSlice。
  *
- * guard 失败语义：throw V1Error（code=illegal_transition），不返回半成品。
+ * guard 失败语义：throw CwEngineError（code=illegal_transition），不返回半成品。
  * gate 失败语义：返回 ActionResult(ok=false)（不抛错，调用方可按 gateResults 决定 retry）。
  *
- * @param params  V1Params 联合类型
- * @param deps    V1Deps（store + gitValidator + testRunner + fileExists + clock）
+ * @param params  CwParams 联合类型
+ * @param deps    CwDeps（store + gitValidator + testRunner + fileExists + clock）
  * @returns ActionResult（含 status / gateResults / ok）
  */
-export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
+export function dispatch(params: CwParams, deps: CwDeps): ActionResult {
   // create 不需要 loadWorkUnit（入口 action，无前置 unit），按 input.layer 路由（默认 wave）。
-  // 直接判 params.action（不用中间变量）——这样才能让后续代码收窄 params 为 V1ParamsExcludingCreate。
+  // 直接判 params.action（不用中间变量）——这样才能让后续代码收窄 params 为 CwParamsExcludingCreate。
   if (params.action === "create") {
     const layer = params.input.layer ?? "wave";
     if (layer === "slice") {
@@ -191,17 +191,17 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
     return handleCreate(params.input, deps);
   }
 
-  // 非 create：params 已收窄为 V1ParamsExcludingCreate。loadWorkUnit（按 scope 返回 ExecutionUnit | Slice | Feature）。null → throw。
+  // 非 create：params 已收窄为 CwParamsExcludingCreate。loadWorkUnit（按 scope 返回 ExecutionUnit | Slice | Feature）。null → throw。
   const unit = loadWorkUnit(deps.store, params.unitId);
   if (!unit) {
-    throw new V1Error("unit_not_found", `unit not found: ${params.unitId}`);
+    throw new CwEngineError("unit_not_found", `unit not found: ${params.unitId}`);
   }
 
   // 按 scope 分派到对应层的 guard + handler switch。
   if (unit.scope === "wave") {
     const verdict = guardWave(params.action as WaveAction, unit.status);
     if (!verdict.ok) {
-      throw new V1Error(verdict.code, verdict.reason);
+      throw new CwEngineError(verdict.code, verdict.reason);
     }
     return dispatchWave(unit, params, deps);
   }
@@ -211,14 +211,14 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
   // 联合里。guardPlanning 查 PLANNING_TRANSITIONS 表会拿到 undefined（表里无此键）导致崩溃，
   // 故先拦截这两个 action，抛 illegal_transition（与 dispatchSlice/dispatchFeature 内部的 case 防御语义一致）。
   if (params.action === "test" || params.action === "exec-review") {
-    throw new V1Error(
+    throw new CwEngineError(
       "illegal_transition",
       `PlanningUnit (slice/feature) has no ${params.action} action (only wave/ExecutionUnit does)`,
     );
   }
   const verdict = guardPlanning(params.action as PlanningAction, unit.status);
   if (!verdict.ok) {
-    throw new V1Error(verdict.code, verdict.reason);
+    throw new CwEngineError(verdict.code, verdict.reason);
   }
   if (unit.scope === "feature") {
     return dispatchFeature(unit, params, deps);
@@ -242,20 +242,20 @@ export function dispatch(params: V1Params, deps: V1Deps): ActionResult {
  * 到对应分支的具体 Input 类型，无需手动断言。create 分支已在 dispatch 提前 return。
  *
  * @param unit    ExecutionUnit
- * @param params  V1Params（判别式联合，switch 自动 narrow input）
- * @param deps    V1Deps
+ * @param params  CwParams（判别式联合，switch 自动 narrow input）
+ * @param deps    CwDeps
  */
 function dispatchWave(
   unit: ExecutionUnit,
-  params: V1ParamsExcludingCreate,
-  deps: V1Deps,
+  params: CwParamsExcludingCreate,
+  deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
     case "clarify":
       return handleClarify(unit, params.input, deps);
     case "plan":
       // 进 dispatchWave 必是 wave（dispatch 已按 scope 分流），其 plan input 必是 PlanInput。
-      // TS 无法从 V1Params 的 plan 分支（PlanInput | PlanSliceInput）推出这点，显式断言。
+      // TS 无法从 CwParams 的 plan 分支（PlanInput | PlanSliceInput）推出这点，显式断言。
       return handlePlan(unit, params.input as PlanInput, deps);
     case "design-review":
       return handleDesignReview(unit, params.input, deps);
@@ -296,13 +296,13 @@ function dispatchWave(
  * 到对应分支的具体 Input 类型。create 分支已在 dispatch 提前 return。
  *
  * @param unit    Slice
- * @param params  V1Params（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
- * @param deps    V1Deps
+ * @param params  CwParams（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
+ * @param deps    CwDeps
  */
 function dispatchSlice(
   unit: Slice,
-  params: V1ParamsExcludingCreate,
-  deps: V1Deps,
+  params: CwParamsExcludingCreate,
+  deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
     case "clarify":
@@ -327,7 +327,7 @@ function dispatchSlice(
     case "test":
     case "exec-review":
       // slice（PlanningUnit）不跑代码测试、不做 exec-review——这两个 action 是 wave 专属。
-      throw new V1Error(
+      throw new CwEngineError(
         "illegal_transition",
         `slice has no ${params.action} action (only wave/ExecutionUnit does)`,
       );
@@ -357,13 +357,13 @@ function dispatchSlice(
  * 到对应分支的具体 Input 类型。create 分支已在 dispatch 提前 return。
  *
  * @param unit    Feature
- * @param params  V1Params（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
- * @param deps    V1Deps
+ * @param params  CwParams（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
+ * @param deps    CwDeps
  */
 function dispatchFeature(
   unit: Feature,
-  params: V1ParamsExcludingCreate,
-  deps: V1Deps,
+  params: CwParamsExcludingCreate,
+  deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
     case "clarify":
@@ -394,7 +394,7 @@ function dispatchFeature(
     case "test":
     case "exec-review":
       // feature（PlanningUnit）不跑代码测试、不做 exec-review——这两个 action 是 wave 专属。
-      throw new V1Error(
+      throw new CwEngineError(
         "illegal_transition",
         `feature has no ${params.action} action (only wave/ExecutionUnit does)`,
       );
@@ -424,13 +424,13 @@ function dispatchFeature(
  * epic 无 test / exec-review（同 slice/feature）——收到这两个 action 抛 illegal_transition（双重防御）。
  *
  * @param unit    Epic
- * @param params  V1Params（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
- * @param deps    V1Deps
+ * @param params  CwParams（判别式联合，switch 自动 narrow input；execute 分支忽略 input）
+ * @param deps    CwDeps
  */
 function dispatchEpic(
   unit: Epic,
-  params: V1ParamsExcludingCreate,
-  deps: V1Deps,
+  params: CwParamsExcludingCreate,
+  deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
     case "clarify":
@@ -461,7 +461,7 @@ function dispatchEpic(
     case "test":
     case "exec-review":
       // epic（PlanningUnit）不跑代码测试、不做 exec-review——这两个 action 是 wave 专属。
-      throw new V1Error(
+      throw new CwEngineError(
         "illegal_transition",
         `epic has no ${params.action} action (only wave/ExecutionUnit does)`,
       );
@@ -484,7 +484,7 @@ function dispatchEpic(
  *
  * @returns scope 字符串；unit 不存在时 null
  */
-export function getUnitScope(store: V1Store, unitId: string): string | null {
+export function getUnitScope(store: CwStore, unitId: string): string | null {
   const record = store.load(unitId);
   return record ? record.scope : null;
 }
@@ -499,7 +499,7 @@ export function getUnitScope(store: V1Store, unitId: string): string | null {
  * @returns ExecutionUnit | Slice | Feature | null（unitId 不存在时 null）
  */
 function loadWorkUnit(
-  store: V1Store,
+  store: CwStore,
   unitId: string,
 ): ExecutionUnit | Slice | Feature | Epic | null {
   const record: WorkUnitRecord | null = store.load(unitId);
@@ -521,7 +521,7 @@ function loadWorkUnit(
     // eslint-disable-next-line taste/no-unsafe-cast
     return record as unknown as Epic;
   }
-  throw new V1Error(
+  throw new CwEngineError(
     "unsupported_scope",
     `unsupported scope: ${record.scope} (expected wave/slice/feature/epic)`,
   );

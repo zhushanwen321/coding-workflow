@@ -8,8 +8,6 @@
  * 抛 `Cannot read properties of undefined`，崩在 rules 层（非可读 fail）。schema 在 clarify 写入前
  * 拦截畸形结构，让 agent 在最早阶段看到「字段路径: 错误描述」可读报错。
  *
- * 范式参考：src/legacy/plan-parser.ts 的 Type.Object + Value.Check / Value.Errors。
- *
  * 不变量：零 IO，零 mock，纯函数。schema 启用 strict 模式（additionalProperties: false），拒绝
  * 未声明的额外字段，避免 agent 拼错字段名（如 FR 写成 `acId` 替代 `ac`）时被静默忽略。
  * 已知合法的 agent 附加信息（priority / statement）显式声明为 Optional。

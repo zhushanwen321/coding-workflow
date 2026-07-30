@@ -9,249 +9,305 @@
 | 维度 | 值 | 来源 |
 |---|---|---|
 | 测试框架 | vitest ^3.0.0 | package.json devDependencies |
-| 测试数量 | 608 passed \| 1 skipped（29 文件） | `npm test` 实跑 |
+| 测试数量 | 743 passed（41 文件） | `npm test` 实跑（截至 commit `5762657`，会随开发增长，以实跑为准） |
 | 覆盖率工具 | 无（未配 c8/istanbul） | package.json 无 coverage 脚本 |
 | Mock 框架 | 零（无 vi.fn / 无 mock 库） | tests/ 全量 grep 无 mock 调用 |
 | 运行命令 | `npm test` → `vitest run` | package.json scripts.test |
 
-测试文件清单（`tests/` 目录）：
+> **数字口径**：743/41 是会随开发增长的基线，不是定数。旧文档（AGENTS.md/README/PRODUCT）各自记的 1380/464/393 互相打架且已过时，一律以 `npm test` 实跑为准。
 
-| 文件 | 层 | 用例数 | 职责 |
-|---|---|---|---|
-| `cli-error.test.ts` | 单元 | 4 | CLI 错误处理 |
-| `cli-params.test.ts` | 单元 | — | `buildParams` 参数构造 |
-| `pure-functions.test.ts` | 单元 | 25 | 纯函数（judgeByExpected / 熔断 guidance 等） |
-| `types-new.test.ts` | 单元 | — | 类型验证（typebox schema） |
-| `plan-parser.test.ts` | 单元 | — | plan.json / dev-plan.json / test.json 解析 |
-| `state-machine.test.ts` | 单元 | — | checkLinear / computeNextStatus / computeGatePassed |
-| `stats.test.ts` | 单元 | 39 | compute* 评估指标 |
-| `store.test.ts` | 集成 | 51 | store DAO（真实 tmp 文件系统） |
-| `gate.test.ts` | 集成 | 52 \| 1 skipped | gate 检查（devCheck / testCheck 等） |
-| `dispatch.test.ts` | 集成 | 63 | dispatch 层全 handler 测试 |
-| `e2e.test.ts` | e2e | 6 | 主链路 happy path（E1-E4：全链跑通 / 渐进式 dev / 非法跳步 / replan） |
-| `e2e-clarify.test.ts` | e2e | 5 | clarify action（pending/resolved/progressive/不阻断 plan/非法状态） |
-| `e2e-review-fix.test.ts` | e2e | 5 | review_fix loop（带 issues/修复/完整 loop/3 轮熔断/非法 issueId） |
-| `e2e-test-fix.test.ts` | e2e | 5 | test_fix loop（失败/修复/完整 loop/5 轮熔断/非法 caseId） |
-| `e2e-assess.test.ts` | e2e | 5 | assess（单次/progressive/defect/非法状态/缺 defect） |
-| `e2e-readonly.test.ts` | e2e | 6 | stats/status/list 只读子命令 |
-| `e2e-init.test.ts` | e2e | 6 | init 基建诊断（空目录/补齐 ready/骨架态/骨架闭环自洽/create 引导接线 ×2） |
-| `e2e-gate-fail.test.ts` | e2e | 3 | gate fail retry / 5 次熔断 / fail 后重试成功 |
-| `expected-multi-mode.test.ts` | 集成 | 27 | expected 多模式（exact/exit_zero/script）：judgeByExpected 分支、handleTest 执行 |
+测试文件清单（`tests/` 目录，41 个 `.test.ts`）：
 
-> 用例数取自 `npm test` 实跑的 per-file 统计；标「—」的文件用例数未逐项核对，以实跑为准。
+### 单元（纯函数，零 IO）
 
-辅助文件：
+| 文件 | 用例数 | 职责 |
+|---|---|---|
+| `state-machine.test.ts` | 16 | wave 状态机：`nextWaveStatus` / `guardWave` / `isWaveTerminal` |
+| `slice-state-machine.test.ts` | 23 | slice（PlanningUnit）状态机：`nextPlanningStatus` / `guardPlanning` |
+| `feature-state-machine.test.ts` | 16 | feature 状态机 + dispatch 层状态流转 |
+| `epic-state-machine.test.ts` | 26 | epic 状态机 + dispatch 层状态流转 |
+| `gates.test.ts` | 45 | wave gate 纯函数：design-review / test / exec-review / retrospect 各 gate 的 pass+fail |
+| `slice-gates.test.ts` | 37 | slice design-review gate（techChoices/split/DAG/layerSpecific） |
+| `feature-gates.test.ts` | 39 | feature design-review gate（FR-AC 强引用 3 gate + split） |
+| `epic-gates.test.ts` | 27 | epic design-review gate（split 结构 + layerSpecific 5 字段） |
+| `freeze.test.ts` | 23 | append-only 不变量校验：`checkFreeze` / `checkFreezeFeatureSpec`（abandoned 条目不可删/不可改核心字段） |
+| `replan.test.ts` | 6 | 影响面计算纯函数：`computeImpact`（aborted/preserved/pendingRebuild） |
+| `spec-schema.test.ts` | 9 | FeatureSpec 校验纯函数 `validateFeatureSpec` |
+| `parse-vitest-output.test.ts` | 12 | vitest 输出解析纯函数（parseVitestCounts / parseFailedTestNames） |
+| `replan-review.test.ts` | 13 | replan 审视引导模板 `buildReplanReviewText` |
+| `guidance.test.ts` | 53 | guidance 子系统纯函数：schema-injector / prefix-builder / failure-hint / cross-layer / build-guidance |
+| `guidance-planning-templates.test.ts` | 18 | 三层 ACTION_SCHEMA 基建 + planning 静态方法论模板 |
+| `planning-guidance-snapshot.test.ts` | 31 | 三层 PlanningUnit guidance 段落结构快照 |
+| `subagent-guidance.test.ts` | 25 | subagent 分级表 + buildSubagentGuidance 集成 |
+| `readonly-handoff.test.ts` | 18 | `renderHandoff` 纯函数（scope=self，接 WorkUnitRecord 不读 fs） |
+| `list-enhance.test.ts` | 22 | cw list 增强：跨 cwd/分页/分组/模糊匹配/--long |
+
+### 集成（dispatch / handler / store / 真实 git 子进程）
+
+| 文件 | 用例数 | 职责 |
+|---|---|---|
+| `dispatch-e2e.test.ts` | 8 | wave 完整生命周期（dispatch 串联 9 步）+ 非法跳步 → CwEngineError |
+| `handler-guidance.test.ts` | 18 | wave 11 个 handler 的 guidance 接入（正常三段式 / 异常四段式 / closeout crossLayer） |
+| `evidence-lifecycle.test.ts` | 7 | evidence 跨阶段填充：execute→commitHash、test→testRunResult、closeout→frozenAt |
+| `store.test.ts` | 20 | CwStore DAO：save/load 往返、原子写、findChildren、事务回滚、损坏文件抛错 |
+| `repo-meta.test.ts` | 8 | collectRepoMeta + CwJsonFile schemaVersion/repoMeta 迁移（真 git 子进程） |
+| `migrate-v1.test.ts` | 13 | `~/.v1 → ~/.cw` 数据迁移（migrateLegacyV1Home / migrateLegacyV1Filename） |
+| `git-extract.test.ts` | 4 | extractChangedFiles 失败上下文（真 git 子进程，note 不丢 stderr） |
+| `parse-abandon-markers.test.ts` | 10 | parseAbandonMarkers + extractCommitMessage（真 git commit trailer） |
+| `abandon-parent-items-input.test.ts` | 16 | ADR-0010 跨层跨时机 abandonParentItems 通道（plan/replan input append-only 合并） |
+| `feature-replan-spec.test.ts` | 18 | feature replan：spec 条目 abandoned 标记 + freeze 接入 + addedSpecItems 拆分重建 + 级联 abort |
+| `slice-replan-cascade.test.ts` | 19 | slice replan 级联影响面：computeImpactCascade + cascadeAbortUnit/cascadeAbortChildren |
+| `evidence-rollup.test.ts` | 8 | slice evidence rollup（wave closeout/abort → childDelivery） |
+| `rollup-planning.test.ts` | 9 | PlanningUnit 三层 closeout/abort + 级联函数内部 rollup |
+| `feature-clarify-validate.test.ts` | 5 | feature clarify 结构校验：畸形 spec 被 validateFeatureSpec 拦截 → ok=false |
+| `epic-retrospect.test.ts` | 22 | epic retrospect 验收 7 gate（allWavesClosed / childUnitEvidenceComplete / deliveryVerdict 等） |
+| `feature-retrospect.test.ts` | 18 | feature retrospect 验收 7 gate |
+| `handoff-scope.test.ts` | 10 | renderHandoff scope=upstream/full（父链+子树）+ size warning |
+
+### e2e（真实子进程跑 `dist/cli.js` 或经 dispatch 跑完整链路）
+
+| 文件 | 用例数 | 职责 |
+|---|---|---|
+| `cli.test.ts` | 26 | cw CLI 子进程接入：create wave / 缺参数 exit 1 / clarify `--input @file.json` 管道 / unit not found |
+| `e2e-handoff.test.ts` | 3 | handoff 端到端：五段式纯文本 + 缺 `--unitId` exit 1 + 不存在 unitId exit 1 |
+| `feature-dispatch-e2e.test.ts` | 17 | feature 完整链路（dispatch 串联：create→…→closeout + child slice 推进） |
+| `slice-dispatch-e2e.test.ts` | 8 | slice 完整链路（dispatch 串联 + child wave 推进） |
+| `epic-dispatch-e2e.test.ts` | 17 | epic 完整链路（dispatch 串联 + child feature/slice/wave 全链推进） |
+
+> 用例数取自 `npm test` 实跑的 per-file 统计；随开发增长，以实跑为准。
+
+辅助文件（`tests/helpers/`）：
 
 | 路径 | 作用 |
 |---|---|
-| `tests/helpers/git.ts` | `setupGitRepo(repoDir)` 在 tmp 目录初始化真实 git 仓库 + 非空 commit；`commitFile(...)` 造指定文件的 commit |
-| `tests/helpers/plan.ts` | `makeValidPlanJson` / `makeValidDevPlanJson` / `makeValidTestJson` / `makeValidClarifyJson` 构造函数 |
-| `tests/helpers/e2e.ts` | E2E 共享基建：`runCli` / `parseStdout` / `createE2eEnv` + 阶段推进 helper（`setupToDeveloped` 等，见下文「E2E 编写指南」） |
+| `tests/helpers/env.ts` | wave 测试基建：`createCwEnv`（tmp 目录 + CW_HOME 隔离 + 真实 CwStore + stub CwDeps）、`makeStubDeps`、wave unit 工厂 + 合法产物工厂（testCase/task/file/contract/judgment/retrospectData）、`commitWithFiles`（造 git commit 验证 extractChangedFiles） |
+| `tests/helpers/git.ts` | `setupGitRepo(repoDir)`：在 tmp 目录初始化真实 git 仓库 + 非空初始 commit（统一 user.email/name + README） |
+| `tests/helpers/slice-env.ts` | slice 测试基建：slice unit 工厂 + 合法 SlicePlan 条目工厂（techChoice/interface/dataModel/errorSpec/split）+ slice 阶段推进 helper（setupToSlicePlanning / setupToSliceDesignReviewed / setupSliceWithClosedWaves / advanceWaveToClosed） |
+| `tests/helpers/feature-env.ts` | feature 测试基建：feature unit 工厂 + 合法 FeatureSpec/Plan/Judgment/RetrospectData 工厂 + feature 阶段推进 helper（经 dispatch 推进到各状态） |
+| `tests/helpers/epic-env.ts` | epic 测试基建：epic unit 工厂 + 合法 epic Split/Plan/Judgment/RetrospectData 工厂 + epic 阶段推进 helper |
+
+> **注意**：无 `tests/helpers/e2e.ts`、无 `tests/helpers/plan.ts`、无 `v1-env.ts`（已改名为 `env.ts`）。e2e 子进程测试（`cli.test.ts` / `e2e-handoff.test.ts`）在文件内联 `runCwCli` / `createCwCliEnv` / `parseStdout`，dispatch-e2e 测试经 `dispatch()` 跑完整链路（进程内，不 spawn 子进程）。
 
 ## 测试金字塔与边界
 
 | 层 | 测什么 | 不测什么 | 对应文件 |
 |---|---|---|---|
-| 单元（纯函数） | 无副作用的判定与计算：`types.ts` 的 `judgeByExpected`、`stats.ts` 的所有 `compute*` 函数、`state-machine.ts` 的 `checkLinear` / `computeNextStatus` / `computeGatePassed`、`plan-parser.ts` 的解析、`cli-params` 的 `buildParams` | 不碰文件系统、不碰 git、不碰 store | pure-functions / stats / state-machine / plan-parser / types-new / cli-params / cli-error |
-| 集成（dispatch） | 走完整 dispatch 路径：`loadTopic → guard(checkLinear) → handler → store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 | 不 spawn 子进程、不跑真实 `cw` CLI | dispatch / store / gate |
-| e2e（子进程） | 真实 `spawnSync` node 子进程跑 `dist/cli.js`，`CW_HOME` 指向 tmp 子目录（per-cwd 隔离）。覆盖**全部 13 个 action 的关键分支路径**：主链路 happy path + clarify/review_fix/test_fix/assess 各自的 loop + turn 上限熔断 + 非法状态 + 只读子命令 + gate fail/circuit breaker | 不 mock 任何东西——入口/状态机/store/git 全部真实 | e2e-* |
+| 单元（纯函数） | 无副作用的判定与计算：状态机（`guardWave`/`guardPlanning`/`nextWaveStatus`/`nextPlanningStatus`）、gate 纯函数（`src/rules/gates/*`）、append-only 校验（`src/rules/freeze.ts` 的 `checkFreeze*`）、影响面计算（`src/rules/replan.ts` 的 `computeImpact`）、guidance 子系统、vitest 输出解析 | 不碰文件系统、不碰 git、不碰 store | state-machine / *-state-machine / gates / *-gates / freeze / replan / spec-schema / parse-* / guidance* / readonly-handoff / list-enhance / replan-review |
+| 集成（dispatch / handler / store） | 走完整 dispatch 路径：`loadWorkUnit → guard → handler（按 scope 路由）→ store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 + guidance 接入 + evidence/rollup；CwStore 用真实 tmp 文件系统；git 走真实子进程 | 不 spawn 子进程跑真实 `cw` CLI（dispatch-e2e 经 dispatch 跑，进程内） | dispatch-e2e / *-dispatch-e2e / handler-guidance / evidence-* / rollup-* / store / repo-meta / migrate-v1 / git-extract / parse-abandon-markers / abandon-parent-items-input / feature-replan-spec / slice-replan-cascade / *-retrospect / feature-clarify-validate / handoff-scope |
+| e2e（子进程 CLI） | 真实 `spawnSync` node 子进程跑 `dist/cli.js`，`CW_HOME` 指向 tmp 子目录（per-cwd 隔离），cwd 绑 workspaceDir。覆盖 CLI 入口到归档的关键链路 + 只读命令（handoff）的端到端可用性 | 不 mock 任何东西——入口/状态机/store/git 全部真实 | cli / e2e-handoff |
 
-**三层职责切分原则**：单元层保证判定逻辑正确（机器重算的核心防线）；集成层保证 handler 编排与 store 读写正确（覆盖每个 handler 的正常 + 异常路径）；e2e 层保证 CLI 入口到归档的整条链路不断裂。集成层不重复单元层的纯逻辑断言，e2e 层不重复集成层的 handler 细节——只验证「端到端跑得通」。
+**三层职责切分原则**：单元层保证判定逻辑正确（机器重算/gate 校验的核心防线）；集成层保证 handler 编排与 store 读写正确（覆盖每个 handler 的正常 + 异常路径 + 跨层 rollup/级联）；e2e 层保证 CLI 入口到归档的整条链路在子进程层不断裂。集成层不重复单元层的纯逻辑断言，e2e 层不重复集成层的 handler 细节——只验证「端到端跑得通」。
+
+**dispatch-e2e vs 子进程 e2e 的区分**：`*-dispatch-e2e.test.ts` 经 `dispatch()` 在进程内跑完整多链生命周期（epic→feature→slice→wave 全链推进），聚焦「dispatch 编排跨层正确串联」；`cli.test.ts`/`e2e-handoff.test.ts` 才是真正的子进程 e2e（spawn `dist/cli.js`），聚焦「CLI 入口真实可用」。两者互补，不重复。
 
 ## 覆盖率门禁
 
 | 项 | 现状 |
 |---|---|
 | 覆盖率阈值 | 无显式阈值（项目未配 c8/istanbul，CI 不卡覆盖率） |
-| 门禁机制 | 靠 dispatch 层测试覆盖每个 handler 的正常 + 异常路径 |
+| 门禁机制 | 靠集成层测试覆盖每个 handler 的正常 + 异常路径；靠 RB 基线守护核心不变式 |
 | 新增 action 约定 | 必须加对应 dispatch 测试（项目约定，非 CI 强制） |
 | CI 集成 | `npm test`（= `vitest run`），全绿即放行 |
 
-**为什么不卡覆盖率数字**：CW 的价值是机器验证（judgeByExpected 机器重算、gate 机器校验、append-only 机器守卫）。这些核心不变式由 RB 基线（见下）守护，比覆盖率百分比更直接——一条 RB 失败就是事故，覆盖率 100% 不能替代。
+**为什么不卡覆盖率数字**：CW 的价值是机器验证（test gate 机器校验、gate 机器校验、append-only 机器守卫）。这些核心不变式由 RB 基线（见下）守护，比覆盖率百分比更直接——一条 RB 失败就是事故，覆盖率 100% 不能替代。
 
 ## Mock 与测试数据约定
 
 | 边界 | 约定 |
 |---|---|
-| 禁 mock（核心） | store / git 都用真实实现。**mock 掉验证逻辑（judgeByExpected、checkLinear、validateAppendOnly、GitValidator）就失去测试意义**——CW 的价值就是机器验证 |
-| 真实 store | `CwStore` 写入 tmp 目录的真实文件系统，不 stub 读写 |
-| 真实 git | `tests/helpers/git.ts` 的 `setupGitRepo()` 用 `execFileSync("git", ...)` 在 tmp 目录初始化真实 git 仓库 + 非空 commit（devCheck 的 GitValidator 校验 nonEmpty，diff-tree 需要有内容） |
-| 测试数据 | `tests/helpers/plan.ts` 提供 plan.json / dev-plan.json / test.json / clarify.json 构造函数，通过 `overrides` 参数控制差异 |
-| tmp 目录 | 每个测试独立 tmp 目录（`mkdtempSync`），测试间无状态共享；`CW_HOME` 指向 tmp 子目录实现 per-cwd 隔离 |
-| git user 统一 | `setupGitRepo` 统一 `user.email=cw-test@test.com` / `user.name=CW Test`，统一 README 内容 |
+| 禁 mock（核心） | store / git 都用真实实现。**mock 掉验证逻辑（gate 纯函数、guard、`checkFreeze*`、GitValidator）就失去测试意义**——CW 的价值就是机器验证 |
+| stub CwDeps（允许） | `CwDeps` 是依赖注入接口（`gitValidator`/`testRunner?`/`fileExists`/`workspacePath`/`clock`，`src/handlers/types.ts:61`），用 `env.ts` 的 `makeStubDeps` 构造手写 stub 对象（非 mock 框架）：gitValidator 始终 true、testRunner 返回固定 passed、fileExists 始终 true、clock 固定 `STUB_NOW`。这是外部依赖注入接口，不是 CW 内部代码 |
+| 真实 store | `CwStore` 写入 tmp 目录的真实文件系统（`mkdtempSync`），不 stub 读写、不走 InMemoryStore |
+| 真实 git | `tests/helpers/git.ts` 的 `setupGitRepo()` 用 `execFileSync("git", ...)` 在 tmp 目录初始化真实 git 仓库 + 非空 commit；`env.ts` 的 `commitWithFiles()` 造指定文件的 commit 验证 execute 的 `extractChangedFiles` |
+| 测试数据 | 合法产物工厂在 `tests/helpers/{env,slice-env,feature-env,epic-env}.ts`：按层构造能过 gate 的 input（wave: testCase/task/file/contract；slice: techChoice/interface/dataModel/errorSpec/split；feature: FR/AC/BC + split；各层 judgment/retrospectData）。通过参数（`overrides` / `childUnitIds` / `splitSlugs`）控制差异 |
+| tmp 目录 | 每个测试独立 tmp 目录（`mkdtempSync`），测试间无状态共享；`CW_HOME` 指向 tmp 子目录实现 per-cwd 隔离，cleanup 还原 |
+| git user 统一 | `setupGitRepo` 统一 `user.email=cw-test@test.com` / `user.name=CW Test`；`commitWithFiles` 用 `test@cw.local`/`cw-test` |
 
 ## E2E 测试编写指南
 
-> E2E 层的真实子进程测试拆分到 `tests/e2e-*.test.ts` 系列文件，共享基建在 `tests/helpers/e2e.ts`。
-> 这里的约定覆盖「写在哪、怎么写、怎么跑」三个问题。
+> e2e 子进程测试聚焦 `cli.test.ts` + `e2e-handoff.test.ts`（真实 spawn `dist/cli.js`）；多链生命周期 e2e 拆到 `tests/*-dispatch-e2e.test.ts`（经 dispatch 进程内跑）。
 
 ### 文件放哪、怎么命名
 
 | 场景 | 文件 | 命名约定 |
 |---|---|---|
-| 主链路 happy path（create→...→closeout 全链跑通） | `tests/e2e.test.ts` | E1 / E2 / E3 / E4（保留原有编号） |
-| 单个 action 的分支路径（loop / 熔断 / 非法 / 只读） | `tests/e2e-<action>.test.ts` | `e2e-clarify` / `e2e-review-fix` / `e2e-test-fix` / `e2e-assess` / `e2e-init` / `e2e-gate-fail` |
-| 只读子命令聚合 | `tests/e2e-readonly.test.ts` | stats / status / list 合并一文件 |
-| 共享基建（不许直接复制到测试文件） | `tests/helpers/e2e.ts` | — |
+| 子进程 CLI 入口接入（create/缺参数/管道/not found） | `tests/cli.test.ts` | W8 / 后续编号 |
+| 单个只读命令端到端 | `tests/e2e-<command>.test.ts` | `e2e-handoff`（后续 e2e-status / e2e-list 按需） |
+| 多链生命周期（经 dispatch 跑完整层链） | `tests/<layer>-dispatch-e2e.test.ts` | feature/slice/epic 各一 |
+| 共享基建 | `tests/helpers/{env,slice-env,feature-env,epic-env}.ts` | — |
 
-**拆分原则**：一个文件聚焦一个 action 的分支路径（或一组同类只读命令），独立 `beforeAll` 隔离环境。不要把所有 E2E 塞进一个文件——单文件超 ~500 行时拆。新增 action 的 E2E 测试时，新建 `e2e-<action>.test.ts`，不要往 `e2e.test.ts` 加。
+**拆分原则**：一个文件聚焦一个层或一组同类命令，独立 `beforeAll`/`beforeEach` 隔离环境。子进程 e2e 共享一个 `CwCliEnv`（`beforeAll` 建一次），dispatch-e2e 每个 `beforeEach` 建 `CwEnv`。
 
 ### 执行方式
 
 ```bash
-npm run build            # 必须！E2E 跑 dist/cli.js，改完 src/ 要先 build
-npm test                 # 全量（含所有 e2e-*.test.ts）
+npm run build            # 子进程 e2e 跑 dist/cli.js，改完 src/ 要先 build
+npm test                 # 全量（含所有 e2e / dispatch-e2e）
 
-# 单独跑某个 E2E 文件
-npx vitest run tests/e2e-assess.test.ts
+# 单独跑某个 e2e 文件
+npx vitest run tests/cli.test.ts
 
-# 跑全部 E2E（排除单元/集成层）
-npx vitest run tests/e2e*.test.ts
+# 跑全部 dispatch-e2e（跨层生命周期）
+npx vitest run tests/*-dispatch-e2e.test.ts
 ```
 
-**关键**：E2E 依赖 `dist/cli.js`（`npm run build` 产物）。改了 `src/` 不 build 直接跑 E2E 会测旧代码——CI 和本地都要先 build。`tests/helpers/e2e.ts` 的 `createE2eEnv()` 会在启动时检查 `dist/cli.js` 是否存在，不存在直接 throw。
+**关键**：子进程 e2e 依赖 `dist/cli.js`（`npm run build` 产物）。改了 `src/` 不 build 直接跑子进程 e2e 会测旧代码——CI 和本地都要先 build。`cli.test.ts` 的 `createCwCliEnv()` 在启动时检查 `dist/cli.js` 是否存在，不存在直接 throw。
 
-### 共享基建（`tests/helpers/e2e.ts`）
+### 子进程 e2e 共享基建（`cli.test.ts` / `e2e-handoff.test.ts`）
 
-写 E2E 测试**必须复用**这些 helper，不要内联 `spawnSync`：
+写子进程 e2e 测试**必须复用**这些内联 helper（当前在 `cli.test.ts` 定义，`e2e-handoff.test.ts` 复制精简版），不要每次重写 `spawnSync`：
 
 | helper | 作用 | 何时用 |
 |---|---|---|
-| `createE2eEnv()` | 创建独立隔离环境（tmp workspace + CW_HOME + git 初始 commit），返回 `E2eEnv` | 每个 `describe` 的 `beforeAll` 调一次 |
-| `disposeE2eEnv(e)` | 清理 tmp 目录 | `afterAll` 调一次 |
-| `runCli(args, e, options?)` | 真实子进程跑 `dist/cli.js`，cwd 自动设为 `e.workspaceDir` | **所有** cw 命令调用都走这个 |
-| `parseStdout(result)` | 解析 stdout 为 JSON，校验 exitCode=0 | 期望命令成功的断言 |
-| `setupToDeveloped(e, slug)` | 一行走到 executing（create+clarify+plan+design-review+execute） | 测 test 前 |
-| `setupToReviewed(e, slug)` | 走到 reviewed（+review 无 issue） | 测 test / test_fix 前 |
-| `setupToTested(e, slug)` | 走到 tested（+test 全 pass） | 测 retrospect / closeout 前 |
-| `setupToClosed(e, slug)` | 走到 closed（完整链路） | 测 assess 前 |
+| `createCwCliEnv()` | 创建独立隔离环境（tmp workspace + 独立 CW_HOME tmp + git 初始 commit），检查 `dist/cli.js` 存在，返回 `CwCliEnv` | `beforeAll` 调一次 |
+| `disposeCwCliEnv(e)` | 清理两个 tmp 目录 | `afterAll` 调一次 |
+| `runCwCli(args, e, options?)` | 真实子进程跑 `dist/cli.js`，cwd 自动绑 `e.workspaceDir` | **所有** cw 命令调用都走这个 |
+| `parseStdout(result)` | 解析 stdout 为 JSON，校验 exitCode=0 + stdout 非空 | 期望命令成功的断言 |
 
-**`runCli` 的 cwd 约定**：第二参数是 `E2eEnv`（不是裸 `env`），cwd 自动绑 `workspaceDir`。CLI 默认 `workspacePath=process.cwd()`，子进程 cwd 必须等于 workspaceDir，否则 `encodeCwd(workspaceDir)` 与 db 落盘路径错位，跨子命令读写失败。需要覆盖 cwd 时（如 init 诊断不同目录）用 `options.cwd`。
+**`runCwCli` 的 cwd 约定**：第二参数是 `CwCliEnv`（含 `workspaceDir`），cwd 自动绑 `workspaceDir`。CLI 默认 `workspacePath=process.cwd()`，子进程 cwd 必须等于 workspaceDir，否则 `encodeCwd(workspaceDir)` 与 db 落盘路径错位，跨子命令读写失败。需要覆盖 cwd 时用 `options.cwd`。
 
-### 编写模板
+### dispatch-e2e 共享基建（`tests/helpers/*.ts`）
 
-新 E2E 文件的标准骨架：
+dispatch-e2e 测试经 `dispatch({ action, unitId, input }, deps)` 在进程内跑完整链路，复用各层 helper 的阶段推进函数：
+
+| helper | 作用 | 出处 |
+|---|---|---|
+| `createCwEnv()` / `env.cleanup()` | tmp + CW_HOME + 真实 CwStore + stub CwDeps | env.ts |
+| `setupToFeaturePlanning` / `setupToFeatureDesignReviewed` / `setupToFeatureExecuting` / `setupFeatureWithClosedSlices` | feature 经 dispatch 推进到各状态（含 child slice 全链 closed） | feature-env.ts |
+| `setupToSlicePlanning` / `setupToSliceDesignReviewed` / `setupSliceWithClosedWaves` | slice 推进到各状态（含 child wave 全链 closed） | slice-env.ts |
+| `setupToEpicClarified` / `setupToEpicPlanning` / `setupToEpicDesignReviewed` / `setupToEpicExecuting` / `setupEpicWithClosedFeatures` | epic 经 dispatch 推进到各状态（含 child feature/slice/wave 全链 closed） | epic-env.ts |
+| `advanceWaveToClosed` / `advanceChildSlicesToClosed` / `advanceChildFeaturesToClosed` | 单个 child unit 走完整生命周期到 closed | slice-env.ts / feature-env.ts / epic-env.ts |
+
+### 编写模板（子进程 e2e）
 
 ```typescript
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  type E2eEnv,
-  createE2eEnv,
-  disposeE2eEnv,
-  parseStdout,
-  runCli,
-  setupToReviewed,       // 按目标阶段选 import
-} from "./helpers/e2e.js";
 
-let e: E2eEnv;
+import { setupGitRepo } from "./helpers/git.js";
 
-beforeAll(() => { e = createE2eEnv(); });
-afterAll(() => { disposeE2eEnv(e); });
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CLI_PATH = join(__dirname, "..", "dist", "cli.js");
 
-describe("E<编号><action>: <场景描述>", () => {
-  it("<具体断言>", () => {
-    // 1. 用阶段 helper 推进到目标阶段
-    const { topicId } = setupToReviewed(e, "<unique-slug>");
-    // 2. 跑被测 action
-    const result = parseStdout(runCli(["<action>", "--topicId", topicId], e, {
-      input: JSON.stringify(/* stdin payload */),
-    }));
-    // 3. 断言 status / nextAction / gatePassed
-    expect(result.status).toBe("...");
-    expect((result.nextAction as Record<string, unknown>).action).toBe("...");
+interface CwCliEnv { workspaceDir: string; cwHome: string; env: Record<string, string>; commitHash: string; }
+interface CliResult { exitCode: number; stdout: string; stderr: string; }
+
+function runCwCli(args: string[], e: CwCliEnv, options: { input?: string; cwd?: string } = {}): CliResult {
+  const result = spawnSync("node", [CLI_PATH, ...args], {
+    env: { ...process.env, ...e.env, PATH: process.env.PATH ?? "" } as NodeJS.ProcessEnv,
+    encoding: "utf8",
+    cwd: options.cwd ?? e.workspaceDir,
+    input: options.input,
+    timeout: 30000,
+  });
+  return { exitCode: result.status ?? -1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function createCwCliEnv(): CwCliEnv {
+  if (!existsSync(CLI_PATH)) throw new Error(`dist/cli.js 不存在，请先 npm run build`);
+  const workspaceDir = realpathSync(mkdtempSync(join(tmpdir(), "cw-cli-ws-")));
+  const cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-cli-home-")));
+  const commitHash = setupGitRepo(workspaceDir);
+  return { workspaceDir, cwHome, env: { CW_HOME: cwHome }, commitHash };
+}
+
+let e: CwCliEnv;
+beforeAll(() => { e = createCwCliEnv(); });
+afterAll(() => { disposeCwCliEnv(e); });
+
+describe("create wave happy path", () => {
+  it("返回 status=created + nextAction.guidance 非空", () => {
+    const r = runCwCli(["create", "wave", "--slug", "w1", "--objective", "test"], e);
+    expect(r.exitCode).toBe(0);
+    const out = JSON.parse(r.stdout) as Record<string, unknown>;
+    expect(out.status).toBe("created");
+    expect(out.unitId).toBe("wave:w1");
   });
 });
 ```
 
 ### 各 action 的输入传递方式
 
-不同 action 的参数从不同渠道传入（CLI 层 `buildParams` 决定）：
+推进 action 一律 `--unitId <id>` 路由（create 例外，靠 `--layer` + `--slug`）。input payload 从 `--input @file.json`（`@` 是「从文件读」的约定标记，可省略）或 stdin（非 TTY 时）读 JSON（`src/cli.ts` 的 `readInput` / `buildParams`）：
 
-| action | stdin（`options.input`） | flag（`args` 数组） |
-|---|---|---|
-| `clarify` | clarifyJson（对象或数组） | `--topicId` |
-| `plan` | planJson（dev-plan.json） | `--topicId` |
-| `replan` | planJson（默认）/ testJson（`--test` 时） | `--topicId` / `--test` / `--testJsonFile` |
-| `dev` | — | `--topicId` / `--tasks '[...]'`（JSON 字符串） |
-| `review` | issues 数组（可选，无 stdin=空=无问题） | `--topicId` / `--reviewPath`（可选，不传=fileCheck pass） |
-| `review_fix` | fixes 数组 `[{issueId,commitHash,resolution}]` | `--topicId` |
-| `test` | — | `--topicId` / `--cases '[...]'`（JSON 字符串，含 `{caseId,actual}`） |
-| `test_fix` | fixes 数组 `[{caseId,commitHash,resolution}]` | `--topicId` |
-| `retrospect` | retrospectData（可选 JSON） | `--topicId` / `--retrospect-path` |
-| `closeout` | — | `--topicId` |
-| `assess` | — | `--type` / `--notes` / `--score` / `--defect`（全 flag） |
-| `init` | — | 无参数（诊断 `process.cwd()`，用 `options.cwd` 覆盖测试目录） |
-
-**ID 格式约定**（写 fix/case 引用时要对应）：
-- review 的 issueId：cw 自增分配 `R1` / `R2`...（按已存在数量 +1）。首轮提交 N 条 issue → `R1`..`R{N}`
-- test 的 caseId：来自 plan 阶段 testCases 字段的 `testCase.id`（测试代码自定，如 `E1` / `E2`）
-- assess 的 assessmentId：cw 自增 `AS1` / `AS2`...
-
-### expected 值约定
-
-expected 是判别联合（`type` 字段必填），3 种判定模式：
-
-| type | 结构 | 判定 | 适用 |
+| action | flag（必填/常用） | input payload（`--input` / stdin） | 出处 |
 |---|---|---|---|
-| `exact` | `{ "type": "exact", "text": "..." }`（可选 `url`） | `expected.text` 与 `actual.text` 精确 === | 单元测试断言值 |
-| `exit_zero` | `{ "type": "exit_zero" }` | CW 跑 testRunner，exit 0→pass | 布尔/状态断言、命令整体成功 |
-| `script` | `{ "type": "script", "path": ".cw/judge-E1.sh" }` | CW 跑脚本，exit 0→pass | 复杂判定（正则/JSON/多字段） |
+| `create` | `--layer <wave\|slice\|feature\|epic>` + `--slug` + `--objective`（可选 `--parent` / `--basedOnParent`） | 无（参数走 flag） | cli.ts buildParams create 分支 |
+| `clarify` | `--unitId` | `{ clarifications: [...] }`（feature 是 `{ clarifications, spec }` 容器形态） | ClarifyInput (handlers/types.ts:200) |
+| `plan` | `--unitId`（可选 `--abandonParentItems`） | wave: `{ testCases, tasks, files, contracts }`；slice: `{ techChoices, interfaces, dataModels, errorSpecs, split }`；feature/epic: `{ split }` | PlanInput (handlers/types.ts:205) / PlanSliceInput (:293) / PlanFeatureInput (:339) |
+| `design-review` | `--unitId` | `{ designReviewJudgment }`（layerSpecific 按层 6/6/6/5 字段） | DesignReviewInput (handlers/types.ts:213) |
+| `execute` | `--unitId`；wave 需 `--commitHash` | wave: `{ commitHash }`（changedFiles 由 cw 从 commit 提取，agent 无需传）；slice/feature/epic: 无 input（按 plan.split 自动下沉子 unit） | ExecuteInput (handlers/types.ts:218) |
+| `test` | `--unitId` | `{ testJudgment }`（wave 专属） | TestInput (handlers/types.ts:228) |
+| `exec-review` | `--unitId` | `{ execReviewJudgment }`（wave 专属） | ExecReviewInput (handlers/types.ts:233) |
+| `retrospect` | `--unitId` | `{ retrospectData }`（PlanningUnit 含 deliveryVerdict + childUnitIdsEvidence + splitFulfillment） | RetrospectInput (handlers/types.ts:238) |
+| `closeout` | `--unitId` | `{ summary?, artifacts? }` | CloseoutInput (handlers/types.ts:243) |
+| `replan` | `--unitId` + `--abandonedIds` + `--note`（或走 `--input`/stdin；可选 `--abandonParentItems`） | `{ abandonedIds, note }`（feature 可加 `addedSpecItems`） | ReplanInput (handlers/types.ts:251) |
+| `abort` | `--unitId`（可选 `--reason`） | `{ reason? }`（可空） | AbortInput (handlers/types.ts:271) |
+| `tree` / `status` / `list` / `handoff` | `--unitId`（list 可用 `--all`/`--layer`/`--grep`/`--limit`/`--offset`/`--long`；handoff 可用 `--scope`） | 无（只读，不经 dispatch、不写 store） | cli.ts READONLY_QUERIES |
 
-阶段 helper 用 `makeValidTestJson()` 造 test.json，其 `expected` 固定值（exact 模式）：
-- case `E1` → `expected = { "type": "exact", "text": "expected-output" }`
-- case `E2` → `expected = { "type": "exact", "text": "real-output" }`
+**ID 格式约定**：
+- unitId：`<scope>:<slug>`（如 `wave:auth-w1`），子 unit slug = `${parent.slug}::${split.slug}`（`::` 分隔，如 `slice:auth::w1`）。出处 `src/core/workunit.ts`（id 格式）
+- abandonedIds：WavePlan/SlicePlan/FeatureSpec 条目的 `WorkUnitItem.id`（如 `TC1`/`IF1`/`FR1`），replan 废弃后 status 改 `abandoned`（append-only 不删）
 
-测 test pass 时 `actual.text` 必须精确匹配（`judgeByExpected` 精确 ===，无 trim/容差）；测 test fail 时传任意不匹配值（如 `"wrong-output"`）。exit_zero/script 模式由 `handleTest`（W3）跑命令/脚本回填 `actual.exitCode`，测试时构造对应 `actual` 即可（见 `tests/expected-multi-mode.test.ts`）。
+## 分支路径覆盖清单
 
-### 分支路径覆盖清单
-
-写新 E2E 时，对照这个清单确认关键分支都测到：
+写新测试时，对照这个清单确认关键分支都测到：
 
 | 分支类型 | 示例 | 涉及文件 |
 |---|---|---|
-| happy path（一次过） | E1 全链、阶段 helper | e2e.test.ts |
-| loop（review_fix / test_fix 修复后重跑） | E6c / E7c | e2e-review-fix / e2e-test-fix |
-| turn 上限熔断（强制跳阶段） | E6d（review 3 轮→test）/ E7d（test 5 轮→retrospect） | e2e-review-fix / e2e-test-fix |
-| progressive（多次调用追加） | E5c（clarify）/ E8b（assess AS1/AS2/AS3） | e2e-clarify / e2e-assess |
-| gate fail → retry | E11a（plan format 错）/ E11c（修后重试成功） | e2e-gate-fail |
-| circuit breaker（连续 5 次 fail 换文案） | E11b | e2e-gate-fail |
-| 非法状态（guard 拒绝） | E5e / E8d → stderr 含 `illegal_transition` | 各 e2e-* 文件 |
-| 非法参数（handler throw） | E6e（issueId 不存在）/ E7e（caseId 不存在）/ E8e（缺 defect） | 各 e2e-* 文件 |
-| 只读子命令 | E9（stats / status / list） | e2e-readonly |
-| 基建诊断 | E10（init 空目录 / ready / 骨架态） | e2e-init |
+| happy path（一次过） | wave 9 步全链、各层 dispatch-e2e 全链 | dispatch-e2e / *-dispatch-e2e |
+| progressive（多次调用追加） | clarify 多次 append、plan 多次写条目 | dispatch-e2e / *-dispatch-e2e |
+| gate fail → 不改 status（可 retry） | design-review gate fail / test gate fail | gates / *-gates / handler-guidance |
+| circuit breaker（连续 5 次 fail 换文案） | failureCount 派生 + 熔断文案 | guidance（failure-hint） |
+| 非法状态（guard 拒绝） | created 直接 execute → CwEngineError(illegal_transition) | state-machine / *-state-machine / dispatch-e2e |
+| append-only 违反 | replan 改 abandoned 条目核心字段 → freezeViolations | freeze / replan / feature-replan-spec |
+| 级联 abort（replan 影响面） | parent 废弃条目 → child.basedOnParent 命中 → child abort | replan / slice-replan-cascade |
+| 跨层 rollup | child wave closeout/abort → parent childDelivery 刷新 | evidence-rollup / rollup-planning |
+| 只读查询 | handoff（self/upstream/full）/ list 分页模糊 / status | e2e-handoff / handoff-scope / list-enhance / readonly-handoff |
 
 ## 不可回退基线（Regression Baseline）
 
 > coding-closeout 从 ⑥验收清单提炼：破坏即事故的用例。每条标溯源。
 > 与 NFR.md「验证」字段双向引用。
 
-### RB-1 judgeByExpected 机器重算  [from: cw-cli-extract]
+### RB-1 test gate 机器校验  [机器重算防线]
 
-- **用例来源**：`tests/pure-functions.test.ts` judgeByExpected 测试组 + `tests/expected-multi-mode.test.ts`（exact/exit_zero/script 三模式全覆盖）
-- **断言**：CW engine 按 `expected.type` 机器重算，不信任 agent 声明。三模式都是**确定性机器重算**：
-  - **exact**：`expected.text` 与 `actual.text` 必须**精确 ===**，任何 fuzzy / trim / substring 容差都会破坏机器重算（实现见 `src/types.ts:114-177`）
-  - **exit_zero**：CW 跑 testRunner 命令一次，按 exit code 判定（0→passed，非 0→failed）。exit code 是机器产出，agent 无法谎报
-  - **script**：CW 跑 `expected.path` 脚本，按 exit code 判定。脚本自包含，agent 不参与判定
-- **破坏即**：agent 谎报测试结果通过——CW 核心防线（机器重算 test gate）失效。三模式中任一回退到「信任 agent 声明」即事故
+- **用例来源**：`tests/gates.test.ts`（test gate 组：`commitExists` / `testsAllPass` / `testCasesExecuted` / `testReferencesDesignReview`）+ `tests/dispatch-e2e.test.ts`（test action 端到端：gate fail 不改 status）
+- **断言**：wave 的 test action 跑 4 个 gate（`src/rules/gates/test.ts`），全部机器校验，不信任 agent 声明：
+  - `commitExists`（test.ts:44）：`--commitHash` 必须真实存在（经 `CwDeps.gitValidator.exists` 校验，commit hash 是 git 产出，agent 无法谎报）
+  - `testsAllPass`（test.ts:79）：CW 经 `CwDeps.testRunner.run` 跑测试套件一次，按返回的 `TestRunResult.passed` 判定
+  - `testCasesExecuted`（test.ts:212）：design-review 阶段声明的 testCases 必须在 testJudgment 里被覆盖
+  - `testReferencesDesignReview`（test.ts:117）：testJudgment 的对照项必须引用 design-review judgment 的 tradeoff/risk id
+- **破坏即**：agent 谎报测试结果通过——CW 核心防线（test gate 机器校验）失效。任一 gate 回退到「信任 agent 声明」即事故
 - **关联约束**：NFR（test gate 机器重算）
 
-### RB-2 checkLinear 防跳步  [from: cw-cli-extract]
+### RB-2 guard 防跳步  [状态机防线]
 
-- **用例来源**：`tests/state-machine.test.ts` guard 测试组
-- **断言**：非 `expectedStatuses` 中的 status 调 action → `GuardError(code: "illegal_transition")`（实现见 `src/state-machine.ts:181-209`，guard 已从三重砍为单重 checkLinear）
-- **破坏即**：agent 跳过 plan / dev / test 直接 closeout，状态机约束形同虚设
+- **用例来源**：`tests/state-machine.test.ts`（wave guard 测试组）+ `tests/slice-state-machine.test.ts` / `tests/feature-state-machine.test.ts` / `tests/epic-state-machine.test.ts`（PlanningUnit guard 测试组）+ `tests/dispatch-e2e.test.ts`（E2：create 后直接 dispatch execute → CwEngineError）
+- **断言**：非 `transition.from` 中的 status 调 action → `GuardVerdict { ok: false, code: "illegal_transition" }`（实现见 `src/rules/state-machine.ts`：`guardWave` :151 / `guardPlanning` :348，查 `WAVE_TRANSITIONS`(:64) / `PLANNING_TRANSITIONS`(:292) 表）。guard fail → dispatch 抛 `CwEngineError`（exit 1，不可恢复）。`GuardErrorCode` 仅 `illegal_transition`（单重 guard，无纵深防御）
+- **破坏即**：agent 跳过 plan / execute / test 直接 closeout，状态机约束形同虚设
 - **关联约束**：NFR S-2
 
-### RB-3 replan append-only  [from: cw-cli-extract]
+### RB-3 replan append-only + 影响面  [历史不可篡改防线]
 
-- **用例来源**：`tests/dispatch.test.ts` replan 测试组
-- **断言**：已 committed wave 的 `changes` / `dependsOn` 不可删改，已 passed testCase 的 `expected` 不可改（`validateAppendOnly` 实现见 `src/actions.ts:1342`，4 种违规检测全保留）
-- **破坏即**：agent 通过 replan 撤销已交付的 commit，让 plan 与 git 历史脱节
+- **用例来源**：`tests/freeze.test.ts`（`checkFreeze` / `checkFreezeFeatureSpec` 全分支）+ `tests/replan.test.ts`（`computeImpact`）+ `tests/feature-replan-spec.test.ts` / `tests/slice-replan-cascade.test.ts`（级联 abort 集成）
+- **断言**：
+  - 已 abandoned 的 WavePlan/SlicePlan/FeatureSpec 条目不可物理删除、不可改核心字段（`expected`/`steps`/`path`/`definition`/`signature` 等）、不可复活 status（实现见 `src/rules/freeze.ts`：`checkFreeze` :141 / `checkFreezePlanning` / `checkFreezeFeatureSpec`，违规返回 `FreezeViolation[]`）
+  - replan 旁路不改 status，但 append 一条 `statusHistory`（from=to=current, action="replan"），历史流 append-only（`src/handlers/replan.ts`）
+  - parent replan 废弃条目 → child.basedOnParent 命中 → child 级联 abort（`computeImpact` / `computeImpactCascade`，实现见 `src/rules/replan.ts`）
+- **破坏即**：agent 通过 replan 撤销已交付的 commit 或篡改已废弃条目的 expected，让 plan 与 git 历史 / 测试断言脱节
 - **关联约束**：NFR C-2
 
-### RB-4 e2e 完整流程跑通  [from: cw-cli-extract]
+### RB-4 store 事务原子性 + 跨层链路跑通  [持久化与端到端防线]
 
-- **用例来源**：`tests/e2e.test.ts` E1（主链路）+ `tests/e2e-*.test.ts` 系列（全部 13 action 的分支路径，共 38 个 E2E 测试）
-- **断言**：`create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout` 全链真实子进程跑通，最终 `status=closed`，evidence 写入；各分支路径（clarify / review_fix / test_fix / assess loop、turn 上限熔断、gate fail/circuit breaker、非法状态/参数、只读子命令、init 诊断）端到端验证
-- **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂，或某个 action 的分支路径在子进程层断裂，agent 无法完成或无法正确推进编码任务
+- **用例来源**：`tests/store.test.ts`（事务回滚 + 原子写 + 损坏文件抛错）+ `tests/dispatch-e2e.test.ts` / `tests/feature-dispatch-e2e.test.ts` / `tests/slice-dispatch-e2e.test.ts` / `tests/epic-dispatch-e2e.test.ts`（四层各自经 dispatch 跑通 create→…→closeout 全链）+ `tests/cli.test.ts` / `tests/e2e-handoff.test.ts`（子进程 CLI 端到端）
+- **断言**：
+  - CwStore 内存事务：`fn` 在深拷贝副本上操作，正常→原子落盘，异常→丢弃副本 ROLLBACK 不污染磁盘（实现见 `src/store/cw-store.ts` 的 `transaction` 方法）。store.json 损坏 → load 抛错（不静默吞）
+  - 四层各自经 dispatch 跑通 `create → clarify → plan → design-review → execute → [test → exec-review →] retrospect → closeout` 全链（PlanningUnit 7 步 / wave 9 步），最终 `status=closed`，evidence.frozenAt 写入；epic→feature→slice→wave 跨层下沉（execute 按 split 创建子 unit）+ closeout 跨层回溯（crossLayer ascend）端到端验证
+  - 子进程层：`dist/cli.js` create/clarify（`--input @file.json` 管道）/handoff 端到端可用，缺参数 → exit 1，unit not found → exit 1 + CwEngineError 语义
+- **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂（事务不回滚导致脏数据，或某层跨链下沉/回溯断裂），agent 无法完成或无法正确推进编码任务
 - **关联约束**：NFR V-1

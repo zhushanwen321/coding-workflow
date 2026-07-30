@@ -7,7 +7,7 @@
 // core 领域模型
 export * from "./core/index.js";
 
-// handlers 共享类型（V1Deps / ActionResult / 各 Input）
+// handlers 共享类型（CwDeps / ActionResult / 各 Input）
 // wave/slice 共用 Input + 各层专属 Input（PlanSliceInput/RetrospectSliceInput）
 export type {
   AbortInput,
@@ -15,6 +15,7 @@ export type {
   ClarifyInput,
   CloseoutInput,
   CreateInput,
+  CwDeps,
   DesignReviewInput,
   ExecReviewInput,
   ExecuteInput,
@@ -24,16 +25,15 @@ export type {
   RetrospectInput,
   RetrospectSliceInput,
   TestInput,
-  V1Deps,
 } from "./handlers/index.js";
 
 // dispatch 入口类型
-export type { V1Params } from "./dispatch.js";
-export { dispatch,getUnitScope,V1Error } from "./dispatch.js";
+export type { CwParams } from "./dispatch.js";
+export { CwEngineError,dispatch,getUnitScope } from "./dispatch.js";
 
-// store（外部构造 V1Deps 时需要 V1Store）
-export type { V1JsonFile,WorkUnitRecord } from "./store/schema.js";
-export { V1Store } from "./store/v1-store.js";
+// store（外部构造 CwDeps 时需要 CwStore）
+export { CwStore } from "./store/cw-store.js";
+export type { CwJsonFile,WorkUnitRecord } from "./store/schema.js";
 
 // readonly 查询渲染（tree/status/list 只读命令用）
 export { renderHandoff, renderList, renderStatus, renderTree } from "./readonly/index.js";

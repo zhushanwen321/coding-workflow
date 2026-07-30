@@ -145,11 +145,15 @@ vite.config.ts.timestamp-*
 # ZCode plan mode artifacts
 .zcode/plans/
 
+# CW CLI 中间产物（clarify/plan/design-review 等阶段 input JSON，机器消费不入库）
+.cw/
+
 # CW CLI topic artifacts (delivery documents, per-topic working files)
 # 用 .xyz-harness/* 而非 .xyz-harness/ —— 父目录被整体忽略时 git 不进入子目录，
 # 白名单无效。改用内容忽略，才能让特定子目录 re-include。
 .xyz-harness/*
 !.xyz-harness/cw-1-0-lifecycle-redesign/
+!.xyz-harness/deprecated-metrics/
 
 # batch-tracer skill 输出（代码分析报告，本地产物不入库）
 .tracers/

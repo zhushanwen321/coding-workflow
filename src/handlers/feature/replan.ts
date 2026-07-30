@@ -35,7 +35,7 @@ import type {
 } from "../../core/clarifications.js";
 import type { WorkUnitStatus } from "../../core/status.js";
 import type { Feature } from "../../core/workunit.js";
-import { V1Error } from "../../dispatch.js";
+import { CwEngineError } from "../../dispatch.js";
 import { checkFreezeFeatureSpec } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import {
@@ -45,7 +45,7 @@ import {
   readRecordStatusHistory,
 } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
-import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,ReplanInput } from "../types.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -65,7 +65,7 @@ import {
 export function handleReplanFeature(
   unit: Feature,
   input: ReplanInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── before 快照（深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
@@ -111,7 +111,7 @@ export function handleReplanFeature(
       if (existingIds.has(it.id)) dupes.push(it.id);
     }
     if (dupes.length > 0) {
-      throw new V1Error(
+      throw new CwEngineError(
         "illegal_argument",
         `replan addedSpecItems id 冲突: ${dupes.join(", ")}`,
       );
@@ -200,7 +200,7 @@ export function handleReplanFeature(
  * @param abandonedIds 触发本次级联的废弃条目 id（写入 abandonedRefs.workUnitItemId）
  */
 function cascadeAbortUnit(
-  deps: V1Deps,
+  deps: CwDeps,
   unitId: string,
   at: string,
   abandonedIds: string[],

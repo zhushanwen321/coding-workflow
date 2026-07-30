@@ -12,7 +12,7 @@ import type { ExecutionUnit } from "../core/workunit.js";
 import { createWave } from "../core/workunit.js";
 import { buildCommand } from "../utils/command.js";
 import { buildNextAction, saveUnit } from "./internal.js";
-import type { ActionResult, CreateInput,V1Deps } from "./types.js";
+import type { ActionResult, CreateInput,CwDeps } from "./types.js";
 
 /** testRunner 配置提示（create 时提前告知 monorepo 用户）。 */
 const TEST_RUNNER_HINT = `
@@ -63,7 +63,7 @@ wave 范围内的测试文件从两处可知：plan 阶段的 WaveTestCase 列�
  */
 export function handleCreate(
   args: CreateInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult & { unit: ExecutionUnit } {
   const unit = createWave({
     slug: args.slug,

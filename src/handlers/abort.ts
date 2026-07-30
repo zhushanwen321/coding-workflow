@@ -20,7 +20,7 @@ import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import { buildNextAction, saveUnit } from "./internal.js";
 import { rollupChildDelivery } from "./rollup.js";
-import type { AbortInput, ActionResult, V1Deps } from "./types.js";
+import type { AbortInput, ActionResult, CwDeps } from "./types.js";
 
 /**
  * 执行 abort action（级联）。
@@ -32,7 +32,7 @@ import type { AbortInput, ActionResult, V1Deps } from "./types.js";
 export function handleAbort(
   unit: ExecutionUnit,
   input: AbortInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   const at = deps.clock.now();
 
@@ -83,7 +83,7 @@ export function handleAbort(
 function cascadeAbortChildren(
   parentId: string,
   at: string,
-  deps: V1Deps,
+  deps: CwDeps,
 ): void {
   const children = deps.store.findChildren(parentId);
   for (const child of children) {

@@ -34,7 +34,7 @@ import type { Slice } from "../../core/workunit.js";
 import { buildReplanGuidance } from "../../guidance/build-guidance.js";
 import { checkFreezePlanning } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
-import { buildCommand } from "../../utils/command.js";
+import { buildCommand, inputFilePath } from "../../utils/command.js";
 import {
   loadChildrenAsWorkUnitBase,
   mergeAbandonParentItems,
@@ -42,7 +42,7 @@ import {
   readRecordStatusHistory,
 } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
-import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,ReplanInput } from "../types.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -62,7 +62,7 @@ import {
 export function handleReplanSlice(
   unit: Slice,
   input: ReplanInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── before 快照（深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
@@ -136,7 +136,7 @@ export function handleReplanSlice(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, "--input @plan.json"),
+    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
   });
 
   return {
@@ -164,7 +164,7 @@ export function handleReplanSlice(
  * @param abandonedIds 触发本次级联的废弃条目 id（写入 abandonedRefs.workUnitItemId）
  */
 function cascadeAbortUnit(
-  deps: V1Deps,
+  deps: CwDeps,
   unitId: string,
   at: string,
   abandonedIds: string[],

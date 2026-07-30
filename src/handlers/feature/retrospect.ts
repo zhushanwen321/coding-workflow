@@ -20,7 +20,7 @@
  * - gate 子函数完全复用（PlanningRetrospectData / Split[] / DesignReviewJudgment 类型与 slice 同型）
  */
 import type { Feature } from "../../core/workunit.js";
-import type { ActionResult, RetrospectFeatureInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,RetrospectFeatureInput } from "../types.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -40,7 +40,7 @@ import {
 export function handleRetrospectFeature(
   unit: Feature,
   input: RetrospectFeatureInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 查 child slice 状态（rules 层零 IO，由 handler 注入 gate）──
   const children = deps.store.findChildren(unit.id);

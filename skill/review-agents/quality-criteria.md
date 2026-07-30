@@ -18,10 +18,22 @@
 | 档位 | 含义 | 处理 |
 |------|------|------|
 | pass | 该维度无明显问题（或仅 nit 级别） | 无需改动 |
-| warn | 有 should_fix 级别问题（有改进空间但不阻塞） | 记入 review.md，不阻塞 cw(review) |
-| fail | 有 must_fix 级别问题（核心缺陷必须修） | 记入 review.md，禁止调 cw(review)，先修代码 |
+| warn | 有 should_fix 级别问题（有改进空间但不阻塞） | 记入编排器指定的维度报告路径（如 .review/run-<runId>/quality-criteria.md），warn 不阻塞流程 |
+| fail | 有 must_fix 级别问题（核心缺陷必须修） | 记入编排器指定的维度报告路径，fail 禁止流程通过 |
 
 档位由"最严重的问题"决定：只要出现一个 must_fix → fail；只有 should_fix 无 must_fix → warn；全无问题 → pass。
+
+### 与统一严重度档位的映射
+
+本维度判定用 pass/warn/fail 三档（面向审查者），但产出的报告条目必须标注统一严重度（面向 aggregator 去重统计）：
+
+| 本维度判定 | 统一严重度 | 说明 |
+|-----------|-----------|------|
+| fail | MUST_FIX | 核心缺陷，对应 aggregator 的 must_fix 计数 |
+| warn | SUGGESTION | 改进空间，对应 aggregator 的 suggestion 计数 |
+| pass | （不产出条目） | 无问题不报告，不产出 INFO；INFO 条目由其他维度按需产出 |
+
+审查者在报告每个问题时，必须同时标注本维度判定（fail/warn）和统一严重度（MUST_FIX/SUGGESTION）。pass 的维度不产出条目。
 
 ---
 
@@ -232,11 +244,9 @@ it("求和", () => {
 
 | 不审的内容 | 谁来审 |
 |-----------|--------|
-| 项目特定 lint 规则（如禁止某 API） | Subagent A（读项目 code-review skill） |
+| 项目特定 lint 规则（如禁止某 API） | Subagent A（读 project-conventions.md） |
 | 架构规范（如分层约定、模块边界） | Subagent A |
 | 命名规范（如 camelCase / 文件命名） | Subagent A |
 | plan 是否完成（changes 落地率） | Subagent C |
 
-如果一个问题既属于通用质量又属于项目约定——**归 Subagent B**（通用优先），避免重复报告。
-
-同一缺陷最多被一个 subagent 抓到。如果你（Subagent B）报告的问题与 Subagent A 重叠，说明分工边界不清晰，优先保留通用质量维度的判定。
+**重叠裁决**：同一缺陷最多被一个维度报告。全局优先级为 **C > A > B**，B（通用质量）是兜底层。当问题同时符合 B 和 A（项目约定）时归 A；当问题同时符合 B 和 C（plan 落地）时归 C。B 只报告既不属于项目特定约定也不属于 plan 落地的通用质量问题。详见 review-aggregator.md 的去重规则。

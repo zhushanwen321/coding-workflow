@@ -72,7 +72,7 @@ git merge --ff-only origin/main
 - 新增 action（状态机新增可执行动作，如 `retrospect`）
 - 新增 gate（新增机器检查门，如新增一个 `code-review-gate`）
 - 新增 handler（实现新的 action handler）
-- CLI 新增子命令（如 `cw v1 stats`、`cw v1 export`）
+- CLI 新增子命令（如 `cw tree`、`cw handoff`）
 - 向后兼容的能力增强（gate 检查更严格但不阻断已通过的流程、guidance 内容改进）
 
 **major**：

@@ -11,7 +11,7 @@
  * epic 是 4 层顶层无父层：createEpic 不写入 parentUnitId（即使 args 传也忽略）。
  */
 import { createEpic } from "../../core/workunit.js";
-import type { ActionResult, CreateInput, V1Deps } from "../types.js";
+import type { ActionResult, CreateInput, CwDeps } from "../types.js";
 import { buildEpicNextAction, saveEpic } from "./epic-internal.js";
 
 /**
@@ -24,7 +24,7 @@ import { buildEpicNextAction, saveEpic } from "./epic-internal.js";
  */
 export function handleCreateEpic(
   args: CreateInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult & { unit: import("../../core/workunit.js").Epic } {
   const unit = createEpic({
     slug: args.slug,

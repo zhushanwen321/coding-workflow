@@ -35,7 +35,7 @@ import {
   readRecordStatusHistory,
 } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
-import type { ActionResult, ReplanInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,ReplanInput } from "../types.js";
 import {
   buildEpicNextAction,
   epicTransition,
@@ -53,7 +53,7 @@ import {
 export function handleReplanEpic(
   unit: Epic,
   input: ReplanInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   const at = deps.clock.now();
 
@@ -110,7 +110,7 @@ export function handleReplanEpic(
  * @param abandonedIds 触发本次级联的废弃条目 id（写入 abandonedRefs.workUnitItemId）
  */
 function cascadeAbortUnit(
-  deps: V1Deps,
+  deps: CwDeps,
   unitId: string,
   at: string,
   abandonedIds: string[],

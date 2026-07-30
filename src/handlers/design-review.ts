@@ -29,7 +29,7 @@ import {
   saveUnit,
   transitionStatus,
 } from "./internal.js";
-import type { ActionResult, DesignReviewInput,V1Deps } from "./types.js";
+import type { ActionResult, CwDeps,DesignReviewInput } from "./types.js";
 
 /**
  * 执行 design-review action。
@@ -41,7 +41,7 @@ import type { ActionResult, DesignReviewInput,V1Deps } from "./types.js";
 export function handleDesignReview(
   unit: ExecutionUnit,
   input: DesignReviewInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 跑 8 个 gate ──
   // 先跑 testCases 结构 gate（designReviewJudgment 还没写，先验 plan 产物）

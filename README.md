@@ -27,13 +27,13 @@ created → clarifying → planning → design-reviewed → executing → tested
                                   └── replan ──┘
 ```
 
-agent 调 `cw create` 建一个 topic，之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
+agent 调 `cw create` 建一个 WorkUnit（4 层：epic/feature/slice/wave），之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
 
 gate 机制在每个阶段做机器检查（plan 结构、commit 真实性、TDD 红灯、测试结果重算）。gate fail 时 `nextAction.action` 指回当前阶段 retry，并附 `mustFix` 说明原因。
 
 ## Skill
 
-agent 的完整操作手册在 [skill/cw-cli/SKILL.md](./skill/cw-cli/SKILL.md)——含入口判断、命令语法、gate fail 恢复、assess 评估、cwd 隔离、失败模式诊断等。
+agent 的完整操作手册在 [skill/cw-cli/SKILL.md](./skill/cw-cli/SKILL.md)——含入口判断、命令语法、gate fail 恢复、cwd 隔离、失败模式诊断等。
 
 ## 本地开发
 
@@ -58,15 +58,13 @@ npm run build        # tsc 编译到 dist/
 
 | 文档 | 内容 |
 |------|------|
-| [SKILL.md](./skill/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、assess、失败模式） |
-| [CONTEXT.md](./CONTEXT.md) | 统一语言（13 action / 8 status / 核心架构概念） |
+| [SKILL.md](./skill/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、失败模式） |
+| [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
 | [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |
 | [TEST-STRATEGY.md](./TEST-STRATEGY.md) | 测试策略（金字塔边界 / mock 约定 / 不可回退基线） |
 | [DESIGN-LOG.md](./DESIGN-LOG.md) | 设计历史索引（主题台账 / ADR 索引） |
-| [docs/metrics-design.md](./docs/metrics-design.md) | 评估指标设计（三层架构 / RuntimeEnv 分组 / 复杂度归一） |
-| [docs/metrics-usage.md](./docs/metrics-usage.md) | 评估指标用法（命令 / 输出解读 / 跨 topic 对比 / assess 时机） |
 
 ## License
 

@@ -30,7 +30,7 @@ import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/ev
 import type { Feature } from "../../core/workunit.js";
 import { createSlice } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import type { ActionResult, V1Deps, V1NextAction } from "../types.js";
+import type { ActionResult, CwDeps, CwNextAction } from "../types.js";
 import { buildFeatureNextAction, featureTransition, saveFeature } from "./feature-internal.js";
 
 /**
@@ -41,7 +41,7 @@ import { buildFeatureNextAction, featureTransition, saveFeature } from "./featur
  */
 export function handleExecuteFeature(
   unit: Feature,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   const at = deps.clock.now();
 
@@ -83,7 +83,7 @@ export function handleExecuteFeature(
 
   // ── crossLayer：下沉到第一个 child slice ──
   const firstChildId = unit.executeResult.childUnitIds[0];
-  const crossLayer: V1NextAction["crossLayer"] | undefined = firstChildId !== undefined
+  const crossLayer: CwNextAction["crossLayer"] | undefined = firstChildId !== undefined
     ? {
         kind: "descend",
         targetLayer: "slice",
