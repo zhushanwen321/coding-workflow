@@ -108,7 +108,7 @@ interface RepoMeta {
 
 - 决策来源：slice `v1-read-and-resume` clarification C2（存 repoMeta）、C3（刷新策略）
 - 前置依赖：Wave B（list --all）需要 repoMeta 做跨 cwd group header 消歧
-- 测试：`tests/v1/repo-meta.test.ts`（8 个 case 覆盖 collectRepoMeta + 迁移 + 刷新策略）
+- 测试：`tests/repo-meta.test.ts`（8 个 case 覆盖 collectRepoMeta + 迁移 + 刷新策略）
 
 ---
 
