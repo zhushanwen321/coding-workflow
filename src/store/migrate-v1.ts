@@ -129,7 +129,7 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
   }
 }
 
-/** 解析失败的哨兵值（比任何合法时间戳都大，确保不被当作有效数据搬迁）。 */
+/** 解析失败的哨兵值：以 \x00 开头（ASCII 最小字符），仅用于 === 判等让调用方跳过该目录；不参与 >= 顺序比较（调用方拿到哨兵后 continue，不会进入排序路径）。 */
 const PARSE_FAILED = "\x00PARSE_FAILED";
 
 /**
