@@ -166,7 +166,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 ## 数据存储
 
-- 状态库：`~/.cw/<encodedCwd>/_v1.json`（per-cwd 隔离）
+- 状态库：`~/.cw/<encodedCwd>/store.json`（per-cwd 隔离）
 - unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`）
 - 跨 session 接续 / 交接：`cw handoff --unitId <id>`（首选，见下方只读查询）
 
@@ -233,7 +233,7 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 - `design-review`：`{designReviewJudgment:{...}}`
 - `execute`（wave）：`{commitHash,...}`；`execute`（slice）：无 input（按 plan.split 自动创建 child wave，忽略 input）
 - `retrospect`（wave）：`{retrospectData:{...}}`；`retrospect`（slice）：`{retrospectData:{...}}`（但 retrospectData 是 PlanningRetrospectData，含 deliveryVerdict/childUnitIdsEvidence/splitFulfillment，比 wave 宽）
-cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.cw/<encodedCwd>/_v1.json` 的 workUnits[0].plan 确认实际存储结构。
+cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.cw/<encodedCwd>/store.json` 的 workUnits[0].plan 确认实际存储结构。
 
 ### illegal_transition（跳阶段）
 调了状态机不允许的 action → V1Error（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。

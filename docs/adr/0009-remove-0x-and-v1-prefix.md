@@ -78,3 +78,9 @@ cw 1.0 起，0.x 编码命令（`cw create`、`cw plan` 等）已在 `cli.ts` �
   `src/v1/core/git.ts` → `src/core/git.ts`、`src/v1/store/v1-store.ts` → `src/store/v1-store.ts`
   平移。`_v1.json` 文件名、`V1Store` 类型名、`V1_HOME` 环境变量名是实际标识符，与命令前缀无关，
   本次重构**不改**。
+
+---
+
+> **更新注（2026-07，后续版本）**：本文档为历史决策记录，正文（含「不改 `_v1.json` 文件名」
+> 的当时结论）保持原样。该文件名已于后续版本改为 `store.json`（与 `CwStore` 类名自洽），
+> 与命令前缀无关，故单独在此说明，不回溯改写历史决策正文。

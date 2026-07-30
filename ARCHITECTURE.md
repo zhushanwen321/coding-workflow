@@ -97,7 +97,7 @@ test: 有 case failed → test_fix → 重跑（最多 5 轮）
 |------|------|------|
 | In-process | `minimist` | argv 解析（cli.ts） |
 | Local-sub | `git`（子进程） | commit 存在性 + diff-tree 文件校验（gate.ts GitValidator） |
-| Local-sub | 文件系统 | _v1.json 读写 + 交付物 gate（store/v1-store.ts） |
+| Local-sub | 文件系统 | store.json 读写 + 交付物 gate（store/v1-store.ts） |
 | True-external | 无 | CW 不依赖任何远程服务 |
 
 ## gate 机制

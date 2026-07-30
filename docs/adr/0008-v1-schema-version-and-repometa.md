@@ -109,3 +109,9 @@ interface RepoMeta {
 - 决策来源：slice `v1-read-and-resume` clarification C2（存 repoMeta）、C3（刷新策略）
 - 前置依赖：Wave B（list --all）需要 repoMeta 做跨 cwd group header 消歧
 - 测试：`tests/v1/repo-meta.test.ts`（8 个 case 覆盖 collectRepoMeta + 迁移 + 刷新策略）
+
+---
+
+> **更新注（2026-07，后续版本）**：本文档为历史决策记录，正文保持当时的文件名原样。
+> 文件名 `_v1.json` 已于后续版本改为 `store.json`（与 `CwStore` 类名自洽），
+> 即 `~/.cw/<encodedCwd>/store.json`；本 ADR 的 `schemaVersion` + `repoMeta` 设计不变。

@@ -125,8 +125,8 @@ export function getCwHome(): string {
 /**
  * 给定 cwd，返回对应的 _v1.json 路径。
  *
- * `<cwHome>/<encodedCwd>/_v1.json`，per-cwd 隔离。
+ * `<cwHome>/<encodedCwd>/store.json`，per-cwd 隔离。
  */
 export function getCwJsonPath(cwd: string): string {
-  return join(getCwHome(), encodeCwd(cwd), "_v1.json");
+  return join(getCwHome(), encodeCwd(cwd), "store.json");
 }

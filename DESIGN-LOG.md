@@ -37,11 +37,11 @@
 | [0005](./docs/adr/0005-replanguard-shape-routing.md) | replanGuard 按 shape 路由 | Accepted | cw-1-0-lifecycle-redesign |
 | [0006](./docs/adr/0006-v5-build-on-engine-abstraction.md) | v5 建在 engine/ 抽象层之上 | **Superseded by 0007** | cw-1-0-lifecycle-redesign |
 | [0007](./docs/adr/0007-v1-isolation-no-engine.md) | v5 新建 src/v1/ 隔离层（不参考 engine） | Accepted（被 0009 部分取代：src/v1 上移到 src/） | cw-1-0-lifecycle-redesign |
-| [0008](./docs/adr/0008-v1-schema-version-and-repometa.md) | _v1.json 加 schemaVersion + repoMeta | Accepted | cw-1-0-lifecycle-redesign |
+| [0008](./docs/adr/0008-v1-schema-version-and-repometa.md) | store.json 加 schemaVersion + repoMeta | Accepted | cw-1-0-lifecycle-redesign |
 | [0009](./docs/adr/0009-remove-0x-and-v1-prefix.md) | 彻底清理 0.x + 重组 src/v1 到根级 + 去掉 cw v1 前缀 | Accepted | cw-1-0-lifecycle-redesign |
 | [0010](./docs/adr/0010-cross-layer-abandon-parent-items.md) | 跨层跨时机的 abandon parent items 声明能力 | Accepted | cw-1-0-lifecycle-redesign |
 | D-001 | CLI 协议用子命令风格（cw create --slug X）+ 大 JSON 走 stdin pipe 或 --xxx-file | confirmed | [from: cw-cli-extract] |
-| D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/_v1.json，env CW_HOME 可覆盖 | confirmed | [from: cw-cli-extract] |
+| D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/store.json，env CW_HOME 可覆盖 | confirmed | [from: cw-cli-extract] |
 | D-003 | 产物为独立 npm 包 @zhushanwen/coding-workflow，bin 名 cw；engine+CLI 同包 | confirmed | [from: cw-cli-extract] |
 | D-004 | 行为等价验证：保留 engine 单测原样 + 新增 CLI e2e 覆盖完整 lite 流程 | confirmed | [from: cw-cli-extract] |
 | D-005 | nextAction.skill 字段原样透传，CLI 不额外处理 | confirmed | [from: cw-cli-extract] |

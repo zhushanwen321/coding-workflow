@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
-import { migrateLegacyV1Home } from "../../src/store/migrate-v1.js";
+import { migrateLegacyV1Filename, migrateLegacyV1Home } from "../../src/store/migrate-v1.js";
 
 /** 构造一个最小合法的 _v1.json 内容。recordedAt 可空（测时间比较）。 */
 function makeV1Json(recordedAt: string, unitCount = 1): string {
@@ -70,7 +70,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     migrateLegacyV1Home({ legacyHome, cwHome });
 
-    // 数据搬到 cw 侧
+    // 数据搬到 cw 侧（home 迁移搬整个目录，文件名仍是 _v1.json；文件名迁移才改成 store.json）
     expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(true);
     // v1 侧清空
     expect(existsSync(join(legacyHome, ENV))).toBe(false);
@@ -84,7 +84,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     migrateLegacyV1Home({ legacyHome, cwHome });
 
-    // 读 cw 侧数据，应是 v1 的（5 unit）
+    // 读 cw 侧数据，应是 v1 的（5 unit）。home 迁移后文件名仍是 _v1.json
     const cwData = JSON.parse(
       readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
     );
@@ -99,7 +99,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     migrateLegacyV1Home({ legacyHome, cwHome });
 
-    // cw 侧数据不变（2 unit）
+    // cw 侧数据不变（2 unit）。home 迁移后文件名仍是 _v1.json
     const cwData = JSON.parse(
       readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
     );
@@ -144,7 +144,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     migrateLegacyV1Home({ legacyHome, cwHome });
 
-    // 有效目录迁移了
+    // 有效目录迁移了（home 迁移后文件名仍是 _v1.json）
     expect(existsSync(join(cwHome, "valid-proj", "_v1.json"))).toBe(true);
     // 空目录被清理（无数据价值），~/.v1 全空后 rmdir
     expect(existsSync(join(legacyHome, "empty-proj"))).toBe(false);
@@ -165,7 +165,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     migrateLegacyV1Home({ legacyHome, cwHome });
 
-    // 孤儿搬到 cw
+    // 孤儿搬到 cw（home 迁移后文件名仍是 _v1.json）
     expect(existsSync(join(cwHome, "orphan-proj", "_v1.json"))).toBe(true);
     // 冲突取 v1（3 unit）
     const conflictData = JSON.parse(
@@ -176,5 +176,89 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
     expect(existsSync(join(legacyHome, "corrupt-proj", "_v1.json"))).toBe(true);
     // ~/.v1 因损坏目录残留没被 rmdir
     expect(existsSync(legacyHome)).toBe(true);
+  });
+});
+
+describe("migrate-v1: migrateLegacyV1Filename", () => {
+  // 文件名迁移：cwHome/<cwd>/ 内 _v1.json → store.json 同目录改名。
+  // 与 home 迁移不同：seedStore 在这里只用来造 legacy 文件名（_v1.json），
+  // 造 store.json（新文件名）时直接 writeFileSync。
+
+  it("仅 _v1.json 存在 → rename 成 store.json", () => {
+    const { cwHome } = setupEnv();
+    // 造一个旧文件名 _v1.json（模拟迁移前的状态）
+    seedStore(cwHome, ENV, "2026-07-29T10:00:00Z", 2);
+
+    migrateLegacyV1Filename({ cwHome });
+
+    expect(existsSync(join(cwHome, ENV, "store.json"))).toBe(true);
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+  });
+
+  it("仅 store.json 存在 → 秒过（幂等），store.json 内容不变", () => {
+    const { cwHome } = setupEnv();
+    // 直接造新文件名 store.json（无 _v1.json，模拟已迁移）
+    const dir = join(cwHome, ENV);
+    mkdirSync(dir, { recursive: true });
+    const expected = makeV1Json("2026-07-29T10:00:00Z", 1);
+    writeFileSync(join(dir, "store.json"), expected);
+
+    migrateLegacyV1Filename({ cwHome });
+
+    // store.json 内容不变，没有 _v1.json 产生
+    expect(readFileSync(join(cwHome, ENV, "store.json"), "utf-8")).toBe(expected);
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+  });
+
+  it("两边都有、_v1 更新 → _v1 覆盖 store，_v1 删除", () => {
+    const { cwHome } = setupEnv();
+    const dir = join(cwHome, ENV);
+    mkdirSync(dir, { recursive: true });
+    // _v1.json 更新（12:00，3 unit）
+    writeFileSync(join(dir, "_v1.json"), makeV1Json("2026-07-29T12:00:00Z", 3));
+    // store.json 更旧（08:00，1 unit）
+    writeFileSync(join(dir, "store.json"), makeV1Json("2026-07-29T08:00:00Z", 1));
+
+    migrateLegacyV1Filename({ cwHome });
+
+    // store.json 是 _v1 的内容（3 unit），_v1.json 删了
+    const data = JSON.parse(readFileSync(join(cwHome, ENV, "store.json"), "utf-8"));
+    expect(data.workUnits.length).toBe(3);
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+  });
+
+  it("两边都有、store 更新 → 删 _v1，store 不变", () => {
+    const { cwHome } = setupEnv();
+    const dir = join(cwHome, ENV);
+    mkdirSync(dir, { recursive: true });
+    // _v1.json 更旧（08:00，3 unit）
+    writeFileSync(join(dir, "_v1.json"), makeV1Json("2026-07-29T08:00:00Z", 3));
+    // store.json 更新（12:00，1 unit）
+    const storeContent = makeV1Json("2026-07-29T12:00:00Z", 1);
+    writeFileSync(join(dir, "store.json"), storeContent);
+
+    migrateLegacyV1Filename({ cwHome });
+
+    // store.json 不变（1 unit），_v1.json 删了
+    expect(readFileSync(join(cwHome, ENV, "store.json"), "utf-8")).toBe(storeContent);
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+  });
+
+  it("_v1.json 解析失败 → 保留原文件，store.json 不变", () => {
+    const { cwHome } = setupEnv();
+    const dir = join(cwHome, ENV);
+    mkdirSync(dir, { recursive: true });
+    // 损坏的 _v1.json
+    writeFileSync(join(dir, "_v1.json"), "{ invalid json !!!");
+    // 正常的 store.json
+    const storeContent = makeV1Json("2026-07-29T10:00:00Z", 1);
+    writeFileSync(join(dir, "store.json"), storeContent);
+
+    // 不应抛错
+    expect(() => migrateLegacyV1Filename({ cwHome })).not.toThrow();
+    // 损坏的 _v1.json 保留（没被删，防数据丢失）
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(true);
+    // store.json 不变
+    expect(readFileSync(join(cwHome, ENV, "store.json"), "utf-8")).toBe(storeContent);
   });
 });

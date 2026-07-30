@@ -15,16 +15,16 @@
 
 ### S-2 topic 数据 per-cwd 物理隔离
 
-- **约束**：不同工作目录（cwd）的 topic 数据必须物理隔离——`_v1.json` 按 cwd 编码后分目录存放，互不可见、互不可达。
+- **约束**：不同工作目录（cwd）的 topic 数据必须物理隔离——`store.json` 按 cwd 编码后分目录存放，互不可见、互不可达。
 - **为什么**：多项目并行开发是常态，若 topic 跨 cwd 泄漏会导致 agent 在 A 项目看到 B 项目的状态，产生幽灵指令/串改。per-cwd 隔离是防止项目间状态污染的第一道物理边界。
 - **验证**：`encodeCwd`（src/path-encoding.ts，由 src/cli.ts `resolveDbPath` 调用）
 - **例外**：符号链接可能解析到不同物理路径（即两个逻辑 cwd 指向同一物理目录，或反之），此时隔离边界以解析后的路径为准。文档已标注，用户对 cwd 解析行为负责。
 
 ## 业务数据安全
 
-### D-1 _v1.json 原子写
+### D-1 store.json 原子写
 
-- **约束**：`_v1.json` 的所有写操作必须原子化——write tmp → fsync → rename → fsync dir，任一阶段 crash 磁盘上文件保持完整（旧文件或新文件，无损坏中间态）。
+- **约束**：`store.json` 的所有写操作必须原子化——write tmp → fsync → rename → fsync dir，任一阶段 crash 磁盘上文件保持完整（旧文件或新文件，无损坏中间态）。
 - **为什么**：状态机推进过程中随时可能被 Ctrl-C / 进程崩溃 / 系统掉电打断。非原子写（直接覆盖主文件）在写一半时崩溃会留下截断的 JSON，下次启动 loadTopic 解析失败，整个 topic 状态丢失——这是不可逆的数据损坏。原子写保证"要么旧要么新"，crash 后总能恢复到一致状态。
 - **验证**：`flushToDisk`（src/store.ts）
 - **例外**：无
@@ -42,7 +42,7 @@
 
 ### C-1 跨进程文件锁
 
-- **约束**：对 `_v1.json` 的写操作必须先获取跨进程文件锁——lockfile + O_EXCL 原子创建，持锁期间独占写，释放后他人可获取。必须检测并打破 stale lock（持有锁的进程已退出但未释放锁文件）。
+- **约束**：对 `store.json` 的写操作必须先获取跨进程文件锁——lockfile + O_EXCL 原子创建，持锁期间独占写，释放后他人可获取。必须检测并打破 stale lock（持有锁的进程已退出但未释放锁文件）。
 - **为什么**：CW 设计为 session 级工具，但同一项目可能被多个终端/agent 并发访问（如人开一个终端、agent 开一个）。无锁并发写会导致 lost update（两进程同时读-改-写，后写覆盖先写）。lockfile + O_EXCL 是 POSIX 原子语义，保证锁获取本身无 race；stale lock 检测防止崩溃进程永久卡住后续写入。
 - **验证**：`acquireLock`（src/store.ts）
 - **例外**：无

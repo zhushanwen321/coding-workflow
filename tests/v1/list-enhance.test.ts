@@ -312,14 +312,14 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     rmSync(cwHome, { recursive: true, force: true });
   });
 
-  /** 在 cwHome 下造一个 cwd 的 _v1.json。 */
+  /** 在 cwHome 下造一个 cwd 的 store.json。 */
   function writeCwdStore(cwd: string, units: WorkUnitRecord[], repoMeta?: RepoMeta): void {
     const encoded = encodeCwd(cwd);
     const dir = join(cwHome, encoded);
     mkdirSync(dir, { recursive: true });
     const data: Record<string, unknown> = { schemaVersion: 1, workUnits: units };
     if (repoMeta) data.repoMeta = repoMeta;
-    writeFileSync(join(dir, "_v1.json"), JSON.stringify(data));
+    writeFileSync(join(dir, "store.json"), JSON.stringify(data));
   }
 
   it("TC-B4fs: 真实 fs 遍历多个 cwd，按 repoMeta.recordedAt DESC 排序", () => {
@@ -338,7 +338,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     // 造一个损坏的
     const badDir = join(cwHome, encodeCwd("/fake/bad"));
     mkdirSync(badDir, { recursive: true });
-    writeFileSync(join(badDir, "_v1.json"), "corrupted{{{invalid json");
+    writeFileSync(join(badDir, "store.json"), "corrupted{{{invalid json");
 
     const loaded = loadAllCwdsFromHome(cwHome);
     expect(loaded.length).toBe(1); // 损坏的跳过

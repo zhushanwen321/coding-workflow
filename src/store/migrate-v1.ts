@@ -81,6 +81,7 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
     }
 
     const cwDir = join(cwHome, encodedCwd);
+    // home 迁移在文件名迁移之前跑，此时 cwHome 里的文件还叫 _v1.json（文件名迁移才改成 store.json）
     const cwFile = join(cwDir, "_v1.json");
 
     try {
@@ -171,5 +172,80 @@ function readCwRecordedAt(cwFile: string): string {
       `[migrate-v1] 解析 ${cwFile} 失败，视为最新不覆盖: ${(err as Error).message}`,
     );
     return "9999"; // 保证 cw 侧解析失败时不被 v1 覆盖
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 文件名迁移：_v1.json → store.json（~/.cw 内同目录改名）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 迁移旧文件名 `_v1.json` 到 `store.json`（~/.cw/<cwd>/ 内同目录 rename）。
+ *
+ * 与 migrateLegacyV1Home 的区别：
+ *   - home 迁移是跨目录（~/.v1 → ~/.cw），CW_HOME 被覆盖时不迁
+ *   - 文件名迁移是同目录内改名，**无论 CW_HOME 是否覆盖都执行**（用户自定义路径里的旧文件名也得改）
+ *
+ * 必须在 migrateLegacyV1Home 之后调用（home 迁移先把 ~/.v1/<cwd>/_v1.json 搬到
+ * ~/.cw/<cwd>/_v1.json，文件名迁移再 rename 成 store.json）。
+ *
+ * 合并策略（同目录内 _v1.json 与 store.json 共存时）：
+ *   - 仅 _v1.json 有 → rename 成 store.json
+ *   - 仅 store.json 有 → 秒过（幂等）
+ *   - 两边都有 → 比 repoMeta.recordedAt 取新，弃旧
+ *   - _v1.json 解析失败 → 保留原文件不删（防数据丢失）
+ *
+ * best-effort：IO 异常 console.warn 不抛，不阻断 cw 启动。
+ */
+export function migrateLegacyV1Filename(opts?: MigrateOpts): void {
+  const cwHome = opts?.cwHome ?? getCwHome();
+
+  let entries: string[];
+  try {
+    entries = readdirSync(cwHome, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch (err) {
+    console.warn(`[migrate-filename] 无法读取 ${cwHome}，跳过: ${(err as Error).message}`);
+    return;
+  }
+
+  for (const encodedCwd of entries) {
+    const dir = join(cwHome, encodedCwd);
+    const legacyFile = join(dir, "_v1.json");
+    const newFile = join(dir, "store.json");
+
+    // 仅 store.json 存在 → 已迁移，秒过（幂等）
+    if (!existsSync(legacyFile)) {
+      continue;
+    }
+
+    try {
+      if (!existsSync(newFile)) {
+        // 仅 _v1.json 存在 → 直接 rename
+        renameSync(legacyFile, newFile);
+      } else {
+        // 两边都有 → 比 recordedAt 取新弃旧
+        const legacyData = readFileSync(legacyFile, "utf-8");
+        const legacyRecordedAt = parseRecordedAt(legacyData, legacyFile);
+        if (legacyRecordedAt === PARSE_FAILED) {
+          continue; // _v1.json 解析失败，保留原文件
+        }
+        const newRecordedAt = readCwRecordedAt(newFile);
+        if (legacyRecordedAt >= newRecordedAt) {
+          // _v1.json 更新 → 覆盖 store.json
+          rmSync(newFile, { force: true });
+          renameSync(legacyFile, newFile);
+        } else {
+          // store.json 更新 → 删 _v1.json
+          rmSync(legacyFile, { force: true });
+        }
+      }
+      // eslint-disable-next-line taste/no-silent-catch -- 迁移是 best-effort，IO 失败只记录不阻断 cw 启动
+    } catch (err) {
+      console.warn(
+        `[migrate-filename] 迁移 ${encodedCwd} 失败，跳过（原文件保留）: ${(err as Error).message}`,
+      );
+    }
   }
 }

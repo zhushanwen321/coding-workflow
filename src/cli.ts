@@ -61,7 +61,7 @@ import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { migrateLegacyV1Home } from "./store/migrate-v1.js";
+import { migrateLegacyV1Filename, migrateLegacyV1Home } from "./store/migrate-v1.js";
 import { getCwHome } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
@@ -942,6 +942,9 @@ async function main(argv: string[]): Promise<void> {
   // 迁移旧 ~/.v1 存储到 ~/.cw（幂等，~/.v1 不存在秒过）。放在所有 new CwStore 之前，
   // 确保后续读写的是迁移后的数据。CW_HOME 被覆盖时不迁移（尊重用户自定义路径）。
   migrateLegacyV1Home();
+  // 文件名迁移：_v1.json → store.json（必须在 home 迁移之后，rename 同目录内的旧文件名）。
+  // 无论 CW_HOME 是否覆盖都执行（同目录改名，用户自定义路径里的旧文件名也得改）。
+  migrateLegacyV1Filename();
 
   // workspacePath 解析（所有子命令共用）。
   const workspacePath =

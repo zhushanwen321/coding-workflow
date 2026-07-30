@@ -48,10 +48,10 @@ export function loadAllCwdsFromHome(cwHome: string): LoadedCwd[] {
 
   const results: LoadedCwd[] = [];
   for (const encodedCwd of entries) {
-    const v1JsonPath = join(cwHome, encodedCwd, "_v1.json");
+    const storePath = join(cwHome, encodedCwd, "store.json");
     let raw: string;
     try {
-      raw = readFileSync(v1JsonPath, "utf-8");
+      raw = readFileSync(storePath, "utf-8");
     } catch {
       continue; // 文件不存在，跳过
     }

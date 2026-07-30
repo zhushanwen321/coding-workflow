@@ -685,7 +685,7 @@ describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
   });
 });
 
-// ── 辅助：在 CW_HOME 树里找 _v1.json ────────────────────────
+// ── 辅助：在 CW_HOME 树里找 store.json ────────────────────────
 
 function findV1Json(dir: string): string | null {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -694,7 +694,7 @@ function findV1Json(dir: string): string | null {
     if (entry.isDirectory()) {
       const found = findV1Json(full);
       if (found) return found;
-    } else if (entry.name === "_v1.json") {
+    } else if (entry.name === "store.json") {
       return full;
     }
   }

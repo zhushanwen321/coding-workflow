@@ -111,7 +111,7 @@ guard（`guardWave`/`guardPlanning`，`src/rules/state-machine.ts`）只验状�
 | **guidance** | 拼入 nextAction 的纯文本提示词，agent 的唯一导航来源；正常三段式/异常四段式 | `src/guidance/build-guidance.ts` |
 | **crossLayer** | closeout 后跨层导航：descend（下沉首个子）/ sibling（横向兄弟）/ ascend（回父 retrospect） | `src/guidance/cross-layer.ts:60` |
 | **CwDeps** | engine 依赖注入接口：store/gitValidator/testRunner?/fileExists/workspacePath/clock | `src/handlers/types.ts:61` |
-| **CwStore** | _v1.json 持久化层：POSIX 原子写 + 跨进程文件锁 + 内存事务（深拷贝+ROLLBACK） | `src/store/cw-store.ts:70` |
+| **CwStore** | store.json 持久化层：POSIX 原子写 + 跨进程文件锁 + 内存事务（深拷贝+ROLLBACK） | `src/store/cw-store.ts:70` |
 | **熔断不阻断** | 连续 gate fail 5 次后 guidance 加「强烈建议 abort」文案，但不阻止 agent 继续重试 | `src/guidance/failure-hint.ts` |
 
 数据流：
@@ -154,7 +154,7 @@ agent bash 调 cw <action> [flags]
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| _v1.json | `~/.cw/<encodedCwd>/_v1.json` | 状态库（workUnits 扁平集合 + repoMeta），per-cwd 隔离 |
+| store.json | `~/.cw/<encodedCwd>/store.json` | 状态库（workUnits 扁平集合 + repoMeta），per-cwd 隔离 |
 | 中间产物 | `<workspacePath>/.cw/<slug>/<action>.json` | clarify/plan/design-review 等阶段 input JSON（已 gitignore） |
 | CW_HOME | 环境变量 | 覆盖默认 `~/.cw`（必须绝对路径） |
 
