@@ -27,7 +27,7 @@ created → clarifying → planning → design-reviewed → executing → tested
                                   └── replan ──┘
 ```
 
-agent 调 `cw create` 建一个 topic，之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
+agent 调 `cw create` 建一个 WorkUnit（4 层：epic/feature/slice/wave），之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
 
 gate 机制在每个阶段做机器检查（plan 结构、commit 真实性、TDD 红灯、测试结果重算）。gate fail 时 `nextAction.action` 指回当前阶段 retry，并附 `mustFix` 说明原因。
 
