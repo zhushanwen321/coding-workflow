@@ -301,6 +301,77 @@ describe("U21: load/lock 鲁棒性", () => {
     });
   });
 
+  describe("suggestion #2: save 在非 git 目录首次 save → repoMeta 降级不抛 + 事务正常提交", () => {
+    it("非 git 目录首次 save → repoMeta 被填为降级值（全空串 + worktreePath + recordedAt），不抛错", () => {
+      // env.cwd 是 createCwEnv() 建的普通临时目录，无 .git（非 git 目录边界）。
+      // 首次 save 时 data.repoMeta === undefined → 触发 collectRepoMeta(this.cwd)，
+      // 该函数 spawnSync 跑多个 git 子进程，在非 git 目录全部失败降级返回空串。
+      const unit = makeUnit("nongit") as unknown as WorkUnitRecord;
+      expect(() => env.store.save(unit)).not.toThrow();
+
+      // 读盘断言 repoMeta 被永久填为降级值（非 undefined）。
+      const path = getCwJsonPath(env.cwd);
+      const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+        repoMeta: {
+          remoteUrl: string;
+          branch: string;
+          worktreePath: string;
+          headCommit: string;
+          recordedAt: string;
+        };
+      };
+      expect(parsed.repoMeta).toBeDefined();
+      // git 命令全部失败 → 三个 git 字段降级为空串（collectRepoMeta 的 runGit 返回 ""）
+      expect(parsed.repoMeta.remoteUrl).toBe("");
+      expect(parsed.repoMeta.branch).toBe("");
+      expect(parsed.repoMeta.headCommit).toBe("");
+      // worktreePath 恒为 cwd（collectRepoMeta 直接透传传入的 cwd 参数）
+      expect(parsed.repoMeta.worktreePath).toBe(env.cwd);
+      // recordedAt 是写入时的 ISO 时间戳（非空），表示落盘事务成功完成
+      expect(parsed.repoMeta.recordedAt).toBeTruthy();
+      expect(parsed.repoMeta.recordedAt).not.toBe("");
+    });
+
+    it("非 git 目录首次 save 后事务正常提交（文件写出 + unit 可 load）", () => {
+      const unit = makeUnit("nongit-commit") as unknown as WorkUnitRecord;
+      env.store.save(unit);
+
+      // 事务正常落盘：store.json 存在 + unit 可读回
+      const path = getCwJsonPath(env.cwd);
+      expect(existsSync(path)).toBe(true);
+      const loaded = env.store.load(unit.id);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.id).toBe("wave:nongit-commit");
+
+      // loadAll 也应包含该 unit
+      expect(env.store.loadAll()).toHaveLength(1);
+    });
+
+    it("非 git 目录再次 save → repoMeta 已冻结，不重试 git（首次降级值保留）", () => {
+      const u1 = makeUnit("nongit-1") as unknown as WorkUnitRecord;
+      env.store.save(u1);
+
+      const path = getCwJsonPath(env.cwd);
+      const raw1 = JSON.parse(readFileSync(path, "utf-8")) as {
+        repoMeta: { remoteUrl: string; branch: string; headCommit: string };
+      };
+      // 首次已降级为空串
+      expect(raw1.repoMeta.remoteUrl).toBe("");
+      expect(raw1.repoMeta.branch).toBe("");
+      expect(raw1.repoMeta.headCommit).toBe("");
+
+      // 第二次 save（同 store、同 cwd）：repoMeta !== undefined，跳过 collectRepoMeta 调用
+      const u2 = makeUnit("nongit-2") as unknown as WorkUnitRecord;
+      env.store.save(u2);
+
+      // repoMeta 整体冻结（深比较），仍是首次的降级值
+      const raw2 = JSON.parse(readFileSync(path, "utf-8")) as {
+        repoMeta: { remoteUrl: string; branch: string; headCommit: string };
+      };
+      expect(raw2.repoMeta).toEqual(raw1.repoMeta);
+    });
+  });
+
   describe("M8: acquireLock 的 TOCTOU fingerprint 保护", () => {
     it("stale lockfile（超时）能正常抢占，save 成功", () => {
       // 1. 先存一个 unit 到磁盘（场景需要）。
