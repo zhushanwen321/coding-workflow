@@ -261,4 +261,87 @@ describe("migrate-v1: migrateLegacyV1Filename", () => {
     // store.json 不变
     expect(readFileSync(join(cwHome, ENV, "store.json"), "utf-8")).toBe(storeContent);
   });
+
+  it("CW_HOME 被 process.env 覆盖时仍执行（与 home 迁移秒返回形成对照）", () => {
+    // 两迁移函数唯一的语义差异点：home 迁移在 CW_HOME 被覆盖时秒返回（不擅自搬数据），
+    // 文件名迁移「无论 CW_HOME 是否覆盖都执行」（用户自定义路径里的旧文件名也得改）。
+    // 走生产解析路径——设 process.env.CW_HOME、不传 opts（getCwHome 读 env），固化该分支契约，
+    // 与 home 迁移在同样条件下的秒返回形成对照，回归保护「函数内部是否尊重 CW_HOME」。
+    const prevCwHome = process.env.CW_HOME;
+    const { cwHome } = setupEnv();
+    process.env.CW_HOME = cwHome; // 非默认绝对路径
+    try {
+      seedStore(cwHome, ENV, "2026-07-29T10:00:00Z", 2);
+
+      // 对照：home 迁移在 CW_HOME 覆盖时秒返回（CW_HOME 检查即 return，不碰 ~/.v1），
+      // cwHome 内的 _v1.json 原地不动，store.json 也不产生。
+      migrateLegacyV1Home();
+      expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(true);
+      expect(existsSync(join(cwHome, ENV, "store.json"))).toBe(false);
+
+      // 被测分支：filename 迁移无视 CW_HOME 覆盖，照常 _v1.json → store.json 改名。
+      migrateLegacyV1Filename();
+      expect(existsSync(join(cwHome, ENV, "store.json"))).toBe(true);
+      expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+    } finally {
+      if (prevCwHome === undefined) {
+        delete process.env.CW_HOME;
+      } else {
+        process.env.CW_HOME = prevCwHome;
+      }
+    }
+  });
+});
+
+describe("migrate-v1: end-to-end home → filename 串联顺序", () => {
+  // cli.ts 调用契约（src/cli.ts:944-947）：
+  //   1) migrateLegacyV1Home()  —— 跨目录搬 ~/.v1/<cwd>/_v1.json → ~/.cw/<cwd>/_v1.json
+  //   2) migrateLegacyV1Filename() —— 同目录改名 ~/.cw/<cwd>/_v1.json → store.json
+  // cli.ts 注释明确「文件名迁移必须在 home 迁移之后」。若未来调换顺序或改并行，
+  // 阶段 2 在 ~/.cw 找不到 _v1.json 会静默漏迁。这里固化顺序契约，两个 describe 独立测
+  // 不能覆盖该端到端串联。
+
+  it("先 home 再 filename：~/.v1/<cwd>/_v1.json 最终落到 ~/.cw/<cwd>/store.json，~/.v1 清空", () => {
+    const { legacyHome, cwHome } = setupEnv();
+    // seed ~/.v1/<ENV>/_v1.json（迁移前的唯一数据来源，cw 侧无任何文件）
+    const expected = makeV1Json("2026-07-29T10:00:00Z", 3);
+    {
+      const dir = join(legacyHome, ENV);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "_v1.json"), expected);
+    }
+
+    // 阶段 1：home 迁移——跨目录搬移，cw 侧此时文件名仍是 _v1.json
+    migrateLegacyV1Home({ legacyHome, cwHome });
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(true);
+    expect(existsSync(join(cwHome, ENV, "store.json"))).toBe(false);
+
+    // 阶段 2：filename 迁移——同目录改名 _v1.json → store.json
+    migrateLegacyV1Filename({ cwHome });
+
+    // 最终落到 store.json，内容正确
+    expect(existsSync(join(cwHome, ENV, "store.json"))).toBe(true);
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+    expect(readFileSync(join(cwHome, ENV, "store.json"), "utf-8")).toBe(expected);
+
+    // ~/.v1 已清空（_v1.json 不再存在，legacyHome 全空后被 rmdir）
+    expect(existsSync(join(legacyHome, ENV, "_v1.json"))).toBe(false);
+    expect(existsSync(legacyHome)).toBe(false);
+  });
+
+  it("顺序契约：单独调 filename（跳过 home）→ 在 ~/.cw 找不到 _v1.json，静默漏迁", () => {
+    // 反向验证：若违反「先 home 再 filename」顺序（如并行或调换），阶段 2 无源可搬。
+    // 证实串联顺序是必需的，而非可选——固化该回归保护。
+    const { legacyHome, cwHome } = setupEnv();
+    seedStore(legacyHome, ENV, "2026-07-29T10:00:00Z", 3); // 源在 ~/.v1
+    // cwHome 下无 _v1.json（home 迁移还没跑）
+
+    // 只跑 filename 迁移：cwHome 下遍历不到 ENV 子目录，无操作
+    migrateLegacyV1Filename({ cwHome });
+
+    // 数据仍在 ~/.v1 原地，~/.cw 下什么都没产生（漏迁，但因无源文件、无报错——静默）
+    expect(existsSync(join(cwHome, ENV, "store.json"))).toBe(false);
+    expect(existsSync(join(cwHome, ENV, "_v1.json"))).toBe(false);
+    expect(existsSync(join(legacyHome, ENV, "_v1.json"))).toBe(true);
+  });
 });
