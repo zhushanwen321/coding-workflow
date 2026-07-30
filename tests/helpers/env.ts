@@ -58,23 +58,23 @@ export interface CwEnv {
  * 串行创建 + cleanup 还原避免泄漏（vitest 默认测试文件内 it 串行）。
  */
 export function createCwEnv(): CwEnv {
-  const root = mkdtempSync(join(tmpdir(), "cw-v1-test-"));
+  const root = mkdtempSync(join(tmpdir(), "cw-test-"));
   const cwd = join(root, "cwd");
-  const cwHome = join(root, "v1home");
+  const cwHome = join(root, "cwHome");
   mkdirSync(cwd, { recursive: true }); // cwd 作为仓库工作目录（execute 提取 changedFiles 时绑 git cwd）
-  mkdirSync(cwHome, { recursive: true }); // CwStore 会在此下写 _v1.json
+  mkdirSync(cwHome, { recursive: true }); // CwStore 会在此下写 store.json
 
-  const prevV1Home = process.env.CW_HOME;
+  const prevCwHome = process.env.CW_HOME;
   process.env.CW_HOME = cwHome;
 
   const store = new CwStore(cwd);
   const deps = makeStubDeps(store, cwd);
 
   const cleanup = (): void => {
-    if (prevV1Home === undefined) {
+    if (prevCwHome === undefined) {
       delete process.env.CW_HOME;
     } else {
-      process.env.CW_HOME = prevV1Home;
+      process.env.CW_HOME = prevCwHome;
     }
     rmSync(root, { recursive: true, force: true });
   };

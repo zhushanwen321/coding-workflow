@@ -2,7 +2,7 @@
  * v1 持久化层 — 存储格式定义与路径编码。
  *
  * 职责：
- *   - 定义 _v1.json 的顶层 schema（扁平集合 + parentUnitId 外键）
+ *   - 定义 store.json 的顶层 schema（扁平集合 + parentUnitId 外键）
  *   - cwd → 目录名的编码（per-cwd 隔离）
  *   - v1 存储根目录解析（CW_HOME 环境变量覆盖）
  *
@@ -30,7 +30,7 @@ export interface CwJsonFile {
 /**
  * git repo 元信息（跨 cwd 接手时消歧同名 topic）。
  *
- * 一个 _v1.json 对应一个 cwd，RepoMeta 一对一存顶层（不存每个 unit 内，避免冗余）。
+ * 一个 store.json 对应一个 cwd，RepoMeta 一对一存顶层（不存每个 unit 内，避免冗余）。
  * 所有字段允许空字符串——git 命令失败时降级，不抛。
  */
 export interface RepoMeta {
@@ -123,7 +123,7 @@ export function getCwHome(): string {
 }
 
 /**
- * 给定 cwd，返回对应的 _v1.json 路径。
+ * 给定 cwd，返回对应的 store.json 路径。
  *
  * `<cwHome>/<encodedCwd>/store.json`，per-cwd 隔离。
  */

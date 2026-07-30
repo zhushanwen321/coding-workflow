@@ -74,17 +74,17 @@ function makeUnit(id: string): WorkUnitRecord {
 describe("Wave A: collectRepoMeta", () => {
   let cwd: string;
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-repometa-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-repometa-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     cwd = mkdtempSync(join(tmpdir(), "cw-repometa-"));
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });
@@ -164,22 +164,22 @@ describe("Wave A: collectRepoMeta", () => {
 describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
   let cwd: string;
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-repometa-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-repometa-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     cwd = makeGitRepo({ remoteUrl: "git@github.com:foo/bar.git" });
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  it("新建 store + 首次 save → _v1.json 含 schemaVersion=1 + repoMeta 全字段", () => {
+  it("新建 store + 首次 save → store.json 含 schemaVersion=1 + repoMeta 全字段", () => {
     const store = new CwStore(cwd);
     const unit = makeUnit("wave:test-a");
     store.save(unit);
@@ -195,11 +195,11 @@ describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
   });
 
   it("旧 store（无 schemaVersion/repoMeta）加载不 crash + schemaVersion 内存补 1 + 磁盘未写", () => {
-    // 手动构造旧格式 _v1.json
-    const v1Path = getCwJsonPath(cwd);
-    mkdirSync(join(v1Path, ".."), { recursive: true });
+    // 手动构造旧格式 store.json
+    const storePath = getCwJsonPath(cwd);
+    mkdirSync(join(storePath, ".."), { recursive: true });
     const oldUnit = makeUnit("wave:old-unit");
-    writeFileSync(v1Path, JSON.stringify({ workUnits: [oldUnit] }));
+    writeFileSync(storePath, JSON.stringify({ workUnits: [oldUnit] }));
 
     const store = new CwStore(cwd);
     const units = store.loadAll();
@@ -208,7 +208,7 @@ describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
     expect(units[0].id).toBe("wave:old-unit");
 
     // loadFileData 是只读路径——磁盘上不应有 schemaVersion 键（内存补不写盘，M4 修复）
-    const rawOnDisk = JSON.parse(readFileSync(v1Path, "utf-8"));
+    const rawOnDisk = JSON.parse(readFileSync(storePath, "utf-8"));
     expect(rawOnDisk.schemaVersion).toBeUndefined();
     expect(rawOnDisk.repoMeta).toBeUndefined();
   });

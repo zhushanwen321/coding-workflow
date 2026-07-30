@@ -85,20 +85,20 @@ describe("Wave C: renderHandoff --scope self（向后兼容）", () => {
 
 describe("Wave C: renderHandoff --scope upstream", () => {
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
   let store: CwStore;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
     store = new CwStore(cwd);
     for (const u of makeFourLayerTree()) store.save(u);
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
   });
 
@@ -139,20 +139,20 @@ describe("Wave C: renderHandoff --scope upstream", () => {
 
 describe("Wave C: renderHandoff --scope full", () => {
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
   let store: CwStore;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
     store = new CwStore(cwd);
     for (const u of makeFourLayerTree()) store.save(u);
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
   });
 
@@ -203,19 +203,19 @@ describe("Wave C: renderHandoff --scope full", () => {
 
 describe("Wave C: size warning", () => {
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
   let store: CwStore;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
     store = new CwStore(cwd);
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
   });
 

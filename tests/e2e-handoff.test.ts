@@ -6,7 +6,7 @@
  *   TC6: handoff 缺 --unitId → exit 1
  *   TC7: handoff 不存在的 unitId → exit 1 + unit not found
  *
- * 复用 cli-v1.test.ts 的子进程模式（runCwCli/createCwCliEnv）。
+ * 复用 cli.test.ts 的子进程模式（runCwCli/createCwCliEnv）。
  * 需先 npm run build（dist/cli.js 存在）。
  */
 import { spawnSync } from "node:child_process";
@@ -25,7 +25,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CLI_PATH = join(__dirname, "..", "dist", "cli.js");
 
-// ── 子进程辅助（精简版，同 cli-v1.test.ts 模式）──
+// ── 子进程辅助（精简版，同 cli.test.ts 模式）──
 
 interface CliResult {
   exitCode: number;

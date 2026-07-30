@@ -8,7 +8,7 @@
  *   - 推进 action（clarify）的 --input @file.json 管道
  *   - unit not found → exit 1 + CwEngineError 语义
  *
- * 复用 tests/v1/helpers/git.ts 的 setupGitRepo（git 仓库初始化，v1/0.x 无关的通用基建）。
+ * 复用 tests/helpers/git.ts 的 setupGitRepo（git 仓库初始化，v1/0.x 无关的通用基建）。
  *
  * 注意：e2e 测试需要先 npm run build（dist/cli.js 存在）。测试文件顶部断言。
  */
@@ -177,10 +177,10 @@ describe("W8: cw create wave（happy path）", () => {
     expect(unitPath.layer).toBe("wave");
     expect(unitPath.unitId).toBe("wave:w8-create");
 
-    // store 落盘验证：_v1.json 在 CW_HOME/<encodedCwd>/_v1.json
-    const v1Json = findV1Json(e.cwHome);
+    // store 落盘验证：store.json 在 CW_HOME/<encodedCwd>/store.json
+    const v1Json = findStoreJson(e.cwHome);
     expect(v1Json).not.toBeNull();
-    const data = JSON.parse(readV1Json(v1Json!)) as { workUnits: unknown[] };
+    const data = JSON.parse(readStoreJson(v1Json!)) as { workUnits: unknown[] };
     expect(data.workUnits.length).toBeGreaterThan(0);
   });
 
@@ -341,9 +341,9 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
     expect(typeof nextAction.guidance).toBe("string");
     expect((nextAction.guidance as string).length).toBeGreaterThan(0);
     // 落盘验证：store 里该 unit 的 clarifications 应有 1 条
-    const v1Json = findV1Json(e.cwHome);
+    const v1Json = findStoreJson(e.cwHome);
     expect(v1Json).not.toBeNull();
-    const data = JSON.parse(readV1Json(v1Json!)) as {
+    const data = JSON.parse(readStoreJson(v1Json!)) as {
       workUnits: Array<{ id: string; clarifications?: unknown[] }>;
     };
     const persisted = data.workUnits.find((u) => u.id === unitId);
@@ -437,17 +437,17 @@ describe("W8: v1 前缀已切断（Wave 3 起 cw 直接跟 action）", () => {
   });
 
   it("v1 和 0.x 写各自的存储（CW_HOME）互不污染", () => {
-    // v1 create 写 _v1.json（CW_HOME 下）
+    // create 写 store.json（CW_HOME 下）
     runCwCli(
       ["create", "wave", "--slug", "iso-v1", "--objective", "o"],
       e,
     );
-    // v1 存储存在
-    expect(findV1Json(e.cwHome)).not.toBeNull();
+    // 存储存在
+    expect(findStoreJson(e.cwHome)).not.toBeNull();
 
     // 存储路径在 CW_HOME 下，不会写到其他地方。
-    // 这里只验证 v1 侧 _v1.json 里只有 v1 的 workUnits（无 0.x topic 字段）。
-    const v1Data = JSON.parse(readV1Json(findV1Json(e.cwHome)!)) as Record<
+    // 这里只验证 store.json 里只有当前 workUnits（无 0.x topic 字段）。
+    const v1Data = JSON.parse(readStoreJson(findStoreJson(e.cwHome)!)) as Record<
       string,
       unknown
     >;
@@ -517,9 +517,9 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     expect(nextAction.crossLayer!.targetLayer).toBe("wave");
     expect(typeof nextAction.crossLayer!.targetUnitId).toBe("string");
     // 落盘验证：slice 的 executeResult.childUnitIds 非空
-    const v1Json = findV1Json(e.cwHome);
+    const v1Json = findStoreJson(e.cwHome);
     expect(v1Json).not.toBeNull();
-    const data = JSON.parse(readV1Json(v1Json!)) as {
+    const data = JSON.parse(readStoreJson(v1Json!)) as {
       workUnits: Array<{ id: string; executeResult?: { childUnitIds?: string[] } }>;
     };
     const persisted = data.workUnits.find((u) => u.id === unitId);
@@ -576,9 +576,9 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
 
   // 共享辅助：从 store 读某 unit 的 abandonedParentItems。
   function readAbandonedParentItems(unitId: string): string[] {
-    const v1Json = findV1Json(e.cwHome);
+    const v1Json = findStoreJson(e.cwHome);
     expect(v1Json).not.toBeNull();
-    const data = JSON.parse(readV1Json(v1Json!)) as {
+    const data = JSON.parse(readStoreJson(v1Json!)) as {
       workUnits: Array<{ id: string; abandonedParentItems?: string[] }>;
     };
     const persisted = data.workUnits.find((u) => u.id === unitId);
@@ -687,12 +687,12 @@ describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
 
 // ── 辅助：在 CW_HOME 树里找 store.json ────────────────────────
 
-function findV1Json(dir: string): string | null {
+function findStoreJson(dir: string): string | null {
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      const found = findV1Json(full);
+      const found = findStoreJson(full);
       if (found) return found;
     } else if (entry.name === "store.json") {
       return full;
@@ -701,7 +701,7 @@ function findV1Json(dir: string): string | null {
   return null;
 }
 
-function readV1Json(path: string): string {
+function readStoreJson(path: string): string {
   return readFileSync(path, "utf-8");
 }
 

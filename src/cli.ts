@@ -245,7 +245,7 @@ function parseJsonArg(name: string, value: unknown): unknown {
 // ── 命令辅助（参数构造 / deps 装配 / 子命令分发） ─────────
 //
 // 与 0.x 完全独立：独立的 params 联合（CwParams）、独立的 deps 接口（CwDeps）、
-// 独立的 dispatch（src/dispatch.ts）、独立的 store（_v1.json，路径由 getCwJsonPath 算）。
+// 独立的 dispatch（src/dispatch.ts）、独立的 store（store.json，路径由 getCwJsonPath 算）。
 // 本节三个纯函数把 argv → CwParams、构造 CwDeps、跑 dispatch 并打印结果。
 // main 里 `ALL_ACTIONS.has(action)` 为真时整体路由到 runWithAction。
 
@@ -577,7 +577,7 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
 /**
  * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
- *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 _v1.json）
+ *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 store.json）
  *   - gitValidator：用 git cat-file 验 commit hash 真实存在（绑定 workspacePath）
  *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
@@ -732,7 +732,7 @@ async function runWithAction(
 
   // 构造 CwParams（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
   // 非 create action 先读 unit scope（wave 需 --commitHash，slice 不需要）。
-  // store 用与 constructCwDeps 相同的 CwStore 实例化（绑 workspacePath，读 _v1.json）。
+  // store 用与 constructCwDeps 相同的 CwStore 实例化（绑 workspacePath，读 store.json）。
   const scope =
     action === "create" ? null : getUnitScope(new CwStore(workspacePath), flag(parsed, "unitId") ?? "");
   const params = buildParams(
@@ -763,7 +763,7 @@ async function runWithAction(
  *
  * 与 advance action 的根本区别：
  *   - 不调 dispatch、不写 store、不 append statusHistory
- *   - 只 new CwStore 读 _v1.json + 调 render 函数 + console.log
+ *   - 只 new CwStore 读 store.json + 调 render 函数 + console.log
  *   - 参数错误（如 status/handoff 缺 --unitId、tree/status 指定不存在的 unit）→ throw CwError → main catch → exit 1
  *
  * 输出是纯文本（tree/列表/handoff）或 JSON（status），不走 ActionResult 序列化。
@@ -869,7 +869,7 @@ async function runReadonly(
  * 找第一个 root unit（parentUnitId 为空/undefined 的 unit）。
  *
  * tree 缺省根的解析规则：顶层 unit 通常无 parent。多个 root 时取 store 里的第一个
- *（loadAll 的顺序即 _v1.json 里 workUnits 数组顺序，创建先后序）。
+ *（loadAll 的顺序即 store.json 里 workUnits 数组顺序，创建先后序）。
  * 无任何 unit 时返回 null。
  */
 function findFirstRootUnitId(store: CwStore): string | null {

@@ -1,9 +1,5 @@
 /**
- * 共享 git 测试 helper —— setupGitRepo（v1 测试专用）。
- *
- * 原位于 tests/helpers/git.ts（0.x 与 v1 共用），Wave 1 删除 0.x 时 tests/helpers/
- * 整体移除；v1 的 cli-v1.test.ts / e2e-handoff.test.ts 仍需 setupGitRepo，故在此重建
- * 精简版（仅 setupGitRepo，commitFile 等 0.x 专用函数不再保留）。
+ * 共享 git 测试 helper，提供 setupGitRepo 等。
  *
  * 统一 user.email/name，统一 README 内容。
  */

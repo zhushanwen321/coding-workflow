@@ -44,7 +44,7 @@ npm run build       # tsc 编译到 dist/
 
 | 文档 | 内容 |
 |------|------|
-| [CONTEXT.md](./CONTEXT.md) | 统一语言（13 action / 8 status / 核心架构概念） |
+| [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
 | [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |

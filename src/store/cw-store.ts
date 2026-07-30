@@ -2,7 +2,7 @@
  * CwStore — v1 JSON 文件持久化层（单集合扁平存储）。
  *
  * 职责：
- *   - _v1.json 读写（单集合 workUnits，扁平存储 + parentUnitId 外键）
+ *   - store.json 读写（单集合 workUnits，扁平存储 + parentUnitId 外键）
  *   - POSIX 原子写：tmp 文件 → fsync(tmp) → rename → fsync(dir)
  *   - 跨进程文件锁：lockfile + O_EXCL 原子创建 + stale 检测
  *   - 内存事务：fn 在深拷贝副本上操作，正常→原子落盘，异常→丢弃（ROLLBACK）
@@ -91,7 +91,7 @@ export class CwStore {
   // ── 文件 IO ────────────────────────────────────────────────
 
   /**
-   * 从磁盘读取 _v1.json。
+   * 从磁盘读取 store.json。
    *
    * - 文件不存在 → 返回空库（全新安装场景，正常）。
    * - 解析失败 → 抛出错误（包含原文件路径 + 原始错误）。早期版本在这里静默回退空库，
@@ -108,7 +108,7 @@ export class CwStore {
       data = JSON.parse(raw) as CwJsonFile;
     } catch (err) {
       throw new Error(
-        `CwStore: failed to parse _v1.json at ${this.dbPath}: ${(err as Error).message}`,
+        `CwStore: failed to parse store.json at ${this.dbPath}: ${(err as Error).message}`,
       );
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];

@@ -210,7 +210,7 @@ describe("failure-hint: buildFailureHint", () => {
     const hint = buildFailureHint(3, "wave:auth-w1", "plan", "auth-w1");
     expect(hint).toContain("--unitId wave:auth-w1");
     expect(hint).not.toContain("<unitId>");
-    // 每条命令都必须带 v1 前缀。
+    // 命令不带 v1 前缀（Wave 3 起切断）。
     expect(hint).toContain("cw clarify");
     expect(hint).toContain("cw replan");
     expect(hint).toContain("cw abort");

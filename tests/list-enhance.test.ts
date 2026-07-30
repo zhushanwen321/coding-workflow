@@ -13,7 +13,7 @@
  *   - updated 列绝对时间（TC-B9）
  *   - --long 追加 children/created 列（TC-B10）
  *   - 空 store 友好提示（TC-B11）
- *   - 损坏 _v1.json 跳过（TC-B12）
+ *   - 损坏 store.json 跳过（TC-B12）
  *
  * 测试策略：真实 fs + 真实 CwStore + 真实 JSON 文件（zero mock）。
  * CW_HOME 隔离：每个 describe 的 beforeEach 设独立 tmp CW_HOME（吸取 Wave A C1 教训）。
@@ -299,16 +299,16 @@ describe("Wave B: renderList 边界", () => {
 
 describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-list-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-list-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
   });
 
@@ -333,7 +333,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     expect(loaded[1].data.workUnits[0].id).toBe("wave:a");
   });
 
-  it("TC-B12: 损坏的 _v1.json 被跳过，不影响其他 cwd", () => {
+  it("TC-B12: 损坏的 store.json 被跳过，不影响其他 cwd", () => {
     writeCwdStore("/fake/good", [makeUnit("wave:good")], makeRepoMeta({ worktreePath: "/fake/good" }));
     // 造一个损坏的
     const badDir = join(cwHome, encodeCwd("/fake/bad"));
@@ -392,20 +392,20 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
 
 describe("Wave B: CwStore 集成 + --cwd", () => {
   let cwHome: string;
-  let prevV1Home: string | undefined;
+  let prevCwHome: string | undefined;
   let cwdA: string;
   let cwdB: string;
 
   beforeEach(() => {
-    cwHome = mkdtempSync(join(tmpdir(), "cw-list-v1home-"));
-    prevV1Home = process.env.CW_HOME;
+    cwHome = mkdtempSync(join(tmpdir(), "cw-list-home-"));
+    prevCwHome = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     cwdA = mkdtempSync(join(tmpdir(), "cw-list-cwdA-"));
     cwdB = mkdtempSync(join(tmpdir(), "cw-list-cwdB-"));
   });
   afterEach(() => {
-    if (prevV1Home === undefined) delete process.env.CW_HOME;
-    else process.env.CW_HOME = prevV1Home;
+    if (prevCwHome === undefined) delete process.env.CW_HOME;
+    else process.env.CW_HOME = prevCwHome;
     rmSync(cwHome, { recursive: true, force: true });
     rmSync(cwdA, { recursive: true, force: true });
     rmSync(cwdB, { recursive: true, force: true });
@@ -427,7 +427,7 @@ describe("Wave B: CwStore 集成 + --cwd", () => {
     expect(unitsB.map((u) => u.id)).toEqual(["wave:b"]);
   });
 
-  // TC-B6: --all 与 --cwd 互斥——cli 层 e2e 测试，已移至 cli-v1.test.ts
+  // TC-B6: --all 与 --cwd 互斥——cli 层 e2e 测试，已移至 cli.test.ts
   // 「W8: cw list --all 与 --cwd 互斥」describe 覆盖（runCwCli 跑真实 dist/cli.js 子进程，
   // 断言 exit 1 + mutually exclusive）。本文件测 renderList 纯函数，互斥检查在 cli.ts
   // 入口层（line 841-843），不适合纯函数测试。

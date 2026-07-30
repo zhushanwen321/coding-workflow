@@ -236,7 +236,7 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.cw/<encodedCwd>/store.json` 的 workUnits[0].plan 确认实际存储结构。
 
 ### illegal_transition（跳阶段）
-调了状态机不允许的 action → V1Error（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。
+调了状态机不允许的 action → CwEngineError（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。
 
 ### gate fail
 返回 `ok: false` + `gateResults` + 异常 guidance（四段式）。**不要慌**——guidance 的「问题」段会告诉你具体哪里错了，「怎么修」段告诉你修正后重提什么命令。

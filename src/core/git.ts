@@ -154,7 +154,7 @@ export function extractChangedFiles(
 }
 
 /**
- * 采集 git repo 元信息（remoteUrl/branch/headCommit），用于 _v1.json 顶层 repoMeta。
+ * 采集 git repo 元信息（remoteUrl/branch/headCommit），用于 store.json 顶层 repoMeta。
  *
  * 与 extractChangedFiles 同风格：spawnSync + GIT_SPAWN_OPTS，失败降级不抛。
  * 每个字段独立采集，单个 git 命令失败不影响其他字段。

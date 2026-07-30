@@ -89,7 +89,7 @@ describe("U18: save + load 往返一致", () => {
 });
 
 describe("U19: 原子写 + findChildren", () => {
-  it("save 后 _v1.json 文件存在且 JSON 合法", () => {
+  it("save 后 store.json 文件存在且 JSON 合法", () => {
     env.store.save(makeUnit("atomic") as unknown as WorkUnitRecord);
 
     const path = getCwJsonPath(env.cwd);
@@ -184,19 +184,19 @@ describe("U20: 事务回滚", () => {
 // ══════════════════════════════════════════════════════════════
 
 describe("U21: load/lock 鲁棒性", () => {
-  // 内部工具：拿 _v1.json 的 lockfile 路径（dbPath + ".lock"）。
+  // 内部工具：拿 store.json 的 lockfile 路径（dbPath + ".lock"）。
   function lockPath(): string {
     return getCwJsonPath(env.cwd) + ".lock";
   }
 
-  describe("M1: _v1.json 解析失败 → throw（不静默丢数据）", () => {
+  describe("M1: store.json 解析失败 → throw（不静默丢数据）", () => {
     it("load 在损坏文件上抛错（不再返回空数据）", () => {
       const path = getCwJsonPath(env.cwd);
       writeFileSync(path, "{ this is not valid json", "utf-8");
 
-      expect(() => env.store.load("wave:any")).toThrow(/failed to parse _v1\.json/);
-      expect(() => env.store.loadAll()).toThrow(/failed to parse _v1\.json/);
-      expect(() => env.store.findChildren("any")).toThrow(/failed to parse _v1\.json/);
+      expect(() => env.store.load("wave:any")).toThrow(/failed to parse store\.json/);
+      expect(() => env.store.loadAll()).toThrow(/failed to parse store\.json/);
+      expect(() => env.store.findChildren("any")).toThrow(/failed to parse store\.json/);
     });
 
     it("save 在损坏文件上抛错且不覆盖磁盘（保护残存数据）", () => {
@@ -208,7 +208,7 @@ describe("U21: load/lock 鲁棒性", () => {
 
       // save 必须抛错（不能闷头执行 delete-the-data 的事务）。
       const unit = makeUnit("attacker") as unknown as WorkUnitRecord;
-      expect(() => env.store.save(unit)).toThrow(/failed to parse _v1\.json/);
+      expect(() => env.store.save(unit)).toThrow(/failed to parse store\.json/);
 
       // 关键不变式：损坏前的文件必须还在磁盘上。未修复 M1 之前，此处会被覆盖成空库。
       expect(existsSync(path)).toBe(true);
