@@ -47,7 +47,7 @@ const HINT_THRESHOLD_STRONG_ABORT = 5;
  * 故可直接作为 buildFailureHint 的 action 参数类型。
  */
 import type { WaveAction } from "../rules/state-machine.js";
-import { buildCommand } from "../utils/command.js";
+import { buildCommand, inputFilePath } from "../utils/command.js";
 
 /**
  * 按 failureCount 渲染递进提示文本。
@@ -57,12 +57,14 @@ import { buildCommand } from "../utils/command.js";
  * @param failureCount 同一 action 的连续 fail 次数（从 statusHistory 派生，§5.1）
  * @param unitId 失败 unit 的 id（嵌入到命令里替代 `<unitId>` 占位）
  * @param action 触发 fail 的 action（决定出口集合的形状——M10 action-aware 适配）
+ * @param slug 失败 unit 的 slug（嵌入到 --input 路径；create 失败等无 unit 场景传空串走 fallback）
  * @returns 递进提示文本；failureCount <= 1 时返回空字符串（调用方据此省略「递进提示」段）
  */
 export function buildFailureHint(
   failureCount: number,
   unitId: string,
   action: WaveAction,
+  slug: string,
 ): string {
   // 第 1 次失败只说问题，不加出口（§5.1 第 1 次示例无「递进提示」段）。
   // 负数视为非法输入，同样返回空（防御性）。
@@ -71,7 +73,7 @@ export function buildFailureHint(
   }
 
   // 三出口（§5.1 第 3 次示例 + M10 action-aware 适配）。
-  const exits = buildExits(action, unitId);
+  const exits = buildExits(action, unitId, slug);
 
   // failureCount >= HINT_THRESHOLD_STRONG_ABORT：再加「强烈建议先 abort」一句（§5.1 末段）。
   if (failureCount >= HINT_THRESHOLD_STRONG_ABORT) {
@@ -96,14 +98,15 @@ export function buildFailureHint(
  *
  * @param action 触发 fail 的 action
  * @param unitId 失败 unit 的 id（嵌入到命令里）
+ * @param slug 失败 unit 的 slug（嵌入到 --input 路径；create 失败传空串走 fallback）
  * @returns 出口文案数组（第 0 项是引导句，后续是具体出口）
  */
-function buildExits(action: WaveAction, unitId: string): string[] {
+function buildExits(action: WaveAction, unitId: string, slug: string): string[] {
   // clarify 失败：没有 plan 可 replan，给「继续 clarify / 重新拆 layer / abort 重选」
   if (action === "clarify") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- 表述不到位 → 继续调整 clarify（${buildCommand("clarify", `--unitId ${unitId}`, "--input @clarify.json")}）`,
+      `- 表述不到位 → 继续调整 clarify（${buildCommand("clarify", `--unitId ${unitId}`, `--input ${inputFilePath(slug, "clarify")}`)}）`,
       `- 单元定位不对 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元拆 layer 重建`,
       `- 选错了层 → 在更高层（epic/feature）建单元`,
     ];
@@ -131,7 +134,7 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   if (action === "create") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- 单元创建参数不对 → 检查 slug/objective 合法性后重试（${buildCommand("create", "--input @create.json")}）`,
+      `- 单元创建参数不对 → 检查 slug/objective 合法性后重试（${buildCommand("create", `--input ${inputFilePath(slug, "create")}`)}）`,
       `- 选错了层 → 在更高层（epic/feature/slice）创建`,
     ];
   }
@@ -140,7 +143,7 @@ function buildExits(action: WaveAction, unitId: string): string[] {
   // 标准三出口——回到 clarify / replan / abort 重选
   return [
     "连续失败已超过 1 次。考虑：",
-    `- 需求本身不明确 → 回到 clarify（${buildCommand("clarify", `--unitId ${unitId}`, "--input @clarify.json")}）`,
+    `- 需求本身不明确 → 回到 clarify（${buildCommand("clarify", `--unitId ${unitId}`, `--input ${inputFilePath(slug, "clarify")}`)}）`,
     `- plan 有根本问题 → replan（${buildCommand("replan", `--unitId ${unitId}`, "--abandonedIds '[...]'", '--note "..."')}）`,
     `- 选错了层 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 重选`,
   ];

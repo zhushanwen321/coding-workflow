@@ -34,7 +34,7 @@ import type { Slice } from "../../core/workunit.js";
 import { buildReplanGuidance } from "../../guidance/build-guidance.js";
 import { checkFreezePlanning } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
-import { buildCommand } from "../../utils/command.js";
+import { buildCommand, inputFilePath } from "../../utils/command.js";
 import {
   loadChildrenAsWorkUnitBase,
   mergeAbandonParentItems,
@@ -136,7 +136,7 @@ export function handleReplanSlice(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, "--input @plan.json"),
+    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
   });
 
   return {

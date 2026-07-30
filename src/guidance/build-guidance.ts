@@ -24,7 +24,7 @@ export interface BuildNormalGuidanceArgs {
   nextAction: string;
   /** 一句话目标（来自 template.goal，描述当前阶段要做什么）。 */
   goal: string;
-  /** 完整命令（如 "cw plan --unitId wave:x --input @plan.json"）。 */
+  /** 完整命令（如 "cw plan --unitId wave:x --input .cw/<slug>/plan.json"）。 */
   command: string;
   /** input schema 文本（来自 schema-injector）。 */
   schemaText: string;
@@ -53,6 +53,9 @@ export interface BuildNormalGuidanceArgs {
  * {schemaText}
  * {templateText 的关键约束段}
  *
+ * ## 中间产物管理        ← 仅当 command 含 --input 时才输出此段
+ * （固定文案：.cw/ 不进 git 等）
+ *
  * ## subagent 调度        ← 仅当 commonGuidance 非空时才输出此段
  * {commonGuidance}
  * ```
@@ -60,7 +63,16 @@ export interface BuildNormalGuidanceArgs {
  * 注：goal 来自 template.goal（一句话目标），由调用方从 template 取出后传入。
  *      templateText 是 constraint 段（关键约束），整段附在 schema 后。
  *      commonGuidance 是 subagent 委派建议（按 action 性质分强制/建议/禁止三档），为空时省略。
+ *      「中间产物管理」段在 command 含 --input（即该 action 产生中间产物 JSON）时自动追加，
+ *      无需调用方传参——文案固定，所有有 input 的 action 共用。
  */
+const ARTIFACT_HINT = [
+  "## 中间产物管理",
+  "- `.cw/` 目录是机器消费的中间产物（clarify/plan/design-review 等 input JSON），**不要 git 提交**（已在 .gitignore）。",
+  "- 如已误提交历史产物，用 `git rm --cached -r .cw/` 清理追踪（不删本地文件）。",
+  "- 报告类产物（handoff 交接文档、retrospect 经验总结）是人读的，由你视情况存到 docs/ 目录。",
+].join("\n");
+
 export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
   const { prefix, goal, command, schemaText, templateText, commonGuidance } = args;
   // 约束段为空时不留空行；非空时前缀换行。
@@ -80,6 +92,11 @@ export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
     schemaText,
     constraintSection,
   ];
+
+  // command 含 --input（该 action 产生中间产物 JSON）时追加「中间产物管理」段。
+  if (command.includes("--input")) {
+    sections.push("", ARTIFACT_HINT);
+  }
 
   // 通用引导段为空时省略此段（§3.1 最小信息原则）。
   const common = commonGuidance?.trim() ?? "";
@@ -163,7 +180,7 @@ export interface BuildReplanGuidanceArgs {
   replanCount: number;
   /** replan 影响面描述（aborted/preserved/pendingRebuild）。 */
   impactSummary: string;
-  /** 下一步命令（如 "cw plan --unitId slice:auth --input @plan.json"）。 */
+  /** 下一步命令（如 "cw plan --unitId slice:auth --input .cw/<slug>/plan.json"）。 */
   nextCommand: string;
 }
 

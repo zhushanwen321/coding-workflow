@@ -6,14 +6,10 @@
  *   - cwd → 目录名的编码（per-cwd 隔离）
  *   - v1 存储根目录解析（CW_HOME 环境变量覆盖）
  *
- * 来源：v5 store 层独立实现。POSIX 文件系统最佳实践参考 0.x 的 src/path-encoding.ts，
- * 但本文件零 0.x 依赖（不 import 任何 src/ 下 0.x 文件），仅按 v1 契约独立实现。
- *
- * 设计要点（vs 0.x）：
- *   - 0.x 一个 CwJsonFile 含 topics/waves/testCases/gateHistory/... 多集合；v1 只用
- *     单个 workUnits 集合（ExecutionUnit / PlanningUnit 直接扁平存，子 unit 通过
+ * 设计要点：
+ *   - 单个 workUnits 集合（ExecutionUnit / PlanningUnit 直接扁平存，子 unit 通过
  *     parentUnitId 外键关联，不嵌套）。
- *   - encodeCwd 规则：把路径里的 `/` 替换为 `__`（独立于 0.x 的 `--...--` 规则）。
+ *   - encodeCwd 规则：把路径里的 `/` 替换为 `__`。
  */
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";

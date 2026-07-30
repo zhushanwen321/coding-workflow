@@ -44,7 +44,7 @@ import type { GateResult } from "../../rules/gates/types.js";
 import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import { buildCommand } from "../../utils/command.js";
+import { buildCommand, inputFilePath } from "../../utils/command.js";
 import type { V1Deps, V1NextAction } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -217,7 +217,7 @@ export function buildEpicNextAction(
   const schemaText = getEpicSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? EPIC_ACTION_TO_NEXT_PUBLIC[action];
-  const command = buildEpicCommand(action, unit.id, nextAction);
+  const command = buildEpicCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({
     prefix,
@@ -244,19 +244,20 @@ export function buildEpicNextAction(
 
 /**
  * 组装 epic 命令字符串（照 wave internal.ts 的 buildWaveNextCommand）。
- * 命令本体由 buildCommand（utils/command.ts）统一构造。
+ * 命令本体由 buildCommand（utils/command.ts）统一构造，input 路径由 inputFilePath 算出。
  */
 function buildEpicCommand(
   currentAction: PlanningAction,
   unitId: string,
   nextAction: string | undefined,
+  slug: string,
 ): string {
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
   const hasInput = EPIC_ACTION_SCHEMA[nextAction] !== undefined ||
     EPIC_FLAT_INPUT_HINT[nextAction] !== undefined;
-  const inputPart = hasInput ? `--input @${nextAction}.json` : "";
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
 }
 
@@ -309,8 +310,8 @@ export function buildEpicFailureNextAction(
   });
 
   const failureCount = deriveFailureCount(unit.statusHistory, action);
-  const failureHint = buildFailureHint(failureCount, unit.id, action);
-  const fixCommand = buildEpicCommand(action, unit.id, action);
+  const failureHint = buildFailureHint(failureCount, unit.id, action, unit.slug);
+  const fixCommand = buildEpicCommand(action, unit.id, action, unit.slug);
 
   const guidance = buildFailureGuidance({
     prefix,

@@ -31,7 +31,7 @@ import {
 import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import { buildCommand } from "../../utils/command.js";
+import { buildCommand, inputFilePath } from "../../utils/command.js";
 import type { V1Deps, V1NextAction } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -213,7 +213,7 @@ export function buildSliceNextAction(
   const schemaText = getSliceSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? SLICE_ACTION_TO_NEXT_PUBLIC[action];
-  const command = buildSliceCommand(action, unit.id, nextAction);
+  const command = buildSliceCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({
     prefix,
@@ -242,19 +242,20 @@ export function buildSliceNextAction(
  * 组装 slice 命令字符串（照 wave internal.ts 的 buildWaveNextCommand）。
  *
  * 终态（nextAction=undefined）→ 仅状态提示，命令为空；有结构化或扁平 input → 附 --input。
- * 命令本体由 buildCommand（utils/command.ts）统一构造。
+ * 命令本体由 buildCommand（utils/command.ts）统一构造，input 路径由 inputFilePath 算出。
  */
 function buildSliceCommand(
   currentAction: PlanningAction,
   unitId: string,
   nextAction: string | undefined,
+  slug: string,
 ): string {
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
   const hasInput = SLICE_ACTION_SCHEMA[nextAction] !== undefined ||
     SLICE_FLAT_INPUT_HINT[nextAction] !== undefined;
-  const inputPart = hasInput ? `--input @${nextAction}.json` : "";
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
 }
 
@@ -307,8 +308,8 @@ export function buildSliceFailureNextAction(
   });
 
   const failureCount = deriveFailureCount(unit.statusHistory, action);
-  const failureHint = buildFailureHint(failureCount, unit.id, action);
-  const fixCommand = buildSliceCommand(action, unit.id, action);
+  const failureHint = buildFailureHint(failureCount, unit.id, action, unit.slug);
+  const fixCommand = buildSliceCommand(action, unit.id, action, unit.slug);
 
   const guidance = buildFailureGuidance({
     prefix,

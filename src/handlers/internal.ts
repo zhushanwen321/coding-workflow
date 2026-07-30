@@ -34,7 +34,7 @@ import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import type { V1Store } from "../store/v1-store.js";
-import { buildCommand } from "../utils/command.js";
+import { buildCommand, inputFilePath } from "../utils/command.js";
 import type { V1Deps,V1NextAction } from "./types.js";
 
 /**
@@ -274,7 +274,7 @@ export function buildNextAction(
   const schemaText = opts?.schemaTextOverride ?? getSchemaText(action);
 
   const nextAction = opts?.nextActionOverride ?? ACTION_TO_NEXT[action];
-  const command = buildWaveNextCommand(action, unit.id, nextAction);
+  const command = buildWaveNextCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({
     prefix,
@@ -334,9 +334,9 @@ export function buildFailureNextAction(
 
   // 含本次的连续 fail 次数（appendFailRecord 已 append，故扫描含本次）。
   const failureCount = deriveFailureCount(unit.statusHistory, action);
-  const failureHint = buildFailureHint(failureCount, unit.id, action);
+  const failureHint = buildFailureHint(failureCount, unit.id, action, unit.slug);
 
-  const fixCommand = buildWaveNextCommand(action, unit.id, action);
+  const fixCommand = buildWaveNextCommand(action, unit.id, action, unit.slug);
 
   const guidance = buildFailureGuidance({
     prefix,
@@ -391,21 +391,22 @@ export function appendFailRecord(
 /**
  * 组装命令字符串（正常路径用 nextAction，异常路径 fixCommand 用 action 自身重提）。
  *
- * 格式（§4.x）：`cw <action> --unitId <id>`（有 input 时附 `--input @<action>.json`），
- * 命令本体由 buildCommand（utils/command.ts）统一构造。
+ * 格式（§4.x）：`cw <action> --unitId <id>`（有 input 时附 `--input .cw/<slug>/<action>.json`），
+ * 命令本体由 buildCommand（utils/command.ts）统一构造，input 路径由 inputFilePath 算出。
  * 终态（nextAction=undefined）→ 仅给状态提示，命令为空。
  */
 function buildWaveNextCommand(
   currentAction: WaveAction,
   unitId: string,
   nextAction: string | undefined,
+  slug: string,
 ): string {
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
   const hasInput = ACTION_SCHEMA[nextAction] !== undefined ||
     FLAT_INPUT_HINT[nextAction] !== undefined;
-  const inputPart = hasInput ? `--input @${nextAction}.json` : "";
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
 }
 

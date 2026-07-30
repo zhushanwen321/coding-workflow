@@ -328,7 +328,7 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
     );
     const clarified = parseStdout(
       runV1Cli(
-        ["clarify", "--unitId", unitId, "--input", `@${inputFile}`],
+        ["clarify", "--unitId", unitId, "--input", `${inputFile}`],
         e,
       ),
     );
@@ -396,7 +396,7 @@ describe("W8: cw unit not found → exit 1（V1Error 语义）", () => {
         "--unitId",
         "wave:ghost",
         "--input",
-        `@${inputFile}`,
+        `${inputFile}`,
       ],
       e,
     );
@@ -481,7 +481,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
       }),
     );
     const clarified = parseStdout(
-      runV1Cli(["clarify", "--unitId", unitId, "--input", `@${clarifyInput}`], e),
+      runV1Cli(["clarify", "--unitId", unitId, "--input", `${clarifyInput}`], e),
     );
     expect(clarified.status).toBe("clarifying");
 
@@ -489,7 +489,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     const planInput = join(e.workspaceDir, "slice-plan.json");
     writeFileSync(planInput, JSON.stringify(makeValidSlicePlan()));
     const planned = parseStdout(
-      runV1Cli(["plan", "--unitId", unitId, "--input", `@${planInput}`], e),
+      runV1Cli(["plan", "--unitId", unitId, "--input", `${planInput}`], e),
     );
     expect(planned.status).toBe("planning");
 
@@ -500,7 +500,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
       JSON.stringify({ designReviewJudgment: makeValidSliceDesignReviewJudgment() }),
     );
     const dr = parseStdout(
-      runV1Cli(["design-review", "--unitId", unitId, "--input", `@${drInput}`], e),
+      runV1Cli(["design-review", "--unitId", unitId, "--input", `${drInput}`], e),
     );
     expect(dr.status).toBe("design-reviewed");
 
@@ -552,7 +552,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
     writeFileSync(clarifyInput, JSON.stringify({ clarifications: [] }));
     parseStdout(
       runV1Cli(
-        ["clarify", "--unitId", unitId, "--input", `@${clarifyInput}`],
+        ["clarify", "--unitId", unitId, "--input", `${clarifyInput}`],
         e,
       ),
     );
@@ -597,7 +597,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
           "--unitId",
           unitId,
           "--input",
-          `@${planInput}`,
+          `${planInput}`,
           "--abandonParentItems",
           '["TC1"]',
         ],
@@ -623,7 +623,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
           "--unitId",
           unitId,
           "--input",
-          `@${planInput}`,
+          `${planInput}`,
           "--abandon-parent-items",
           '["TC2","TC3"]',
         ],
@@ -641,7 +641,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
 
     const planned = parseStdout(
       runV1Cli(
-        ["plan", "--unitId", unitId, "--input", `@${planInput}`],
+        ["plan", "--unitId", unitId, "--input", `${planInput}`],
         e,
       ),
     );
@@ -661,7 +661,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
         "--unitId",
         unitId,
         "--input",
-        `@${planInput}`,
+        `${planInput}`,
         "--abandonParentItems",
         "not-valid-json",
       ],

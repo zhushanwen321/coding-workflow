@@ -129,18 +129,18 @@ create → clarify → plan → design-review → execute → test → exec-revi
 
 | action | 命令 | input 方式 |
 |--------|------|-----------|
-| `clarify` | `cw clarify --unitId <id> --input @clarify.json` | JSON 文件或 stdin |
-| `plan` | `cw plan --unitId <id> --input @plan.json` | JSON 文件或 stdin |
-| `design-review` | `cw design-review --unitId <id> --input @review.json` | JSON 文件或 stdin |
+| `clarify` | `cw clarify --unitId <id> --input .cw/<slug>/clarify.json` | JSON 文件或 stdin |
+| `plan` | `cw plan --unitId <id> --input .cw/<slug>/plan.json` | JSON 文件或 stdin |
+| `design-review` | `cw design-review --unitId <id> --input .cw/<slug>/review.json` | JSON 文件或 stdin |
 | `execute` | `cw execute --unitId <id> --commitHash <sha>` | flags |
-| `test` | `cw test --unitId <id> --input @test.json` | JSON 文件或 stdin |
-| `exec-review` | `cw exec-review --unitId <id> --input @review.json` | JSON 文件或 stdin |
-| `retrospect` | `cw retrospect --unitId <id> --input @retrospect.json` | JSON 文件或 stdin |
-| `closeout` | `cw closeout --unitId <id> --input @closeout.json` | JSON 文件或 stdin |
+| `test` | `cw test --unitId <id> --input .cw/<slug>/test.json` | JSON 文件或 stdin |
+| `exec-review` | `cw exec-review --unitId <id> --input .cw/<slug>/review.json` | JSON 文件或 stdin |
+| `retrospect` | `cw retrospect --unitId <id> --input .cw/<slug>/retrospect.json` | JSON 文件或 stdin |
+| `closeout` | `cw closeout --unitId <id> --input .cw/<slug>/closeout.json` | JSON 文件或 stdin |
 | `replan` | `cw replan --unitId <id> --abandonedIds '["T2"]' --note "原因"` | flags |
 | `abort` | `cw abort --unitId <id> [--reason "原因"]` | flags |
 
-`--input` 支持 `@file.json`（读文件）、`-`（stdin）、或直接传 JSON 字符串。
+`--input` 支持文件路径（如 `.cw/<slug>/plan.json`，相对项目根）、`-`（stdin）、或直接传 JSON 字符串。guidance 给的命令已自带 `.cw/<slug>/<action>.json` 路径，中间产物按此路径写入即可（`.cw/` 已在 .gitignore，不进 git）。
 
 ## guidance 的渐进式特性
 
@@ -166,7 +166,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 ## 数据存储
 
-- 状态库：`~/.v1/<encodedCwd>/_v1.json`（per-cwd 隔离）
+- 状态库：`~/.cw/<encodedCwd>/_v1.json`（per-cwd 隔离）
 - unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`）
 - 跨 session 接续 / 交接：`cw handoff --unitId <id>`（首选，见下方只读查询）
 
@@ -187,7 +187,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 - 无参数 → 当前 cwd 最近 10 个（**90% 接手场景用这个**）
 - `--limit N` / `--offset N` → 分页（默认 limit=10）
 - `--grep <keyword>` → slug + objective 大小写不敏感 substring 过滤
-- `--all` → 跨所有 cwd 遍历（扫 V1_HOME 全部 store，按 repo/branch 分组带 group header）
+- `--all` → 跨所有 cwd 遍历（扫 CW_HOME 全部 store，按 repo/branch 分组带 group header）
 - `--cwd <path>` → 指定查别的 cwd（不 cd，与 `--all` 互斥）
 - `--long` → 追加 children/created 列
 - `--layer epic|feature|slice|wave` → 按 scope 过滤
@@ -196,7 +196,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 
 1. **一般不加参数即可**。默认就是最近 10 个当前 cwd topic，覆盖 90% 接手场景。
 2. **看到 `Showing X–Y of Z` 时**，如果 Z 远大于当前页，**优先用 `--grep` 收窄**，不要无脑 `--offset` 翻页（浪费 token）。
-3. **当前 cwd 没命中时才用 `--all`**——它会扫整个 V1_HOME，开销大。
+3. **当前 cwd 没命中时才用 `--all`**——它会扫整个 CW_HOME，开销大。
 4. **拿 unitId 后必须 handoff**——list 只给定位（unitId + status + objective），不给上下文。`cw handoff --unitId <id>` 才是真正接手（五段式 markdown 重建认知）。
 
 **接手标准流程（≤ 3 次 cw 调用）**：
@@ -221,7 +221,7 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 [MANDATORY] 启动前：
 - **`cw` 命令可用**：`which cw` 能找到。未安装 → `npm install -g @zhushanwen/coding-workflow` 或用 dev-link skill 切本地开发版
 - **git 仓库已初始化**：`git rev-parse --git-dir` 能跑通（execute 需要真实 commit）
-- **workspace 可写**：交付物落在 `<cwd>/.xyz-harness/<slug>/`
+- **workspace 可写**：中间产物（input JSON）落在 `<cwd>/.cw/<slug>/`（已 gitignore）；报告类文档视情况存 docs/
 
 ## 失败模式
 
@@ -233,7 +233,7 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 - `design-review`：`{designReviewJudgment:{...}}`
 - `execute`（wave）：`{commitHash,...}`；`execute`（slice）：无 input（按 plan.split 自动创建 child wave，忽略 input）
 - `retrospect`（wave）：`{retrospectData:{...}}`；`retrospect`（slice）：`{retrospectData:{...}}`（但 retrospectData 是 PlanningRetrospectData，含 deliveryVerdict/childUnitIdsEvidence/splitFulfillment，比 wave 宽）
-cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.v1/<encodedCwd>/_v1.json` 的 workUnits[0].plan 确认实际存储结构。
+cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.cw/<encodedCwd>/_v1.json` 的 workUnits[0].plan 确认实际存储结构。
 
 ### illegal_transition（跳阶段）
 调了状态机不允许的 action → V1Error（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。

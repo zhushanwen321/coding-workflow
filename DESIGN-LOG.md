@@ -40,7 +40,7 @@
 | [0009](./docs/adr/0009-remove-0x-and-v1-prefix.md) | 彻底清理 0.x + 重组 src/v1 到根级 + 去掉 cw v1 前缀 | Accepted | cw-1-0-lifecycle-redesign |
 | [0010](./docs/adr/0010-cross-layer-abandon-parent-items.md) | 跨层跨时机的 abandon parent items 声明能力 | Accepted | cw-1-0-lifecycle-redesign |
 | D-001 | CLI 协议用子命令风格（cw create --slug X）+ 大 JSON 走 stdin pipe 或 --xxx-file | confirmed | [from: cw-cli-extract] |
-| D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/_cw.json，env CW_HOME 可覆盖；pi 数据留 ~/.pi/ 不迁移 | confirmed | [from: cw-cli-extract] |
+| D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/_v1.json，env CW_HOME 可覆盖 | confirmed | [from: cw-cli-extract] |
 | D-003 | 产物为独立 npm 包 @zhushanwen/coding-workflow，bin 名 cw；engine+CLI 同包 | confirmed | [from: cw-cli-extract] |
 | D-004 | 行为等价验证：保留 engine 单测原样 + 新增 CLI e2e 覆盖完整 lite 流程 | confirmed | [from: cw-cli-extract] |
 | D-005 | nextAction.skill 字段原样透传，CLI 不额外处理 | confirmed | [from: cw-cli-extract] |

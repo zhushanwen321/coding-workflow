@@ -59,10 +59,11 @@ created → clarifying → planning → design-reviewed → executing → tested
 
 ## 数据存储
 
+> ⚠️ 本段描述的是 0.x 模型，与当前 4 层 WorkUnit 实现有出入，待整体重写
+
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| _cw.json | `~/.cw/<encoded-cwd>/_cw.json` | topic 状态库（JSON + flock + 原子写），per-cwd 隔离 |
-| env.json | `~/.cw/<encoded-cwd>/env.json` | RuntimeEnv 默认值（agent + llm），可选 |
+| _v1.json | `~/.cw/<encodedCwd>/_v1.json` | topic 状态库（JSON + flock + 原子写），per-cwd 隔离 |
 | 交付物目录 | `<workspacePath>/.xyz-harness/<slug>/` | plan.json / retrospect.md / review.md 等 |
 
 ## 业务边界

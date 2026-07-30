@@ -27,7 +27,7 @@ import type { ExecutionUnit } from "../core/workunit.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
 import { checkFreeze } from "../rules/freeze.js";
 import { computeImpact } from "../rules/replan.js";
-import { buildCommand } from "../utils/command.js";
+import { buildCommand, inputFilePath } from "../utils/command.js";
 import {
   appendFailRecord,
   buildFailureNextAction,
@@ -117,7 +117,7 @@ export function handleReplan(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, "--input @plan.json"),
+    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
   });
 
   return {

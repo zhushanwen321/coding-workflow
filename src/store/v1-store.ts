@@ -7,9 +7,7 @@
  *   - 跨进程文件锁：lockfile + O_EXCL 原子创建 + stale 检测
  *   - 内存事务：fn 在深拷贝副本上操作，正常→原子落盘，异常→丢弃（ROLLBACK）
  *
- * 来源：v5 store 层独立实现。POSIX 原子写 / lockfile 的 Node API 调用方式参考
- * 0.x 的 src/store.ts，但本文件零 0.x 依赖（不 import 任何 src/ 下 0.x 文件），
- * 仅 import src/core 类型 + node:fs / node:path 内置模块。
+ * 仅 import src/core 类型 + node:fs / node:path 内置模块，无外部依赖。
  *
  * 事务等价性（沿用 POSIX 文件持久化的标准不变式）：
  *   - 原子性：内存深拷贝操作 → temp + fsync + rename 一次性落盘（POSIX rename 原子）

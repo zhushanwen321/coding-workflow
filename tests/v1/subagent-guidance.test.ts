@@ -174,7 +174,7 @@ describe("buildNormalGuidance: commonGuidance 第 4 段渲染", () => {
     prefix: "[wave:1] status=plan",
     nextAction: "plan",
     goal: "编写执行计划",
-    command: "cw plan --unitId wave:1 --input @plan.json",
+    command: "cw plan --unitId wave:1 --input .cw/1/plan.json",
     schemaText: "{ schema }",
     templateText: "关键约束：testCases 不能为空",
   };
