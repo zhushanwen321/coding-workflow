@@ -37,3 +37,20 @@
 - fix(replan): address all CR findings (C1-C2, M1-M8, m1-m8) (a15ab53)
 - fix(skills): inline remove-worktree + fix merge skill fetch tracking-ref bug (46a0148)
 
+
+## [v1.0.6] - 2026-07-30
+
+### Features
+- feat(skills): add pr-cr-fix + upgrade code-review to multi-subagent review (b961172)
+- feat(guidance): redirect intermediate artifacts to .cw/<slug>/ + cleanup v1 docs (59e9b15)
+
+### Bug Fixes
+- fix(store): migrate ~/.v1 to ~/.cw + cleanup legacy artifacts script (b9bef2b)
+
+### Refactoring
+- Merge pull request #5 from zhushanwen321/feat-optimize-root-json-file (4c19f84)
+- refactor: cleanup v1 naming residuals (comments, error msg, test renames) (5762657)
+- refactor(tests): flatten tests/v1/ → tests/ + rename helpers/v1-env.ts → env.ts (f7d6891)
+- refactor(store): rename _v1.json → store.json + filename migration (0fb1f83)
+- refactor: rename V1* identifiers to Cw* + cleanup stale docs + fix migrate lint (bb28e31)
+
