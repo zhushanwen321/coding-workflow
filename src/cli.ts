@@ -62,6 +62,7 @@ import {
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
 import { getCwHome } from "./store/schema.js";
+import { migrateLegacyV1Home } from "./store/migrate-v1.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
@@ -937,6 +938,10 @@ async function main(argv: string[]): Promise<void> {
     process.exit(EXIT_CW_ERROR);
   }
   const action = String(rawAction);
+
+  // 迁移旧 ~/.v1 存储到 ~/.cw（幂等，~/.v1 不存在秒过）。放在所有 new V1Store 之前，
+  // 确保后续读写的是迁移后的数据。CW_HOME 被覆盖时不迁移（尊重用户自定义路径）。
+  migrateLegacyV1Home();
 
   // workspacePath 解析（所有子命令共用）。
   const workspacePath =
