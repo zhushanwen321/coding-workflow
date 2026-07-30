@@ -1,9 +1,9 @@
 /**
- * Wave A: collectRepoMeta + V1JsonFile schemaVersion/repoMeta 迁移测试。
+ * Wave A: collectRepoMeta + CwJsonFile schemaVersion/repoMeta 迁移测试。
  *
  * 测试目标：
  *   - collectRepoMeta 在真实 git repo / 非 git 目录 / bare+worktree 三种环境的行为
- *   - V1Store 新建 store 写入 schemaVersion=1 + repoMeta
+ *   - CwStore 新建 store 写入 schemaVersion=1 + repoMeta
  *   - 旧 store（无 schemaVersion/repoMeta）加载降级不 crash
  *   - 推进类 save 刷新 repoMeta，readonly query 不刷新
  *
@@ -20,9 +20,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { collectRepoMeta } from "../../src/core/git.js";
+import { CwStore } from "../../src/store/cw-store.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
-import { getV1JsonPath } from "../../src/store/schema.js";
-import { V1Store } from "../../src/store/v1-store.js";
+import { getCwJsonPath } from "../../src/store/schema.js";
 
 /** 临时 git 仓库：init + 配置 user + 可选 remote + 初始 commit。 */
 function makeGitRepo(opts: { remoteUrl?: string } = {}): string {
@@ -161,7 +161,7 @@ describe("Wave A: collectRepoMeta", () => {
   });
 });
 
-describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
+describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
   let cwd: string;
   let cwHome: string;
   let prevV1Home: string | undefined;
@@ -180,11 +180,11 @@ describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
   });
 
   it("新建 store + 首次 save → _v1.json 含 schemaVersion=1 + repoMeta 全字段", () => {
-    const store = new V1Store(cwd);
+    const store = new CwStore(cwd);
     const unit = makeUnit("wave:test-a");
     store.save(unit);
 
-    const raw = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
+    const raw = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));
     expect(raw.schemaVersion).toBe(1);
     expect(raw.repoMeta).toBeDefined();
     expect(raw.repoMeta.remoteUrl).toBe("git@github.com:foo/bar.git");
@@ -196,12 +196,12 @@ describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
 
   it("旧 store（无 schemaVersion/repoMeta）加载不 crash + schemaVersion 内存补 1 + 磁盘未写", () => {
     // 手动构造旧格式 _v1.json
-    const v1Path = getV1JsonPath(cwd);
+    const v1Path = getCwJsonPath(cwd);
     mkdirSync(join(v1Path, ".."), { recursive: true });
     const oldUnit = makeUnit("wave:old-unit");
     writeFileSync(v1Path, JSON.stringify({ workUnits: [oldUnit] }));
 
-    const store = new V1Store(cwd);
+    const store = new CwStore(cwd);
     const units = store.loadAll();
 
     expect(units).toHaveLength(1);
@@ -214,12 +214,12 @@ describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
   });
 
   it("再次 save 不刷新 repoMeta（M1：首次记录后冻结，避免批量 save N*3 git 进程 + cwd 迁移覆盖）", () => {
-    const store = new V1Store(cwd);
+    const store = new CwStore(cwd);
     const unit = makeUnit("wave:test-refresh");
     store.save(unit);
 
     // 首次 save 后记录 branch（创建时的 git 快照）
-    const raw1 = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
+    const raw1 = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));
     const branchBefore = raw1.repoMeta.branch;
 
     // 切新分支
@@ -229,17 +229,17 @@ describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
     unit.status = "clarifying";
     store.save(unit);
 
-    const raw2 = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
+    const raw2 = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));
     // repoMeta 整体冻结（深比较），branch 仍是首次记录值
     expect(raw2.repoMeta).toEqual(raw1.repoMeta);
     expect(raw2.repoMeta.branch).toBe(branchBefore);
   });
 
   it("readonly query 不刷新 repoMeta 整体（不只 recordedAt）", () => {
-    const store = new V1Store(cwd);
+    const store = new CwStore(cwd);
     store.save(makeUnit("wave:test-readonly"));
 
-    const raw1 = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
+    const raw1 = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));
 
     // 多次 readonly query（M2 修复：验证 repoMeta 整体不变，不只 recordedAt）
     store.loadAll();
@@ -248,7 +248,7 @@ describe("Wave A: V1Store schemaVersion + repoMeta 迁移", () => {
     store.findChildren("wave:test-readonly");
 
     // repoMeta 整体未被刷新（深比较整个对象）
-    const raw2 = JSON.parse(readFileSync(getV1JsonPath(cwd), "utf-8"));
+    const raw2 = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));
     expect(raw2.repoMeta).toEqual(raw1.repoMeta);
   });
 });

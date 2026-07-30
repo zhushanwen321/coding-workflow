@@ -153,6 +153,7 @@ vite.config.ts.timestamp-*
 # 白名单无效。改用内容忽略，才能让特定子目录 re-include。
 .xyz-harness/*
 !.xyz-harness/cw-1-0-lifecycle-redesign/
+!.xyz-harness/deprecated-metrics/
 
 # batch-tracer skill 输出（代码分析报告，本地产物不入库）
 .tracers/

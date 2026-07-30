@@ -10,7 +10,7 @@
  * 另通过 dispatch 集成验：child feature 未全 close 时 retrospect ok=false 不流转；
  * splitFulfillment 覆盖所有 split 时通过。
  *
- * 真实 store + stub V1Deps。零 mock 框架。
+ * 真实 store + stub CwDeps。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -18,9 +18,9 @@ import type { PlanningRetrospectData } from "../../src/core/judgments.js";
 import { createEpic, type Epic } from "../../src/core/workunit.js";
 import { dispatch } from "../../src/dispatch.js";
 import { runEpicRetrospectGates } from "../../src/handlers/epic/epic-internal.js";
-import type { V1Deps } from "../../src/handlers/types.js";
+import type { CwDeps } from "../../src/handlers/types.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeValidClarification,
   makeValidEpicDesignReviewJudgment,
   makeValidEpicRetrospectData,
@@ -38,12 +38,12 @@ import {
   makeValidSliceDesignReviewJudgment,
   makeValidSlicePlan,
 } from "./helpers/slice-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -442,7 +442,7 @@ describe("T9d: epic retrospect 混合终态（closed + aborted）", () => {
 // ── T9d 辅助 ──
 
 function setupEpicWithMixedTerminal(
-  testEnv: V1Env,
+  testEnv: CwEnv,
 ): { epicId: string; childClosedId: string; childAbortedId: string } {
   const { deps } = testEnv;
   const slug = "mixed-retro-epic";
@@ -488,7 +488,7 @@ function setupEpicWithMixedTerminal(
   return { epicId, childClosedId, childAbortedId };
 }
 
-function advanceChildFeatureToClosed(deps: V1Deps, featureId: string): void {
+function advanceChildFeatureToClosed(deps: CwDeps, featureId: string): void {
   dispatch(
     { action: "clarify", unitId: featureId, input: makeFeatureClarifyInput() },
     deps,
@@ -542,7 +542,7 @@ function advanceChildFeatureToClosed(deps: V1Deps, featureId: string): void {
   );
 }
 
-function advanceSliceToClosed(deps: V1Deps, sliceId: string): void {
+function advanceSliceToClosed(deps: CwDeps, sliceId: string): void {
   dispatch({ action: "clarify", unitId: sliceId, input: { clarifications: [] } }, deps);
   dispatch({ action: "plan", unitId: sliceId, input: makeValidSlicePlan() }, deps);
   dispatch({ action: "design-review", unitId: sliceId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } }, deps);

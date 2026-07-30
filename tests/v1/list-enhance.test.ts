@@ -15,7 +15,7 @@
  *   - 空 store 友好提示（TC-B11）
  *   - 损坏 _v1.json 跳过（TC-B12）
  *
- * 测试策略：真实 fs + 真实 V1Store + 真实 JSON 文件（zero mock）。
+ * 测试策略：真实 fs + 真实 CwStore + 真实 JSON 文件（zero mock）。
  * CW_HOME 隔离：每个 describe 的 beforeEach 设独立 tmp CW_HOME（吸取 Wave A C1 教训）。
  */
 import {
@@ -31,9 +31,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { loadAllCwdsFromHome } from "../../src/readonly/cross-cwd.js";
 import { type AnnotatedUnit,renderList } from "../../src/readonly/render.js";
+import { CwStore } from "../../src/store/cw-store.js";
 import type { RepoMeta, WorkUnitRecord } from "../../src/store/schema.js";
 import { encodeCwd } from "../../src/store/schema.js";
-import { V1Store } from "../../src/store/v1-store.js";
 
 /** 造一个最小 WorkUnitRecord（靠索引签名 [key: string]: unknown 过类型，不强转）。 */
 function makeUnit(
@@ -390,7 +390,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
   });
 });
 
-describe("Wave B: V1Store 集成 + --cwd", () => {
+describe("Wave B: CwStore 集成 + --cwd", () => {
   let cwHome: string;
   let prevV1Home: string | undefined;
   let cwdA: string;
@@ -411,24 +411,24 @@ describe("Wave B: V1Store 集成 + --cwd", () => {
     rmSync(cwdB, { recursive: true, force: true });
   });
 
-  it("TC-B8: --cwd 指定查别的 cwd（通过 V1Store 切换 cwd）", () => {
+  it("TC-B8: --cwd 指定查别的 cwd（通过 CwStore 切换 cwd）", () => {
     // cwdA 存 wave:a，cwdB 存 wave:b
-    const storeA = new V1Store(cwdA);
+    const storeA = new CwStore(cwdA);
     storeA.save(makeUnit("wave:a"));
-    const storeB = new V1Store(cwdB);
+    const storeB = new CwStore(cwdB);
     storeB.save(makeUnit("wave:b"));
 
     // 默认查 cwdA
-    const unitsA = new V1Store(cwdA).loadAll();
+    const unitsA = new CwStore(cwdA).loadAll();
     expect(unitsA.map((u) => u.id)).toEqual(["wave:a"]);
 
     // 用 cwdB 的 store 查
-    const unitsB = new V1Store(cwdB).loadAll();
+    const unitsB = new CwStore(cwdB).loadAll();
     expect(unitsB.map((u) => u.id)).toEqual(["wave:b"]);
   });
 
   // TC-B6: --all 与 --cwd 互斥——cli 层 e2e 测试，已移至 cli-v1.test.ts
-  // 「W8: cw list --all 与 --cwd 互斥」describe 覆盖（runV1Cli 跑真实 dist/cli.js 子进程，
+  // 「W8: cw list --all 与 --cwd 互斥」describe 覆盖（runCwCli 跑真实 dist/cli.js 子进程，
   // 断言 exit 1 + mutually exclusive）。本文件测 renderList 纯函数，互斥检查在 cli.ts
   // 入口层（line 841-843），不适合纯函数测试。
 });

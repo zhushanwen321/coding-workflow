@@ -18,7 +18,7 @@
  */
 import type { ChildDeliveryRecord } from "../core/evidence.js";
 import type { WorkUnitRecord } from "../store/schema.js";
-import type { V1Deps } from "./types.js";
+import type { CwDeps } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════
 // 安全读取辅助（从 WorkUnitRecord 的 unknown 字段收窄，避免 any）
@@ -108,7 +108,7 @@ function getArrayField(obj: object, key: string): unknown[] | undefined {
  * @param childUnitId 状态刚变更的 child unit id
  */
 export function rollupChildDelivery(
-  deps: V1Deps,
+  deps: CwDeps,
   childUnitId: string,
 ): void {
   const child = deps.store.load(childUnitId);

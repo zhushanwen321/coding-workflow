@@ -18,7 +18,7 @@
 import type { StatusChange, WorkUnitStatus } from "../../core/status.js";
 import type { Epic } from "../../core/workunit.js";
 import { rollupChildDelivery } from "../rollup.js";
-import type { AbortInput, ActionResult, V1Deps } from "../types.js";
+import type { AbortInput, ActionResult, CwDeps } from "../types.js";
 import { buildEpicNextAction, epicTransition, readRecordStatus, readRecordStatusHistory, saveEpic } from "./epic-internal.js";
 
 /**
@@ -31,7 +31,7 @@ import { buildEpicNextAction, epicTransition, readRecordStatus, readRecordStatus
 export function handleAbortEpic(
   unit: Epic,
   input: AbortInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   const at = deps.clock.now();
 
@@ -67,7 +67,7 @@ export function handleAbortEpic(
  * @param reason abort 原因（写 statusHistory.note）
  */
 function cascadeAbortChildren(
-  deps: V1Deps,
+  deps: CwDeps,
   parentId: string,
   at: string,
   reason: string | undefined,

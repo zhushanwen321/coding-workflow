@@ -4,7 +4,7 @@
  * 来源：v5 wave 附录 A §10-§11（handler 编排骨架）、各阶段产物归宿（plan/judgments/evidence）。
  *
  * 职责：handler 编排层自身不含业务逻辑——调 rules（纯函数）+ store（IO），
- *      所有 IO 能力通过 V1Deps 注入（gitValidator / testRunner / clock / fileExists），
+ *      所有 IO 能力通过 CwDeps 注入（gitValidator / testRunner / clock / fileExists），
  *      handler 不直接 import node:fs 或调 git。
  *
  * 不变量：本文件只声明类型，零运行时代码。各 handler 文件 import 类型后实现。
@@ -42,10 +42,10 @@ import type { ExecutionUnit } from "../core/workunit.js";
 import type { FreezeViolation } from "../rules/freeze.js";
 import type { GateResult } from "../rules/gates/types.js";
 import type { ReplanImpact } from "../rules/replan.js";
-import type { V1Store } from "../store/v1-store.js";
+import type { CwStore } from "../store/cw-store.js";
 
 // ═══════════════════════════════════════════════════════════════
-// V1Deps（handler 依赖注入接口）
+// CwDeps（handler 依赖注入接口）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -58,8 +58,8 @@ import type { V1Store } from "../store/v1-store.js";
  * - clock：提供 ISO 8601 时间戳（statusHistory.at / evidence.generatedAt / frozenAt / abandonedAt）
  * - workspacePath：仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）
  */
-export interface V1Deps {
-  store: V1Store;
+export interface CwDeps {
+  store: CwStore;
   gitValidator: { exists: (hash: string) => boolean };
   /** 跑测试套件返回结果。仅 wave 的 test handler 需要——slice handler 不跑测试，故可选。 wave test handler 使用时做 non-null 断言（slice 不触达）。 */
   testRunner?: { run: (unit: ExecutionUnit) => TestRunResult };
@@ -107,11 +107,11 @@ export interface ActionResult {
   /** 同一 action 连续 fail 次数（从 statusHistory 派生，跨 session 不重置）。 */
   failureCount?: number;
   /** 下一步导航（含 guidance + 结构化字段）。 */
-  nextAction?: V1NextAction;
+  nextAction?: CwNextAction;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// V1NextAction（下一步导航结构）
+// CwNextAction（下一步导航结构）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -123,7 +123,7 @@ export interface ActionResult {
  * - guidance：纯文本（正常三段式 / 异常四段式），agent 优先读这个
  * - unitPath / crossLayer / itemProgress / evidenceProgress：结构化进度字段，供程序化读取
  */
-export interface V1NextAction {
+export interface CwNextAction {
   /**
    * 下一步 action（同层）。
    * undefined 时的路由（按序）：
@@ -256,7 +256,7 @@ export interface ReplanInput extends AbandonParentItemsInput {
    *
    * 用于「FR1 拆成 FR1a+FR1b」场景：abandonedIds 废弃 FR1，addedSpecItems 追加 FR1a/FR1b（active）。
    * slice/epic replan 不消费此字段，类型兼容留空即可。
-   * handler 强制 status='active'，id 由 agent 传入且不得与现有条目 id 冲突（冲突抛 V1Error）。
+   * handler 强制 status='active'，id 由 agent 传入且不得与现有条目 id 冲突（冲突抛 CwEngineError）。
    */
   addedSpecItems?: {
     functionalRequirements?: FunctionalRequirement[];

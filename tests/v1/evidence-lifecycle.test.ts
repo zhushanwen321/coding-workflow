@@ -21,7 +21,8 @@ import { handleTest } from "../../src/handlers/test.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
 import {
   commitWithFiles,
-  createV1Env,
+  createCwEnv,
+  type CwEnv,
   makeValidContract,
   makeValidDesignReviewJudgment,
   makeValidExecReviewJudgment,
@@ -32,13 +33,12 @@ import {
   makeValidTestJudgment,
   makeWaveUnit,
   STUB_NOW,
-  type V1Env,
 } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {

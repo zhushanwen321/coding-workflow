@@ -15,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionUnit } from "../../src/core/workunit.js";
 import { dispatch } from "../../src/dispatch.js";
 import {
-  createV1Env,
+  createCwEnv,
+  type CwEnv,
   makeValidContract,
   makeValidDesignReviewJudgment,
   makeValidExecReviewJudgment,
@@ -24,13 +25,12 @@ import {
   makeValidTask,
   makeValidTestCase,
   makeValidTestJudgment,
-  type V1Env,
 } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -564,7 +564,7 @@ describe("W7: abort guidance（流程结束）", () => {
 describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）", () => {
   it("testsAllPass 失败 → guidance 含 cw.config.json / --testCwd 提示", () => {
     // 构造 testRunner 返回失败的 deps
-    const failEnv = createV1Env();
+    const failEnv = createCwEnv();
     failEnv.deps.testRunner = {
       run: () => ({ passed: false, passedCount: 0, failedCount: 5 }),
     };

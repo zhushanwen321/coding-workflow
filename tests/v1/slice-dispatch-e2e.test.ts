@@ -5,28 +5,28 @@
  * execute→[推进 child wave]→retrospect→closeout），验证编排层正确串联 slice handler。
  *
  * 另测 dispatch 拒绝 slice 的 test/exec-review（slice 是 PlanningUnit，无此 action）→
- * throw V1Error(illegal_transition)。
+ * throw CwEngineError(illegal_transition)。
  *
- * 真实 store + stub V1Deps（外部依赖注入接口）。零 mock 框架。
+ * 真实 store + stub CwDeps（外部依赖注入接口）。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Slice } from "../../src/core/workunit.js";
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
   advanceWaveToClosed,
-  createV1Env,
+  createCwEnv,
   makeRetrospectDataFromStore,
   makeValidSliceDesignReviewJudgment,
   makeValidSlicePlan,
   STUB_NOW,
 } from "./helpers/slice-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -43,8 +43,8 @@ function loadSlice(id: string): Slice {
  * 构造 slice execute 的 dispatch 参数。
  *
  * slice execute 按 plan.split 自动创建 child wave，不接收 input（handler 忽略 params.input）。
- * 但 V1Params 联合的 execute 分支类型是 ExecuteInput（wave 专属，需 commitHash），
- * TS 无法从 action tag 区分 wave/slice 的 execute。故此处显式断言为 V1Params。
+ * 但 CwParams 联合的 execute 分支类型是 ExecuteInput（wave 专属，需 commitHash），
+ * TS 无法从 action tag 区分 wave/slice 的 execute。故此处显式断言为 CwParams。
  */
 function sliceExecute(unitId: string): Parameters<typeof dispatch>[0] {
   return { action: "execute", unitId, input: {} } as unknown as Parameters<typeof dispatch>[0];
@@ -197,7 +197,7 @@ describe("dispatch 完整 slice 生命周期", () => {
 });
 
 describe("dispatch 拒绝 slice 的 test/exec-review", () => {
-  it("slice dispatch test → throw V1Error(illegal_transition)", () => {
+  it("slice dispatch test → throw CwEngineError(illegal_transition)", () => {
     const unitId = "slice:e2e-no-test";
     dispatch(
       { action: "create", input: { slug: "e2e-no-test", objective: "o", layer: "slice" } },
@@ -209,7 +209,7 @@ describe("dispatch 拒绝 slice 的 test/exec-review", () => {
         { action: "test", unitId, input: { testJudgment: { necessityMet: "x", sufficiencyMet: { gapsConfirmed: [], gapsNewlyFound: [], overlapsConfirmed: [] }, alternativesReconsidered: "", tradeoffCostRealized: [], riskOutcome: [] } } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -218,13 +218,13 @@ describe("dispatch 拒绝 slice 的 test/exec-review", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      const err = e as V1Error;
+      const err = e as CwEngineError;
       expect(err.code).toBe("illegal_transition");
       expect(err.message).toMatch(/test/);
     }
   });
 
-  it("slice dispatch exec-review → throw V1Error(illegal_transition)", () => {
+  it("slice dispatch exec-review → throw CwEngineError(illegal_transition)", () => {
     const unitId = "slice:e2e-no-execreview";
     dispatch(
       { action: "create", input: { slug: "e2e-no-execreview", objective: "o", layer: "slice" } },
@@ -240,12 +240,12 @@ describe("dispatch 拒绝 slice 的 test/exec-review", () => {
         },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 });
 
 describe("dispatch slice 非法跳步 + gate fail", () => {
-  it("slice create 后直接 execute → throw V1Error(illegal_transition)", () => {
+  it("slice create 后直接 execute → throw CwEngineError(illegal_transition)", () => {
     const unitId = "slice:e2e-illegal";
     dispatch(
       { action: "create", input: { slug: "e2e-illegal", objective: "o", layer: "slice" } },
@@ -253,7 +253,7 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
     );
     expect(() =>
       dispatch(sliceExecute(unitId), env.deps),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
   it("slice design-review gate fail（techChoices 空）→ ActionResult(ok=false)，status 不变", () => {
@@ -289,13 +289,13 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
     expect(loadSlice(unitId).status).toBe("planning");
   });
 
-  it("slice unit not found → throw V1Error(unit_not_found)", () => {
+  it("slice unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
         { action: "clarify", unitId: "slice:ghost", input: { clarifications: [] } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -304,11 +304,11 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unit_not_found");
+      expect((e as CwEngineError).code).toBe("unit_not_found");
     }
   });
 
-  it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
+  it("closed 后任何 action → throw CwEngineError（终态不可逆）", () => {
     const unitId = "slice:e2e-terminal";
     dispatch(
       { action: "create", input: { slug: "e2e-terminal", objective: "o", layer: "slice" } },
@@ -334,6 +334,6 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
     // closed 后再 execute → illegal
     expect(() =>
       dispatch(sliceExecute(unitId), env.deps),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 });

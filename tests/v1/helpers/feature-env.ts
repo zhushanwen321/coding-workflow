@@ -2,7 +2,7 @@
  * feature 测试基建 — feature unit 工厂 + 合法 FeatureSpec/Plan/Judgment/RetrospectData 产物工厂
  * + 阶段推进 helper。
  *
- * 复用 v1-env.ts 的 createV1Env / makeStubDeps（隔离环境 + stub V1Deps）。
+ * 复用 v1-env.ts 的 createCwEnv / makeStubDeps（隔离环境 + stub CwDeps）。
  * 复用 slice-env.ts 的 makeValidSlicePlan / makeValidSliceDesignReviewJudgment /
  * makeValidPlanningRetrospectData / advanceWaveToClosed（feature 的 child 是 slice，
  * 推进 child slice 复用 slice 的合法产物工厂 + wave 推进 helper）。
@@ -13,7 +13,7 @@
  * - 阶段推进 helper：setupToFeaturePlanning / setupToFeatureDesignReviewed /
  *   setupToFeatureExecuting / setupFeatureWithClosedSlices（调 dispatch 推进到各状态）。
  *
- * 零 mock 框架：真实 V1Store + tmp 目录（同 v1-env.ts 约定）。
+ * 零 mock 框架：真实 CwStore + tmp 目录（同 v1-env.ts 约定）。
  */
 import type {
   AcceptanceCriterion,
@@ -31,7 +31,7 @@ import type { Split } from "../../../src/core/plan.js";
 import type { Feature } from "../../../src/core/workunit.js";
 import { createFeature } from "../../../src/core/workunit.js";
 import { dispatch } from "../../../src/dispatch.js";
-import type { V1Deps } from "../../../src/handlers/types.js";
+import type { CwDeps } from "../../../src/handlers/types.js";
 import {
   advanceWaveToClosed,
   makeValidPlanningRetrospectData,
@@ -39,13 +39,13 @@ import {
   makeValidSlicePlan,
 } from "./slice-env.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeStubDeps,
   STUB_NOW,
 } from "./v1-env.js";
 
 export {
-  createV1Env,
+  createCwEnv,
   makeStubDeps,
   STUB_NOW,
 };
@@ -263,7 +263,7 @@ export function makeValidFeatureRetrospectData(
  * 与动态生成的 child slice id 不匹配导致 childUnitEvidenceComplete gate fail。
  */
 export function makeFeatureRetrospectDataFromStore(
-  deps: V1Deps,
+  deps: CwDeps,
   unitId: string,
 ): PlanningRetrospectData {
   const record = deps.store.load(unitId) as unknown as {
@@ -280,7 +280,7 @@ export function makeFeatureRetrospectDataFromStore(
 // 阶段推进 helper（通过 dispatch 推进到各状态，e2e/gates/retrospect 测试复用）
 // ═══════════════════════════════════════════════════════════════
 
-/** feature execute 按 split 创建 child slice，不接收 input。V1Params execute 分支锁 ExecuteInput，故断言。 */
+/** feature execute 按 split 创建 child slice，不接收 input。CwParams execute 分支锁 ExecuteInput，故断言。 */
 type DispatchParams = Parameters<typeof dispatch>[0];
 
 /** feature execute 的 dispatch 参数（无 input，handler 忽略）。 */
@@ -294,10 +294,10 @@ function featureExecute(unitId: string): DispatchParams {
  * 用 dispatch 走完整路径（create → clarify），写入合法 FeatureClarification。
  * 返回 feature unit id。
  *
- * @param deps stub V1Deps（store 注入）
+ * @param deps stub CwDeps（store 注入）
  * @param slug feature slug（默认 test-feature）
  */
-export function setupToFeatureClarified(deps: V1Deps, slug = "test-feature"): string {
+export function setupToFeatureClarified(deps: CwDeps, slug = "test-feature"): string {
   const unitId = `feature:${slug}`;
   dispatch(
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "feature" } },
@@ -318,7 +318,7 @@ export function setupToFeatureClarified(deps: V1Deps, slug = "test-feature"): st
  * 推进 feature 到 planning 状态（+ plan）。
  * 返回 feature unit id（status=planning，plan.split 已写入）。
  */
-export function setupToFeaturePlanning(deps: V1Deps, slug = "test-feature"): string {
+export function setupToFeaturePlanning(deps: CwDeps, slug = "test-feature"): string {
   const unitId = setupToFeatureClarified(deps, slug);
   dispatch(
     { action: "plan", unitId, input: makeValidFeaturePlan() },
@@ -331,7 +331,7 @@ export function setupToFeaturePlanning(deps: V1Deps, slug = "test-feature"): str
  * 推进 feature 到 design-reviewed 状态（+ design-review 过 gate）。
  * 返回 feature unit id（status=design-reviewed，可直接 execute）。
  */
-export function setupToFeatureDesignReviewed(deps: V1Deps, slug = "test-feature"): string {
+export function setupToFeatureDesignReviewed(deps: CwDeps, slug = "test-feature"): string {
   const unitId = setupToFeaturePlanning(deps, slug);
   dispatch(
     {
@@ -348,7 +348,7 @@ export function setupToFeatureDesignReviewed(deps: V1Deps, slug = "test-feature"
  * 推进 feature 到 executing 状态（+ execute 创建 child slice）。
  * 返回 feature unit id（status=executing，child slice 已创建）。
  */
-export function setupToFeatureExecuting(deps: V1Deps, slug = "test-feature"): string {
+export function setupToFeatureExecuting(deps: CwDeps, slug = "test-feature"): string {
   const unitId = setupToFeatureDesignReviewed(deps, slug);
   dispatch(featureExecute(unitId), deps);
   return unitId;
@@ -365,11 +365,11 @@ export function setupToFeatureExecuting(deps: V1Deps, slug = "test-feature"): st
  * 只有 wave abort 接入）。但 feature retrospect 的 allWavesClosed 从 store.findChildren 读实时
  * status（不依赖 childDelivery），故只要 child slice 真的 closed 即可通过。
  *
- * @param deps stub V1Deps
+ * @param deps stub CwDeps
  * @param featureId feature unit id
  * @returns child slice id 列表
  */
-export function advanceChildSlicesToClosed(deps: V1Deps, featureId: string): string[] {
+export function advanceChildSlicesToClosed(deps: CwDeps, featureId: string): string[] {
   const record = deps.store.load(featureId);
   if (!record) throw new Error(`feature not found: ${featureId}`);
   const childUnitIds = (record as unknown as {
@@ -435,10 +435,10 @@ export function advanceChildSlicesToClosed(deps: V1Deps, featureId: string): str
  * 流程：setupToFeatureExecuting → advanceChildSlicesToClosed。
  * 返回 feature unit id（所有 child slice 已 closed，可过 retrospect allWavesClosed gate）。
  *
- * @param deps stub V1Deps
+ * @param deps stub CwDeps
  * @param slug feature slug
  */
-export function setupFeatureWithClosedSlices(deps: V1Deps, slug = "test-feature"): string {
+export function setupFeatureWithClosedSlices(deps: CwDeps, slug = "test-feature"): string {
   const featureId = setupToFeatureExecuting(deps, slug);
   advanceChildSlicesToClosed(deps, featureId);
   return featureId;

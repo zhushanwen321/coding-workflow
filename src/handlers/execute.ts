@@ -18,7 +18,7 @@ import { assertEvidenceNotFrozen } from "../core/evidence.js";
 import { extractChangedFiles, parseAbandonMarkers } from "../core/git.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, mergeAbandonParentItems, saveUnit, transitionStatus } from "./internal.js";
-import type { ActionResult, ExecuteInput, V1Deps } from "./types.js";
+import type { ActionResult, CwDeps,ExecuteInput } from "./types.js";
 
 /**
  * 执行 execute action。
@@ -30,7 +30,7 @@ import type { ActionResult, ExecuteInput, V1Deps } from "./types.js";
 export function handleExecute(
   unit: ExecutionUnit,
   input: ExecuteInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 检测 replan 后重新 execute：旧 commitHash 需要 append 进 statusHistory ──
   const oldCommitHash = unit.executeResult?.commitHash;

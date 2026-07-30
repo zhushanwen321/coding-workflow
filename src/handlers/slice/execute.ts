@@ -26,7 +26,7 @@ import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/ev
 import type { Slice } from "../../core/workunit.js";
 import { createWave } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import type { ActionResult, V1Deps, V1NextAction } from "../types.js";
+import type { ActionResult, CwDeps, CwNextAction } from "../types.js";
 import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -37,7 +37,7 @@ import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-intern
  */
 export function handleExecuteSlice(
   unit: Slice,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   const at = deps.clock.now();
 
@@ -79,7 +79,7 @@ export function handleExecuteSlice(
 
   // ── crossLayer：下沉到第一个 child wave ──
   const firstChildId = unit.executeResult.childUnitIds[0];
-  const crossLayer: V1NextAction["crossLayer"] | undefined = firstChildId !== undefined
+  const crossLayer: CwNextAction["crossLayer"] | undefined = firstChildId !== undefined
     ? {
         kind: "descend",
         targetLayer: "wave",

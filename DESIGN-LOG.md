@@ -10,7 +10,7 @@
 | Topic | 主题 | 开始 | 归档 | 沉淀去向 | 状态 |
 |-------|------|------|------|---------|------|
 | cw-1-0-lifecycle-redesign | cw 1.0 生命周期重构：4 层 WorkUnit 模型（epic/feature/slice/wave）+ V5 设计文档集 + ADR 0006-0010 | 07-19 | — | `.xyz-harness/cw-1-0-lifecycle-redesign/design-v5-*.md`, `docs/adr/0006-0010`, `src/{core,rules,store,handlers,dispatch}` 五层架构 | in-progress |
-| metrics-eval-waves | 评估指标体系 Wave 1-5：changedFiles 持久化 + retrospect 结构化 + 三层指标 + review 3-subagent 架构 + assess post-closeout | 07-14 | — | `docs/metrics-design.md`, `docs/metrics-usage.md`, `cw assess` 动作, review 3-subagent 架构 | in-progress |
+| metrics-eval-waves | 评估指标体系 Wave 1-5：changedFiles 持久化 + retrospect 结构化 + 三层指标 + review 3-subagent 架构 + assess post-closeout | 07-14 | — | `docs/metrics-design.md`, `docs/metrics-usage.md`（已归档至 `.xyz-harness/deprecated-metrics/`） | deprecated（随 0.x `cw stats`/`cw assess` 一并删除，设计文档归档保留可追溯） |
 | issue-tracking-fix-loop | review_fix / test_fix loop：issue tracking + fix loop 闭环追踪（reviewIssues / testFixLog） | 07-14 | — | `.xyz-harness/issue-tracking-fix-loop/`, types.reviewIssues/testFixLog | in-progress |
 | clarify-adr-mechanism | clarify 阶段 + ADR 机制：create→plan 之间的需求/技术澄清 | 07-14 | — | `cw clarify` 动作, ADR 机制（非正式，见下表） | in-progress |
 | cw-mechanism-levers | CW mechanism levers 修复：4 个机制杠杆修复 + testRunner 持久化 + replan --test | 07-14 | — | `.xyz-harness/cw-engine-gate-hardening/`, gate/testRunner 改动 | in-progress |
@@ -22,6 +22,7 @@
 - `in-progress` — 设计/实施中，topic 目录可读写
 - `archived` — coding-closeout 已收尾，topic 目录只读，沉淀已进长期文档
 - `abandoned` — 放弃，标理由（沉淀仍可能有价值，归档前提取）
+- `deprecated` — 功能已从代码删除，设计文档归档至 `.xyz-harness/deprecated-*` 保留可追溯
 
 ## 活跃 ADR 索引
 

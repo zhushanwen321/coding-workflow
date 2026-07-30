@@ -1,11 +1,11 @@
 /**
  * slice 测试基建 — slice unit 工厂 + 合法 SlicePlan 产物工厂 + 阶段推进 helper。
  *
- * 复用 v1-env.ts 的 createV1Env / makeStubDeps（隔离环境 + stub V1Deps）。
+ * 复用 v1-env.ts 的 createCwEnv / makeStubDeps（隔离环境 + stub CwDeps）。
  * 本文件只加 slice 专属：makeSliceUnit / 合法 SlicePlan 条目 / 合法 PlanningRetrospectData /
  * 阶段推进 helper（setupToSlicePlanning / setupToSliceDesignReviewed / setupSliceWithClosedWaves）。
  *
- * 零 mock 框架：真实 V1Store + tmp 目录（同 v1-env.ts 约定）。
+ * 零 mock 框架：真实 CwStore + tmp 目录（同 v1-env.ts 约定）。
  */
 import type {
   DesignReviewJudgment,
@@ -34,11 +34,11 @@ import { handleClarifySlice } from "../../../src/handlers/slice/clarify.js";
 import { handleDesignReviewSlice } from "../../../src/handlers/slice/design-review.js";
 import { handleExecuteSlice } from "../../../src/handlers/slice/execute.js";
 import { handlePlanSlice } from "../../../src/handlers/slice/plan.js";
-import type { V1Deps } from "../../../src/handlers/types.js";
+import type { CwDeps } from "../../../src/handlers/types.js";
+import type { CwStore } from "../../../src/store/cw-store.js";
 import type { WorkUnitRecord } from "../../../src/store/schema.js";
-import type { V1Store } from "../../../src/store/v1-store.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeStubDeps,
   makeValidContract,
   makeValidDesignReviewJudgment,
@@ -52,7 +52,7 @@ import {
 } from "./v1-env.js";
 
 export {
-  createV1Env,
+  createCwEnv,
   makeStubDeps,
   makeValidContract,
   makeValidDesignReviewJudgment,
@@ -235,7 +235,7 @@ export function makeValidPlanningRetrospectData(
  * 与动态生成的 childUnitId 不匹配导致 childUnitEvidenceComplete gate fail。
  */
 export function makeRetrospectDataFromStore(
-  deps: V1Deps,
+  deps: CwDeps,
   unitId: string,
 ): PlanningRetrospectData {
   const record = deps.store.load(unitId) as unknown as {
@@ -256,10 +256,10 @@ export function makeRetrospectDataFromStore(
  * 推进 slice 到 planning 状态（create → clarify → plan）。
  * 返回的 slice 已写入合法 SlicePlan，status=planning。
  *
- * @param deps stub V1Deps（store 注入）
+ * @param deps stub CwDeps（store 注入）
  * @param slug slice slug（默认 test-slice）
  */
-export function setupToSlicePlanning(deps: V1Deps, slug = "test-slice"): Slice {
+export function setupToSlicePlanning(deps: CwDeps, slug = "test-slice"): Slice {
   // create（直接调 handler，不经 dispatch——单元测试聚焦 handler 逻辑）
   const created = createSlice({ slug, objective: `obj ${slug}`, createdAt: STUB_NOW });
    
@@ -283,7 +283,7 @@ export function setupToSlicePlanning(deps: V1Deps, slug = "test-slice"): Slice {
  * 推进 slice 到 design-reviewed 状态（+ design-review 过 gate）。
  * 返回的 slice status=design-reviewed，可直接 execute。
  */
-export function setupToSliceDesignReviewed(deps: V1Deps, slug = "test-slice"): Slice {
+export function setupToSliceDesignReviewed(deps: CwDeps, slug = "test-slice"): Slice {
   const slice = setupToSlicePlanning(deps, slug);
   handleDesignReviewSlice(slice, { designReviewJudgment: makeValidSliceDesignReviewJudgment() }, deps);
   return slice;
@@ -298,11 +298,11 @@ export function setupToSliceDesignReviewed(deps: V1Deps, slug = "test-slice"): S
  * child wave 推进复用 wave handler（createWave 已在 execute 时创建并 save，这里 load 后逐阶段推进）。
  * child wave 的 WavePlan 用最小合法形态（1 testCase + 1 task + 1 file，过 design-review gate）。
  *
- * @param deps stub V1Deps（testRunner stub 返回 passed=true）
+ * @param deps stub CwDeps（testRunner stub 返回 passed=true）
  * @param slug slice slug
  */
 export function setupSliceWithClosedWaves(
-  deps: V1Deps,
+  deps: CwDeps,
   slug = "test-slice",
 ): { slice: Slice; childWaveIds: string[] } {
   const slice = setupToSliceDesignReviewed(deps, slug);
@@ -333,7 +333,7 @@ export function setupSliceWithClosedWaves(
  *
  * 已 export：e2e/rollup 测试需要单独推进某个 child wave（如只 abort 不 closeout 的场景）。
  */
-export function advanceWaveToClosed(deps: V1Deps, waveId: string): void {
+export function advanceWaveToClosed(deps: CwDeps, waveId: string): void {
    
   const wave = deps.store.load(waveId) as unknown as ExecutionUnit;
   if (!wave) throw new Error(`wave not found: ${waveId}`);
@@ -370,5 +370,5 @@ export function advanceWaveToClosed(deps: V1Deps, waveId: string): void {
   handleCloseout(wave, { artifacts: [] }, deps);
 }
 
-// V1Store 类型重导出（部分测试需要直接操作 store）
-export type { V1Store };
+// CwStore 类型重导出（部分测试需要直接操作 store）
+export type { CwStore };

@@ -24,7 +24,6 @@
 | `types-new.test.ts` | 单元 | — | 类型验证（typebox schema） |
 | `plan-parser.test.ts` | 单元 | — | plan.json / dev-plan.json / test.json 解析 |
 | `state-machine.test.ts` | 单元 | — | checkLinear / computeNextStatus / computeGatePassed |
-| `stats.test.ts` | 单元 | 39 | compute* 评估指标 |
 | `store.test.ts` | 集成 | 51 | store DAO（真实 tmp 文件系统） |
 | `gate.test.ts` | 集成 | 52 \| 1 skipped | gate 检查（devCheck / testCheck 等） |
 | `dispatch.test.ts` | 集成 | 63 | dispatch 层全 handler 测试 |
@@ -32,9 +31,6 @@
 | `e2e-clarify.test.ts` | e2e | 5 | clarify action（pending/resolved/progressive/不阻断 plan/非法状态） |
 | `e2e-review-fix.test.ts` | e2e | 5 | review_fix loop（带 issues/修复/完整 loop/3 轮熔断/非法 issueId） |
 | `e2e-test-fix.test.ts` | e2e | 5 | test_fix loop（失败/修复/完整 loop/5 轮熔断/非法 caseId） |
-| `e2e-assess.test.ts` | e2e | 5 | assess（单次/progressive/defect/非法状态/缺 defect） |
-| `e2e-readonly.test.ts` | e2e | 6 | stats/status/list 只读子命令 |
-| `e2e-init.test.ts` | e2e | 6 | init 基建诊断（空目录/补齐 ready/骨架态/骨架闭环自洽/create 引导接线 ×2） |
 | `e2e-gate-fail.test.ts` | e2e | 3 | gate fail retry / 5 次熔断 / fail 后重试成功 |
 | `expected-multi-mode.test.ts` | 集成 | 27 | expected 多模式（exact/exit_zero/script）：judgeByExpected 分支、handleTest 执行 |
 
@@ -52,9 +48,9 @@
 
 | 层 | 测什么 | 不测什么 | 对应文件 |
 |---|---|---|---|
-| 单元（纯函数） | 无副作用的判定与计算：`types.ts` 的 `judgeByExpected`、`stats.ts` 的所有 `compute*` 函数、`state-machine.ts` 的 `checkLinear` / `computeNextStatus` / `computeGatePassed`、`plan-parser.ts` 的解析、`cli-params` 的 `buildParams` | 不碰文件系统、不碰 git、不碰 store | pure-functions / stats / state-machine / plan-parser / types-new / cli-params / cli-error |
+| 单元（纯函数） | 无副作用的判定与计算：`types.ts` 的 `judgeByExpected`、`state-machine.ts` 的 `checkLinear` / `computeNextStatus` / `computeGatePassed`、`plan-parser.ts` 的解析、`cli-params` 的 `buildParams` | 不碰文件系统、不碰 git、不碰 store | pure-functions / state-machine / plan-parser / types-new / cli-params / cli-error |
 | 集成（dispatch） | 走完整 dispatch 路径：`loadTopic → guard(checkLinear) → handler → store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 | 不 spawn 子进程、不跑真实 `cw` CLI | dispatch / store / gate |
-| e2e（子进程） | 真实 `spawnSync` node 子进程跑 `dist/cli.js`，`CW_HOME` 指向 tmp 子目录（per-cwd 隔离）。覆盖**全部 13 个 action 的关键分支路径**：主链路 happy path + clarify/review_fix/test_fix/assess 各自的 loop + turn 上限熔断 + 非法状态 + 只读子命令 + gate fail/circuit breaker | 不 mock 任何东西——入口/状态机/store/git 全部真实 | e2e-* |
+| e2e（子进程） | 真实 `spawnSync` node 子进程跑 `dist/cli.js`，`CW_HOME` 指向 tmp 子目录（per-cwd 隔离）。覆盖**全部 15 个 action 的关键分支路径**：主链路 happy path + clarify/review_fix/test_fix 各自的 loop + turn 上限熔断 + 非法状态 + 只读查询（tree/status/list/handoff）+ gate fail/circuit breaker | 不 mock 任何东西——入口/状态机/store/git 全部真实 | e2e-* |
 
 **三层职责切分原则**：单元层保证判定逻辑正确（机器重算的核心防线）；集成层保证 handler 编排与 store 读写正确（覆盖每个 handler 的正常 + 异常路径）；e2e 层保证 CLI 入口到归档的整条链路不断裂。集成层不重复单元层的纯逻辑断言，e2e 层不重复集成层的 handler 细节——只验证「端到端跑得通」。
 
@@ -90,8 +86,7 @@
 | 场景 | 文件 | 命名约定 |
 |---|---|---|
 | 主链路 happy path（create→...→closeout 全链跑通） | `tests/e2e.test.ts` | E1 / E2 / E3 / E4（保留原有编号） |
-| 单个 action 的分支路径（loop / 熔断 / 非法 / 只读） | `tests/e2e-<action>.test.ts` | `e2e-clarify` / `e2e-review-fix` / `e2e-test-fix` / `e2e-assess` / `e2e-init` / `e2e-gate-fail` |
-| 只读子命令聚合 | `tests/e2e-readonly.test.ts` | stats / status / list 合并一文件 |
+| 单个 action 的分支路径（loop / 熔断 / 非法 / 只读） | `tests/e2e-<action>.test.ts` | `e2e-clarify` / `e2e-review-fix` / `e2e-test-fix` / `e2e-gate-fail` |
 | 共享基建（不许直接复制到测试文件） | `tests/helpers/e2e.ts` | — |
 
 **拆分原则**：一个文件聚焦一个 action 的分支路径（或一组同类只读命令），独立 `beforeAll` 隔离环境。不要把所有 E2E 塞进一个文件——单文件超 ~500 行时拆。新增 action 的 E2E 测试时，新建 `e2e-<action>.test.ts`，不要往 `e2e.test.ts` 加。
@@ -103,7 +98,7 @@ npm run build            # 必须！E2E 跑 dist/cli.js，改完 src/ 要先 bui
 npm test                 # 全量（含所有 e2e-*.test.ts）
 
 # 单独跑某个 E2E 文件
-npx vitest run tests/e2e-assess.test.ts
+npx vitest run tests/e2e-review-fix.test.ts
 
 # 跑全部 E2E（排除单元/集成层）
 npx vitest run tests/e2e*.test.ts
@@ -124,9 +119,9 @@ npx vitest run tests/e2e*.test.ts
 | `setupToDeveloped(e, slug)` | 一行走到 executing（create+clarify+plan+design-review+execute） | 测 test 前 |
 | `setupToReviewed(e, slug)` | 走到 reviewed（+review 无 issue） | 测 test / test_fix 前 |
 | `setupToTested(e, slug)` | 走到 tested（+test 全 pass） | 测 retrospect / closeout 前 |
-| `setupToClosed(e, slug)` | 走到 closed（完整链路） | 测 assess 前 |
+| `setupToClosed(e, slug)` | 走到 closed（完整链路） | 测 closeout 后只读查询（status/handoff/list）前 |
 
-**`runCli` 的 cwd 约定**：第二参数是 `E2eEnv`（不是裸 `env`），cwd 自动绑 `workspaceDir`。CLI 默认 `workspacePath=process.cwd()`，子进程 cwd 必须等于 workspaceDir，否则 `encodeCwd(workspaceDir)` 与 db 落盘路径错位，跨子命令读写失败。需要覆盖 cwd 时（如 init 诊断不同目录）用 `options.cwd`。
+**`runCli` 的 cwd 约定**：第二参数是 `E2eEnv`（不是裸 `env`），cwd 自动绑 `workspaceDir`。CLI 默认 `workspacePath=process.cwd()`，子进程 cwd 必须等于 workspaceDir，否则 `encodeCwd(workspaceDir)` 与 db 落盘路径错位，跨子命令读写失败。需要覆盖 cwd 时用 `options.cwd`。
 
 ### 编写模板
 
@@ -179,13 +174,10 @@ describe("E<编号><action>: <场景描述>", () => {
 | `test_fix` | fixes 数组 `[{caseId,commitHash,resolution}]` | `--topicId` |
 | `retrospect` | retrospectData（可选 JSON） | `--topicId` / `--retrospect-path` |
 | `closeout` | — | `--topicId` |
-| `assess` | — | `--type` / `--notes` / `--score` / `--defect`（全 flag） |
-| `init` | — | 无参数（诊断 `process.cwd()`，用 `options.cwd` 覆盖测试目录） |
 
 **ID 格式约定**（写 fix/case 引用时要对应）：
 - review 的 issueId：cw 自增分配 `R1` / `R2`...（按已存在数量 +1）。首轮提交 N 条 issue → `R1`..`R{N}`
 - test 的 caseId：来自 plan 阶段 testCases 字段的 `testCase.id`（测试代码自定，如 `E1` / `E2`）
-- assess 的 assessmentId：cw 自增 `AS1` / `AS2`...
 
 ### expected 值约定
 
@@ -212,13 +204,12 @@ expected 是判别联合（`type` 字段必填），3 种判定模式：
 | happy path（一次过） | E1 全链、阶段 helper | e2e.test.ts |
 | loop（review_fix / test_fix 修复后重跑） | E6c / E7c | e2e-review-fix / e2e-test-fix |
 | turn 上限熔断（强制跳阶段） | E6d（review 3 轮→test）/ E7d（test 5 轮→retrospect） | e2e-review-fix / e2e-test-fix |
-| progressive（多次调用追加） | E5c（clarify）/ E8b（assess AS1/AS2/AS3） | e2e-clarify / e2e-assess |
+| progressive（多次调用追加） | E5c（clarify） | e2e-clarify |
 | gate fail → retry | E11a（plan format 错）/ E11c（修后重试成功） | e2e-gate-fail |
 | circuit breaker（连续 5 次 fail 换文案） | E11b | e2e-gate-fail |
 | 非法状态（guard 拒绝） | E5e / E8d → stderr 含 `illegal_transition` | 各 e2e-* 文件 |
-| 非法参数（handler throw） | E6e（issueId 不存在）/ E7e（caseId 不存在）/ E8e（缺 defect） | 各 e2e-* 文件 |
-| 只读子命令 | E9（stats / status / list） | e2e-readonly |
-| 基建诊断 | E10（init 空目录 / ready / 骨架态） | e2e-init |
+| 非法参数（handler throw） | E6e（issueId 不存在）/ E7e（caseId 不存在） | 各 e2e-* 文件 |
+| 只读查询 | E9（status / list / handoff / tree） | e2e-* |
 
 ## 不可回退基线（Regression Baseline）
 
@@ -251,7 +242,7 @@ expected 是判别联合（`type` 字段必填），3 种判定模式：
 
 ### RB-4 e2e 完整流程跑通  [from: cw-cli-extract]
 
-- **用例来源**：`tests/e2e.test.ts` E1（主链路）+ `tests/e2e-*.test.ts` 系列（全部 13 action 的分支路径，共 38 个 E2E 测试）
-- **断言**：`create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout` 全链真实子进程跑通，最终 `status=closed`，evidence 写入；各分支路径（clarify / review_fix / test_fix / assess loop、turn 上限熔断、gate fail/circuit breaker、非法状态/参数、只读子命令、init 诊断）端到端验证
+- **用例来源**：`tests/e2e.test.ts` E1（主链路）+ `tests/e2e-*.test.ts` 系列（全部 15 action 的分支路径，共 38 个 E2E 测试）
+- **断言**：`create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout` 全链真实子进程跑通，最终 `status=closed`，evidence 写入；各分支路径（clarify / review_fix / test_fix loop、turn 上限熔断、gate fail/circuit breaker、非法状态/参数、只读查询）端到端验证
 - **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂，或某个 action 的分支路径在子进程层断裂，agent 无法完成或无法正确推进编码任务
 - **关联约束**：NFR V-1

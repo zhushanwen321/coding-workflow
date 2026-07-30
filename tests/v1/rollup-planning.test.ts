@@ -39,13 +39,13 @@ import {
   setupSliceWithClosedWaves,
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
-import { createV1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
+import { createCwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {

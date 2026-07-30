@@ -15,7 +15,7 @@
  */
 import type { Feature } from "../../core/workunit.js";
 import { mergeAbandonParentItems } from "../internal.js";
-import type { ActionResult, PlanFeatureInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,PlanFeatureInput } from "../types.js";
 import { buildFeatureNextAction, featureTransition, saveFeature } from "./feature-internal.js";
 
 /**
@@ -28,7 +28,7 @@ import { buildFeatureNextAction, featureTransition, saveFeature } from "./featur
 export function handlePlanFeature(
   unit: Feature,
   input: PlanFeatureInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   unit.plan = { split: input.split };
 

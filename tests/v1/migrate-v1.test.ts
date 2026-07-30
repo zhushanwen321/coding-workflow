@@ -4,10 +4,12 @@
  * 零 mock：用 mkdtemp 临时目录构造 legacyHome / cwHome，真实文件 IO。
  * 不碰用户真实的 ~/.v1 / ~/.cw（通过 opts 注入临时路径绕过 homedir()）。
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { afterEach,beforeEach, describe, expect, it } from "vitest";
+
 import { migrateLegacyV1Home } from "../../src/store/migrate-v1.js";
 
 /** 构造一个最小合法的 _v1.json 内容。recordedAt 可空（测时间比较）。 */
@@ -84,7 +86,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     // 读 cw 侧数据，应是 v1 的（5 unit）
     const cwData = JSON.parse(
-      require("node:fs").readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
+      readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
     );
     expect(cwData.workUnits.length).toBe(5);
     expect(existsSync(join(legacyHome, ENV))).toBe(false);
@@ -99,7 +101,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
 
     // cw 侧数据不变（2 unit）
     const cwData = JSON.parse(
-      require("node:fs").readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
+      readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
     );
     expect(cwData.workUnits.length).toBe(2);
     expect(existsSync(join(legacyHome, ENV))).toBe(false); // v1 删了
@@ -113,7 +115,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
     migrateLegacyV1Home({ legacyHome, cwHome });
 
     const cwData = JSON.parse(
-      require("node:fs").readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
+      readFileSync(join(cwHome, ENV, "_v1.json"), "utf-8"),
     );
     expect(cwData.workUnits.length).toBe(5); // 取了 v1 的
   });
@@ -167,7 +169,7 @@ describe("migrate-v1: migrateLegacyV1Home", () => {
     expect(existsSync(join(cwHome, "orphan-proj", "_v1.json"))).toBe(true);
     // 冲突取 v1（3 unit）
     const conflictData = JSON.parse(
-      require("node:fs").readFileSync(join(cwHome, "conflict-proj", "_v1.json"), "utf-8"),
+      readFileSync(join(cwHome, "conflict-proj", "_v1.json"), "utf-8"),
     );
     expect(conflictData.workUnits.length).toBe(3);
     // 损坏的原文件保留

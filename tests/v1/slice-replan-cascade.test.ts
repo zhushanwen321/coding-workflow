@@ -20,11 +20,11 @@ import { handleReplanSlice } from "../../src/handlers/slice/replan.js";
 import { computeImpactCascade } from "../../src/rules/replan.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
 import {
-  createV1Env,
+  createCwEnv,
   setupSliceWithClosedWaves,
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 import {
   makeValidContract,
   makeValidFile,
@@ -32,10 +32,10 @@ import {
   makeValidTestCase,
 } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {

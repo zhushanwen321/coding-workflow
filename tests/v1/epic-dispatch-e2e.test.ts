@@ -6,21 +6,21 @@
  *
  * 另测：
  * - create 按 input.layer=epic 路由（→ handleCreateEpic，scope=epic）
- * - dispatch 拒绝 epic 的 test/exec-review → throw V1Error(illegal_transition)
+ * - dispatch 拒绝 epic 的 test/exec-review → throw CwEngineError(illegal_transition)
  * - gate fail 短路（构造 fail 的 judgment，design-review 返回 ok=false 不流转）
  * - execute 创建的 child 是 feature（scope=feature，basedOnParent=split.inheritedItemIds，
  *   crossLayer.targetLayer='feature'）
  * - closeout 后 crossLayer undefined（epic 顶层无父，孤立终点——与 feature 的 ascend 对比）
  *
- * 真实 store + stub V1Deps（外部依赖注入接口）。零 mock 框架。
+ * 真实 store + stub CwDeps（外部依赖注入接口）。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Epic } from "../../src/core/workunit.js";
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
   advanceChildFeaturesToClosed,
-  createV1Env,
+  createCwEnv,
   makeEpicRetrospectDataFromStore,
   makeValidClarification,
   makeValidEpicDesignReviewJudgment,
@@ -30,12 +30,12 @@ import {
   setupToEpicPlanning,
   STUB_NOW,
 } from "./helpers/epic-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -211,7 +211,7 @@ describe("dispatch create 按 input.layer 路由", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch 拒绝 epic 的 test/exec-review", () => {
-  it("epic dispatch test → throw V1Error(illegal_transition)", () => {
+  it("epic dispatch test → throw CwEngineError(illegal_transition)", () => {
     const unitId = "epic:e2e-no-test";
     dispatch(
       { action: "create", input: { slug: "e2e-no-test", objective: "o", layer: "epic" } },
@@ -235,7 +235,7 @@ describe("dispatch 拒绝 epic 的 test/exec-review", () => {
         },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -256,13 +256,13 @@ describe("dispatch 拒绝 epic 的 test/exec-review", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      const err = e as V1Error;
+      const err = e as CwEngineError;
       expect(err.code).toBe("illegal_transition");
       expect(err.message).toMatch(/test/);
     }
   });
 
-  it("epic dispatch exec-review → throw V1Error(illegal_transition)", () => {
+  it("epic dispatch exec-review → throw CwEngineError(illegal_transition)", () => {
     const unitId = "epic:e2e-no-execreview";
     dispatch(
       { action: "create", input: { slug: "e2e-no-execreview", objective: "o", layer: "epic" } },
@@ -280,7 +280,7 @@ describe("dispatch 拒绝 epic 的 test/exec-review", () => {
         },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 });
 
@@ -423,22 +423,22 @@ describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流�
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch epic 非法跳步", () => {
-  it("epic create 后直接 execute → throw V1Error(illegal_transition)", () => {
+  it("epic create 后直接 execute → throw CwEngineError(illegal_transition)", () => {
     const unitId = "epic:e2e-illegal";
     dispatch(
       { action: "create", input: { slug: "e2e-illegal", objective: "o", layer: "epic" } },
       env.deps,
     );
-    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(CwEngineError);
   });
 
-  it("epic unit not found → throw V1Error(unit_not_found)", () => {
+  it("epic unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
         { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -447,11 +447,11 @@ describe("dispatch epic 非法跳步", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unit_not_found");
+      expect((e as CwEngineError).code).toBe("unit_not_found");
     }
   });
 
-  it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
+  it("closed 后任何 action → throw CwEngineError（终态不可逆）", () => {
     const unitId = setupEpicWithClosedFeatures(env.deps, "e2e-terminal");
     dispatch(
       { action: "retrospect", unitId, input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) } },
@@ -460,7 +460,7 @@ describe("dispatch epic 非法跳步", () => {
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
     expect(loadEpic(unitId).status).toBe("closed");
 
-    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(CwEngineError);
   });
 });
 

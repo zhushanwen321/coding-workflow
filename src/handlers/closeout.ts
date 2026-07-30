@@ -27,7 +27,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import { rollupChildDelivery } from "./rollup.js";
-import type { ActionResult, CloseoutInput, V1Deps } from "./types.js";
+import type { ActionResult, CloseoutInput, CwDeps } from "./types.js";
 
 /**
  * 执行 closeout action。
@@ -39,7 +39,7 @@ import type { ActionResult, CloseoutInput, V1Deps } from "./types.js";
 export function handleCloseout(
   unit: ExecutionUnit,
   input: CloseoutInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
   assertEvidenceNotFrozen(unit.evidence, "closeout");

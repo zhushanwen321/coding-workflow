@@ -16,7 +16,7 @@
  * 不跑独立 gate（split 结构在 design-review 阶段验，见 design-review.ts）。
  */
 import type { Epic } from "../../core/workunit.js";
-import type { ActionResult, PlanFeatureInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,PlanFeatureInput } from "../types.js";
 import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.js";
 
 /**
@@ -29,7 +29,7 @@ import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.j
 export function handlePlanEpic(
   unit: Epic,
   input: PlanFeatureInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   unit.plan = { split: input.split };
 

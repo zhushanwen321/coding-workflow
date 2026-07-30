@@ -19,7 +19,7 @@ import { isAbsolute, join } from "node:path";
 // ═══════════════════════════════════════════════════════════════
 
 /** v1 持久化文件的顶层 schema（扁平集合 + parentUnitId 外键）。 */
-export interface V1JsonFile {
+export interface CwJsonFile {
   /** schema 版本，初始 = 1。缺失/非数字时 loadFileData 补 1（旧 store 向前兼容） */
   schemaVersion?: number;
   /** git repo 元信息，可选（旧 store 缺失时降级，首次推进类 action 时回填） */
@@ -127,6 +127,6 @@ export function getCwHome(): string {
  *
  * `<cwHome>/<encodedCwd>/_v1.json`，per-cwd 隔离。
  */
-export function getV1JsonPath(cwd: string): string {
+export function getCwJsonPath(cwd: string): string {
   return join(getCwHome(), encodeCwd(cwd), "_v1.json");
 }

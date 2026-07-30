@@ -4,7 +4,7 @@
  * 覆盖 scope=upstream（父链）+ scope=full（父链+子树）+ size warning。
  * scope=self 的向后兼容由现有 readonly-handoff.test.ts 的 18 个测试覆盖。
  *
- * 测试策略：真实 V1Store + mkdtemp + 真实父子 unit（zero mock）。
+ * 测试策略：真实 CwStore + mkdtemp + 真实父子 unit（zero mock）。
  * CW_HOME 隔离（吸取 Wave A/B 教训）。
  */
 import { mkdtempSync, rmSync } from "node:fs";
@@ -14,8 +14,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { renderHandoff } from "../../src/readonly/render.js";
+import { CwStore } from "../../src/store/cw-store.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
-import { V1Store } from "../../src/store/v1-store.js";
 
 /** 造一个最小 WorkUnitRecord（靠索引签名过类型）。 */
 function makeUnit(
@@ -86,14 +86,14 @@ describe("Wave C: renderHandoff --scope self（向后兼容）", () => {
 describe("Wave C: renderHandoff --scope upstream", () => {
   let cwHome: string;
   let prevV1Home: string | undefined;
-  let store: V1Store;
+  let store: CwStore;
 
   beforeEach(() => {
     cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
     prevV1Home = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
-    store = new V1Store(cwd);
+    store = new CwStore(cwd);
     for (const u of makeFourLayerTree()) store.save(u);
   });
   afterEach(() => {
@@ -140,14 +140,14 @@ describe("Wave C: renderHandoff --scope upstream", () => {
 describe("Wave C: renderHandoff --scope full", () => {
   let cwHome: string;
   let prevV1Home: string | undefined;
-  let store: V1Store;
+  let store: CwStore;
 
   beforeEach(() => {
     cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
     prevV1Home = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
-    store = new V1Store(cwd);
+    store = new CwStore(cwd);
     for (const u of makeFourLayerTree()) store.save(u);
   });
   afterEach(() => {
@@ -204,14 +204,14 @@ describe("Wave C: renderHandoff --scope full", () => {
 describe("Wave C: size warning", () => {
   let cwHome: string;
   let prevV1Home: string | undefined;
-  let store: V1Store;
+  let store: CwStore;
 
   beforeEach(() => {
     cwHome = mkdtempSync(join(tmpdir(), "cw-hscope-v1home-"));
     prevV1Home = process.env.CW_HOME;
     process.env.CW_HOME = cwHome;
     const cwd = mkdtempSync(join(tmpdir(), "cw-hscope-cwd-"));
-    store = new V1Store(cwd);
+    store = new CwStore(cwd);
   });
   afterEach(() => {
     if (prevV1Home === undefined) delete process.env.CW_HOME;

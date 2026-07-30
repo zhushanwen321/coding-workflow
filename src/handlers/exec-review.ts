@@ -27,7 +27,7 @@ import {
   saveUnit,
   transitionStatus,
 } from "./internal.js";
-import type { ActionResult, ExecReviewInput,V1Deps } from "./types.js";
+import type { ActionResult, CwDeps,ExecReviewInput } from "./types.js";
 
 /**
  * 执行 exec-review action。
@@ -39,7 +39,7 @@ import type { ActionResult, ExecReviewInput,V1Deps } from "./types.js";
 export function handleExecReview(
   unit: ExecutionUnit,
   input: ExecReviewInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 跑 4 个 gate ──
   const gateResults = [

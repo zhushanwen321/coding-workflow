@@ -1,5 +1,5 @@
 /**
- * v1 V1Store 持久化测试（U18-U21）。
+ * v1 CwStore 持久化测试（U18-U21）。
  *
  * 真实文件 IO（mkdtemp 临时目录 + CW_HOME 隔离），零 mock。
  * - save + load 往返一致
@@ -24,17 +24,17 @@ import {
 import type { ExecutionUnit } from "../../src/core/workunit.js";
 import { createWave } from "../../src/core/workunit.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
-import { encodeCwd, getV1JsonPath } from "../../src/store/schema.js";
+import { encodeCwd, getCwJsonPath } from "../../src/store/schema.js";
 import {
-  createV1Env,
+  createCwEnv,
+  type CwEnv,
   STUB_NOW,
-  type V1Env,
 } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -92,7 +92,7 @@ describe("U19: 原子写 + findChildren", () => {
   it("save 后 _v1.json 文件存在且 JSON 合法", () => {
     env.store.save(makeUnit("atomic") as unknown as WorkUnitRecord);
 
-    const path = getV1JsonPath(env.cwd);
+    const path = getCwJsonPath(env.cwd);
     expect(existsSync(path)).toBe(true);
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as { workUnits: WorkUnitRecord[] };
@@ -186,12 +186,12 @@ describe("U20: 事务回滚", () => {
 describe("U21: load/lock 鲁棒性", () => {
   // 内部工具：拿 _v1.json 的 lockfile 路径（dbPath + ".lock"）。
   function lockPath(): string {
-    return getV1JsonPath(env.cwd) + ".lock";
+    return getCwJsonPath(env.cwd) + ".lock";
   }
 
   describe("M1: _v1.json 解析失败 → throw（不静默丢数据）", () => {
     it("load 在损坏文件上抛错（不再返回空数据）", () => {
-      const path = getV1JsonPath(env.cwd);
+      const path = getCwJsonPath(env.cwd);
       writeFileSync(path, "{ this is not valid json", "utf-8");
 
       expect(() => env.store.load("wave:any")).toThrow(/failed to parse _v1\.json/);
@@ -200,7 +200,7 @@ describe("U21: load/lock 鲁棒性", () => {
     });
 
     it("save 在损坏文件上抛错且不覆盖磁盘（保护残存数据）", () => {
-      const path = getV1JsonPath(env.cwd);
+      const path = getCwJsonPath(env.cwd);
       // 模拟"磁盘上事实上残存数据但 JSON 损坏"的场景。
       const corrupt = `{
   "workUnits": [{ "id": "wave:survivor"`;
@@ -264,7 +264,7 @@ describe("U21: load/lock 鲁棒性", () => {
         .map((c) => String(c[0]))
         .join("");
       // 至少有一条由 verbose 写入的 unlink 失败诊断。
-      expect(stderrCalls).toMatch(/\[v1-store\] unlinkSync\(.+\) failed:/);
+      expect(stderrCalls).toMatch(/\[cw-store\] unlinkSync\(.+\) failed:/);
     });
 
     it("verbose 关闭时同样场景不写 stderr（保持静默兼容旧行为）", () => {
@@ -282,7 +282,7 @@ describe("U21: load/lock 鲁棒性", () => {
       ).mock.calls
         .map((c) => String(c[0]))
         .join("");
-      expect(stderrCalls).not.toMatch(/\[v1-store\] unlinkSync/);
+      expect(stderrCalls).not.toMatch(/\[cw-store\] unlinkSync/);
     });
 
     it("ENOENT 路径在 verbose 模式下也不写 stderr（无害丢失仍静默）", () => {
@@ -297,7 +297,7 @@ describe("U21: load/lock 鲁棒性", () => {
       ).mock.calls
         .map((c) => String(c[0]))
         .join("");
-      expect(stderrCalls).not.toMatch(/\[v1-store\] unlinkSync/);
+      expect(stderrCalls).not.toMatch(/\[cw-store\] unlinkSync/);
     });
   });
 

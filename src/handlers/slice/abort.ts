@@ -19,7 +19,7 @@
 import type { StatusChange, WorkUnitStatus } from "../../core/status.js";
 import type { Slice } from "../../core/workunit.js";
 import { rollupChildDelivery } from "../rollup.js";
-import type { AbortInput, ActionResult, V1Deps } from "../types.js";
+import type { AbortInput, ActionResult, CwDeps } from "../types.js";
 import { buildSliceNextAction, readRecordStatus, readRecordStatusHistory, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -32,7 +32,7 @@ import { buildSliceNextAction, readRecordStatus, readRecordStatusHistory, saveSl
 export function handleAbortSlice(
   unit: Slice,
   input: AbortInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   const at = deps.clock.now();
 
@@ -68,7 +68,7 @@ export function handleAbortSlice(
  * @param reason abort 原因（写 statusHistory.note）
  */
 function cascadeAbortChildren(
-  deps: V1Deps,
+  deps: CwDeps,
   parentId: string,
   at: string,
   reason: string | undefined,

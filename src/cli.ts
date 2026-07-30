@@ -9,10 +9,10 @@
  * 职责：
  *   - minimist argv 解析
  *   - stdin 读取（Promise 封装，推进 action 的 input JSON 从 stdin 读）
- *   - runWithAction：argv → V1Params 构造（buildParams）→ V1Deps 装配（constructV1Deps）
+ *   - runWithAction：argv → CwParams 构造（buildParams）→ CwDeps 装配（constructCwDeps）
  *     → v1Dispatch 调用 + stdout JSON 序列化
  *   - runReadonly：tree/status/list/handoff 只读查询（不经 dispatch、不写 store）
- *   - exit code 映射（0=正常, 1=CwError/V1Error/参数错误, 2=内部异常）
+ *   - exit code 映射（0=正常, 1=CwError/CwEngineError/参数错误, 2=内部异常）
  *
  * 设计原则：
  *   - CLI 是 agent 的唯一导航入口。agent 只需知道 `cw create`，后续全靠返回的 guidance 推进。
@@ -33,10 +33,11 @@ import type { TestRunResult } from "./core/evidence.js";
 import type { ExecutionUnit } from "./core/workunit.js";
 import type {
   AbortInput,
-  ActionResult as V1ActionResult,
+  ActionResult as CwActionResult,
   ClarifyInput,
   CloseoutInput,
   CreateInput,
+  CwDeps,
   DesignReviewInput,
   ExecReviewInput,
   ExecuteInput,
@@ -44,25 +45,24 @@ import type {
   ReplanInput,
   RetrospectInput,
   TestInput,
-  V1Deps,
 } from "./handlers/index.js";
 import {
+  CwEngineError,
+  type CwParams,
+  CwStore,
   dispatch as v1Dispatch,
   getUnitScope,
   renderHandoff,
   renderList,
   renderStatus,
   renderTree,
-  V1Error,
-  type V1Params,
-  V1Store,
 } from "./index.js";
 import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { getCwHome } from "./store/schema.js";
 import { migrateLegacyV1Home } from "./store/migrate-v1.js";
+import { getCwHome } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
@@ -79,7 +79,7 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * BYTES_PER_MB;
 const JSON_INDENT = 2;
 
 /** v1 list 默认每页条数（与 render.ts DEFAULT_LIMIT 一致）。 */
-const V1_LIST_DEFAULT_LIMIT = 10;
+const CW_LIST_DEFAULT_LIMIT = 10;
 
 /** process.argv 中用户参数的起始索引（[0]=node, [1]=脚本路径）。 */
 const ARGV_USER_PARAMS_START = 2;
@@ -244,9 +244,9 @@ function parseJsonArg(name: string, value: unknown): unknown {
 
 // ── 命令辅助（参数构造 / deps 装配 / 子命令分发） ─────────
 //
-// 与 0.x 完全独立：独立的 params 联合（V1Params）、独立的 deps 接口（V1Deps）、
-// 独立的 dispatch（src/dispatch.ts）、独立的 store（_v1.json，路径由 getV1JsonPath 算）。
-// 本节三个纯函数把 argv → V1Params、构造 V1Deps、跑 dispatch 并打印结果。
+// 与 0.x 完全独立：独立的 params 联合（CwParams）、独立的 deps 接口（CwDeps）、
+// 独立的 dispatch（src/dispatch.ts）、独立的 store（_v1.json，路径由 getCwJsonPath 算）。
+// 本节三个纯函数把 argv → CwParams、构造 CwDeps、跑 dispatch 并打印结果。
 // main 里 `ALL_ACTIONS.has(action)` 为真时整体路由到 runWithAction。
 
 /**
@@ -309,7 +309,7 @@ function readInput(
 }
 
 /**
- * buildParams — 把子命令的 flags 构造成 V1Params 联合。
+ * buildParams — 把子命令的 flags 构造成 CwParams 联合。
  *
  *   - create：layer 必填（wave/slice/feature/epic 四层均已实现）+ --slug + --objective
  *     必填，可选 --parent（parentUnitId）/ --basedOnParent（JSON 数组字符串）。
@@ -337,7 +337,7 @@ function buildParams(
   stdinData: string,
   isStdinTTY: boolean,
   scope: string | null,
-): V1Params {
+): CwParams {
   if (action === "create") {
     if (layer === undefined) {
       throw new CwError(
@@ -418,7 +418,7 @@ function buildParams(
       // - wave（ExecutionUnit）：需 --commitHash（记录代码提交）+ 可选 --input/stdin（带 changedFiles）。
       // - slice 及其他 PlanningUnit（feature/epic）：不接收 input（dispatchSlice 里 handleExecuteSlice
       //   忽略 params.input，按 plan.split 自动创建 child wave），input 传空对象。
-      //   V1Params 联合的 execute 分支类型是 ExecuteInput（commitHash 必填），slice 场景无 commitHash，
+      //   CwParams 联合的 execute 分支类型是 ExecuteInput（commitHash 必填），slice 场景无 commitHash，
       //   显式断言绕过类型检查（与 slice-dispatch-e2e.test.ts 的 input:{} + as unknown 同语义）。
       if (scope === "slice" || scope === "feature" || scope === "epic") {
         return {
@@ -575,9 +575,9 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
 }
 
 /**
- * constructV1Deps — 组装 v1 dispatch 所需的 V1Deps。
+ * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
- *   - store：V1Store，绑定 cwd（getV1JsonPath 用 CW_HOME + encodeCwd(cwd) 定位 _v1.json）
+ *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 _v1.json）
  *   - gitValidator：用 git cat-file 验 commit hash 真实存在（绑定 workspacePath）
  *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
@@ -586,9 +586,9 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
  * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
  * 命令默认 `npx vitest run`，可通过 cw.config.json 的 testRunner.command 覆盖。
  */
-function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
-  debugLog("constructV1Deps workspacePath", workspacePath, "testCwd", testCwd);
-  const store = new V1Store(workspacePath);
+function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
+  debugLog("constructCwDeps workspacePath", workspacePath, "testCwd", testCwd);
+  const store = new CwStore(workspacePath);
   const gitValidator = {
     exists: (hash: string): boolean => {
       // 与 0.x GitValidator 同语义：git cat-file -e <hash>^{commit} 成功即存在。
@@ -616,7 +616,7 @@ function constructV1Deps(workspacePath: string, testCwd?: string): V1Deps {
     : workspacePath;
   const runnerCommand = config?.testRunner?.command ?? "npx vitest run";
   const [runnerCmd, ...runnerArgs] = runnerCommand.split(/\s+/);
-  debugLog("constructV1Deps runnerCwd", runnerCwd, "runnerCommand", runnerCommand);
+  debugLog("constructCwDeps runnerCwd", runnerCwd, "runnerCommand", runnerCommand);
 
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
@@ -667,11 +667,11 @@ function isENOENT(e: unknown): boolean {
  *   1. argv 解析：action 由 main 传入（argv[2]），layer = argv[3]（仅 create）
  *   2. action 合法性校验（VALID_ACTIONS）
  *   3. create 之外读 stdin（--input / stdin 传 JSON）
- *   4. buildParams 构造 V1Params（参数校验在此层）
- *   5. constructV1Deps（store + git + testRunner + fileExists + clock）
+ *   4. buildParams 构造 CwParams（参数校验在此层）
+ *   5. constructCwDeps（store + git + testRunner + fileExists + clock）
  *   6. v1Dispatch + 序列化 ActionResult → stdout
  *
- * 错误语义：V1Error / CwError → stderr + exit 1；其他 → exit 2（由 main 的 catch 兜）。
+ * 错误语义：CwEngineError / CwError → stderr + exit 1；其他 → exit 2（由 main 的 catch 兜）。
  *
  * @param argv  完整 process.argv
  * @param workspacePath  当前工作目录（store/git/testRunner 都绑它）
@@ -692,7 +692,7 @@ async function runWithAction(
   debugLog("runWithAction action", action, "layer", layer);
 
   // ── readonly 查询分支（tree/status/list/handoff）──
-  // 不经 dispatch、不写 store、不读 stdin。只 new V1Store 读数据 + render + console.log + 早返回。
+  // 不经 dispatch、不写 store、不读 stdin。只 new CwStore 读数据 + render + console.log + 早返回。
   if (READONLY_QUERIES.has(action)) {
     await runReadonly(action, parsed, workspacePath);
     return;
@@ -730,11 +730,11 @@ async function runWithAction(
   const isStdinTTY = process.stdin.isTTY === true;
   debugLog("runWithAction stdin length", stdinData.length, "isTTY", isStdinTTY);
 
-  // 构造 V1Params（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
+  // 构造 CwParams（参数校验在此层完成，缺失必填 → throw CwError → main catch → exit 1）。
   // 非 create action 先读 unit scope（wave 需 --commitHash，slice 不需要）。
-  // store 用与 constructV1Deps 相同的 V1Store 实例化（绑 workspacePath，读 _v1.json）。
+  // store 用与 constructCwDeps 相同的 CwStore 实例化（绑 workspacePath，读 _v1.json）。
   const scope =
-    action === "create" ? null : getUnitScope(new V1Store(workspacePath), flag(parsed, "unitId") ?? "");
+    action === "create" ? null : getUnitScope(new CwStore(workspacePath), flag(parsed, "unitId") ?? "");
   const params = buildParams(
     action,
     layer,
@@ -745,11 +745,11 @@ async function runWithAction(
   );
   debugLog("runWithAction params", params);
 
-  // 构造 V1Deps + 调 v1Dispatch。
+  // 构造 CwDeps + 调 v1Dispatch。
   const testCwd = flag(parsed, "testCwd");
-  const deps = constructV1Deps(workspacePath, testCwd);
+  const deps = constructCwDeps(workspacePath, testCwd);
   debugLog("runWithAction deps constructed");
-  const result: V1ActionResult = v1Dispatch(params, deps);
+  const result: CwActionResult = v1Dispatch(params, deps);
   debugLog("runWithAction dispatch result", result);
 
   // 序列化 ActionResult → stdout JSON。
@@ -763,7 +763,7 @@ async function runWithAction(
  *
  * 与 advance action 的根本区别：
  *   - 不调 dispatch、不写 store、不 append statusHistory
- *   - 只 new V1Store 读 _v1.json + 调 render 函数 + console.log
+ *   - 只 new CwStore 读 _v1.json + 调 render 函数 + console.log
  *   - 参数错误（如 status/handoff 缺 --unitId、tree/status 指定不存在的 unit）→ throw CwError → main catch → exit 1
  *
  * 输出是纯文本（tree/列表/handoff）或 JSON（status），不走 ActionResult 序列化。
@@ -773,7 +773,7 @@ async function runReadonly(
   parsed: ParsedArgs,
   workspacePath: string,
 ): Promise<void> {
-  const store = new V1Store(workspacePath);
+  const store = new CwStore(workspacePath);
 
   if (action === "tree") {
     // --unitId 可选；缺省取第一个无 parentUnitId 的 root unit。
@@ -831,10 +831,10 @@ async function runReadonly(
   // minimist 把 --limit 2 解析成 {limit: 2}（number），直接读 parsed 字段。
   const rawLimit = typeof parsed.limit === "number" ? parsed.limit : Number(parsed.limit);
   const rawOffset = typeof parsed.offset === "number" ? parsed.offset : Number(parsed.offset);
-  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : V1_LIST_DEFAULT_LIMIT;
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : CW_LIST_DEFAULT_LIMIT;
   const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
-  // M4：--cwd 必须是绝对路径（V1Store 按 encodeCwd(cwd) 落盘，相对路径会与实际 cwd 错位）
+  // M4：--cwd 必须是绝对路径（CwStore 按 encodeCwd(cwd) 落盘，相对路径会与实际 cwd 错位）
   if (cwdFlag !== undefined && !isAbsolute(cwdFlag)) {
     throw new CwError(`--cwd 需要绝对路径，当前值: ${cwdFlag}`);
   }
@@ -859,7 +859,7 @@ async function runReadonly(
   }
 
   // 单 cwd 模式：--cwd 覆盖默认 workspacePath（不指定时复用上方已构造的 store，避免重复 new）
-  const singleStore = cwdFlag ? new V1Store(cwdFlag) : store;
+  const singleStore = cwdFlag ? new CwStore(cwdFlag) : store;
   const units = singleStore.loadAll();
   const annotated = units.map((unit) => ({ unit }));
   process.stdout.write(renderList(annotated, { limit, offset, layer, grep, verbose: isLong }));
@@ -872,7 +872,7 @@ async function runReadonly(
  *（loadAll 的顺序即 _v1.json 里 workUnits 数组顺序，创建先后序）。
  * 无任何 unit 时返回 null。
  */
-function findFirstRootUnitId(store: V1Store): string | null {
+function findFirstRootUnitId(store: CwStore): string | null {
   const units = store.loadAll();
   const root = units.find((u) => u.parentUnitId === undefined || u.parentUnitId === "");
   return root?.id ?? null;
@@ -889,8 +889,8 @@ function findFirstRootUnitId(store: V1Store): string | null {
  *   - exit 2 = 内部异常（未预期的错误）
  */
 export function mapExitCode(err: Error): number {
-  // CwError（0.x 预期错误）+ V1Error（v1 guard fail / unit not found）都映射 exit 1。
-  return err instanceof CwError || err instanceof V1Error
+  // CwError（0.x 预期错误）+ CwEngineError（v1 guard fail / unit not found）都映射 exit 1。
+  return err instanceof CwError || err instanceof CwEngineError
     ? EXIT_CW_ERROR
     : EXIT_INTERNAL_ERROR;
 }
@@ -900,7 +900,7 @@ export function mapExitCode(err: Error): number {
  *
  * 契约：
  *   - 非 Error 值 → exit 2，输出 String(err)
- *   - CwError / V1Error（exit 1）→ 只输出友好 message，不暴露堆栈
+ *   - CwError / CwEngineError（exit 1）→ 只输出友好 message，不暴露堆栈
  *   - 其他内部异常（exit 2）→ 输出 message + 完整 stack trace
  *
  * 与 mapExitCode 分离：render 负责 stderr 文案，mapExitCode 负责 exit code 映射。
@@ -939,7 +939,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const action = String(rawAction);
 
-  // 迁移旧 ~/.v1 存储到 ~/.cw（幂等，~/.v1 不存在秒过）。放在所有 new V1Store 之前，
+  // 迁移旧 ~/.v1 存储到 ~/.cw（幂等，~/.v1 不存在秒过）。放在所有 new CwStore 之前，
   // 确保后续读写的是迁移后的数据。CW_HOME 被覆盖时不迁移（尊重用户自定义路径）。
   migrateLegacyV1Home();
 

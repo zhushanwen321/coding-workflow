@@ -26,7 +26,7 @@ import {
   saveUnit,
   transitionStatus,
 } from "./internal.js";
-import type { ActionResult, RetrospectInput,V1Deps } from "./types.js";
+import type { ActionResult, CwDeps,RetrospectInput } from "./types.js";
 
 /**
  * 执行 retrospect action。
@@ -38,7 +38,7 @@ import type { ActionResult, RetrospectInput,V1Deps } from "./types.js";
 export function handleRetrospect(
   unit: ExecutionUnit,
   input: RetrospectInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 跑 2 个 gate ──
   const gateResults = [

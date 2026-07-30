@@ -14,12 +14,12 @@
  *       → 有非终态兄弟（过滤 aborted）→ crossLayer = sibling（横向，第一个非终态兄弟）
  *       → 全部终态（closed/aborted）→ crossLayer = ascend（回父单元 retrospect）
  *
- * 注：本函数返回 V1NextAction["crossLayer"]（结构化字段），不渲染文本。
+ * 注：本函数返回 CwNextAction["crossLayer"]（结构化字段），不渲染文本。
  *      caller（build-guidance）不依赖此返回做渲染——agent 读结构化字段决定下一步（§7.2 路由）。
  */
 import type { ExecutionStatus } from "../core/status.js";
-import type { V1NextAction } from "../handlers/types.js";
-import type { V1Store } from "../store/v1-store.js";
+import type { CwNextAction } from "../handlers/types.js";
+import type { CwStore } from "../store/cw-store.js";
 
 // ═══════════════════════════════════════════════════════════════
 // 终态判断
@@ -45,7 +45,7 @@ export function isTerminalStatus(status: ExecutionStatus): boolean {
 /** computeCrossLayerAfterCloseout 入参。 */
 export interface ComputeCrossLayerArgs {
   /** store（用于查父/兄弟单元状态）。 */
-  store: V1Store;
+  store: CwStore;
   /** 刚 closeout 的子单元 id（用于在兄弟里排除自身）。 */
   unitId: string;
   /** 父单元 id（无则孤立终点，返回 undefined）。 */
@@ -59,7 +59,7 @@ export interface ComputeCrossLayerArgs {
  */
 export function computeCrossLayerAfterCloseout(
   args: ComputeCrossLayerArgs,
-): V1NextAction["crossLayer"] {
+): CwNextAction["crossLayer"] {
   const { store, unitId, parentUnitId } = args;
 
   // 无 parent → 孤立终点，流程结束（§1.3，任何层都能无 parent 独立起步）。

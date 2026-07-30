@@ -6,7 +6,7 @@
  *   - 缺少必填参数 → exit 1 + 错误信息
  *   - v1 与 0.x 命令并存互不干扰（cw create 走 0.x，cw create 走 v1）
  *   - 推进 action（clarify）的 --input @file.json 管道
- *   - unit not found → exit 1 + V1Error 语义
+ *   - unit not found → exit 1 + CwEngineError 语义
  *
  * 复用 tests/v1/helpers/git.ts 的 setupGitRepo（git 仓库初始化，v1/0.x 无关的通用基建）。
  *
@@ -55,7 +55,7 @@ export interface CliResult {
   stderr: string;
 }
 
-export interface V1CliEnv {
+export interface CwCliEnv {
   /** 工作目录（cwd）：v1 store/git/testRunner 都绑它。 */
   workspaceDir: string;
   /** v1 存储根（CW_HOME），per-cwd 隔离。 */
@@ -67,14 +67,14 @@ export interface V1CliEnv {
 }
 
 /**
- * runV1Cli — 真实子进程调 dist/cli.js（args 直接是 action 起的参数，无 v1 前缀）。
+ * runCwCli — 真实子进程调 dist/cli.js（args 直接是 action 起的参数，无 v1 前缀）。
  *
  * cwd 默认 env.workspaceDir（CLI 默认 workspacePath=process.cwd()，
  * v1 store 的 encodeCwd(workspacePath) 必须与落盘路径一致）。
  */
-function runV1Cli(
+function runCwCli(
   args: string[],
-  env: V1CliEnv,
+  env: CwCliEnv,
   options: { input?: string; cwd?: string } = {},
 ): CliResult {
   const mergedEnv = {
@@ -112,7 +112,7 @@ function parseStdout(result: CliResult): Record<string, unknown> {
  *
  * git repo 仅 execute/test 的真实 git 校验需要；create/clarify 等不依赖 git。
  */
-function createV1CliEnv(): V1CliEnv {
+function createCwCliEnv(): CwCliEnv {
   if (!existsSync(CLI_PATH)) {
     throw new Error(`dist/cli.js 不存在，请先 npm run build。路径: ${CLI_PATH}`);
   }
@@ -124,21 +124,21 @@ function createV1CliEnv(): V1CliEnv {
   return { workspaceDir, cwHome, env, commitHash };
 }
 
-function disposeV1CliEnv(e: V1CliEnv): void {
+function disposeCwCliEnv(e: CwCliEnv): void {
   rmSync(e.workspaceDir, { recursive: true, force: true });
   rmSync(e.cwHome, { recursive: true, force: true });
 }
 
 // ── 共享测试环境 ────────────────────────────────────────────
 
-let e: V1CliEnv;
+let e: CwCliEnv;
 
 beforeAll(() => {
-  e = createV1CliEnv();
+  e = createCwCliEnv();
 });
 
 afterAll(() => {
-  disposeV1CliEnv(e);
+  disposeCwCliEnv(e);
 });
 
 // ── 测试 ────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ afterAll(() => {
 describe("W8: cw create wave（happy path）", () => {
   it("返回 JSON 含 status=created + nextAction.guidance 非空", () => {
     const result = parseStdout(
-      runV1Cli(
+      runCwCli(
         [
           "create",
           "wave",
@@ -186,7 +186,7 @@ describe("W8: cw create wave（happy path）", () => {
 
   it("带 --parent + --basedOnParent 的 create 也能落盘 parentUnitId", () => {
     const result = parseStdout(
-      runV1Cli(
+      runCwCli(
         [
           "create",
           "wave",
@@ -210,7 +210,7 @@ describe("W8: cw create wave（happy path）", () => {
 
 describe("W8: cw create 缺必填参数 → exit 1", () => {
   it("缺 --objective → exit 1 + 错误信息含 objective", () => {
-    const result = runV1Cli(
+    const result = runCwCli(
       ["create", "wave", "--slug", "no-obj"],
       e,
     );
@@ -219,7 +219,7 @@ describe("W8: cw create 缺必填参数 → exit 1", () => {
   });
 
   it("缺 --slug → exit 1 + 错误信息含 slug", () => {
-    const result = runV1Cli(
+    const result = runCwCli(
       ["create", "wave", "--objective", "x"],
       e,
     );
@@ -230,7 +230,7 @@ describe("W8: cw create 缺必填参数 → exit 1", () => {
   it("缺 layer → exit 0 + 返回选层 guidance（规模表/层级树/反模式/命令）", () => {
     // layer 完全缺失（create 后无位置参数）：返回选层 guidance 引导 agent 选层。
     // 与下方「非法 layer 字符串 → exit 1」区分：缺失走 guidance，非法值走 throw。
-    const result = runV1Cli(
+    const result = runCwCli(
       ["create", "--slug", "x", "--objective", "y"],
       e,
     );
@@ -245,13 +245,13 @@ describe("W8: cw create 缺必填参数 → exit 1", () => {
 
   it("create 后无任何参数 → exit 0 + 选层 guidance", () => {
     // argv[3] === undefined 的形态（cw create 后什么都不跟）。
-    const result = runV1Cli(["create"], e);
+    const result = runCwCli(["create"], e);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("选择 layer");
   });
 
   it("非法 layer → exit 1 + 错误信息", () => {
-    const result = runV1Cli(
+    const result = runCwCli(
       ["create", "bogus", "--slug", "x", "--objective", "y"],
       e,
     );
@@ -261,7 +261,7 @@ describe("W8: cw create 缺必填参数 → exit 1", () => {
 
   it("非法 layer 名 → exit 1 + 明确提示非法", () => {
     // epic 已实现，改用虚构 layer 名验证「未知 layer 被拒」防御逻辑
-    const result = runV1Cli(
+    const result = runCwCli(
       ["create", "bogus-layer", "--slug", "x", "--objective", "y"],
       e,
     );
@@ -272,7 +272,7 @@ describe("W8: cw create 缺必填参数 → exit 1", () => {
 
 describe("W8: cw <action> 未知/缺 unitId → exit 1", () => {
   it("未知 v1 action → exit 1 + 错误信息", () => {
-    const result = runV1Cli(
+    const result = runCwCli(
       ["frobnicate", "--unitId", "wave:x"],
       e,
     );
@@ -281,14 +281,14 @@ describe("W8: cw <action> 未知/缺 unitId → exit 1", () => {
   });
 
   it("只打 cw v1（旧前缀）→ exit 1 + 错误信息（v1 不再是合法 action）", () => {
-    const result = runV1Cli(["v1"], e);
+    const result = runCwCli(["v1"], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("未知 action");
     expect(result.stderr).toContain("v1");
   });
 
   it("推进 action 缺 --unitId → exit 1", () => {
-    const result = runV1Cli(
+    const result = runCwCli(
       ["clarify", "--input", "-"],
       e,
       { input: JSON.stringify({ clarifications: [] }) },
@@ -302,7 +302,7 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
   it("create → clarify（--input @file.json）→ status=clarifying + clarifications 落盘", () => {
     // 1. 先 create 一个 wave
     const created = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["create", "wave", "--slug", "w8-clarify", "--objective", "o"],
         e,
       ),
@@ -327,7 +327,7 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
       }),
     );
     const clarified = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["clarify", "--unitId", unitId, "--input", `${inputFile}`],
         e,
       ),
@@ -354,14 +354,14 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
 
   it("clarify 用 stdin 传 input 也能跑通", () => {
     const created = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["create", "wave", "--slug", "w8-stdin", "--objective", "o"],
         e,
       ),
     );
     const unitId = created.unitId as string;
     const clarified = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["clarify", "--unitId", unitId, "--input", "-"],
         e,
         { input: JSON.stringify({ clarifications: [] }) },
@@ -373,24 +373,24 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
 
   it("推进 action 无 input（stdin 空 + 无 --input）→ exit 1", () => {
     const created = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["create", "wave", "--slug", "w8-noinput", "--objective", "o"],
         e,
       ),
     );
     const unitId = created.unitId as string;
-    // stdin 为空（runV1Cli 不传 input 且子进程 stdin 无 pipe）→ 报缺 input
-    const result = runV1Cli(["plan", "--unitId", unitId], e);
+    // stdin 为空（runCwCli 不传 input 且子进程 stdin 无 pipe）→ 报缺 input
+    const result = runCwCli(["plan", "--unitId", unitId], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("input");
   });
 });
 
-describe("W8: cw unit not found → exit 1（V1Error 语义）", () => {
+describe("W8: cw unit not found → exit 1（CwEngineError 语义）", () => {
   it("clarify 一个不存在的 unitId → exit 1 + unit_not_found", () => {
     const inputFile = join(e.workspaceDir, "ghost-input.json");
     writeFileSync(inputFile, JSON.stringify({ clarifications: [] }));
-    const result = runV1Cli(
+    const result = runCwCli(
       [
         "clarify",
         "--unitId",
@@ -401,24 +401,24 @@ describe("W8: cw unit not found → exit 1（V1Error 语义）", () => {
       e,
     );
     expect(result.exitCode).toBe(1);
-    // V1Error message 含 unit not found（exit code 由 mapExitCode 映射，V1Error → 1）
+    // CwEngineError message 含 unit not found（exit code 由 mapExitCode 映射，CwEngineError → 1）
     expect(result.stderr).toContain("unit not found");
   });
 
   it("create 后直接 execute（非法跳步）→ exit 1 + illegal_transition", () => {
     const created = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["create", "wave", "--slug", "w8-illegal", "--objective", "o"],
         e,
       ),
     );
     const unitId = created.unitId as string;
-    const result = runV1Cli(
+    const result = runCwCli(
       ["execute", "--unitId", unitId, "--commitHash", e.commitHash],
       e,
     );
     expect(result.exitCode).toBe(1);
-    // V1Error 的 message 是 guard 的 reason（"action X not allowed from status Y"），
+    // CwEngineError 的 message 是 guard 的 reason（"action X not allowed from status Y"），
     // 由 mapExitCode 映射 exit 1。断言 reason 关键词，不断言 code 字段（code 不在 message 里）。
     expect(result.stderr).toContain("not allowed");
   });
@@ -427,7 +427,7 @@ describe("W8: cw unit not found → exit 1（V1Error 语义）", () => {
 describe("W8: v1 前缀已切断（Wave 3 起 cw 直接跟 action）", () => {
   it("cw v1 create（旧前缀）被拒为「未知 action v1」→ exit 1 + 提示改用 cw <action>", () => {
     // Wave 3 起去掉 v1 前缀：v1 不再是合法 action，走 main 的「未知 action」分支。
-    const result = runV1Cli(
+    const result = runCwCli(
       ["v1", "create", "--slug", "legacy-coexist", "--objective", "0.x"],
       e,
     );
@@ -438,7 +438,7 @@ describe("W8: v1 前缀已切断（Wave 3 起 cw 直接跟 action）", () => {
 
   it("v1 和 0.x 写各自的存储（CW_HOME）互不污染", () => {
     // v1 create 写 _v1.json（CW_HOME 下）
-    runV1Cli(
+    runCwCli(
       ["create", "wave", "--slug", "iso-v1", "--objective", "o"],
       e,
     );
@@ -461,7 +461,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     // slice execute 不需 --commitHash（wave 才需），CLI 需按 scope 区分。
     // 1. create slice
     const created = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["create", "slice", "--slug", "cli-slice-exec", "--objective", "o"],
         e,
       ),
@@ -481,7 +481,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
       }),
     );
     const clarified = parseStdout(
-      runV1Cli(["clarify", "--unitId", unitId, "--input", `${clarifyInput}`], e),
+      runCwCli(["clarify", "--unitId", unitId, "--input", `${clarifyInput}`], e),
     );
     expect(clarified.status).toBe("clarifying");
 
@@ -489,7 +489,7 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     const planInput = join(e.workspaceDir, "slice-plan.json");
     writeFileSync(planInput, JSON.stringify(makeValidSlicePlan()));
     const planned = parseStdout(
-      runV1Cli(["plan", "--unitId", unitId, "--input", `${planInput}`], e),
+      runCwCli(["plan", "--unitId", unitId, "--input", `${planInput}`], e),
     );
     expect(planned.status).toBe("planning");
 
@@ -500,13 +500,13 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
       JSON.stringify({ designReviewJudgment: makeValidSliceDesignReviewJudgment() }),
     );
     const dr = parseStdout(
-      runV1Cli(["design-review", "--unitId", unitId, "--input", `${drInput}`], e),
+      runCwCli(["design-review", "--unitId", unitId, "--input", `${drInput}`], e),
     );
     expect(dr.status).toBe("design-reviewed");
 
     // 5. execute（slice，不传 --commitHash）——核心修复验证点
     const executed = parseStdout(
-      runV1Cli(["execute", "--unitId", unitId], e),
+      runCwCli(["execute", "--unitId", unitId], e),
     );
     expect(executed.ok).toBe(true);
     expect(executed.status).toBe("executing");
@@ -530,11 +530,11 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
 
   it("wave execute 仍要求 --commitHash（slice 修复不影响 wave）", () => {
     const created = parseStdout(
-      runV1Cli(["create", "wave", "--slug", "w8-wave-exec", "--objective", "o"], e),
+      runCwCli(["create", "wave", "--slug", "w8-wave-exec", "--objective", "o"], e),
     );
     const unitId = created.unitId as string;
     // wave execute 不传 --commitHash → exit 1
-    const result = runV1Cli(["execute", "--unitId", unitId], e);
+    const result = runCwCli(["execute", "--unitId", unitId], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--commitHash");
   });
@@ -544,14 +544,14 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
   // 共享辅助：create wave → clarify → 返回 unitId（plan.from 需 clarifying，必须先 clarify）。
   function createWaveToClarifying(slug: string): string {
     const created = parseStdout(
-      runV1Cli(["create", "wave", "--slug", slug, "--objective", "o"], e),
+      runCwCli(["create", "wave", "--slug", slug, "--objective", "o"], e),
     );
     expect(created.ok).toBe(true);
     const unitId = created.unitId as string;
     const clarifyInput = join(e.workspaceDir, `${slug}-clarify.json`);
     writeFileSync(clarifyInput, JSON.stringify({ clarifications: [] }));
     parseStdout(
-      runV1Cli(
+      runCwCli(
         ["clarify", "--unitId", unitId, "--input", `${clarifyInput}`],
         e,
       ),
@@ -591,7 +591,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
     const planInput = writeWavePlan("wave-plan-abandon.json");
 
     const planned = parseStdout(
-      runV1Cli(
+      runCwCli(
         [
           "plan",
           "--unitId",
@@ -617,7 +617,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
     const planInput = writeWavePlan("wave-plan-kebab.json");
 
     const planned = parseStdout(
-      runV1Cli(
+      runCwCli(
         [
           "plan",
           "--unitId",
@@ -640,7 +640,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
     const planInput = writeWavePlan("wave-plan-none.json");
 
     const planned = parseStdout(
-      runV1Cli(
+      runCwCli(
         ["plan", "--unitId", unitId, "--input", `${planInput}`],
         e,
       ),
@@ -655,7 +655,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
     const unitId = createWaveToClarifying("w8-abandon-bad");
     const planInput = writeWavePlan("wave-plan-bad.json");
 
-    const result = runV1Cli(
+    const result = runCwCli(
       [
         "plan",
         "--unitId",
@@ -676,7 +676,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
 describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
   it("--all + --cwd 同时传 → exit 1 + 互斥错误信息", () => {
     // cli.ts:841-843 的互斥检查：--all 跨 cwd 遍历，--cwd 锁定单 cwd，语义冲突
-    const result = runV1Cli(
+    const result = runCwCli(
       ["list", "--all", "--cwd", e.workspaceDir],
       e,
     );

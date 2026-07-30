@@ -12,14 +12,14 @@
  *
  * progressive 语义（同 status 可重提）+ 非法转换抛 illegal_transition + replan 旁路 + abort 终态。
  *
- * 真实 store + stub V1Deps。零 mock 框架。
+ * 真实 store + stub CwDeps。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Epic } from "../../src/core/workunit.js";
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeEpicRetrospectDataFromStore,
   makeValidClarification,
   makeValidEpicDesignReviewJudgment,
@@ -32,12 +32,12 @@ import {
   setupToEpicPlanning,
   STUB_NOW,
 } from "./helpers/epic-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -326,39 +326,39 @@ describe("epic progressive 语义", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("epic 非法转换抛 illegal_transition", () => {
-  it("created 直接 execute → throw V1Error(illegal_transition)", () => {
+  it("created 直接 execute → throw CwEngineError(illegal_transition)", () => {
     const unitId = "epic:sm-illegal-exec";
     dispatch(
       { action: "create", input: { slug: "sm-illegal-exec", objective: "o", layer: "epic" } },
       env.deps,
     );
-    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(CwEngineError);
     try {
       dispatch(epicExecute(unitId), env.deps);
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("illegal_transition");
+      expect((e as CwEngineError).code).toBe("illegal_transition");
     }
   });
 
-  it("planning 直接 closeout → throw V1Error(illegal_transition)", () => {
+  it("planning 直接 closeout → throw CwEngineError(illegal_transition)", () => {
     const unitId = setupToEpicPlanning(env.deps, "sm-illegal-close");
     expect(() =>
       dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("design-reviewed 直接 retrospect（未 execute）→ throw V1Error", () => {
+  it("design-reviewed 直接 retrospect（未 execute）→ throw CwEngineError", () => {
     const unitId = setupToEpicDesignReviewed(env.deps, "sm-illegal-retro");
     expect(() =>
       dispatch(
         { action: "retrospect", unitId, input: { retrospectData: makeValidEpicRetrospectData() } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
+  it("closed 后任何 action → throw CwEngineError（终态不可逆）", () => {
     const unitId = setupEpicWithClosedFeatures(env.deps, "sm-terminal");
     dispatch(
       { action: "retrospect", unitId, input: { retrospectData: makeEpicRetrospectDataFromStore(env.deps, unitId) } },
@@ -367,16 +367,16 @@ describe("epic 非法转换抛 illegal_transition", () => {
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
     expect(loadEpic(unitId).status).toBe("closed");
 
-    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(epicExecute(unitId), env.deps)).toThrow(CwEngineError);
   });
 
-  it("epic unit not found → throw V1Error(unit_not_found)", () => {
+  it("epic unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
         { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
     try {
       dispatch(
         { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
@@ -384,7 +384,7 @@ describe("epic 非法转换抛 illegal_transition", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unit_not_found");
+      expect((e as CwEngineError).code).toBe("unit_not_found");
     }
   });
 });
@@ -523,7 +523,7 @@ describe("epic abort 终态", () => {
     // 终态不可逆：再次任何 action 抛 illegal_transition
     expect(() =>
       dispatch({ action: "plan", unitId, input: makeValidEpicPlan() }, env.deps),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
   it("executing abort → 级联 abort 所有 child feature", () => {

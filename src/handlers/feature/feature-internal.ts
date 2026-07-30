@@ -45,7 +45,7 @@ import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import { buildCommand, inputFilePath } from "../../utils/command.js";
-import type { V1Deps, V1NextAction } from "../types.js";
+import type { CwDeps, CwNextAction } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
 // guidance 填充静态基建（w1 新增，w2 接入 buildFeatureNextAction 主体）
@@ -186,11 +186,11 @@ export interface BuildFeatureNextActionOpts {
   /** 覆盖默认下一步 action（execute/终态时调用方传 undefined 表示停留）。 */
   nextActionOverride?: string;
   /** 跨层建议（execute 下沉 / closeout 回溯）。 */
-  crossLayer?: V1NextAction["crossLayer"];
+  crossLayer?: CwNextAction["crossLayer"];
 }
 
 /**
- * 构建 feature handler 正常路径的 V1NextAction（w2：接入 buildNormalGuidance 三段式）。
+ * 构建 feature handler 正常路径的 CwNextAction（w2：接入 buildNormalGuidance 三段式）。
  *
  * 照 wave internal.ts 的 buildNextAction 流水线：
  *   prefix → PLANNING_STAGE_TEMPLATES 查约束 → getFeatureSchemaText 取 schema → buildNormalGuidance 组装。
@@ -203,7 +203,7 @@ export function buildFeatureNextAction(
   unit: Feature,
   action: PlanningAction,
   opts?: BuildFeatureNextActionOpts,
-): V1NextAction {
+): CwNextAction {
   const statusDisplay = FEATURE_STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "feature",
@@ -273,7 +273,7 @@ function buildFeatureCommand(
  * 不改 status（fail 诊断记录不是状态转换）。
  */
 export function appendFeatureFailRecord(
-  deps: V1Deps,
+  deps: CwDeps,
   unit: Feature,
   action: PlanningAction,
   reason: string,
@@ -288,7 +288,7 @@ export function appendFeatureFailRecord(
 }
 
 /**
- * 构建 feature handler fail 路径的 V1NextAction + failureCount（w2：接入 buildFailureGuidance 四段式）。
+ * 构建 feature handler fail 路径的 CwNextAction + failureCount（w2：接入 buildFailureGuidance 四段式）。
  *
  * 照 wave internal.ts 的 buildFailureNextAction 流水线：
  *   prefix（status 标注「未变」）→ deriveFailureCount（含本次）→ buildFailureHint → buildFailureGuidance。
@@ -301,7 +301,7 @@ export function buildFeatureFailureNextAction(
   unit: Feature,
   action: PlanningAction,
   problem: string,
-): { nextAction: V1NextAction; failureCount: number } {
+): { nextAction: CwNextAction; failureCount: number } {
   const statusDisplay = FEATURE_STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "feature",

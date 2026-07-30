@@ -12,14 +12,14 @@
  *
  * progressive 语义（同 status 可重提）+ 非法转换抛 illegal_transition。
  *
- * 真实 store + stub V1Deps。零 mock 框架。
+ * 真实 store + stub CwDeps。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Feature } from "../../src/core/workunit.js";
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeFeatureClarifyInput,
   makeFeatureRetrospectDataFromStore,
   makeValidFeatureDesignReviewJudgment,
@@ -32,12 +32,12 @@ import {
   setupToFeaturePlanning,
   STUB_NOW,
 } from "./helpers/feature-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -245,39 +245,39 @@ describe("feature progressive 语义", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("feature 非法转换抛 illegal_transition", () => {
-  it("created 直接 execute → throw V1Error(illegal_transition)", () => {
+  it("created 直接 execute → throw CwEngineError(illegal_transition)", () => {
     const unitId = "feature:sm-illegal-exec";
     dispatch(
       { action: "create", input: { slug: "sm-illegal-exec", objective: "o", layer: "feature" } },
       env.deps,
     );
-    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(CwEngineError);
     try {
       dispatch(featureExecute(unitId), env.deps);
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("illegal_transition");
+      expect((e as CwEngineError).code).toBe("illegal_transition");
     }
   });
 
-  it("planning 直接 closeout → throw V1Error(illegal_transition)", () => {
+  it("planning 直接 closeout → throw CwEngineError(illegal_transition)", () => {
     const unitId = setupToFeaturePlanning(env.deps, "sm-illegal-close");
     expect(() =>
       dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("design-reviewed 直接 retrospect（未 execute）→ throw V1Error", () => {
+  it("design-reviewed 直接 retrospect（未 execute）→ throw CwEngineError", () => {
     const unitId = setupToFeatureDesignReviewed(env.deps, "sm-illegal-retro");
     expect(() =>
       dispatch(
         { action: "retrospect", unitId, input: { retrospectData: makeValidFeatureRetrospectData() } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
+  it("closed 后任何 action → throw CwEngineError（终态不可逆）", () => {
     const unitId = setupFeatureWithClosedSlices(env.deps, "sm-terminal");
     dispatch(
       { action: "retrospect", unitId, input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) } },
@@ -286,16 +286,16 @@ describe("feature 非法转换抛 illegal_transition", () => {
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
     expect(loadFeature(unitId).status).toBe("closed");
 
-    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(CwEngineError);
   });
 
-  it("feature unit not found → throw V1Error(unit_not_found)", () => {
+  it("feature unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
         { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
     try {
       dispatch(
         { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
@@ -303,7 +303,7 @@ describe("feature 非法转换抛 illegal_transition", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unit_not_found");
+      expect((e as CwEngineError).code).toBe("unit_not_found");
     }
   });
 });

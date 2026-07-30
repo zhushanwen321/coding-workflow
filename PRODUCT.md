@@ -4,7 +4,7 @@
 > 给新需求的 ①full-clarity 提供「产品已经是什么」的上下文，避免每次需求从零理解产品。
 > 本次需求细节在 `.xyz-harness/{主题}/requirements.md`（不搬进本文件——那是需求级，非产品级）。
 >
-> 配套文档：[CONTEXT.md](./CONTEXT.md)（统一语言）、[ARCHITECTURE.md](./ARCHITECTURE.md)（系统架构）、[docs/metrics-design.md](./docs/metrics-design.md)（指标设计）。
+> 配套文档：[CONTEXT.md](./CONTEXT.md)（统一语言）、[ARCHITECTURE.md](./ARCHITECTURE.md)（系统架构）。
 
 ## 愿景
 
@@ -19,7 +19,7 @@
 | Actor | 诉求 | 边界 |
 |-------|------|------|
 | **Coding Agent**（Pi / Claude Code / Cursor 等） | 通过 bash 调 `cw` 命令驱动机器检查流程，拿 `nextAction.guidance` 当唯一导航 | 只能调命令 + 读 stdout；CW 不假设它有 skill 加载 / workflow 引擎 / 工具调用等 harness 能力 [from: README.md；AGENTS.md「Agent-agnostic」] |
-| **开发者（设计者）** | 通过 `cw stats` / `cw assess` 看评估指标，决策 cw-cli 改进方向（哪个 phase 退步、哪个 gate 失效） | assess 是人工 post-closeout 评估，由设计者而非执行 agent 调用；指标看趋势不看单点 [from: docs/metrics-usage.md「指标驱动的改进循环」] |
+| **开发者（设计者）** | 通过 `cw status` / `cw tree` / `cw handoff` 观察流程状态，决策 cw-cli 改进方向（哪个 phase 退步、哪个 gate 失效） | 只读命令由设计者而非执行 agent 调用；看趋势不看单点 [from: README.md；ARCHITECTURE.md「只读查询」] |
 
 ## 功能边界
 
@@ -27,13 +27,10 @@
 
 | 功能域 | 成熟度 | 说明 |
 |--------|--------|------|
-| **状态机编排** | 核心 | 13 action / 8 status / 单重 guard（`checkLinear` 防跳步）[from: CONTEXT.md] |
+| **状态机编排** | 核心 | 15 action / 8 status / 单重 guard（`checkLinear` 防跳步）[from: CONTEXT.md] |
 | **机器检查 gate** | 核心 | plan 结构校验 / TDD 红灯 / commit 锚定（diff-tree）/ judgeByExpected 机器重算 / append-only 守门——不信任 agent 声明，只信机器证据 [from: ARCHITECTURE.md「gate 机制」] |
 | **review / test fix loop** | 核心 | 各自独立循环（review 最多 3 轮，test 最多 5 轮），不回退到 dev；达上限强制进下一阶段或熔断告警 [from: ARCHITECTURE.md「fix loop」] |
-| **三层评估指标** | 稳定 | 交付质量 / 过程效率 / 杠杆健康度，纯函数计算，只读 topic 数据 [from: docs/metrics-design.md「三层架构」] |
-| **RuntimeEnv 分组维度** | 稳定 | agent + llm + cwVersion，create 时注入不可变；跨 topic 聚合按此分组 + 复杂度分桶 [from: docs/metrics-design.md「分组维度」] |
-| **post-closeout assess** | 稳定 | 人工评估（quality/test/stability）+ defect 校准（foundInReview 锚定 review 召回率）；不走 gate，不改 status [from: docs/metrics-design.md「为什么 assess 不走 gate 机制」] |
-| **clarify + ADR 机制** | 稳定 | create→plan 之间的需求/技术澄清，advisory（不阻断 plan），记录 ADR [from: CONTEXT.md 13 action 表] |
+| **clarify + ADR 机制** | 稳定 | create→plan 之间的需求/技术澄清，advisory（不阻断 plan），记录 ADR [from: CONTEXT.md action 表] |
 
 测试基线：393 个测试，零 mock 框架，真实 CwStore + tmp 目录 + git 子进程（含 e2e 子进程跑真实 `cw` CLI）。[from: AGENTS.md「测试规范」；README.md「开发」]
 
@@ -61,7 +58,5 @@
 | [cw-cli-extract](./.xyz-harness/cw-cli-extract/) | CW engine 从 pi 扩展抽离为独立 npm 包（`@zhushanwen/coding-workflow`） | delivered [from: git log `d1a7a39 merge: cw-cli-extract`] |
 | [cw-refactor-lite](./.xyz-harness/cw-refactor-lite/) | lite 单轨重构：砍 tier/clarify/detail，重构为 lite-only 单轨状态机 | delivered [from: git log `e59e15a refactor: flatten src/`] |
 | clarify-stage（ADR） | 新增 clarify 阶段（advisory）+ ADR 机制 | delivered [from: git log `925c642 feat: add clarify stage + ADR mechanism`] |
-| CW mechanism levers | 修复 4 个机制杠杆（fuzzy expected / file coverage / TDD self-check / cwd docs）+ 评估指标 Wave 1-5 | delivered [from: git log `01fa904 fix: repair 4 CW mechanism levers`、`66cfe90 feat: add cw stats --all`] |
+| CW mechanism levers | 修复 4 个机制杠杆（fuzzy expected / file coverage / TDD self-check / cwd docs） | delivered [from: git log `01fa904 fix: repair 4 CW mechanism levers`] |
 | [issue-tracking-fix-loop](./.xyz-harness/issue-tracking-fix-loop/) | review/test fix loop 闭环：issue tracking 类型 + store DAO + fix loop handlers + 状态机转换 | delivered [from: git log `915c068`、`f97daec`、`9949535`] |
-| post-closeout assess | `cw assess` post-closeout 质量评估（quality/test/stability/defect） | delivered [from: git log `0afa5c8 feat: add cw assess action`] |
-| Wave 6（跨 topic 指标） | review 召回率 / 散弹枪修改指数 / 自省准确度等需数据积累的指标 | in-progress（数据已采集，计算逻辑待积累 N 个 topic 后实现） [from: docs/metrics-design.md「待实现」] |

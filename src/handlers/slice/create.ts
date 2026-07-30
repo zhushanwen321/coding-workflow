@@ -10,7 +10,7 @@
  * layer='wave'（默认）走 wave 的 handleCreate。
  */
 import { createSlice } from "../../core/workunit.js";
-import type { ActionResult, CreateInput, V1Deps } from "../types.js";
+import type { ActionResult, CreateInput, CwDeps } from "../types.js";
 import { buildSliceNextAction, saveSlice } from "./slice-internal.js";
 
 /**
@@ -22,7 +22,7 @@ import { buildSliceNextAction, saveSlice } from "./slice-internal.js";
  */
 export function handleCreateSlice(
   args: CreateInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult & { unit: import("../../core/workunit.js").Slice } {
   const unit = createSlice({
     slug: args.slug,

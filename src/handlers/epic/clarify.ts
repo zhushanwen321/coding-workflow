@@ -13,7 +13,7 @@
  * Clarification 数组。
  */
 import type { Epic } from "../../core/workunit.js";
-import type { ActionResult, ClarifyInput, V1Deps } from "../types.js";
+import type { ActionResult, ClarifyInput, CwDeps } from "../types.js";
 import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.js";
 
 /**
@@ -26,7 +26,7 @@ import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.j
 export function handleClarifyEpic(
   unit: Epic,
   input: ClarifyInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // append clarifications（progressive，不覆盖历史——同 slice 模式，非 feature 容器覆盖）
   unit.clarifications = [...unit.clarifications, ...input.clarifications];

@@ -5,7 +5,7 @@
  * - schema-injector：解析 WaveTestCase/WaveTask（枚举值 + extends 补字段 + 可选标注 + 注释）
  * - prefix-builder：有/无 parent
  * - failure-hint：failureCount 1/3/5 + deriveFailureCount
- * - cross-layer：有父有兄弟 / 全终态 / 无 parent（用 createV1Env + makeStubDeps 构造 store）
+ * - cross-layer：有父有兄弟 / 全终态 / 无 parent（用 createCwEnv + makeStubDeps 构造 store）
  * - build-guidance：正常三段式 / 异常四段式结构验证
  *
  * 对应 design-v5-cli-and-guidance §3.4-§3.6、§5.1、§7.3、§9。
@@ -27,7 +27,7 @@ import {
   WAVE_REPLAN_TEMPLATE,
 } from "../../src/guidance/templates/wave.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
-import { createV1Env, STUB_NOW, type V1Env } from "./helpers/v1-env.js";
+import { createCwEnv, type CwEnv,STUB_NOW } from "./helpers/v1-env.js";
 
 // ═══════════════════════════════════════════════════════════════
 // schema-injector
@@ -325,10 +325,10 @@ describe("cross-layer: isTerminalStatus", () => {
 });
 
 describe("cross-layer: computeCrossLayerAfterCloseout", () => {
-  let env: V1Env;
+  let env: CwEnv;
 
   beforeEach(() => {
-    env = createV1Env();
+    env = createCwEnv();
   });
 
   afterEach(() => {

@@ -26,16 +26,17 @@ import { handlePlan } from "../../src/handlers/plan.js";
 import { handleReplan } from "../../src/handlers/replan.js";
 import { handlePlanSlice } from "../../src/handlers/slice/plan.js";
 import { handleReplanSlice } from "../../src/handlers/slice/replan.js";
+import type { WorkUnitRecord } from "../../src/store/schema.js";
 import {
   makeValidSlicePlan,
   setupToSliceDesignReviewed,
 } from "./helpers/slice-env.js";
-import { createV1Env, makeValidContract, makeValidFile, makeValidTask, makeValidTestCase, makeWaveUnit, type V1Env } from "./helpers/v1-env.js";
+import { createCwEnv, type CwEnv,makeValidContract, makeValidFile, makeValidTask, makeValidTestCase, makeWaveUnit } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -109,7 +110,7 @@ describe("plan handler 通过 input 写入 abandonedParentItems", () => {
     // wave plan 需要一个 ExecutionUnit，直接用 helper 构造后 save
     const w = makeWaveUnit("test-wave");
     w.status = "planning";
-    env.deps.store.save(w);
+    env.deps.store.save(w as unknown as WorkUnitRecord);
 
     handlePlan(
       w,
@@ -194,7 +195,7 @@ describe("replan handler 通过 input 写入 abandonedParentItems", () => {
       files: [],
       contracts: [],
     };
-    env.deps.store.save(w);
+    env.deps.store.save(w as unknown as WorkUnitRecord);
 
     handleReplan(
       w,
@@ -214,7 +215,7 @@ describe("replan handler 通过 input 写入 abandonedParentItems", () => {
     const slice = setupToSliceDesignReviewed(env.deps);
     // 预先有值（模拟之前 plan 阶段已声明）
     slice.abandonedParentItems = ["FR1"];
-    env.deps.store.save(slice);
+    env.deps.store.save(slice as unknown as WorkUnitRecord);
 
     handleReplanSlice(
       slice,
@@ -241,13 +242,13 @@ describe("replan handler 通过 input 写入 abandonedParentItems", () => {
  * 与 v1-env.ts 的 commitWithFiles 区别：后者 message 固定为 "add <files>"，
  * 本 helper 允许自定义 message（用于塞 Cw-Abandon trailer）。
  *
- * @param env    createV1Env() 产出的环境（cwd = git 仓库工作目录 = deps.workspacePath）
+ * @param env    createCwEnv() 产出的环境（cwd = git 仓库工作目录 = deps.workspacePath）
  * @param relPath 本次 commit 新增的文件相对路径（需有文件改动才能 commit）
  * @param content 文件内容
  * @param commitMessage commit message（可含多行 + trailer）
  */
 function commitWithMessage(
-  env: V1Env,
+  env: CwEnv,
   relPath: string,
   content: string,
   commitMessage: string,
@@ -285,7 +286,7 @@ describe("handleExecute trailer 解析集成（顺便通道）", () => {
     // 2. 建一个 design-reviewed 状态的 wave（execute.from = ["design-reviewed"]）
     const wave = makeWaveUnit("exec-trailer-wave");
     wave.status = "design-reviewed";
-    env.deps.store.save(wave);
+    env.deps.store.save(wave as unknown as WorkUnitRecord);
 
     // 前置：wave.abandonedParentItems 初始空
     expect(
@@ -312,7 +313,7 @@ describe("handleExecute trailer 解析集成（顺便通道）", () => {
 
     const wave = makeWaveUnit("exec-no-trailer-wave");
     wave.status = "design-reviewed";
-    env.deps.store.save(wave);
+    env.deps.store.save(wave as unknown as WorkUnitRecord);
 
     handleExecute(wave, { commitHash }, env.deps);
 
@@ -332,7 +333,7 @@ describe("handleExecute trailer 解析集成（顺便通道）", () => {
     wave.status = "design-reviewed";
     // 预先有 TC3（验证 append-only 去重，不重复）
     wave.abandonedParentItems = ["TC3"];
-    env.deps.store.save(wave);
+    env.deps.store.save(wave as unknown as WorkUnitRecord);
 
     handleExecute(wave, { commitHash }, env.deps);
 

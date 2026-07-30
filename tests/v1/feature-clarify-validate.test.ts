@@ -16,16 +16,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { FeatureSpec } from "../../src/core/clarifications.js";
 import { dispatch } from "../../src/dispatch.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeFeatureClarifyInput,
   makeFeatureSpec,
 } from "./helpers/feature-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 describe("feature clarify 结构校验（畸形 spec 被拦）", () => {

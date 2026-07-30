@@ -1,5 +1,5 @@
 /**
- * V1Store — v1 JSON 文件持久化层（单集合扁平存储）。
+ * CwStore — v1 JSON 文件持久化层（单集合扁平存储）。
  *
  * 职责：
  *   - _v1.json 读写（单集合 workUnits，扁平存储 + parentUnitId 外键）
@@ -30,8 +30,8 @@ import {
 import { dirname } from "node:path";
 
 import { collectRepoMeta } from "../core/git.js";
-import type { V1JsonFile, WorkUnitRecord } from "./schema.js";
-import { getV1JsonPath } from "./schema.js";
+import type { CwJsonFile, WorkUnitRecord } from "./schema.js";
+import { getCwJsonPath } from "./schema.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
@@ -61,13 +61,13 @@ function isVerbose(): boolean {
 
 function logVerbose(msg: string): void {
   if (isVerbose()) {
-    process.stderr.write(`[v1-store] ${msg}\n`);
+    process.stderr.write(`[cw-store] ${msg}\n`);
   }
 }
 
-// ── V1Store ──────────────────────────────────────────────────
+// ── CwStore ──────────────────────────────────────────────────
 
-export class V1Store {
+export class CwStore {
   private readonly dbPath: string;
   private readonly lockPath: string;
   private readonly tmpPath: string;
@@ -75,13 +75,13 @@ export class V1Store {
   private readonly cwd: string;
 
   /** 事务内的工作副本（深拷贝自磁盘 snapshot）。事务外为 null。 */
-  private fileData: V1JsonFile | null = null;
+  private fileData: CwJsonFile | null = null;
   private inTransaction = false;
   private lockHeld = false;
 
   constructor(cwd: string) {
     this.cwd = cwd;
-    this.dbPath = getV1JsonPath(cwd);
+    this.dbPath = getCwJsonPath(cwd);
     this.lockPath = this.dbPath + ".lock";
     this.tmpPath = this.dbPath + ".tmp";
     // 父目录自动创建（全局路径首次使用时目录可能不存在）。
@@ -98,17 +98,17 @@ export class V1Store {
    *   会导致后续 save 在内存里覆盖式写入时把损坏前的数据彻底删空（删库效应）。
    *   现在选择让调用方立即知道文件损坏，避免灾难性数据丢失。
    */
-  private loadFileData(): V1JsonFile {
+  private loadFileData(): CwJsonFile {
     if (!existsSync(this.dbPath)) {
       return this.emptyFile();
     }
-    let data: V1JsonFile;
+    let data: CwJsonFile;
     try {
       const raw = readFileSync(this.dbPath, "utf-8");
-      data = JSON.parse(raw) as V1JsonFile;
+      data = JSON.parse(raw) as CwJsonFile;
     } catch (err) {
       throw new Error(
-        `V1Store: failed to parse _v1.json at ${this.dbPath}: ${(err as Error).message}`,
+        `CwStore: failed to parse _v1.json at ${this.dbPath}: ${(err as Error).message}`,
       );
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
@@ -118,7 +118,7 @@ export class V1Store {
     return data;
   }
 
-  private emptyFile(): V1JsonFile {
+  private emptyFile(): CwJsonFile {
     // 显式 repoMeta: undefined 表明该键存在但尚未回填（首次 save 时由 save() 填充）。
     return { schemaVersion: 1, repoMeta: undefined, workUnits: [] };
   }
@@ -207,7 +207,7 @@ export class V1Store {
       }
     }
     throw new Error(
-      `V1Store: failed to acquire lock after ${LOCK_MAX_RETRIES} retries (${this.lockPath})`,
+      `CwStore: failed to acquire lock after ${LOCK_MAX_RETRIES} retries (${this.lockPath})`,
     );
   }
 
@@ -323,7 +323,7 @@ export class V1Store {
   /**
    * 返回当前活跃数据：事务内返回内存副本，否则从磁盘加载。
    */
-  private getActiveData(): V1JsonFile {
+  private getActiveData(): CwJsonFile {
     if (this.inTransaction && this.fileData) {
       return this.fileData;
     }

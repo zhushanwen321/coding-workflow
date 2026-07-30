@@ -1,11 +1,11 @@
 /**
- * v1 handlers 编排层统一导出（wave 层 11 个 action handler + V1Deps + ActionResult + 各 Input）。
+ * v1 handlers 编排层统一导出（wave 层 11 个 action handler + CwDeps + ActionResult + 各 Input）。
  *
  * 来源：v5 wave 附录 A §10（handler 编排骨架）、各阶段产物归宿。
  *
  * 层职责：handlers 是编排层——每个 action 一个 handler，串 rules（纯函数）+ store（IO）。
  *      handler 自身不含业务逻辑：调 rules 做 gate/freeze/状态机校验，调 store 做持久化。
- *      所有 IO（git 校验 / 跑测试 / 文件存在 / 时钟）通过 V1Deps 注入。
+ *      所有 IO（git 校验 / 跑测试 / 文件存在 / 时钟）通过 CwDeps 注入。
  *
  * 模块索引（11 个 handler）：
  * - create：入口，createWave 工厂初始化空态
@@ -29,6 +29,7 @@ export type {
   ClarifyInput,
   CloseoutInput,
   CreateInput,
+  CwDeps,
   DesignReviewInput,
   ExecReviewInput,
   ExecuteInput,
@@ -38,7 +39,6 @@ export type {
   RetrospectInput,
   RetrospectSliceInput,
   TestInput,
-  V1Deps,
 } from "./types.js";
 
 // 11 个 handler

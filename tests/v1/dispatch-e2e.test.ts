@@ -3,16 +3,17 @@
  *
  * 通过 dispatch 统一入口跑完整 wave 生命周期，验证编排层正确串联。
  * - E1: create→...→closeout 全链路，断言最终 status=closed + evidence.frozenAt 非空
- * - E2: create 后直接 dispatch execute → V1Error(illegal_transition)
+ * - E2: create 后直接 dispatch execute → CwEngineError(illegal_transition)
  *
- * 真实 store + stub V1Deps（外部依赖注入接口）。零 mock 框架。
+ * 真实 store + stub CwDeps（外部依赖注入接口）。零 mock 框架。
  */
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import type { ExecutionUnit } from "../../src/core/workunit.js";
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
-  createV1Env,
+  createCwEnv,
+  type CwEnv,
   makeValidContract,
   makeValidDesignReviewJudgment,
   makeValidExecReviewJudgment,
@@ -22,13 +23,12 @@ import {
   makeValidTestCase,
   makeValidTestJudgment,
   STUB_NOW,
-  type V1Env,
 } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -164,8 +164,8 @@ describe("E1: dispatch 完整 wave 生命周期", () => {
   });
 });
 
-describe("E2: dispatch 非法跳步 → V1Error(illegal_transition)", () => {
-  it("create 后直接 execute → V1Error(illegal_transition)", () => {
+describe("E2: dispatch 非法跳步 → CwEngineError(illegal_transition)", () => {
+  it("create 后直接 execute → CwEngineError(illegal_transition)", () => {
     dispatch(
       { action: "create", input: {
         slug: "e2e-illegal",
@@ -182,7 +182,7 @@ describe("E2: dispatch 非法跳步 → V1Error(illegal_transition)", () => {
         { action: "execute", unitId, input: { commitHash: "abc" } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -191,13 +191,13 @@ describe("E2: dispatch 非法跳步 → V1Error(illegal_transition)", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      const err = e as V1Error;
+      const err = e as CwEngineError;
       expect(err.code).toBe("illegal_transition");
       expect(err.message).toMatch(/execute/);
     }
   });
 
-  it("test 从 created 状态 → V1Error(illegal_transition)", () => {
+  it("test 从 created 状态 → CwEngineError(illegal_transition)", () => {
     dispatch(
       { action: "create", input: {
         slug: "e2e-illegal2",
@@ -215,10 +215,10 @@ describe("E2: dispatch 非法跳步 → V1Error(illegal_transition)", () => {
         } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("closed 后任何 action → V1Error（终态不可逆）", () => {
+  it("closed 后任何 action → CwEngineError（终态不可逆）", () => {
     // 先跑到 closed（复用 E1 链路的最小版本）
     const unitId = "wave:e2e-terminal";
     const steps: Array<["clarify" | "plan" | "design-review" | "execute" | "test" | "exec-review" | "retrospect" | "closeout", unknown]> = [
@@ -248,16 +248,16 @@ describe("E2: dispatch 非法跳步 → V1Error(illegal_transition)", () => {
     // closed 后再 execute → illegal
     expect(() =>
       dispatch({ action: "execute", unitId, input: { commitHash: "xyz" } }, env.deps),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("unit not found → V1Error(unit_not_found)", () => {
+  it("unit not found → CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
         { action: "clarify", unitId: "wave:ghost", input: { clarifications: [] } },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
     try {
       dispatch(
         { action: "clarify", unitId: "wave:ghost", input: { clarifications: [] } },
@@ -265,7 +265,7 @@ describe("E2: dispatch 非法跳步 → V1Error(illegal_transition)", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unit_not_found");
+      expect((e as CwEngineError).code).toBe("unit_not_found");
     }
   });
 });

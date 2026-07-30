@@ -21,8 +21,6 @@ npm run build       # tsc 编译到 dist/
 - **guidance 是唯一导航**：所有阶段提示词（spec/plan/execute/review/retrospect）内嵌在 `src/prompts/*.ts`，由 `buildNextAction` 拼入返回的 `nextAction.guidance`。
 - **单重 guard**：只有 `checkLinear`（防跳步），无纵深防御。`GuardErrorCode` 仅 `illegal_transition`。
 - **gate 熔断不阻断**：连续 fail 5 次后 guidance 换熔断文案，但不阻止 agent 继续重试。
-- **纯函数指标**：`stats.ts` 的所有计算都是只读纯函数，无副作用，不依赖外部文件。
-- **init 不进状态机**：`cw init` 是 topic 之前的只读基建诊断（与 status/list/stats 同级），扫描文档缺失/骨架态/漂移，返回骨架供 agent 补齐。`create` 时检测缺失在 guidance 引导但不阻断。
 
 ## TypeScript 规范
 
@@ -52,7 +50,5 @@ npm run build       # tsc 编译到 dist/
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |
 | [TEST-STRATEGY.md](./TEST-STRATEGY.md) | 测试策略（金字塔边界 / mock 约定 / 不可回退基线） |
 | [DESIGN-LOG.md](./DESIGN-LOG.md) | 设计历史索引（主题台账 / ADR 索引） |
-| [docs/metrics-design.md](./docs/metrics-design.md) | 评估指标设计（三层架构 / RuntimeEnv 分组 / 复杂度归一） |
-| [docs/metrics-usage.md](./docs/metrics-usage.md) | 评估指标用法（命令 / 输出解读 / 跨 topic 对比 / assess 时机） |
 | [docs/architecture-review.md](./docs/architecture-review.md) | 早期架构评审笔记（三层防线设计历史） |
 | [docs/architecture-three-layers.md](./docs/architecture-three-layers.md) | 三层防线详细设计（证据层 / 数据源） |

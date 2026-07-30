@@ -8,7 +8,7 @@
  * 渲染 group header 表格。
  *
  * 设计要点：
- *   - 不 import V1Store（store 的 load/save 带 activeData 切换、事务等写语义，
+ *   - 不 import CwStore（store 的 load/save 带 activeData 切换、事务等写语义，
  *     跨 cwd 聚合只需 JSON.parse，引入 store 会带来不必要的副作用风险）。
  *   - 子目录名是 encodedCwd（encodeCwd: / → __），反解时直接 `__` → `/`。
  *   - 损坏/缺失的 _v1.json 静默跳过（ES2：单 cwd 损坏不影响其他 cwd 的列表）。
@@ -16,7 +16,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { V1JsonFile } from "../store/schema.js";
+import type { CwJsonFile } from "../store/schema.js";
 import { decodeCwd } from "../store/schema.js";
 
 /** 单个 cwd 的加载结果。 */
@@ -24,7 +24,7 @@ export interface LoadedCwd {
   /** 反解后的 cwd 绝对路径（encodedCwd 的 __ → /）。repoMeta 存在时优先用 worktreePath（更精确）。 */
   cwd: string;
   /** _v1.json 解析结果。 */
-  data: V1JsonFile;
+  data: CwJsonFile;
 }
 
 /**
@@ -55,9 +55,9 @@ export function loadAllCwdsFromHome(cwHome: string): LoadedCwd[] {
     } catch {
       continue; // 文件不存在，跳过
     }
-    let data: V1JsonFile;
+    let data: CwJsonFile;
     try {
-      data = JSON.parse(raw) as V1JsonFile;
+      data = JSON.parse(raw) as CwJsonFile;
     } catch {
       continue; // JSON 损坏，跳过（ES2）
     }

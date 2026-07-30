@@ -1,12 +1,13 @@
 /**
  * 迁移旧 ~/.v1 存储到 ~/.cw（commit e10f05b 改了路径但没搬数据）。
  *
- * 进程级一次性：cli.ts main 入口调一次，不在 V1Store 构造函数里调（有 5 个调用点会重复触发）。
+ * 进程级一次性：cli.ts main 入口调一次，不在 CwStore 构造函数里调（有 5 个调用点会重复触发）。
  * 幂等：~/.v1 不存在时秒返回，迁移过的环境零开销。
  */
+import { existsSync, readdirSync, readFileSync,renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, renameSync, rmSync, readFileSync } from "node:fs";
+
 import { getCwHome } from "./schema.js";
 
 /** 旧存储根目录（迁移前的 ~/.v1）。 */
@@ -63,9 +64,6 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
     return;
   }
 
-  let migrated = 0;
-  let skipped = 0;
-
   for (const encodedCwd of entries) {
     const legacyDir = join(legacyHome, encodedCwd);
     const legacyFile = join(legacyDir, "_v1.json");
@@ -74,10 +72,11 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
     if (!existsSync(legacyFile)) {
       try {
         rmSync(legacyDir, { recursive: true, force: true });
-      } catch {
-        // 删失败不影响，留给最后的非空检测处理
+        // eslint-disable-next-line taste/no-silent-catch -- 迁移是 best-effort，IO 失败只记录不阻断 cw 启动
+      } catch (err) {
+        // best-effort：空目录残留无害，留给最后的非空检测处理
+        console.debug(`[migrate-v1] 清理空目录 ${encodedCwd} 失败（忽略）: ${(err as Error).message}`);
       }
-      skipped++;
       continue;
     }
 
@@ -90,14 +89,12 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
       const legacyRecordedAt = parseRecordedAt(legacyData, legacyFile);
       // parseRecordedAt 解析失败返回特殊标记，据此跳过
       if (legacyRecordedAt === PARSE_FAILED) {
-        skipped++;
         continue;
       }
 
       if (!existsSync(cwFile)) {
         // 仅 ~/.v1 有 → 直接搬整个目录（已校验可解析）
         renameSync(legacyDir, cwDir);
-        migrated++;
       } else {
         // 两边都有 → 比 recordedAt 决定保留哪份
         const cwRecordedAt = readCwRecordedAt(cwFile);
@@ -106,18 +103,15 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
           // ~/.v1 更新或相同 → v1 覆盖 cw（先删 cw 旧目录再搬 v1）
           rmSync(cwDir, { recursive: true, force: true });
           renameSync(legacyDir, cwDir);
-          migrated++;
         } else {
           // ~/.cw 更新 → 删 v1 旧目录
           rmSync(legacyDir, { recursive: true, force: true });
-          migrated++;
         }
       }
+      // eslint-disable-next-line taste/no-silent-catch -- 迁移是 best-effort，IO 失败只 warn 不阻断 cw 启动
     } catch (err) {
-      console.warn(
-        `[migrate-v1] 迁移 ${encodedCwd} 失败，跳过（原文件保留）: ${(err as Error).message}`,
-      );
-      skipped++;
+      // best-effort：单个目录迁移失败不影响其他目录。原文件保留不丢数据
+      console.warn(`[migrate-v1] 迁移 ${encodedCwd} 失败，跳过（原文件保留）: ${(err as Error).message}`);
     }
   }
 
@@ -127,13 +121,27 @@ export function migrateLegacyV1Home(opts?: MigrateOpts): void {
     if (remaining.length === 0) {
       rmSync(legacyHome, { recursive: true, force: true });
     }
-  } catch {
-    // rmdir 失败不影响功能，~/.v1 残留空目录无害
+    // eslint-disable-next-line taste/no-silent-catch -- 迁移是 best-effort，IO 失败只记录不阻断 cw 启动
+  } catch (err) {
+    // best-effort：~/.v1 残留空目录无害，rmdir 失败不影响功能
+    console.debug(`[migrate-v1] rmdir ${legacyHome} 失败（忽略）: ${(err as Error).message}`);
   }
 }
 
 /** 解析失败的哨兵值（比任何合法时间戳都大，确保不被当作有效数据搬迁）。 */
 const PARSE_FAILED = "\x00PARSE_FAILED";
+
+/**
+ * 类型守卫：从已解析的 JSON 值安全读取 repoMeta.recordedAt（string）。
+ * 任何结构不符 → 返回 null（调用方按"缺失"处理）。
+ */
+function safeGetRecordedAt(parsed: unknown): string | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const repoMeta = (parsed as Record<string, unknown>).repoMeta;
+  if (typeof repoMeta !== "object" || repoMeta === null) return null;
+  const recordedAt = (repoMeta as Record<string, unknown>).recordedAt;
+  return typeof recordedAt === "string" ? recordedAt : null;
+}
 
 /**
  * 从 _v1.json 内容解析 repoMeta.recordedAt。
@@ -142,8 +150,8 @@ const PARSE_FAILED = "\x00PARSE_FAILED";
  */
 function parseRecordedAt(raw: string, filePath: string): string {
   try {
-    const data = JSON.parse(raw) as { repoMeta?: { recordedAt?: string } };
-    return data.repoMeta?.recordedAt ?? "";
+    const parsed: unknown = JSON.parse(raw);
+    return safeGetRecordedAt(parsed) ?? "";
   } catch (err) {
     console.warn(
       `[migrate-v1] 解析 ${filePath} 失败，跳过该目录（原文件保留）: ${(err as Error).message}`,
@@ -156,8 +164,8 @@ function parseRecordedAt(raw: string, filePath: string): string {
 function readCwRecordedAt(cwFile: string): string {
   try {
     const raw = readFileSync(cwFile, "utf-8");
-    const data = JSON.parse(raw) as { repoMeta?: { recordedAt?: string } };
-    return data.repoMeta?.recordedAt ?? "";
+    const parsed: unknown = JSON.parse(raw);
+    return safeGetRecordedAt(parsed) ?? "";
   } catch (err) {
     console.warn(
       `[migrate-v1] 解析 ${cwFile} 失败，视为最新不覆盖: ${(err as Error).message}`,

@@ -10,7 +10,7 @@
  * 与 wave clarify 同构（slice 的 clarifications 也是 Clarification[]）。
  */
 import type { Slice } from "../../core/workunit.js";
-import type { ActionResult, ClarifyInput, V1Deps } from "../types.js";
+import type { ActionResult, ClarifyInput, CwDeps } from "../types.js";
 import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -23,7 +23,7 @@ import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-intern
 export function handleClarifySlice(
   unit: Slice,
   input: ClarifyInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // append clarifications（progressive，不覆盖历史）
   unit.clarifications = [...unit.clarifications, ...input.clarifications];

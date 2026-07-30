@@ -10,25 +10,25 @@
  * - addedSpecItems：拆分重建（FR1→FR1a+FR1b）+ id 冲突检测
  * - feature→slice 级联 abort：feature replan 废弃 FR → child slice 被级联 aborted
  *
- * 真实 V1Store + tmp 目录 + stub clock。零 mock 框架。
+ * 真实 CwStore + tmp 目录 + stub clock。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeFeatureClarifyInput,
   makeFeatureSpec,
   makeValidFeatureDesignReviewJudgment,
   makeValidFeaturePlan,
   makeValidFunctionalRequirement,
 } from "./helpers/feature-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -311,7 +311,7 @@ describe("T9a: feature replan addedSpecItems 拆分重建（§7.4 FR1→FR1a+FR1
     expect(spec.functionalRequirements.find((f) => f.id === "FR99")?.status).toBe("active");
   });
 
-  it("addedSpecItems id 冲突（与现有 active FR 重复）→ throw V1Error(illegal_argument)", () => {
+  it("addedSpecItems id 冲突（与现有 active FR 重复）→ throw CwEngineError(illegal_argument)", () => {
     const { deps } = env;
     const unitId = setupFeatureWithTwoFRs();
     expect(() =>
@@ -331,7 +331,7 @@ describe("T9a: feature replan addedSpecItems 拆分重建（§7.4 FR1→FR1a+FR1
         },
         deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
     try {
       dispatch(
         {
@@ -351,12 +351,12 @@ describe("T9a: feature replan addedSpecItems 拆分重建（§7.4 FR1→FR1a+FR1
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("illegal_argument");
-      expect((e as V1Error).message).toMatch(/FR1/);
+      expect((e as CwEngineError).code).toBe("illegal_argument");
+      expect((e as CwEngineError).message).toMatch(/FR1/);
     }
   });
 
-  it("addedSpecItems id 冲突（与 abandoned 条目重复）→ throw V1Error", () => {
+  it("addedSpecItems id 冲突（与 abandoned 条目重复）→ throw CwEngineError", () => {
     const { deps } = env;
     const unitId = setupFeatureWithTwoFRs();
     expect(() =>
@@ -376,10 +376,10 @@ describe("T9a: feature replan addedSpecItems 拆分重建（§7.4 FR1→FR1a+FR1
         },
         deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
-  it("addedSpecItems 跨 FR/AC/UC id 冲突 → throw V1Error", () => {
+  it("addedSpecItems 跨 FR/AC/UC id 冲突 → throw CwEngineError", () => {
     const { deps } = env;
     const unitId = setupFeatureWithTwoFRs();
     expect(() =>
@@ -399,7 +399,7 @@ describe("T9a: feature replan addedSpecItems 拆分重建（§7.4 FR1→FR1a+FR1
         },
         deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 
   it("addedSpecItems 空对象 → 正常废弃，不追加新条目", () => {

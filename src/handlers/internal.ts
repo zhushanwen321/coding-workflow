@@ -5,7 +5,7 @@
  *
  * 职责：封装三个重复模式，避免 11 个 handler 各写一遍：
  *   1. transitionStatus / saveUnit：算 next status + append statusHistory + 更新 unit.status + 持久化
- *   2. buildNextAction：正常路径的 guidance 填充（prefix + 模板 + schema + 组装 V1NextAction）
+ *   2. buildNextAction：正常路径的 guidance 填充（prefix + 模板 + schema + 组装 CwNextAction）
  *   3. buildFailureNextAction / appendFailRecord：gate fail 路径的异常 guidance + failureCount 派生
  *
  * 注意：buildNextAction 是 handler 层内部的便利封装，不是业务规则（规则在 rules/state-machine.ts）。
@@ -32,10 +32,10 @@ import {
 } from "../guidance/index.js";
 import type { WaveAction } from "../rules/state-machine.js";
 import { nextWaveStatus } from "../rules/state-machine.js";
+import type { CwStore } from "../store/cw-store.js";
 import type { WorkUnitRecord } from "../store/schema.js";
-import type { V1Store } from "../store/v1-store.js";
 import { buildCommand, inputFilePath } from "../utils/command.js";
-import type { V1Deps,V1NextAction } from "./types.js";
+import type { CwDeps,CwNextAction } from "./types.js";
 
 /**
  * 流转 unit status：算 next → append StatusChange → 更新 unit.status。
@@ -110,7 +110,7 @@ export function mergeAbandonParentItems(
 // ═══════════════════════════════════════════════════════════════
 //
 // 设计：guidance 填充把 prefix-builder / schema-injector / templates / build-guidance
-// 串成一条流水线，输出 V1NextAction。三个静态映射表是 handler 层内部知识
+// 串成一条流水线，输出 CwNextAction。三个静态映射表是 handler 层内部知识
 // （哪个 action 的下一步是什么 / 哪个 input 用哪个 schema / 状态如何中文化），
 // 放这里而不是 guidance/ 下——因为这些映射只服务于 wave handler 编排，
 // 且会随 action 增减而变（guidance/ 是通用渲染层，不感知 wave 的 action 列表）。
@@ -244,13 +244,13 @@ export interface BuildNextActionOpts {
   /** 覆盖默认的 schema 文本（极少用，replan 等特殊场景）。 */
   schemaTextOverride?: string;
   /** 填 crossLayer（closeout 后回溯，由调用方调 computeCrossLayerAfterCloseout 算好传入）。 */
-  crossLayer?: V1NextAction["crossLayer"];
+  crossLayer?: CwNextAction["crossLayer"];
 }
 
 /**
- * 构建正常路径的 V1NextAction（ok=true 时 handler 调用，填入 ActionResult.nextAction）。
+ * 构建正常路径的 CwNextAction（ok=true 时 handler 调用，填入 ActionResult.nextAction）。
  *
- * 流水线：prefix-builder → templates 查约束 → schema-injector（带缓存）→ buildNormalGuidance → 组装 V1NextAction。
+ * 流水线：prefix-builder → templates 查约束 → schema-injector（带缓存）→ buildNormalGuidance → 组装 CwNextAction。
  *
  * @param unit 刚完成流转 / 存好的 unit（读 status / id / parentUnitId 做位置 + 导航）
  * @param action 刚执行完的 action（查模板 + schema + 下一步）
@@ -259,7 +259,7 @@ export function buildNextAction(
   unit: ExecutionUnit,
   action: WaveAction,
   opts?: BuildNextActionOpts,
-): V1NextAction {
+): CwNextAction {
   const statusDisplay = STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "wave",
@@ -302,13 +302,13 @@ export function buildNextAction(
 /** buildFailureNextAction 返回。 */
 export interface FailureNextAction {
   /** 填入 ActionResult.nextAction 的异常 guidance 结构。 */
-  nextAction: V1NextAction;
+  nextAction: CwNextAction;
   /** 填入 ActionResult.failureCount（含本次 fail 的连续计数）。 */
   failureCount: number;
 }
 
 /**
- * 构建 gate fail 路径的 V1NextAction + failureCount（ok=false 时 handler 调用）。
+ * 构建 gate fail 路径的 CwNextAction + failureCount（ok=false 时 handler 调用）。
  *
  * 流水线：prefix-builder（status 标注「未变」）→ deriveFailureCount（含本次）→ buildFailureHint → buildFailureGuidance（四段式）。
  *
@@ -374,7 +374,7 @@ export function buildFailureNextAction(
  * @param reason fail 原因（写入 note）
  */
 export function appendFailRecord(
-  deps: V1Deps,
+  deps: CwDeps,
   unit: ExecutionUnit,
   action: WaveAction,
   reason: string,
@@ -463,7 +463,7 @@ export function readAbandonedParentItems(record: WorkUnitRecord): string[] {
  * feature 的 child 默认 slice、epic 的 child 默认 feature）。
  */
 export function loadChildrenAsWorkUnitBase(
-  store: V1Store,
+  store: CwStore,
   parentId: string,
   defaultScope: WorkUnitBase["scope"],
 ): WorkUnitBase[] {

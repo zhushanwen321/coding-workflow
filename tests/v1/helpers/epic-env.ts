@@ -2,7 +2,7 @@
  * epic 测试基建 — epic unit 工厂 + 合法 EpicSplit/Plan/Judgment/RetrospectData 产物工厂
  * + 阶段推进 helper。
  *
- * 复用 v1-env.ts 的 createV1Env / makeStubDeps（隔离环境 + stub V1Deps）。
+ * 复用 v1-env.ts 的 createCwEnv / makeStubDeps（隔离环境 + stub CwDeps）。
  * 复用 feature-env.ts 的 setupFeatureWithClosedSlices（epic 的 child 是 feature，推进 child feature
  * 走完整 feature 7 步到 closed 复用 feature 的 setup）。
  * 复用 slice-env.ts 的 advanceWaveToClosed（feature 推进 child slice 时复用）。
@@ -13,7 +13,7 @@
  * - 阶段推进 helper：setupToEpicClarified / setupToEpicPlanning / setupToEpicDesignReviewed /
  *   setupToEpicExecuting / advanceChildFeaturesToClosed / setupEpicWithClosedFeatures
  *
- * 零 mock 框架：真实 V1Store + tmp 目录（同 v1-env.ts 约定）。
+ * 零 mock 框架：真实 CwStore + tmp 目录（同 v1-env.ts 约定）。
  */
 import type {
   Clarification,
@@ -27,9 +27,9 @@ import type { Split } from "../../../src/core/plan.js";
 import type { Epic } from "../../../src/core/workunit.js";
 import { createEpic } from "../../../src/core/workunit.js";
 import { dispatch } from "../../../src/dispatch.js";
-import type { V1Deps } from "../../../src/handlers/types.js";
+import type { CwDeps } from "../../../src/handlers/types.js";
 import {
-  createV1Env,
+  createCwEnv,
   makeFeatureClarifyInput,
   makeStubDeps,
   makeValidClarification,
@@ -46,7 +46,7 @@ import {
 } from "./slice-env.js";
 
 export {
-  createV1Env,
+  createCwEnv,
   makeStubDeps,
   makeValidClarification,
   STUB_NOW,
@@ -187,7 +187,7 @@ export function makeValidEpicRetrospectData(
  * 与动态生成的 child feature id 不匹配导致 childUnitEvidenceComplete gate fail。
  */
 export function makeEpicRetrospectDataFromStore(
-  deps: V1Deps,
+  deps: CwDeps,
   unitId: string,
 ): PlanningRetrospectData {
   const record = deps.store.load(unitId) as unknown as {
@@ -218,10 +218,10 @@ function epicExecute(unitId: string): DispatchParams {
  * epic clarify 用通用 ClarifyInput（数组形态），走数组 push 累积（非 feature 的容器覆盖）。
  * 返回 epic unit id。
  *
- * @param deps stub V1Deps（store 注入）
+ * @param deps stub CwDeps（store 注入）
  * @param slug epic slug（默认 test-epic）
  */
-export function setupToEpicClarified(deps: V1Deps, slug = "test-epic"): string {
+export function setupToEpicClarified(deps: CwDeps, slug = "test-epic"): string {
   const unitId = `epic:${slug}`;
   dispatch(
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "epic" } },
@@ -242,7 +242,7 @@ export function setupToEpicClarified(deps: V1Deps, slug = "test-epic"): string {
  * 推进 epic 到 planning 状态（+ plan）。
  * 返回 epic unit id（status=planning，plan.split 已写入）。
  */
-export function setupToEpicPlanning(deps: V1Deps, slug = "test-epic"): string {
+export function setupToEpicPlanning(deps: CwDeps, slug = "test-epic"): string {
   const unitId = setupToEpicClarified(deps, slug);
   dispatch(
     { action: "plan", unitId, input: makeValidEpicPlan() },
@@ -255,7 +255,7 @@ export function setupToEpicPlanning(deps: V1Deps, slug = "test-epic"): string {
  * 推进 epic 到 design-reviewed 状态（+ design-review 过 gate）。
  * 返回 epic unit id（status=design-reviewed，可直接 execute）。
  */
-export function setupToEpicDesignReviewed(deps: V1Deps, slug = "test-epic"): string {
+export function setupToEpicDesignReviewed(deps: CwDeps, slug = "test-epic"): string {
   const unitId = setupToEpicPlanning(deps, slug);
   dispatch(
     {
@@ -272,7 +272,7 @@ export function setupToEpicDesignReviewed(deps: V1Deps, slug = "test-epic"): str
  * 推进 epic 到 executing 状态（+ execute 创建 child feature）。
  * 返回 epic unit id（status=executing，child feature 已创建）。
  */
-export function setupToEpicExecuting(deps: V1Deps, slug = "test-epic"): string {
+export function setupToEpicExecuting(deps: CwDeps, slug = "test-epic"): string {
   const unitId = setupToEpicDesignReviewed(deps, slug);
   dispatch(epicExecute(unitId), deps);
   return unitId;
@@ -296,11 +296,11 @@ function featureExecute(unitId: string): DispatchParams {
  * child feature 的 child slice 推进复用 feature-env.advanceChildSlicesToClosed 的逻辑（内联，
  * 避免循环依赖——feature-env 的 advanceChildSlicesToClosed 也是 dispatch 流程）。
  *
- * @param deps stub V1Deps
+ * @param deps stub CwDeps
  * @param epicId epic unit id
  * @returns child feature id 列表
  */
-export function advanceChildFeaturesToClosed(deps: V1Deps, epicId: string): string[] {
+export function advanceChildFeaturesToClosed(deps: CwDeps, epicId: string): string[] {
   const record = deps.store.load(epicId);
   if (!record) throw new Error(`epic not found: ${epicId}`);
   const childUnitIds = (record as unknown as {
@@ -364,10 +364,10 @@ export function advanceChildFeaturesToClosed(deps: V1Deps, epicId: string): stri
  * 流程：setupToEpicExecuting → advanceChildFeaturesToClosed。
  * 返回 epic unit id（所有 child feature 已 closed，可过 retrospect allWavesClosed gate）。
  *
- * @param deps stub V1Deps
+ * @param deps stub CwDeps
  * @param slug epic slug
  */
-export function setupEpicWithClosedFeatures(deps: V1Deps, slug = "test-epic"): string {
+export function setupEpicWithClosedFeatures(deps: CwDeps, slug = "test-epic"): string {
   const epicId = setupToEpicExecuting(deps, slug);
   advanceChildFeaturesToClosed(deps, epicId);
   return epicId;
@@ -386,7 +386,7 @@ export type { Clarification };
  * 内联 feature-env.advanceChildSlicesToClosed 的单 slice 推进逻辑（避免循环依赖）。
  * slice 的 child wave 推进复用 slice-env.advanceWaveToClosed。
  */
-function advanceFeatureChildSliceToClosed(deps: V1Deps, sliceId: string): void {
+function advanceFeatureChildSliceToClosed(deps: CwDeps, sliceId: string): void {
   dispatch(
     { action: "clarify", unitId: sliceId, input: { clarifications: [] } },
     deps,

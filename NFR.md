@@ -74,7 +74,7 @@
 
 ### V-1 旧 topic 向后兼容
 
-- **约束**：加载旧版本创建的 topic（缺少 `runtimeEnv` / `retrospectData` / `assessments` 等新字段）必须正常工作——缺失字段 loadTopic 时视为 undefined，统计归入 unknown 分组，不得抛错或丢弃整个 topic。
+- **约束**：加载旧版本创建的 topic（缺少 `runtimeEnv` / `retrospectData` 等新字段）必须正常工作——缺失字段 loadTopic 时视为 undefined，统计归入 unknown 分组，不得抛错或丢弃整个 topic。
 - **为什么**：CW 的 topic 数据持久化在用户磁盘，升级 CW 版本后旧 topic 必须可读可用。若新字段缺失就报错，用户升级后历史 topic 全部失效，这是不可接受的数据迁移风险。向后兼容保证"新版本读旧数据"始终成立，字段渐进式增强。
 - **验证**：`computeGatePassed`（src/state-machine.ts，对缺失字段做容错计算）
 - **例外**：缺少 `runtimeEnv` 的旧 topic 不参与跨 topic 的 runtimeEnv 聚合对比（因元数据缺失，对比无意义）。

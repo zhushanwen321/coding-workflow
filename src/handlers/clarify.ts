@@ -10,7 +10,7 @@
  */
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
-import type { ActionResult, ClarifyInput,V1Deps } from "./types.js";
+import type { ActionResult, ClarifyInput,CwDeps } from "./types.js";
 
 /**
  * 执行 clarify action（progressive）。
@@ -22,7 +22,7 @@ import type { ActionResult, ClarifyInput,V1Deps } from "./types.js";
 export function handleClarify(
   unit: ExecutionUnit,
   input: ClarifyInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // 写产物：append clarifications（progressive，不覆盖历史）
   unit.clarifications = [...unit.clarifications, ...input.clarifications];

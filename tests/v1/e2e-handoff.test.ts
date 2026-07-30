@@ -6,7 +6,7 @@
  *   TC6: handoff 缺 --unitId → exit 1
  *   TC7: handoff 不存在的 unitId → exit 1 + unit not found
  *
- * 复用 cli-v1.test.ts 的子进程模式（runV1Cli/createV1CliEnv）。
+ * 复用 cli-v1.test.ts 的子进程模式（runCwCli/createCwCliEnv）。
  * 需先 npm run build（dist/cli.js 存在）。
  */
 import { spawnSync } from "node:child_process";
@@ -33,14 +33,14 @@ interface CliResult {
   stderr: string;
 }
 
-interface V1CliEnv {
+interface CwCliEnv {
   workspaceDir: string;
   cwHome: string;
   env: Record<string, string>;
   commitHash: string;
 }
 
-function runV1Cli(args: string[], env: V1CliEnv): CliResult {
+function runCwCli(args: string[], env: CwCliEnv): CliResult {
   const mergedEnv = { ...process.env, ...env.env, PATH: process.env.PATH ?? "" };
   const result = spawnSync("node", [CLI_PATH, ...args], {
     env: mergedEnv as NodeJS.ProcessEnv,
@@ -55,7 +55,7 @@ function runV1Cli(args: string[], env: V1CliEnv): CliResult {
   };
 }
 
-function createV1CliEnv(): V1CliEnv {
+function createCwCliEnv(): CwCliEnv {
   if (!existsSync(CLI_PATH)) {
     throw new Error(`dist/cli.js 不存在，请先 npm run build。路径: ${CLI_PATH}`);
   }
@@ -66,21 +66,21 @@ function createV1CliEnv(): V1CliEnv {
   return { workspaceDir, cwHome, env, commitHash };
 }
 
-function disposeV1CliEnv(e: V1CliEnv): void {
+function disposeCwCliEnv(e: CwCliEnv): void {
   rmSync(e.workspaceDir, { recursive: true, force: true });
   rmSync(e.cwHome, { recursive: true, force: true });
 }
 
 // ── 共享环境 ────────────────────────────────────────────────
 
-let e: V1CliEnv;
+let e: CwCliEnv;
 
 beforeAll(() => {
-  e = createV1CliEnv();
+  e = createCwCliEnv();
 });
 
 afterAll(() => {
-  disposeV1CliEnv(e);
+  disposeCwCliEnv(e);
 });
 
 // ── TC5: create 后 handoff → 五段式纯文本 ───────────────────
@@ -88,14 +88,14 @@ afterAll(() => {
 describe("TC5: cw handoff --unitId <id> 端到端", () => {
   it("create 后 handoff 输出五段式 + 含下一步 guidance，exit 0", () => {
     // 先 create 一个 wave
-    const created = runV1Cli(
+    const created = runCwCli(
       ["create", "wave", "--slug", "tc5-wave", "--objective", "TC5 交接测试"],
       e,
     );
     expect(created.exitCode).toBe(0);
 
     // handoff
-    const result = runV1Cli(["handoff", "--unitId", "wave:tc5-wave"], e);
+    const result = runCwCli(["handoff", "--unitId", "wave:tc5-wave"], e);
 
     expect(result.exitCode).toBe(0);
     const out = result.stdout;
@@ -120,7 +120,7 @@ describe("TC5: cw handoff --unitId <id> 端到端", () => {
 
 describe("TC6: cw handoff 缺 --unitId 报错", () => {
   it("不带 --unitId → exit 1 + stderr 含 handoff 需要 --unitId", () => {
-    const result = runV1Cli(["handoff"], e);
+    const result = runCwCli(["handoff"], e);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("handoff 需要 --unitId");
   });
@@ -130,7 +130,7 @@ describe("TC6: cw handoff 缺 --unitId 报错", () => {
 
 describe("TC7: cw handoff 不存在的 unitId 报错", () => {
   it("wave:nope → exit 1 + stderr 含 unit not found", () => {
-    const result = runV1Cli(["handoff", "--unitId", "wave:nope"], e);
+    const result = runCwCli(["handoff", "--unitId", "wave:nope"], e);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("unit not found");
   });

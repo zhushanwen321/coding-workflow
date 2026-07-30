@@ -6,20 +6,20 @@
  *
  * 另测：
  * - create 按 input.layer=feature 路由（→ handleCreateFeature，scope=feature）
- * - dispatch 拒绝 feature 的 test/exec-review → throw V1Error(illegal_transition)
+ * - dispatch 拒绝 feature 的 test/exec-review → throw CwEngineError(illegal_transition)
  * - gate fail 短路（构造 fail 的 spec/judgment，design-review 返回 ok=false 不流转）
  * - execute 创建的 child 是 slice（scope=slice，basedOnParent=split.inheritedItemIds）
  * - childDelivery 初始快照（childStatus=pending）
  *
- * 真实 store + stub V1Deps（外部依赖注入接口）。零 mock 框架。
+ * 真实 store + stub CwDeps（外部依赖注入接口）。零 mock 框架。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Feature } from "../../src/core/workunit.js";
-import { dispatch, V1Error } from "../../src/dispatch.js";
+import { CwEngineError,dispatch } from "../../src/dispatch.js";
 import {
   advanceChildSlicesToClosed,
-  createV1Env,
+  createCwEnv,
   makeFeatureClarifyInput,
   makeFeatureRetrospectDataFromStore,
   makeFeatureSpec,
@@ -29,12 +29,12 @@ import {
   setupToFeaturePlanning,
   STUB_NOW,
 } from "./helpers/feature-env.js";
-import type { V1Env } from "./helpers/v1-env.js";
+import type { CwEnv } from "./helpers/v1-env.js";
 
-let env: V1Env;
+let env: CwEnv;
 
 beforeEach(() => {
-  env = createV1Env();
+  env = createCwEnv();
 });
 
 afterEach(() => {
@@ -237,7 +237,7 @@ describe("dispatch create 按 input.layer 路由", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch 拒绝 feature 的 test/exec-review", () => {
-  it("feature dispatch test → throw V1Error(illegal_transition)", () => {
+  it("feature dispatch test → throw CwEngineError(illegal_transition)", () => {
     const unitId = "feature:e2e-no-test";
     dispatch(
       { action: "create", input: { slug: "e2e-no-test", objective: "o", layer: "feature" } },
@@ -261,7 +261,7 @@ describe("dispatch 拒绝 feature 的 test/exec-review", () => {
         },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -282,13 +282,13 @@ describe("dispatch 拒绝 feature 的 test/exec-review", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      const err = e as V1Error;
+      const err = e as CwEngineError;
       expect(err.code).toBe("illegal_transition");
       expect(err.message).toMatch(/test/);
     }
   });
 
-  it("feature dispatch exec-review → throw V1Error(illegal_transition)", () => {
+  it("feature dispatch exec-review → throw CwEngineError(illegal_transition)", () => {
     const unitId = "feature:e2e-no-execreview";
     dispatch(
       { action: "create", input: { slug: "e2e-no-execreview", objective: "o", layer: "feature" } },
@@ -306,7 +306,7 @@ describe("dispatch 拒绝 feature 的 test/exec-review", () => {
         },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
   });
 });
 
@@ -470,22 +470,22 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch feature 非法跳步", () => {
-  it("feature create 后直接 execute → throw V1Error(illegal_transition)", () => {
+  it("feature create 后直接 execute → throw CwEngineError(illegal_transition)", () => {
     const unitId = "feature:e2e-illegal";
     dispatch(
       { action: "create", input: { slug: "e2e-illegal", objective: "o", layer: "feature" } },
       env.deps,
     );
-    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(CwEngineError);
   });
 
-  it("feature unit not found → throw V1Error(unit_not_found)", () => {
+  it("feature unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
         { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -494,11 +494,11 @@ describe("dispatch feature 非法跳步", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unit_not_found");
+      expect((e as CwEngineError).code).toBe("unit_not_found");
     }
   });
 
-  it("closed 后任何 action → throw V1Error（终态不可逆）", () => {
+  it("closed 后任何 action → throw CwEngineError（终态不可逆）", () => {
     const unitId = setupFeatureWithClosedSlices(env.deps, "e2e-terminal");
     dispatch(
       { action: "retrospect", unitId, input: { retrospectData: makeFeatureRetrospectDataFromStore(env.deps, unitId) } },
@@ -507,10 +507,10 @@ describe("dispatch feature 非法跳步", () => {
     dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps);
     expect(loadFeature(unitId).status).toBe("closed");
 
-    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(V1Error);
+    expect(() => dispatch(featureExecute(unitId), env.deps)).toThrow(CwEngineError);
   });
 
-  it("unsupported scope（未实现的 scope）→ throw V1Error(unsupported_scope)", () => {
+  it("unsupported scope（未实现的 scope）→ throw CwEngineError(unsupported_scope)", () => {
     // 手动存一个 scope='custom-unknown' 的 record，loadWorkUnit 会抛 unsupported_scope
     //（epic 已实现，改用虚构 scope 验证未知 scope 的防御逻辑）
     env.store.save({
@@ -529,7 +529,7 @@ describe("dispatch feature 非法跳步", () => {
         { action: "clarify", unitId: "custom-unknown:fake", input: makeFeatureClarifyInput() },
         env.deps,
       ),
-    ).toThrow(V1Error);
+    ).toThrow(CwEngineError);
 
     try {
       dispatch(
@@ -538,7 +538,7 @@ describe("dispatch feature 非法跳步", () => {
       );
       throw new Error("should have thrown");
     } catch (e) {
-      expect((e as V1Error).code).toBe("unsupported_scope");
+      expect((e as CwEngineError).code).toBe("unsupported_scope");
     }
   });
 });

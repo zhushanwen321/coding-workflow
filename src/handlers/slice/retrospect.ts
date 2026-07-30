@@ -21,7 +21,7 @@
  */
 import type { Slice } from "../../core/workunit.js";
 import { runSliceRetrospectGates } from "../../rules/gates/retrospect.js";
-import type { ActionResult, RetrospectSliceInput, V1Deps } from "../types.js";
+import type { ActionResult, CwDeps,RetrospectSliceInput } from "../types.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -40,7 +40,7 @@ import {
 export function handleRetrospectSlice(
   unit: Slice,
   input: RetrospectSliceInput,
-  deps: V1Deps,
+  deps: CwDeps,
 ): ActionResult {
   // ── 查 child wave 状态（rules 层零 IO，由 handler 注入 gate）──
   const children = deps.store.findChildren(unit.id);
