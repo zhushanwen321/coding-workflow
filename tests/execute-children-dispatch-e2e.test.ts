@@ -15,20 +15,20 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Slice, Feature } from "../src/core/workunit.js";
+import type { Feature,Slice } from "../src/core/workunit.js";
 import { dispatch } from "../src/dispatch.js";
 import type { CwEnv } from "./helpers/env.js";
 import {
   createCwEnv,
 } from "./helpers/env.js";
 import {
-  makeValidSliceDesignReviewJudgment,
-  makeValidSlicePlan,
-} from "./helpers/slice-env.js";
-import {
   makeFeatureClarifyInput,
   makeValidFeatureDesignReviewJudgment,
 } from "./helpers/feature-env.js";
+import {
+  makeValidSliceDesignReviewJudgment,
+  makeValidSlicePlan,
+} from "./helpers/slice-env.js";
 
 let env: CwEnv;
 

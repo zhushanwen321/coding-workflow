@@ -14,6 +14,7 @@
  */
 import type { Clarification } from "../core/clarifications.js";
 import { CwError } from "../core/errors.js";
+import type { FrontierResult } from "../core/frontier.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
 import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";
 import { buildFeatureNextAction } from "../handlers/feature/feature-internal.js";
@@ -103,6 +104,16 @@ function renderTreeNode(
  */
 export function renderStatus(unit: WorkUnitRecord): string {
   return JSON.stringify(unit, null, JSON_INDENT) + "\n";
+}
+
+/**
+ * renderFrontier — frontier 命令的 JSON 格式化输出（纯渲染，计算逻辑在 core/frontier.ts）。
+ *
+ * 与 renderStatus 同模式：接收已计算好的 FrontierResult，输出 JSON。
+ * 计算逻辑（两遍扫描、blocked 判定）全在 core/frontier.ts，本函数只做序列化。
+ */
+export function renderFrontier(result: FrontierResult): string {
+  return JSON.stringify(result, null, JSON_INDENT) + "\n";
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -30,6 +30,7 @@ import minimist from "minimist";
 
 import { CwError } from "./core/errors.js";
 import type { TestRunResult } from "./core/evidence.js";
+import { computeFrontier } from "./core/frontier.js";
 import type { ExecutionUnit } from "./core/workunit.js";
 import type {
   AbortInput,
@@ -52,6 +53,7 @@ import {
   CwStore,
   dispatch as v1Dispatch,
   getUnitScope,
+  renderFrontier,
   renderHandoff,
   renderList,
   renderStatus,
@@ -158,8 +160,8 @@ const ADVANCE_ACTIONS = new Set([
 /** 合法 action 总集（create + 10 个推进 action）。 */
 const VALID_ACTIONS = new Set(["create", ...ADVANCE_ACTIONS]);
 
-/** 只读查询命令（tree/status/list/handoff）——不经 dispatch、不写 store。 */
-const READONLY_QUERIES = new Set(["tree", "status", "list", "handoff"]);
+/** 只读查询命令（tree/status/list/handoff/frontier）——不经 dispatch、不写 store。 */
+const READONLY_QUERIES = new Set(["tree", "status", "list", "handoff", "frontier"]);
 
 /** 全部合法 action（推进 + 只读），main 用此判断是否走 action 路由。 */
 const ALL_ACTIONS = new Set([...VALID_ACTIONS, ...READONLY_QUERIES]);
@@ -759,7 +761,7 @@ async function runWithAction(
 // ── 只读查询（tree/status/list/handoff） ──────────────────────────
 
 /**
- * runReadonly — 只读查询命令处理（tree/status/list/handoff）。
+ * runReadonly — 只读查询命令处理（tree/status/list/handoff/frontier）。
  *
  * 与 advance action 的根本区别：
  *   - 不调 dispatch、不写 store、不 append statusHistory
@@ -818,6 +820,23 @@ async function runReadonly(
       throw new CwError(`--scope 必须是 self/upstream/full，当前值: ${scope}`);
     }
     process.stdout.write(renderHandoff(unit, store, scope));
+    return;
+  }
+
+  if (action === "frontier") {
+    // frontier：以某 unit 为根的 frontier 视图（非终态节点 + blocked 判定）。
+    // 与 status 同样需要 load + not found 判定，但输出是聚合后的 JSON。
+    // --root 指定根 unit id（必填）。
+    const rootUnitId = flag(parsed, "root");
+    if (!rootUnitId) {
+      throw new CwError("frontier 需要 --root");
+    }
+    const unit = store.load(rootUnitId);
+    if (unit === null) {
+      throw new CwError(`unit not found: ${rootUnitId}`);
+    }
+    const result = computeFrontier(rootUnitId, store);
+    process.stdout.write(renderFrontier(result));
     return;
   }
 
