@@ -349,7 +349,7 @@ describe("feature design-review gates: feature layerSpecific 非空（6 字段�
 });
 
 // ═══════════════════════════════════════════════════════════════
-// runFeatureDesignReviewGates 聚合（13 个 gate）
+// runFeatureDesignReviewGates 聚合（14 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
 describe("runFeatureDesignReviewGates 聚合（14 个 gate）", () => {

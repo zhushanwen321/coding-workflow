@@ -19,7 +19,13 @@
  * 约束：零 mock——真实 CwStore（mkdtemp tmp 目录）+ stub CwDeps（外部依赖注入接口），
  * 走 dispatch 真实建 unit + 推进。w1 推到 closed 用 advanceWaveToClosed（走完 wave 9 步，非改 store）。
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { FrontierNode } from "../src/core/frontier.js";
 import { computeFrontier } from "../src/core/frontier.js";
@@ -220,6 +226,60 @@ describe("FTC3：root 不存在 → 防御性空 nodes", () => {
     const result = computeFrontier("slice:nonexistent", env.store);
     expect(result.rootUnitId).toBe("slice:nonexistent");
     expect(result.nodes).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FTC3-cli：cli 层 cw frontier --root <不存在> → exit 1 + stderr
+// （补 FTC3 未覆盖的 cli 层链路：src/cli.ts runReadonly frontier 分支 throw CwError）
+// ═══════════════════════════════════════════════════════════════
+
+// spawn 真实 cw 子进程模式（自包含，同 e2e-handoff.test.ts / cli.test.ts，不跨文件复用 runCwCli）。
+const __cliFilename = fileURLToPath(import.meta.url);
+const __cliDirname = dirname(__cliFilename);
+const CLI_PATH = join(__cliDirname, "..", "dist", "cli.js");
+
+interface CliResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** spawn `node dist/cli.js frontier --root <id>`，返回 exitCode/stdout/stderr。 */
+function runFrontierCli(rootUnitId: string, cwHome: string): CliResult {
+  const result = spawnSync("node", [CLI_PATH, "frontier", "--root", rootUnitId], {
+    env: { ...process.env, CW_HOME: cwHome, PATH: process.env.PATH ?? "" },
+    encoding: "utf8",
+    cwd: cwHome,
+    timeout: 30000,
+  });
+  return {
+    exitCode: result.status ?? -1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+describe("FTC3-cli：cw frontier --root <不存在> → exit 1 + stderr", () => {
+  // 共享一个隔离的 CW_HOME（空 store，保证 rootUnitId 不存在）。
+  let cwHome: string;
+
+  beforeAll(() => {
+    if (!existsSync(CLI_PATH)) {
+      throw new Error(`dist/cli.js 不存在，请先 npm run build。路径: ${CLI_PATH}`);
+    }
+    cwHome = realpathSync(mkdtempSync(join(tmpdir(), "cw-frontier-cli-home-")));
+  });
+
+  afterAll(() => {
+    rmSync(cwHome, { recursive: true, force: true });
+  });
+
+  it("cw frontier --root slice:nonexistent → exit 1 + stderr 含 'unit not found'", () => {
+    const result = runFrontierCli("slice:nonexistent", cwHome);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unit not found");
+    expect(result.stderr).toContain("slice:nonexistent");
   });
 });
 

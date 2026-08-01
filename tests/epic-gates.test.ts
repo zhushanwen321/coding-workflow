@@ -250,7 +250,7 @@ describe("epic design-review gates: epic layerSpecific 非空（5 字段）", ()
 });
 
 // ═══════════════════════════════════════════════════════════════
-// runEpicDesignReviewGates 聚合（8 个 gate）
+// runEpicDesignReviewGates 聚合（11 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
 describe("runEpicDesignReviewGates 聚合（11 个 gate，无 FR-AC 强引用）", () => {

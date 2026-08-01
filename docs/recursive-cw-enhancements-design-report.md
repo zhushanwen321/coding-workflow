@@ -185,7 +185,7 @@ if (!isWave && action === "execute") {
 
 ```jsonc
 // cw frontier --root epic:xxx --format json 的 stdout
-// 注：示例省略可选字段 lastStatusHistoryAction（见 §7），实际每个 node 都带。
+// 注：每个 node 都带可选字段 lastStatusHistoryAction（statusHistory 最后一条的 action，见 §7）。
 {
   "rootUnitId": "epic:xxx",
   "nodes": [
@@ -196,7 +196,8 @@ if (!isWave && action === "execute") {
       "nextAction": "test",
       "blocked": false,
       "dependsOn": [],
-      "parentUnitId": "slice:xxx::s1"
+      "parentUnitId": "slice:xxx::s1",
+      "lastStatusHistoryAction": "execute"
     },
     {
       "unitId": "wave:xxx::w2",
@@ -206,7 +207,8 @@ if (!isWave && action === "execute") {
       "blocked": true,
       "blockedReason": "依赖 wave:xxx::w1 未完成",
       "dependsOn": ["wave:xxx::w1"],
-      "parentUnitId": "slice:xxx::s1"
+      "parentUnitId": "slice:xxx::s1",
+      "lastStatusHistoryAction": "create"
     },
     {
       "unitId": "slice:xxx::s1",
@@ -217,7 +219,8 @@ if (!isWave && action === "execute") {
       "blockedReason": "子层有未终态节点: wave:xxx::w1, wave:xxx::w2",
       "dependsOn": [],
       "parentUnitId": "feature:xxx",
-      "childUnitIds": ["wave:xxx::w1", "wave:xxx::w2"]
+      "childUnitIds": ["wave:xxx::w1", "wave:xxx::w2"],
+      "lastStatusHistoryAction": "execute"
     }
   ]
 }

@@ -27,6 +27,7 @@
  * 不变量：execute 不跑 gate（split DAG 无环在 design-review 已验）。child feature 创建后立即 save。
  */
 import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/evidence.js";
+import { resolveChildDependsOn } from "../../core/hierarchy.js";
 import type { Epic } from "../../core/workunit.js";
 import { createFeature } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
@@ -73,15 +74,12 @@ export function handleExecuteEpic(
   }
 
   // ── 构造 ActionResult.children（供递归调度器消费）──
-  const slugToChildId = new Map(
-    unit.evidence.childDelivery.map((r) => [r.splitSlug, r.childUnitId] as const),
-  );
-  const children: ChildInfo[] = unit.plan.split.map((s) => ({
-    unitId: slugToChildId.get(s.slug) ?? "",
-    dependsOn: s.dependsOn
-      .map((d) => slugToChildId.get(d))
-      .filter((x): x is string => typeof x === "string"),
-  }));
+  // 复用 hierarchy.resolveChildDependsOn（同构：slugToChildId Map + split.dependsOn 映射），
+  // 仅返回字段名不同（childUnitId → ChildInfo.unitId），故 .map 适配。
+  const children: ChildInfo[] = resolveChildDependsOn(
+    unit.plan.split,
+    unit.evidence.childDelivery,
+  ).map((d) => ({ unitId: d.childUnitId, dependsOn: d.dependsOn }));
 
   // generatedAt 首次生成时间（progressive 场景下 execute 可能重跑，已填则保留）
   if (!unit.evidence.generatedAt) {

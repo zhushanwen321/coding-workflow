@@ -189,7 +189,7 @@ export function computeFrontier(
 
   // Pass 1: 递归收集整棵树。
   const allRecords: WorkUnitRecord[] = [];
-  collectSubtree(root, store, allRecords);
+  collectSubtree(root, store, allRecords, new Set());
 
   // 过滤终态，算 nextAction，建 node（blocked/dependsOn 待 Pass 2 填）。
   const nonTerminal = allRecords.filter(
@@ -265,14 +265,21 @@ export function computeFrontier(
  * 递归收集 unit 及其整棵子树到 out（深度优先，前序）。
  *
  * 与 renderTree 同模式：靠 store.findChildren 遍历，不假设记录内部已含 children 指针。
+ *
+ * visited 防环：frontier 是排查异常 store 的只读命令，脏数据可能导致父子外键成环，
+ * 无 visited 集合时递归不终止会栈溢出。visited 按 id 去重，遇已访问节点直接跳过。
  */
 function collectSubtree(
   unit: WorkUnitRecord,
   store: FrontierStore,
   out: WorkUnitRecord[],
+  visited: Set<string>,
 ): void {
+  const id = getStringField(unit, "id");
+  if (visited.has(id)) return; // 防环：脏数据可能导致父子外键成环
+  visited.add(id);
   out.push(unit);
-  for (const child of store.findChildren(getStringField(unit, "id"))) {
-    collectSubtree(child, store, out);
+  for (const child of store.findChildren(id)) {
+    collectSubtree(child, store, out, visited);
   }
 }
