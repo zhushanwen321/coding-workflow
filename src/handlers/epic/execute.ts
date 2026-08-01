@@ -30,7 +30,7 @@ import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/ev
 import type { Epic } from "../../core/workunit.js";
 import { createFeature } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import type { ActionResult, CwDeps, CwNextAction } from "../types.js";
+import type { ActionResult, ChildInfo, CwDeps, CwNextAction } from "../types.js";
 import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.js";
 
 /**
@@ -72,6 +72,17 @@ export function handleExecuteEpic(
     unit.evidence.childDelivery.push(record);
   }
 
+  // ── 构造 ActionResult.children（供递归调度器消费）──
+  const slugToChildId = new Map(
+    unit.evidence.childDelivery.map((r) => [r.splitSlug, r.childUnitId] as const),
+  );
+  const children: ChildInfo[] = unit.plan.split.map((s) => ({
+    unitId: slugToChildId.get(s.slug) ?? "",
+    dependsOn: s.dependsOn
+      .map((d) => slugToChildId.get(d))
+      .filter((x): x is string => typeof x === "string"),
+  }));
+
   // generatedAt 首次生成时间（progressive 场景下 execute 可能重跑，已填则保留）
   if (!unit.evidence.generatedAt) {
     unit.evidence.generatedAt = at;
@@ -96,6 +107,7 @@ export function handleExecuteEpic(
     unitId: unit.id,
     status: unit.status,
     ok: true,
+    children,
     nextAction: buildEpicNextAction(unit, "execute", { crossLayer }),
   };
 }
