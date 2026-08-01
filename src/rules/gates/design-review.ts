@@ -469,6 +469,42 @@ export function splitDagValid(unit: Slice): GateResult {
 }
 
 /**
+ * spec-c §2 — split 内 slug 唯一性校验的通用实现（接收 Split[]，不绑定具体层）。
+ *
+ * cw store 按 id save 子层 unit，id 由 split.slug 派生；slug 重复会让后建的子层覆盖先建的
+ *（store 写覆盖语义），子层交付静默丢失。机器必须显式验（splitDagValid 不查重复，只查环）。
+ * 提取为公共纯函数避免 slice/feature/epic 各写一份（照 splitDagValidBySplits 模式）。
+ * 对外不导出——各层 exported gate（duplicateSplitSlug / featureDuplicateSplitSlug /
+ * epicDuplicateSplitSlug）转调它。
+ */
+function duplicateSplitSlugBySplits(splits: Split[]): GateResult {
+  const slugs = splits.map((s) => s.slug);
+  const unique = new Set(slugs);
+  if (slugs.length !== unique.size) {
+    // 找出所有出现 2 次以上的 slug（去重后展示）
+    const dupes = slugs.filter((s, i) => slugs.indexOf(s) !== i);
+    const dupeList = [...new Set(dupes)].join(", ");
+    return {
+      passed: false,
+      report: `duplicate-split-slug: split 内 slug 必须唯一，重复 slug（${dupeList}）会导致子层 unit id 冲突覆盖（cw store 按 id save）`,
+    };
+  }
+  return {
+    passed: true,
+    report: `duplicate-split-slug: split 内 slug 全部唯一（${slugs.length} 个）`,
+  };
+}
+
+/**
+ * spec-c §2 / 附录 A `duplicate-split-slug` — SlicePlan.split 内 slug 唯一。
+ *
+ * 转调通用唯一性实现 duplicateSplitSlugBySplits（slice/feature/epic 的 split 结构同型，逻辑通用）。
+ */
+export function duplicateSplitSlug(unit: Slice): GateResult {
+  return duplicateSplitSlugBySplits(unit.plan.split);
+}
+
+/**
  * slice §5.5 / 附录 A `layer-specific-non-empty` — designReviewJudgment.layerSpecific 的 6 个字段都非空。
  *
  * layerSpecific 是 slice 专属的设计审查维度（SliceDesignReviewLayerSpecific 6 字段），
@@ -541,6 +577,7 @@ export function runSliceDesignReviewGates(unit: Slice): GateResult[] {
     runGateSafely("tech-choice-non-empty", techChoiceNonEmpty, unit),
     runGateSafely("split-non-empty", splitNonEmpty, unit),
     runGateSafely("split-dag-valid", splitDagValid, unit),
+    runGateSafely("duplicate-split-slug", duplicateSplitSlug, unit),
     runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications),
     runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, plan.split, validIds),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
@@ -690,6 +727,15 @@ export function featureSplitDagValid(unit: Feature): GateResult {
 }
 
 /**
+ * spec-c §2 / 附录 A `duplicate-split-slug`（feature 版）— Plan.split 内 slug 唯一。
+ *
+ * 与 slice 的 duplicateSplitSlug 同源逻辑（Split 结构同型），feature 版仅文案/命名区分层。
+ */
+export function featureDuplicateSplitSlug(unit: Feature): GateResult {
+  return duplicateSplitSlugBySplits(unit.plan.split);
+}
+
+/**
  * feature §4.2 / 附录 A `layer-specific-non-empty`（feature 版）— designReviewJudgment.layerSpecific 的 6 个字段都非空。
  *
  * layerSpecific 是 feature 专属的设计审查维度（FeatureDesignReviewLayerSpecific 6 字段），
@@ -765,6 +811,7 @@ export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
     runGateSafely("ac-non-empty", acNonEmpty, unit),
     runGateSafely("slice-split-non-empty", featureSplitNonEmpty, unit),
     runGateSafely("slice-split-dag-valid", featureSplitDagValid, unit),
+    runGateSafely("duplicate-split-slug", featureDuplicateSplitSlug, unit),
     runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications.clarifications),
     runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, unit.plan.split, validIds),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
@@ -822,6 +869,15 @@ export function epicSplitNonEmpty(unit: Epic): GateResult {
  */
 export function epicSplitDagValid(unit: Epic): GateResult {
   return splitDagValidBySplits(unit.plan.split);
+}
+
+/**
+ * spec-c §2 / 附录 A `duplicate-split-slug`（epic 版）— Plan.split 内 slug 唯一。
+ *
+ * 与 slice/feature 的 duplicateSplitSlug 同源逻辑（Split 结构同型），epic 版仅文案/命名区分层。
+ */
+export function epicDuplicateSplitSlug(unit: Epic): GateResult {
+  return duplicateSplitSlugBySplits(unit.plan.split);
 }
 
 /**
@@ -891,6 +947,7 @@ export function runEpicDesignReviewGates(unit: Epic): GateResult[] {
   return [
     runGateSafely("feature-split-non-empty", epicSplitNonEmpty, unit),
     runGateSafely("feature-split-dag-valid", epicSplitDagValid, unit),
+    runGateSafely("duplicate-split-slug", epicDuplicateSplitSlug, unit),
     runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications),
     runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, unit.plan.split, validIds),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),

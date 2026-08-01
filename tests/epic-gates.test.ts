@@ -1,14 +1,14 @@
 /**
  * v1 epic gate 测试。
  *
- * 测 epic design-review 的 10 个 gate（纯函数，零 IO）：
- * - split 结构完整性 2：epicSplitNonEmpty / epicSplitDagValid
+ * 测 epic design-review 的 11 个 gate（纯函数，零 IO）：
+ * - split 结构完整性 3：epicSplitNonEmpty / epicSplitDagValid / epicDuplicateSplitSlug（slug 唯一）
  * - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  * - judgment 非空 5（复用 wave/slice/feature 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  * - epic layerSpecific 非空 1（epic 专属 5 字段：strategicAlignment/featureSplitRationale/
  *   scopeBoundary/priorityRationale/resourceEstimate）
  *
- * 另测 runEpicDesignReviewGates 聚合：合法 → 10 个全 pass；构造各种 fail 场景验正确 gate fail。
+ * 另测 runEpicDesignReviewGates 聚合：合法 → 11 个全 pass；构造各种 fail 场景验正确 gate fail。
  *
  * 关键差异（epic vs feature）：epic 无 FR-AC 强引用 3 gate（epic 不产 spec），
  * layerSpecific 是 5 字段（feature 是 6 字段）。
@@ -40,7 +40,7 @@ import {
 
 // ── 辅助：构造一个已填好合法 plan + judgment 的 epic（design-review 全 pass 基线）──
 
-/** 构造合法 epic（plan + judgment 都填好，10 个 design-review gate 全过）。 */
+/** 构造合法 epic（plan + judgment 都填好，11 个 design-review gate 全过）。 */
 function validEpic(): Epic {
   const unit = makeEpicUnit();
   // clarifications 补 Q1（makeValidEpicPlan 的 split.inheritedItemIds 引用 Q1，需存在）
@@ -253,19 +253,19 @@ describe("epic design-review gates: epic layerSpecific 非空（5 字段）", ()
 // runEpicDesignReviewGates 聚合（8 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
-describe("runEpicDesignReviewGates 聚合（10 个 gate，无 FR-AC 强引用）", () => {
-  it("合法 epic → 10 个 gate 全 pass", () => {
+describe("runEpicDesignReviewGates 聚合（11 个 gate，无 FR-AC 强引用）", () => {
+  it("合法 epic → 11 个 gate 全 pass", () => {
     const unit = validEpic();
     const results = runEpicDesignReviewGates(unit);
-    expect(results).toHaveLength(10);
+    expect(results).toHaveLength(11);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
-  it("无 FR-AC 强引用 gate（不像 feature 的 13 个）—— gate 数量严格为 10", () => {
+  it("无 FR-AC 强引用 gate（不像 feature 的 14 个）—— gate 数量严格为 11", () => {
     const unit = validEpic();
     const results = runEpicDesignReviewGates(unit);
-    // epic 只有 10 个 gate，feature 有 13 个（多 FR-AC 3 gate）
-    expect(results).toHaveLength(10);
+    // epic 只有 11 个 gate，feature 有 14 个（多 FR-AC 3 gate）
+    expect(results).toHaveLength(11);
     // 不含 FR-AC 相关 gate
     const reports = results.map((r) => r.report).join(";");
     expect(reports).not.toMatch(/fr-ac-coverage/);

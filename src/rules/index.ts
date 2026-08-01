@@ -53,6 +53,7 @@ export {
 
 // design-review 阶段 gate（slice 附录 A §11 / slice §5.5）
 export {
+  duplicateSplitSlug,
   layerSpecificNonEmpty,
   runSliceDesignReviewGates,
   splitDagValid,
@@ -64,6 +65,7 @@ export {
 export {
   acNonEmpty,
   acReachableFromFr,
+  featureDuplicateSplitSlug,
   featureLayerSpecificNonEmpty,
   featureSplitDagValid,
   featureSplitNonEmpty,
@@ -73,6 +75,7 @@ export {
 
 // design-review 阶段 gate（epic 附录 A / epic §2.4）
 export {
+  epicDuplicateSplitSlug,
   epicLayerSpecificNonEmpty,
   epicSplitDagValid,
   epicSplitNonEmpty,

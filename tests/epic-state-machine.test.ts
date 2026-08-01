@@ -146,7 +146,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect("techChoices" in unit.plan).toBe(false);
   });
 
-  it("design-review → design-reviewed（10 个 gate 全过）", () => {
+  it("design-review → design-reviewed（11 个 gate 全过）", () => {
     const unitId = setupToEpicPlanning(env.deps, "sm-dr");
     const result = dispatch(
       {
@@ -159,7 +159,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect(result.ok).toBe(true);
     expect(result.status).toBe("design-reviewed");
     expect(result.nextAction?.action).toBe("execute");
-    expect(result.gateResults).toHaveLength(10);
+    expect(result.gateResults).toHaveLength(11);
 
     const unit = loadEpic(unitId);
     expect(unit.designReviewJudgment.necessity).toBeTruthy();

@@ -2,8 +2,8 @@
  * v1 slice gate 测试。
  *
  * 测两类 slice gate（纯函数，零 IO）：
- * - design-review 11 gates（runSliceDesignReviewGates + 11 个单 gate）
- *   - 结构完整性 3：techChoiceNonEmpty / splitNonEmpty / splitDagValid（DAG 无环）
+ * - design-review 12 gates（runSliceDesignReviewGates + 12 个单 gate）
+ *   - 结构完整性 4：techChoiceNonEmpty / splitNonEmpty / splitDagValid（DAG 无环）/ duplicateSplitSlug（slug 唯一）
  *   - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  *   - judgment 非空 5（复用 wave 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  *   - layerSpecific 非空 1（slice 专属 6 字段）
@@ -227,11 +227,11 @@ describe("slice design-review gates: layerSpecific 非空（6 字段）", () => 
   });
 });
 
-describe("runSliceDesignReviewGates 聚合（11 个 gate）", () => {
-  it("合法 slice → 11 个 gate 全 pass", () => {
+describe("runSliceDesignReviewGates 聚合（12 个 gate）", () => {
+  it("合法 slice → 12 个 gate 全 pass", () => {
     const unit = validSlice();
     const results = runSliceDesignReviewGates(unit);
-    expect(results).toHaveLength(11);
+    expect(results).toHaveLength(12);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 

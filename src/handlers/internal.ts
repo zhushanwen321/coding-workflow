@@ -271,7 +271,13 @@ export function buildNextAction(
   const template = WAVE_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
-  const schemaText = opts?.schemaTextOverride ?? getSchemaText(action);
+  const baseSchemaText = opts?.schemaTextOverride ?? getSchemaText(action);
+  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
+  // wave 的 4 个专属字段全 optional（WaveDesignReviewLayerSpecific），用「建议包含」措辞。
+  const schemaText =
+    action === "design-review"
+      ? `${baseSchemaText}\nlayerSpecific 建议包含以下 key: testCaseCoverageNote, boundaryConditionNote, mockStrategyNote, tddRedReadinessNote`
+      : baseSchemaText;
 
   const nextAction = opts?.nextActionOverride ?? ACTION_TO_NEXT[action];
   const command = buildWaveNextCommand(action, unit.id, nextAction, unit.slug);

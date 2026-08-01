@@ -42,7 +42,7 @@ interface Rule {
  *
  * wave 是写代码/跑测试的执行层，execute 是上下文最密集的环节（强制委派·实现方向）；
  * design-review / exec-review 审查主 agent 刚产出的产物，隔离可避免确认偏差（强制委派·审查方向）；
- * retrospect 依赖主 agent 的执行轨迹，过程知识不在 store 中（禁止）。
+ * retrospect 递归模式下由独立 agent 读 cw handoff + 本层 session 做复盘（按需委派·综合方向）。
  */
 const WAVE_RULES: Readonly<Record<string, Rule>> = {
   clarify: {
@@ -76,9 +76,9 @@ const WAVE_RULES: Readonly<Record<string, Rule>> = {
     reason: "审查主 agent 刚写的代码，隔离后的 subagent 更客观，避免确认偏差",
   },
   retrospect: {
-    level: "forbidden",
-    direction: "",
-    reason: "retrospect 依赖主 agent 的执行轨迹（过程知识不在 store 中），subagent 无法 reconstruct",
+    level: "optional",
+    direction: "综合",
+    reason: "递归模式下由独立 agent 执行本 wave 复盘",
   },
   closeout: {
     level: "optional",
@@ -97,7 +97,7 @@ const WAVE_RULES: Readonly<Record<string, Rule>> = {
  *
  * planning 是下沉导航层。planning execute 是拆分+创建子 unit+下沉的编排决策，主 agent 不可卸载（禁止）；
  * planning design-review 审查刚做的 Split 设计，确认偏差风险与 wave 一致（强制委派·审查方向）；
- * planning retrospect 验收子层交付，依赖执行轨迹（禁止）。
+ * planning retrospect 递归模式下可委派，agent 读 cw handoff + 子层 session 做复盘（按需委派·综合方向）。
  */
 const PLANNING_RULES: Readonly<Record<string, Rule>> = {
   clarify: {
@@ -121,9 +121,9 @@ const PLANNING_RULES: Readonly<Record<string, Rule>> = {
     reason: "planning execute 是拆分+创建子 unit+下沉的编排决策，主 agent 不可卸载",
   },
   retrospect: {
-    level: "forbidden",
-    direction: "",
-    reason: "planning retrospect 验收子层交付，依赖主 agent 的执行轨迹，subagent 无法 reconstruct",
+    level: "optional",
+    direction: "综合",
+    reason: "递归模式下可委派，agent 读 cw handoff + 子层 session 做复盘",
   },
   closeout: {
     level: "optional",

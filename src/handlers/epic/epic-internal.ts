@@ -215,6 +215,12 @@ export function buildEpicNextAction(
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
   const schemaText = getEpicSchemaText(action);
+  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
+  // 这里追加 epic 专属 5 字段名，提示 agent 必须填这些 key（机器 gate layer-specific-non-empty 会验）。
+  const finalSchemaText =
+    action === "design-review"
+      ? `${schemaText}\nlayerSpecific 必须包含以下 key: strategicAlignment, featureSplitRationale, scopeBoundary, priorityRationale, resourceEstimate`
+      : schemaText;
 
   const nextAction = opts?.nextActionOverride ?? EPIC_ACTION_TO_NEXT_PUBLIC[action];
   const command = buildEpicCommand(action, unit.id, nextAction, unit.slug);
@@ -224,7 +230,7 @@ export function buildEpicNextAction(
     nextAction: action,
     goal,
     command,
-    schemaText,
+    schemaText: finalSchemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("planning", action),
   });

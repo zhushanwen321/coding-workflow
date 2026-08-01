@@ -12,7 +12,7 @@
  *     objective / status 字段需类型收窄为 string（store 不裁剪 core 字段，
  *     但渲染层只关心可读字符串，未知字段降级为空串）。
  */
-import type { Clarification } from "../core/clarifications.js";
+import type { Clarification, FeatureSpec } from "../core/clarifications.js";
 import { CwError } from "../core/errors.js";
 import type { FrontierResult } from "../core/frontier.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
@@ -858,6 +858,27 @@ function renderDecisionsSection(unit: WorkUnitRecord): string[] {
     }
   }
 
+  // feature 层专属：FR/AC（model §5.7）。spec 在 FeatureClarification 容器内，仅 feature 产生。
+  const spec = readFeatureSpec(unit);
+  if (spec) {
+    const frs = asArray<Record<string, unknown>>(spec.functionalRequirements);
+    const acs = asArray<Record<string, unknown>>(spec.acceptanceCriteria);
+    if (frs.length > 0 || acs.length > 0) {
+      lines.push("### 功能需求与验收条件");
+      for (const fr of frs) {
+        const id = asString(fr.id) ?? "?";
+        const title = asString(fr.title) ?? "";
+        const acRefs = asArray<string>(fr.ac).map((a) => String(a));
+        lines.push(`- FR ${id}: ${title}${acRefs.length > 0 ? ` (验收: ${acRefs.join(", ")})` : ""}`);
+      }
+      for (const ac of acs) {
+        const id = asString(ac.id) ?? "?";
+        const condition = asString(ac.condition) ?? "";
+        lines.push(`- AC ${id}: ${condition}`);
+      }
+    }
+  }
+
   // design-review 的 alternatives/tradeoffs/risks（各层共用 DesignReviewJudgment 结构）
   const judgment = readField<Record<string, unknown>>(unit, "designReviewJudgment");
   if (judgment) {
@@ -907,6 +928,21 @@ function readClarifications(unit: WorkUnitRecord): Clarification[] {
     }
   }
   return [];
+}
+
+/**
+ * 从 feature 容器读 FeatureSpec（仅 feature 层；其他层返回 undefined）。
+ *
+ * feature 的 clarifications 是 FeatureClarification 容器（{ clarifications, spec }），
+ * spec 才是 FR/AC 来源。WorkUnitRecord 是宽松类型，这里做结构 guard 而非类型断言，
+ * 避免其他层 unit 误带 spec 字段时崩溃。
+ */
+function readFeatureSpec(unit: WorkUnitRecord): FeatureSpec | undefined {
+  if (unit.scope !== "feature") return undefined;
+  const raw = unit.clarifications;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const spec = (raw as Record<string, unknown>).spec;
+  return spec && typeof spec === "object" ? (spec as FeatureSpec) : undefined;
 }
 
 /** 把宽松的 WorkUnitRecord 安全断言为具名 unit 类型 T（handoff 只读访问）。

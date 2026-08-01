@@ -91,7 +91,7 @@ describe("dispatch 完整 feature 生命周期", () => {
     expect(plan.status).toBe("planning");
     expect(loadFeature(unitId).plan.split).toHaveLength(1);
 
-    // 4. design-review（11 个 gate 全过）
+    // 4. design-review（14 个 gate 全过）
     const dr = dispatch(
       {
         action: "design-review",
@@ -102,7 +102,7 @@ describe("dispatch 完整 feature 生命周期", () => {
     );
     expect(dr.ok).toBe(true);
     expect(dr.status).toBe("design-reviewed");
-    expect(dr.gateResults).toHaveLength(13);
+    expect(dr.gateResults).toHaveLength(14);
 
     // 5. execute（创建 child slice）
     const execute = dispatch(featureExecute(unitId), env.deps);
