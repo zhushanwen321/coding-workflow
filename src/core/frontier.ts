@@ -71,6 +71,10 @@ export interface FrontierNode {
   parentUnitId?: string;
   /** planning 层 execute 后创建的子 unit id（wave 层无此字段）。 */
   childUnitIds?: string[];
+  /** statusHistory 最后一条的 action（如 "replan"/"clarify"/"plan"/"execute"）。
+   * 供递归调度器做 replan 后备检测——replan 是旁路（status 不变），frontier 的
+   *  status→action 映射不反映"需回 plan"，调度器靠此字段识别 replan 发生。 */
+  lastStatusHistoryAction?: string;
 }
 
 /** computeFrontier 的返回。 */
@@ -142,6 +146,19 @@ function getChildUnitIds(unit: WorkUnitRecord): string[] | undefined {
   return Array.isArray(ids) ? (ids as string[]) : undefined;
 }
 
+/** 从宽松 record 安全读 statusHistory 最后一条的 action。
+ *
+ * replan handler append action="replan"（status 不变的旁路），调度器靠此识别 replan 发生。
+ * 空数组 / 非数组 / 缺 action 字段时返回 undefined。 */
+function getLastStatusHistoryAction(unit: WorkUnitRecord): string | undefined {
+  const history = readField<unknown>(unit, "statusHistory");
+  if (!Array.isArray(history) || history.length === 0) return undefined;
+  const last = history[history.length - 1] as Record<string, unknown> | null;
+  if (last === null || typeof last !== "object") return undefined;
+  const action = last.action;
+  return typeof action === "string" ? action : undefined;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // computeFrontier — 两遍扫描
 // ═══════════════════════════════════════════════════════════════
@@ -193,6 +210,7 @@ export function computeFrontier(
       dependsOn: [],
       parentUnitId: getStringField(r, "parentUnitId") || undefined,
       childUnitIds: getChildUnitIds(r),
+      lastStatusHistoryAction: getLastStatusHistoryAction(r),
     };
   });
 

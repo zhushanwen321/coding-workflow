@@ -282,3 +282,44 @@ describe("FTC5：全终态树 → nodes=[]", () => {
     expect(result.nodes).toEqual([]);
   });
 });
+
+describe("FTC6：replan 后 frontier 输出 lastStatusHistoryAction（后备检测信号）", () => {
+  it("replan 后该节点 lastStatusHistoryAction === 'replan'，其他节点仍是各自 action", () => {
+    const { sliceId, waveIds } = setupSliceExecuting("ftc6", [
+      { slug: "w1", description: "wave 1", dependsOn: [], inheritedItemIds: ["IF1"] },
+      { slug: "w2", description: "wave 2", dependsOn: [], inheritedItemIds: ["DM1"] },
+    ]);
+    const [w1Id] = waveIds;
+
+    // replan 废弃 IF1 → w1 被 abort（级联），w2 保留
+    dispatch(
+      { action: "replan", unitId: sliceId, input: { abandonedIds: ["IF1"], note: "方案要改" } },
+      env.deps,
+    );
+
+    // replan 后 frontier：slice 的 lastStatusHistoryAction='replan'
+    const result = computeFrontier(sliceId, env.store);
+    const sliceNode = result.nodes.find((n) => n.unitId === sliceId);
+    expect(sliceNode).toBeDefined();
+    expect(sliceNode!.lastStatusHistoryAction).toBe("replan");
+
+    // w1 被 abort（终态，不在 nodes 里）
+    expect(result.nodes.find((n) => n.unitId === w1Id)).toBeUndefined();
+
+    // w2 保留，其 lastStatusHistoryAction 是 'create'（被 execute 创建时的 action）
+    const w2Node = result.nodes.find((n) => n.unitId === waveIds[1]);
+    expect(w2Node).toBeDefined();
+    expect(w2Node!.lastStatusHistoryAction).toBe("create");
+  });
+
+  it("未 replan 的节点 lastStatusHistoryAction 反映最近 action（非 'replan'）", () => {
+    const { sliceId } = setupSliceExecuting("ftc6b", [
+      { slug: "w1", description: "wave 1", dependsOn: [], inheritedItemIds: ["IF1"] },
+    ]);
+
+    // 走到 executing，没 replan → lastStatusHistoryAction='execute'
+    const result = computeFrontier(sliceId, env.store);
+    const sliceNode = result.nodes.find((n) => n.unitId === sliceId);
+    expect(sliceNode!.lastStatusHistoryAction).toBe("execute");
+  });
+});
