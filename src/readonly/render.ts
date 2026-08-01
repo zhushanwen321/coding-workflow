@@ -16,10 +16,10 @@ import type { Clarification, FeatureSpec } from "../core/clarifications.js";
 import { CwError } from "../core/errors.js";
 import type { FrontierResult } from "../core/frontier.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
-import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";
-import { buildFeatureNextAction } from "../handlers/feature/feature-internal.js";
-import { buildNextAction } from "../handlers/internal.js";
-import { buildSliceNextAction } from "../handlers/slice/slice-internal.js";
+import { buildEpicCurrentActionGuidance } from "../handlers/epic/epic-internal.js";
+import { buildFeatureCurrentActionGuidance } from "../handlers/feature/feature-internal.js";
+import { buildWaveCurrentActionGuidance } from "../handlers/internal.js";
+import { buildSliceCurrentActionGuidance } from "../handlers/slice/slice-internal.js";
 import type { PlanningAction,WaveAction } from "../rules/state-machine.js";
 import type { CwStore } from "../store/cw-store.js";
 import type { RepoMeta, WorkUnitRecord } from "../store/schema.js";
@@ -963,9 +963,13 @@ function asUnit<T extends { scope: string }>(
   return unit as unknown as T;
 }
 
-/** 按 scope 调对应的 build{Scope}NextAction 取阶段 guidance。
+/** 按 scope 调对应的 build{Scope}CurrentActionGuidance 取阶段 guidance。
  *
- * 四个函数签名同构（均返回 CwNextAction），但 action 类型不同（WaveAction vs PlanningAction）、
+ * 关键：handoff 的 action 是「接手 agent 现在该跑什么」（由 status→action 映射得出），
+ * 因此 guidance 必须用 build*CurrentActionGuidance（command 用当前 action）而非 build*NextAction
+ * （后者返回「跑完 action 后的下一步导航」，command 用 nextAction，会与外层「下一步执行」自相矛盾）。
+ *
+ * 四个函数签名同构（均返回 guidance 字符串），但 action 类型不同（WaveAction vs PlanningAction）、
  * unit 类型不同（ExecutionUnit vs Slice/Feature/Epic）。WorkUnitRecord 与具名 unit 类型结构上
  * 后者是前者的超集；handoff 只读访问，断言安全（字段缺失时 build 内部 helper 降级，不 crash）。
  * 返回 undefined 表示该 scope 未配置 build 函数或调用抛出。 */
@@ -977,27 +981,27 @@ function buildGuidanceForScope(
   const action = (scope === "wave" ? WAVE_STATUS_TO_ACTION : PLANNING_STATUS_TO_ACTION)[status];
   if (!action) return undefined;
   try {
-    let next: { guidance: string };
+    let guidance: string;
     if (scope === "wave") {
       const exec = asUnit<ExecutionUnit>(unit, "wave");
       if (!exec) return undefined;
-      next = buildNextAction(exec, action as WaveAction);
+      guidance = buildWaveCurrentActionGuidance(exec, action as WaveAction);
     } else if (scope === "slice") {
       const slice = asUnit<Slice>(unit, "slice");
       if (!slice) return undefined;
-      next = buildSliceNextAction(slice, action as PlanningAction);
+      guidance = buildSliceCurrentActionGuidance(slice, action as PlanningAction);
     } else if (scope === "feature") {
       const feature = asUnit<Feature>(unit, "feature");
       if (!feature) return undefined;
-      next = buildFeatureNextAction(feature, action as PlanningAction);
+      guidance = buildFeatureCurrentActionGuidance(feature, action as PlanningAction);
     } else if (scope === "epic") {
       const epic = asUnit<Epic>(unit, "epic");
       if (!epic) return undefined;
-      next = buildEpicNextAction(epic, action as PlanningAction);
+      guidance = buildEpicCurrentActionGuidance(epic, action as PlanningAction);
     } else {
       return undefined;
     }
-    return { action, guidance: next.guidance };
+    return { action, guidance };
   } catch {
     return { action, guidance: "" };
   }

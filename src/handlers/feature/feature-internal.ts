@@ -26,10 +26,10 @@ import {
   buildPrefix,
   buildSubagentGuidance,
   deriveFailureCount,
-  injectSchema,
   PLANNING_ACTION_TO_NEXT,
   PLANNING_STAGE_TEMPLATES,
   PLANNING_STATUS_DISPLAY,
+  readSchemaText,
 } from "../../guidance/index.js";
 import {
   allWavesClosed,
@@ -51,62 +51,31 @@ import type { CwDeps, CwNextAction } from "../types.js";
 // guidance 填充静态基建（w1 新增，w2 接入 buildFeatureNextAction 主体）
 // ═══════════════════════════════════════════════════════════════
 //
-// 以下 5 个 export 是 w1 的纯新增基建：ACTION_SCHEMA / getSchemaText / STATUS_DISPLAY /
-// ACTION_TO_NEXT / FLAT_INPUT_HINT。w1 不改 buildFeatureNextAction/buildFeatureFailureNextAction
-// 主体（w2 任务），这些常量声明为 exported const 避免 eslint unused 报错，w2 接入时使用。
-// 模式照 wave internal.ts。
+// ACTION_SCHEMA（FEATURE_ACTION_SCHEMA）与 wave 同源，定义集中在 guidance/action-schemas.ts
+// （四层一处管理 + 供 buildSchemaGenFile 消费，避免 schema-injector 反向 import handlers 造成
+// ESM 循环依赖）。
 
-/**
- * action → 该 action 的 input schema 来源（core 源文件 + interface 名）。
- *
- * IF5 映射（feature 层）：clarify→FeatureClarification@clarifications.ts、plan→Split@plan.ts。
- * feature clarify 产物是 FeatureClarification 容器（{ clarifications, spec }），
- * plan 只写 split（Plan 基类，不产技术方案）。
- */
-interface SchemaSource {
-  sourceFilePath: string;
-  interfaceName: string;
-}
+/** re-export：tests 与部分调用方按 layer 从本文件取 schema 表（保持原 import 路径稳定）。 */
+export { FEATURE_ACTION_SCHEMA } from "../../guidance/action-schemas.js";
+import { FEATURE_ACTION_SCHEMA } from "../../guidance/action-schemas.js";
 
-export const FEATURE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
-  create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "FeatureClarification" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanFeatureInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
-  execute: undefined, // 下沉创建 child slice，不接收 input
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
-  replan: undefined,
-  abort: undefined,
-};
-
-/** schema 文本缓存（按 action，模块级）。照 wave internal.ts 模式。 */
+/** schema 文本缓存（key 用 `${scope}:${action}`，与 schemas.gen.json 的 key 格式一致）。照 wave internal.ts 模式。 */
 const featureSchemaCache = new Map<string, string>();
 
 /**
- * 取某 action 的 input schema 文本（带缓存 + 降级）。
+ * 取某 action 的 input schema 文本（缓存优先：dist/guidance/schemas.gen.json → injectSchema → 兜底）。
  *
- * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错）。
- * - 同一 action 第二次调用命中缓存。
+ * 优先读预计算产物 `feature:${action}` 条目（npm pack 后 src/core 不存在，靠此命中）；
+ * 未命中降级到 injectSchema 实时解析（开发时无 build 产物）。同一 action 第二次调用命中缓存。
  */
 export function getFeatureSchemaText(action: string): string {
-  const cached = featureSchemaCache.get(action);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const source = FEATURE_ACTION_SCHEMA[action];
-  let text: string;
-  if (source === undefined) {
-    text = FEATURE_FLAT_INPUT_HINT[action] ?? "（无结构化 input schema）";
-  } else {
-    try {
-      text = injectSchema(source.sourceFilePath, source.interfaceName);
-    } catch {
-      text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
-    }
-  }
-  featureSchemaCache.set(action, text);
-  return text;
+  return readSchemaText({
+    scope: "feature",
+    action,
+    source: FEATURE_ACTION_SCHEMA[action],
+    flatHint: FEATURE_FLAT_INPUT_HINT[action],
+    cache: featureSchemaCache,
+  });
 }
 
 /**
@@ -266,6 +235,67 @@ function buildFeatureCommand(
     FEATURE_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 为 handoff 路径构建「当前步」命令（command 用当前 action，不是 nextAction）。
+ *
+ * 与 buildFeatureCommand 的区别：后者用 nextAction 组装命令（导航下一步）；
+ * 本函数用 action 自身组装命令（重建「现在该跑什么」认知）。handoff 的接手 agent
+ * 看 guidance 应得到与外层「下一步执行」一致的命令，而非「跑完后再跑的下一步」。
+ */
+function buildFeatureCurrentCommand(
+  action: PlanningAction,
+  unitId: string,
+  slug: string,
+): string {
+  const hasInput = FEATURE_ACTION_SCHEMA[action] !== undefined ||
+    FEATURE_FLAT_INPUT_HINT[action] !== undefined;
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";
+  return buildCommand(action, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 构建 feature handler handoff 路径的「当前步」guidance（command 用当前 action）。
+ *
+ * 与 buildFeatureNextAction 的区别：后者返回「跑完 action 后的下一步导航」
+ * （command 用 nextAction，供 handler 填 ActionResult.nextAction）；本函数返回
+ * 「现在该跑的 guidance」（command 用当前 action，供 handoff 重建当前步认知）。
+ * 其余片段（prefix/goal/template/schemaText）复用与 buildFeatureNextAction 完全一致的查表逻辑。
+ *
+ * @param unit 待交接的 Feature
+ * @param action 接手 agent 现在该跑的 PlanningAction（handoff 视角的当前步）
+ */
+export function buildFeatureCurrentActionGuidance(unit: Feature, action: PlanningAction): string {
+  const statusDisplay = FEATURE_STATUS_DISPLAY[unit.status] ?? unit.status;
+  const prefix = buildPrefix({
+    layer: "feature",
+    unitId: unit.id,
+    status: statusDisplay,
+    parentUnitId: unit.parentUnitId,
+  });
+
+  const template = PLANNING_STAGE_TEMPLATES[action];
+  const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
+  const baseSchemaText = getFeatureSchemaText(action);
+  // design-review 特判：与 buildFeatureNextAction 一致（layerSpecific 必含 feature 专属 6 key）。
+  const schemaText =
+    action === "design-review"
+      ? `${baseSchemaText}\nlayerSpecific 必须包含以下 key: specMeceNote, sliceSplitRationale, acVerifiabilityNote, consistencyNote, frAcCoverageNote, sliceSpecCoverageNote`
+      : baseSchemaText;
+
+  const command = buildFeatureCurrentCommand(action, unit.id, unit.slug);
+
+  return buildNormalGuidance({
+    prefix,
+    nextAction: action,
+    goal,
+    command,
+    schemaText,
+    templateText,
+    commonGuidance: buildSubagentGuidance("planning", action),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

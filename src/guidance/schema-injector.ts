@@ -24,11 +24,19 @@
  * IO 说明：本函数读源文件是构建时/测试时调用（不是运行时 IO）。
  *      sourceFilePath 相对于 cwd（调用方保证指向 src/core/*.ts）。
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import * as ts from "typescript";
 
-import { ACTION_SCHEMA } from "./action-schemas.js";
+import {
+  ACTION_SCHEMA,
+  EPIC_ACTION_SCHEMA,
+  FEATURE_ACTION_SCHEMA,
+  type SchemaSource,
+  SLICE_ACTION_SCHEMA,
+} from "./action-schemas.js";
 
 // ═══════════════════════════════════════════════════════════════
 // 类型
@@ -115,28 +123,133 @@ export interface SchemaGenEntry {
 }
 
 /**
- * 为所有 ACTION_SCHEMA 中声明的 action 预计算 schema 文本，输出可序列化的 JSON 对象。
+ * 为四层所有 schema 表中声明的 action 预计算 schema 文本，输出可序列化的 JSON 对象。
  *
  * 设计：npm pack 只发布 dist/ 目录，运行时 src/core/*.ts 可能不存在。
  * 因此在 build 阶段调用本函数生成 dist/guidance/schemas.gen.json，
  * 运行时优先读该 JSON 产物，命中则直接返回 schema 文本；未命中再降级回
  * injectSchema（开发时无 build 产物仍可工作）。
  *
- * @returns action → SchemaGenEntry 的映射对象。
+ * key 格式：`${scope}:${action}`（如 `wave:clarify` / `slice:plan`）。四层可能有同名 action
+ * 但不同 input interface（如 plan：wave=PlanInput、slice=PlanSliceInput），用 scope 前缀避免同名 key 冲突。
+ * 读取侧（readSchemaText / 四层 get*SchemaText）必须用同样的 `${scope}:${action}` key 查缓存。
+ *
+ * @returns `${scope}:${action}` → SchemaGenEntry 的映射对象。
  */
 export function buildSchemaGenFile(): Record<string, SchemaGenEntry> {
   const result: Record<string, SchemaGenEntry> = {};
-  for (const [action, source] of Object.entries(ACTION_SCHEMA)) {
-    if (source === undefined) {
-      continue;
+  // 合并四层 schema 表。各层 *ACTION_SCHEMA 的元素类型均为 { sourceFilePath, interfaceName } | undefined，
+  // 结构同构，用 SchemaSource 收敛（schema-injector 不关心各层 scope 语义，只负责提取 schema 文本）。
+  const allSources: ReadonlyArray<[scope: string, table: Readonly<Record<string, SchemaSource | undefined>>]> = [
+    ["wave", ACTION_SCHEMA],
+    ["slice", SLICE_ACTION_SCHEMA],
+    ["feature", FEATURE_ACTION_SCHEMA],
+    ["epic", EPIC_ACTION_SCHEMA],
+  ];
+  for (const [scope, table] of allSources) {
+    for (const [action, source] of Object.entries(table)) {
+      if (source === undefined) {
+        continue;
+      }
+      result[`${scope}:${action}`] = {
+        sourceFilePath: source.sourceFilePath,
+        interfaceName: source.interfaceName,
+        schemaText: injectSchema(source.sourceFilePath, source.interfaceName),
+      };
     }
-    result[action] = {
-      sourceFilePath: source.sourceFilePath,
-      interfaceName: source.interfaceName,
-      schemaText: injectSchema(source.sourceFilePath, source.interfaceName),
-    };
   }
   return result;
+}
+
+/**
+ * 定位预计算 schema 产物路径（dist/guidance/schemas.gen.json）。
+ *
+ * 本文件在 src/guidance/schema-injector.ts 或 dist/guidance/schema-injector.js 中运行，
+ * 向上两层即项目根目录，再拼 dist/guidance/schemas.gen.json。
+ *
+ * 供四层 get*SchemaText 共享（提取 readSchemaText 后不再各写一份）。
+ */
+export function getSchemaGenFilePath(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  // schema-injector.{ts,js} 与 schemas.gen.json 同在 guidance/ 目录
+  // （src/guidance/ 开发态、dist/guidance/ 打包态），直接取同目录文件。
+  return resolve(dirname(currentFile), "schemas.gen.json");
+}
+
+/** 从预计算 JSON 产物读取某条目的结构（与 buildSchemaGenFile 输出一致）。 */
+interface SchemaGenFile {
+  [key: string]: { schemaText: string } | undefined;
+}
+
+/** readSchemaText 的入参形态：source 缺失时用 flatHint 兜底（无结构化 schema 的 action）。 */
+interface ReadSchemaTextArgs {
+  /** scope 前缀（wave/slice/feature/epic），用于拼缓存 key `${scope}:${action}`。 */
+  scope: string;
+  /** action 名（如 clarify/plan）。 */
+  action: string;
+  /** 该 action 的 schema 来源（结构化 input）；undefined 表示无结构化 schema。 */
+  source: SchemaSource | undefined;
+  /** 无结构化 schema 时的扁平参数提示文本。 */
+  flatHint: string;
+  /** 模块级缓存 Map（四层各自一份，避免跨 scope 串扰 + 避免改各层已 export 的缓存名）。 */
+  cache: Map<string, string>;
+}
+
+/**
+ * 读缓存优先的 schema 文本（四层 get*SchemaText 共享）。
+ *
+ * 优先级：
+ *   1. 命中 cache（同一 `${scope}:${action}` 第二次调用直接返回）；
+ *   2. 命中 dist/guidance/schemas.gen.json 中 `${scope}:${action}` 条目 → 返回产物 schemaText；
+ *   3. 降级到 injectSchema 实时解析 src/core/*.ts（开发时无 build 产物）；
+ *   4. source 为 undefined（无结构化 schema）→ 用 flatHint；injectSchema 抛错时返回兜底提示文本。
+ *
+ * 缓存 key 用 `${scope}:${action}`（与 buildSchemaGenFile 的 key 格式一致），四层共享同一份 schemas.gen.json。
+ * schema 是静态的，模块级缓存安全（整个进程只读一次源文件 / JSON）。
+ *
+ * 不抛错：schema 是给 agent 看的辅助信息，缺失只降级体验，不阻断 guidance。
+ */
+export function readSchemaText({
+  scope,
+  action,
+  source,
+  flatHint,
+  cache,
+}: ReadSchemaTextArgs): string {
+  const cacheKey = `${scope}:${action}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let text: string;
+  if (source === undefined) {
+    // 无结构化 schema 的 action（create / execute / replan / abort）：用扁平参数提示。
+    text = flatHint ?? "（无结构化 input schema）";
+  } else {
+    const genPath = getSchemaGenFilePath();
+    if (existsSync(genPath)) {
+      try {
+        const genFile = JSON.parse(readFileSync(genPath, "utf-8")) as SchemaGenFile;
+        const entry = genFile[cacheKey];
+        if (entry?.schemaText !== undefined) {
+          text = entry.schemaText;
+        } else {
+          text = injectSchema(source.sourceFilePath, source.interfaceName);
+        }
+      } catch {
+        text = injectSchema(source.sourceFilePath, source.interfaceName);
+      }
+    } else {
+      try {
+        text = injectSchema(source.sourceFilePath, source.interfaceName);
+      } catch {
+        // 降级：源文件缺失或 interface 不存在时给出可读提示，不阻断 guidance。
+        text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
+      }
+    }
+  }
+  cache.set(cacheKey, text);
+  return text;
 }
 
 // ═══════════════════════════════════════════════════════════════
