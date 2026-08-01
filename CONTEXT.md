@@ -9,7 +9,7 @@
 |------|------|------|
 | **CW（Coding Workflow）** | 编码流程编排器：状态机 + 机器检查 gate，强制编码任务走 create → closeout | 项目核心 |
 | **WorkUnit** | 一次编码任务的生命周期单元，4 层模型（epic/feature/slice/wave） | `src/core/workunit.ts:53` WorkUnitBase |
-| **Action** | CW 接受的 15 种操作之一（见下表） | `src/cli.ts:144-164` |
+| **Action** | CW 接受的 16 种操作之一（见下表） | `src/cli.ts:144-164` |
 | **Status（状态）** | WorkUnit 的生命周期阶段，两层枚举（见下文） | `src/core/status.ts` |
 | **Gate（机器检查门）** | action 流转前的结构化检查，gate fail 可 retry 不阻断 | `src/rules/gates/*.ts` |
 | **Guard** | 状态机合法性校验（防跳步），guard fail 抛 CwEngineError 不可恢复 | `src/rules/state-machine.ts` |
@@ -37,7 +37,7 @@ epic → feature → slice → wave
 
 出处：`src/core/workunit.ts:57`（scope 字段）、`:207/288/345/417`（id 格式 `<scope>:<slug>`）。
 
-## 15 个 Action
+## 16 个 Action
 
 | Action | 类型 | 说明 |
 |--------|------|------|
@@ -56,9 +56,10 @@ epic → feature → slice → wave
 | `status` | 只读 | 单 unit 完整 JSON dump |
 | `list` | 只读 | unit 列表（支持 --all 跨 cwd / --layer / --grep / --limit） |
 | `handoff` | 只读 | 叙述性交接摘要（self/upstream/full 三种 scope） |
+| `frontier` | 只读 | 以某 unit 为根的 frontier 视图（非终态节点 + blocked/dependsOn/lastStatusHistoryAction，供递归调度器消费） |
 
 > progressive = 可在同一 status 下多次调用。只读命令不经 dispatch、不写 store、不 append statusHistory。
-> ADVANCE_ACTIONS = create + 10 推进（`src/cli.ts:144`）；READONLY_QUERIES = 4 只读（`src/cli.ts:161`）。
+> ADVANCE_ACTIONS = create + 10 推进（`src/cli.ts:144`）；READONLY_QUERIES = 5 只读（`src/cli.ts:164`）。
 > test / exec-review 是 wave 专属——PlanningUnit 收到会抛 illegal_transition。
 
 ## 两层 Status 枚举
@@ -106,7 +107,7 @@ guard（`guardWave`/`guardPlanning`，`src/rules/state-machine.ts`）只验状�
 | 术语 | 定义 | 出处 |
 |------|------|------|
 | **dispatch** | engine 统一入口纯函数：`(params, deps) => ActionResult`，按 scope 路由到 4 子分派器 | `src/dispatch.ts` |
-| **ActionResult** | engine 统一返回：unitId/status/ok/gateResults?/nextAction?/failureCount? | `src/handlers/types.ts:87` |
+| **ActionResult** | engine 统一返回：unitId/status/ok/gateResults?/nextAction?/failureCount?/children? | `src/handlers/types.ts:87` |
 | **nextAction** | engine 返回的导航信息：action? + guidance + unitPath + crossLayer? | `src/handlers/types.ts:126` CwNextAction |
 | **guidance** | 拼入 nextAction 的纯文本提示词，agent 的唯一导航来源；正常三段式/异常四段式 | `src/guidance/build-guidance.ts` |
 | **crossLayer** | closeout 后跨层导航：descend（下沉首个子）/ sibling（横向兄弟）/ ascend（回父 retrospect） | `src/guidance/cross-layer.ts:60` |

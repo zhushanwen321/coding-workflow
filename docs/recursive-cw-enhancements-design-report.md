@@ -2,7 +2,7 @@
 
 > **日期**：2026-08-01
 > **分支**：`feat-recursive-problem-solving`（coding-workflow 仓）
-> **CW topic**：`slice:recursive-cw-enhancements`（已过 clarify → plan → design-review，11 gate 全过）
+> **CW topic**：`slice:recursive-cw-enhancements`（已过 clarify → plan → design-review → execute → retrospect，全部实现并 commit）
 > **源头设计**：`xyz-agent-workspace/feat-recursive-problem-solving/.xyz-harness/recursive-problem-solving/spec-c-cw-enhancements.md`
 > **用途**：对比当前方案与 spec-c 原始设计的差异，**重点是 xyz-agent（spec-f）会消费的协议部分**，供调整 xyz-agent 开发计划
 
@@ -10,11 +10,12 @@
 
 ## 0. TL;DR
 
-spec-c 的 6 处改动（C1-C5 + duplicate-slug gate）**全部保留，功能范围不变**。经两轮 reviewer 审查 + 架构归位评估，做了 **3 处架构调整 + 6 处实现修正**，其中 **2 处影响 xyz-agent spec-f 的消费协议**（字段数据源更明确、类型 B 调用链更清晰，但不破坏契约）。
+spec-c 的 6 处改动（C1-C5 + duplicate-slug gate）**全部保留，功能范围不变**，并已全部实现（见 §6 实施状态）。经两轮 reviewer 审查 + 架构归位评估，做了 **3 处架构调整 + 6 处实现修正**，其中 **2 处影响 xyz-agent spec-f 的消费协议**（字段数据源更明确、类型 B 调用链更清晰，但不破坏契约）。另有 **1 处增量改动**（`lastStatusHistoryAction`，见 §7）在实施阶段追加，对 spec-f 是向后兼容的字段新增。
 
 **xyz-agent 侧需要关注的变更**：
 - `children` 字段的 `dependsOn` 数据来源从"slug 映射可能歧义"改为"childDelivery 显式映射"——**更可靠，消费方无感**
 - frontier 的 `blocked` 由 cw 计算好输出——**spec-f 的 queryFrontier/topoSort 直接 filter(!blocked) 即可，与自己算状态**
+- frontier 每个 node 多一个可选 `lastStatusHistoryAction`（§7）——**后备检测信号，不读也能工作**
 - `allWavesClosed` gate 已接受 `aborted` 终态——**spec-f 的失败传播（abort wave → 父 slice retrospect）可直接工作，无需 cw 改动**
 
 ---
@@ -31,7 +32,7 @@ spec-c 的 6 处改动（C1-C5 + duplicate-slug gate）**全部保留，功能�
 | C4：design-review 注入 layerSpecific 字段名 | ✅ 完全一致（实现路径细化，见 1.3） |
 | C5：retrospect forbidden → optional | ✅ 完全一致 |
 | C6：duplicate-slug gate | ✅ 完全一致（spec-c §2 旁路发现，用户决定一起补） |
-| frontier 输出 JSON 字段（nodes/unitId/scope/status/nextAction/blocked/dependsOn/parentUnitId/childUnitIds） | ✅ 完全一致 |
+| frontier 输出 JSON 字段（nodes/unitId/scope/status/nextAction/blocked/dependsOn/parentUnitId/childUnitIds） | ✅ 完全一致（另在实施阶段追加 `lastStatusHistoryAction?`，见 §7） |
 
 ### 1.2 架构调整（3 处，影响代码组织但不改对外协议）
 
@@ -184,6 +185,7 @@ if (!isWave && action === "execute") {
 
 ```jsonc
 // cw frontier --root epic:xxx --format json 的 stdout
+// 注：示例省略可选字段 lastStatusHistoryAction（见 §7），实际每个 node 都带。
 {
   "rootUnitId": "epic:xxx",
   "nodes": [
@@ -244,9 +246,11 @@ const nonTerminal = childStatuses.filter((s) => s !== "closed" && s !== "aborted
 
 ### 2.2 字段命名（未冻结为不可变契约）
 
-按用户决策：`frontier` action、`children` 字段、`blocked`/`blockedReason` 字段进 CONTEXT.md 词表作为当前规范，但**不冻结为跨项目不可变契约**。后续如需新增/修改字段名，必须先讨论。
+按用户决策：`frontier` action、`children` 字段、`blocked`/`blockedReason` 字段应进 CONTEXT.md 词表作为当前规范，但**不冻结为跨项目不可变契约**。后续如需新增/修改字段名，必须先讨论。
 
-**当前规范字段清单**（进 CONTEXT.md）：
+> ⚠️ **实施差异**：原计划这些字段进 CONTEXT.md，但实际开发**未更新 CONTEXT.md**（仍停留在 15 action 旧文本，缺这些词表行）。详见 §5。代码侧（`src/cli.ts` / `src/handlers/types.ts` / `src/core/frontier.ts`）已全部实现，是事实上的当前规范。
+
+**当前规范字段清单**（代码已实现，待补进 CONTEXT.md）：
 
 | 字段 | 位置 | 类型 | 说明 |
 |------|------|------|------|
@@ -254,6 +258,7 @@ const nonTerminal = childStatuses.filter((s) => s !== "closed" && s !== "aborted
 | `children` | ActionResult 顶层 | `ChildInfo[]?` | execute 返回的子层信息（仅 planning-execute） |
 | `blocked` | frontier 输出 | `boolean` | 节点是否阻塞（等依赖/等子层） |
 | `blockedReason` | frontier 输出 | `string?` | 阻塞原因 |
+| `lastStatusHistoryAction` | frontier 输出（FrontierNode） | `string?` | statusHistory 最后一条的 action；`"replan"` 时调度器需做 replan 后备检测（§7，实施阶段追加） |
 
 ### 2.3 xyz-agent 开发计划的建议调整点
 
@@ -265,7 +270,7 @@ const nonTerminal = childStatuses.filter((s) => s !== "closed" && s !== "aborted
 
 3. **`children` 字段的 dependsOn 数据源更可靠**——本方案用 childDelivery 显式映射而非 slug 字符串匹配，duplicate slug 不再导致 childUnitId 错配。spec-f 的 topoSort 消费的 `dependsOn` 更可信。
 
-4. **依赖路径**——spec-f 依赖 spec-c 的 C1（children）+ C2（frontier）。本方案把 C1 和 C2 拆成两个独立 wave（w1/w2 无代码依赖可并行），cw 侧可更快交付这两个协议。
+4. **依赖路径**——spec-f 依赖 spec-c 的 C1（children）+ C2（frontier）。C1 和 C2 已作为两个独立 wave 实现并 commit（w1=`47e5b97`、w2=`522bcd0`），cw 侧两个协议均已交付。
 
 ---
 
@@ -297,29 +302,83 @@ w3: guidance-gates-spec — C3+C4+C5+C6，改 render.ts(renderDecisionsSection) 
 
 ---
 
-## 5. 待办：CONTEXT.md 更新清单
+## 5. CONTEXT.md 更新清单（实施差异说明）
 
-实现时需同步更新 `CONTEXT.md`（按用户要求，新增字段进词表）：
+> 本节原标题「待办」，因实现已完成，改为记录实施差异：原计划同步更新仓库根 `CONTEXT.md`（按用户要求，新增字段进词表），**实际代码已落地（action 数=16、`frontier` 命令、`children`/`blocked` 字段均已实现），但 `CONTEXT.md` 文件本身未被本次开发更新**——它仍停留在「15 种操作 / 15 个 Action / READONLY_QUERIES = 4 只读」的旧文本，缺 frontier / children / blocked / lastStatusHistoryAction 词表行。
 
-| 位置 | 改动 |
-|------|------|
-| L11 | "15 种操作之一" → "16 种" |
-| L40 | "## 15 个 Action" → "## 16 个 Action" |
-| L58 后 | 新增 `frontier` 行：`\| frontier \| 只读 \| 列出 WorkUnit 树的非终态节点 + 可推进性（blocked），--root <id> \|` |
-| L60 | "READONLY_QUERIES = 4 只读" → "5 只读" |
-| L109 | ActionResult 概念行追加 `children?`（仅 planning-execute 填充） |
-| L104-115 核心架构概念表 | 可选新增 `blocked` 概念行（frontier 推导的可推进性标志，非持久化字段） |
+**代码侧已确认的现状**（与下表对照）：
 
-**不放进 WorkUnitBase 数据模型表**（L130-139）：`blocked`/`blockedReason` 是 frontier 查询的推导结果（瞬态），不是持久化字段——与 `nextAction?`/`failureCount?` 同类，放概念表不放数据模型表。
+- `src/cli.ts:147-160` `ADVANCE_ACTIONS` = 10 推进（create+10=11 推进类），`src/cli.ts:164` `READONLY_QUERIES = tree/status/list/handoff/frontier`（5 只读）→ 总计 **16 个 action**。
+- `src/handlers/types.ts:111` `children?: ChildInfo[]`；`:117` `ChildInfo`。
+- `src/core/frontier.ts:59-78` `FrontierNode`（含 `blocked`/`blockedReason`/`dependsOn`/`childUnitIds`/`lastStatusHistoryAction`）。
+
+原计划改动清单（**至今未落地到 `CONTEXT.md`，留作遗留**）：
+
+| 位置 | 计划改动 | 现状 |
+|------|---------|------|
+| L11 | "15 种操作之一" → "16 种" | ❌ 未改 |
+| L40 | "## 15 个 Action" → "## 16 个 Action" | ❌ 未改 |
+| L58 后 | 新增 `frontier` 行：`\| frontier \| 只读 \| 列出 WorkUnit 树的非终态节点 + 可推进性（blocked），--root <id> \|` | ❌ 未加 |
+| L60 | "READONLY_QUERIES = 4 只读" → "5 只读" | ❌ 未改 |
+| L109 | ActionResult 概念行追加 `children?`（仅 planning-execute 填充） | ❌ 未改 |
+| L104-115 核心架构概念表 | 新增 `blocked` / `lastStatusHistoryAction` 概念行 | ❌ 未加 |
+
+> 注：`CONTEXT.md` 位于仓库根（不在 `docs/`），不属于本次 docs 审查范围；本报告仅记录差异。若需补齐，应由一次独立的 CONTEXT.md 同步改动完成。`blocked`/`blockedReason`/`lastStatusHistoryAction` 是 frontier 查询的推导结果（瞬态），不是持久化字段——与 `nextAction?`/`failureCount?` 同类，应进概念表而非 WorkUnitBase 数据模型表（L130-139）。
 
 ---
 
-## 6. 下一步
+## 6. 实施状态
 
-CW topic `slice:recursive-cw-enhancements` 当前停在 `design-reviewed` 状态，下一步是 `execute`（自动按 plan.split 拆出 3 个 wave）。
+本报告原稿写作时 CW topic `slice:recursive-cw-enhancements` 停在 `design-reviewed`，原 §6 写的是「等你确认后启动 execute」。**实际后续已全部实现、测试并 commit**，3 个 wave + 1 个增量改动全部落地：
 
-**等你确认**：
-1. 审完本报告，对 xyz-agent 开发计划的调整点是否有补充
-2. 是否启动 cw execute（拆 wave → 逐个施工）
+| wave | 改动 | commit |
+|------|------|--------|
+| w1（children，C1） | `ActionResult` 新增 `children?: ChildInfo[]` | `47e5b97 feat(c1): add children field to ActionResult for recursive scheduling` |
+| w2（frontier，C2） | 新建 `src/core/frontier.ts` + `src/core/hierarchy.ts` + `cw frontier --root <id>` 命令 | `522bcd0 feat(c2): add cw frontier readonly command for recursive BFS scheduling` |
+| w3（guidance-gates，C3+C4+C5+C6） | handoff 渲染 FeatureSpec FR/AC + layerSpecific schema 注入 + retrospect optional + `duplicate-split-slug` gate | `e943383 feat(c3-c6): handoff FR/AC, layerSpecific schema, retrospect optional, dup-slug gate` |
+| 增量（lastStatusHistoryAction） | FrontierNode 新增 `lastStatusHistoryAction?` 字段，供递归调度器做 replan 后备检测 | `a7f0af1 feat(frontier): expose lastStatusHistoryAction for replan detection` |
+
+另：`c98a77e docs(cw-cli skill): fix --input/execute flags + add frontier command` 同步更新了 cw-cli skill 文档。
+
+> **遗留**：`CONTEXT.md`（仓库根，非 `docs/`）原计划按 §5 同步更新（15→16 action、新增 frontier/children/blocked 词表行），但实际开发未触及该文件——仍停留在「15 种操作 / 15 个 Action / READONLY_QUERIES = 4 只读」。详见 §5 的实施差异说明。
 
 报告完。
+
+---
+
+## 7. 增量改动：lastStatusHistoryAction（replan 后备检测）
+
+> 本报告初稿（§0-6）完成于 design-review 阶段，覆盖 C1-C6。**实施 frontier（C2）后追加了一个增量改动**（commit `a7f0af1`），原报告未含，本节补记。
+
+### 7.1 背景：replan 是旁路，status→action 映射看不到它
+
+`replan` action 是**旁路**——不改 status，只 append 一条 `statusHistory`（`action="replan"`）并做影响面计算/级联 abort。这意味着 frontier 的 Pass 1 用 `status→action` 映射（`WAVE_STATUS_TO_ACTION` / `PLANNING_STATUS_TO_ACTION`，frontier.ts:22-46）算出的 `nextAction` **反映不出"刚发生了 replan"**。
+
+递归调度器（xyz-agent spec-f 的 BFS 主循环）需要知道某个 unit 刚被 replan 过——因为 replan 后通常需要回 plan 阶段重做（即便 status 仍停在 `executing`）。
+
+### 7.2 改动：FrontierNode 新增 lastStatusHistoryAction
+
+`FrontierNode`（frontier.ts:59-78）新增字段：
+
+```typescript
+/** statusHistory 最后一条的 action（如 "replan"/"clarify"/"plan"/"execute"）。
+ *  供递归调度器做 replan 后备检测——replan 是旁路（status 不变），frontier 的
+ *  status→action 映射不反映"需回 plan"，调度器靠此字段识别 replan 发生。 */
+lastStatusHistoryAction?: string;
+```
+
+实现（frontier.ts:149-160）：从 `unit.statusHistory` 取最后一条，读其 `.action` 字段；空数组/非数组/缺 action 字段时返回 `undefined`（安全降级，不崩溃）。
+
+### 7.3 对 xyz-agent spec-f 的影响
+
+- **契约新增（向后兼容）**：frontier 输出每个 node 多一个可选字段 `lastStatusHistoryAction`。spec-f 的消费代码（§2.3 的 `queryFrontier`/`topoSort`）**不读这个字段也能工作**——它是后备检测的补充信号，非必需。
+- **推荐用法**：调度器优先用 `nextAction`（status 派生），当 `lastStatusHistoryAction === "replan"` 时降级为"该 unit 需要回 plan 阶段处理 replan 影响面"，而非按 status 推进。
+- **§2.2 字段清单**：原表列 frontier 输出字段时未含此项，实际已含（见下表更新）。
+
+### 7.4 §2.2 字段清单更新
+
+frontier 输出字段（与 §2.2 协议 2 的 JSON 示例一致，补充 `lastStatusHistoryAction`）：
+
+| 字段 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `lastStatusHistoryAction` | frontier 输出（FrontierNode） | `string?` | statusHistory 最后一条的 action；`"replan"` 时调度器需做 replan 后备检测 |

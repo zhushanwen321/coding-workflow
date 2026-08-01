@@ -9,9 +9,9 @@
 ┌──────────────────────────────────────────────────────────┐
 │  CLI 层 (src/cli.ts)                                       │
 │  argv 解析 → stdin → buildParams → CwParams               │
-│  ADVANCE_ACTIONS(10) / READONLY_QUERIES(4) / create 路由   │
+│  ADVANCE_ACTIONS(10) / READONLY_QUERIES(5) / create 路由   │
 │  exit code 映射（0 正常 / 1 CwError·CwEngineError / 2 内部） │
-│  migrateLegacyV1Home() + 只读查询（tree/status/list/handoff）│
+│  migrateLegacyV1Home() + 只读查询（tree/status/list/handoff/frontier）│
 ├──────────────────────────────────────────────────────────┤
 │  Engine 层 (src/dispatch.ts)                               │
 │  create: 按 input.layer 路由（epic/feature/slice/wave）     │
@@ -72,9 +72,9 @@ epic → feature → slice → wave
 | `handlers` | `src/handlers/`（wave 直放 + `{epic,feature,slice}/` 子目录） | 各 action 的事务编排：gate 检查 → store 变更 → status 流转 → 拼下一动作；`internal.ts` 提供 `transitionStatus`/`buildNextAction`/`buildFailureNextAction`/`appendFailRecord` | 新增 action 时加每层 handler |
 | `gates` | `src/rules/gates/`（`design-review.ts`/`test.ts`/`exec-review.ts`/`retrospect.ts`/`types.ts`）+ `src/rules/freeze.ts` + `src/rules/replan.ts` | 各阶段机器检查纯函数（零 IO，返回 `GateResult`）；`freeze.ts` 的 `checkFreeze` 验 append-only 不变性；`replan.ts` 的 `computeImpact` 算影响面 | 新增 gate 时加检查函数 |
 | `store` | `src/store/cw-store.ts` + `schema.ts` + `migrate-v1.ts` | `CwStore`：store.json 读写（POSIX 原子写 + 跨进程文件锁 + 内存事务）+ `WorkUnitRecord` upsert/load/findChildren | 存储格式变化时改 schema |
-| `core` | `src/core/`（`workunit.ts`/`status.ts`/`plan.ts`/`evidence.ts`/`judgments.ts`/`clarifications.ts`/`git.ts`/`errors.ts`） | 领域模型与类型（零依赖）；`CwError`（预期错误，exit 1） | 核心契约，变更影响面大 |
+| `core` | `src/core/`（`workunit.ts`/`status.ts`/`plan.ts`/`evidence.ts`/`judgments.ts`/`clarifications.ts`/`git.ts`/`errors.ts`/`frontier.ts`/`hierarchy.ts`） | 领域模型与类型（零依赖）；`CwError`（预期错误，exit 1）；`frontier.ts` 算 frontier 视图（非终态节点 + blocked/dependsOn）；`hierarchy.ts` 跨父子 WorkUnit 关系只读遍历 | 核心契约，变更影响面大 |
 | `guidance` | `src/guidance/`（`build-guidance.ts`/`cross-layer.ts`/`failure-hint.ts`/`prefix-builder.ts`/`schema-injector.ts`/`subagent-guidance.ts`/`templates/`） | 拼入 `nextAction.guidance` 的纯文本提示词（正常三段式 / 异常四段式），agent 的唯一导航来源 | 阶段方法论变化时改 template |
-| `readonly` | `src/readonly/`（`render.ts`/`cross-cwd.ts`/`index.ts`） | 只读查询（tree/status/list/handoff）的渲染——不经 dispatch、不写 store | 查询输出格式变化时改 render |
+| `readonly` | `src/readonly/`（`render.ts`/`cross-cwd.ts`/`index.ts`） | 只读查询（tree/status/list/handoff/frontier）的渲染——不经 dispatch、不写 store | 查询输出格式变化时改 render |
 
 > 关键约定（[AGENTS.md](./AGENTS.md)）：engine **agent-agnostic**（不依赖任何 agent harness 能力，guidance 是纯文本，agent 通过 bash 调 `cw`）；**guidance 是唯一导航**；**单重 guard**（只 `guard{Wave|Planning}` 防跳步，`GuardErrorCode` 仅 `illegal_transition`）；**gate 熔断不阻断**（连续 fail 5 次后 guidance 换文案，但不阻止重试）。
 
@@ -91,7 +91,7 @@ epic → feature → slice → wave
 - **guard fail / unit not found** → throw `CwEngineError`（exit 1，**不可恢复**）。
 - **handler gate fail** → 返回 `ActionResult(ok=false)` + `gateResults`（**可 retry**，不改 status、不 save，但 append 一条 fail 记录到 statusHistory）。
 
-返回类型 `ActionResult`（`src/handlers/types.ts`）：`unitId` / `status` / `ok` / `gateResults?` / `error?` / `replanImpact?` / `freezeViolations?` / `failureCount?` / `nextAction?`。依赖注入接口 `CwDeps`：`store` / `gitValidator` / `testRunner?` / `fileExists` / `workspacePath` / `clock`——所有 IO 能力通过此接口注入，handler 本身不直接做 IO。
+返回类型 `ActionResult`（`src/handlers/types.ts`）：`unitId` / `status` / `ok` / `gateResults?` / `error?` / `replanImpact?` / `freezeViolations?` / `failureCount?` / `children?`（execute 下沉时返回子层信息 `{unitId, dependsOn}[]`，供递归调度器消费）/ `nextAction?`。依赖注入接口 `CwDeps`：`store` / `gitValidator` / `testRunner?` / `fileExists` / `workspacePath` / `clock`——所有 IO 能力通过此接口注入，handler 本身不直接做 IO。
 
 ## 关键状态机
 
@@ -145,7 +145,7 @@ gate 是 CW 的核心价值——不信任 agent 的声明，只信机器验证�
 | `create` | 无 gate | 工厂初始化全字段空态 | `src/handlers/create.ts` |
 | `clarify` | `validateFeatureSpec`（仅 feature） | feature spec 结构校验（typebox schema）；wave/slice/epic 无 gate | `src/rules/spec-schema.ts`、`src/handlers/feature/clarify.ts` |
 | `plan` | 无 gate | testCases/split 结构在 `design-review` 阶段才验 | `src/handlers/plan.ts` |
-| `design-review` | wave 8 个 / slice 11 个 / feature 13 个 / epic 10 个 | 结构完整性（wave: `test-cases-non-empty`/`test-cases-have-expected`；slice: `tech-choice-non-empty`/`split-non-empty`/`split-dag-valid`；feature: FR-AC 强引用 `fr-ac-coverage`/`ac-reachable-from-fr`/`ac-non-empty` + `slice-split-*`；epic: `feature-split-*`）+ `all-decisions-resolved` + `inherited-item-ids-valid` + judgment 非空（`design-review-{necessity,sufficiency,alternatives}-*`/`design-review-{tradeoffs,risks}-present`）+ `layer-specific-non-empty`（各层专属维度） | `src/rules/gates/design-review.ts` |
+| `design-review` | wave 8 个 / slice 12 个 / feature 14 个 / epic 11 个 | 结构完整性（wave: `test-cases-non-empty`/`test-cases-have-expected`；slice: `tech-choice-non-empty`/`split-non-empty`/`split-dag-valid`/`duplicate-split-slug`；feature: FR-AC 强引用 `fr-ac-coverage`/`ac-reachable-from-fr`/`ac-non-empty` + `slice-split-*` + `duplicate-split-slug`；epic: `feature-split-*` + `duplicate-split-slug`）+ `all-decisions-resolved` + `inherited-item-ids-valid` + judgment 非空（`design-review-{necessity,sufficiency,alternatives}-*`/`design-review-{tradeoffs,risks}-present`）+ `layer-specific-non-empty`（各层专属维度） | `src/rules/gates/design-review.ts` |
 | `execute` | 无 gate | commit 存在性在 `test` gate 验（避免 executing 状态因 commit 无效卡死） | `src/handlers/execute.ts` |
 | `test` | 4 个 gate（wave 专属） | `commit-exists`（commitHash 真实存在，整个 cw 唯一 git 校验点）+ `tests-all-pass`（业务正确性机器验证）+ `test-cases-executed`（用例被执行）+ `test-references-design-review`（引用一致性，覆盖 tradeoffs/risks） | `src/rules/gates/test.ts` |
 | `exec-review` | 4 个 gate（wave 专属） | `exec-review-readability-non-empty` + `exec-review-architecture-non-empty` + `exec-review-overall-verdict-non-empty` + `exec-review-followup-actions-when-needed`（纯人审，验结构不验内容） | `src/rules/gates/exec-review.ts` |

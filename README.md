@@ -47,7 +47,7 @@ npm link             # 全局 link cw 命令到本地 dist
 
 ```bash
 npm run check:all    # tsc 类型检查（src + tests）
-npm test             # vitest run（464 个测试，含真实子进程 e2e）
+npm test             # vitest run（801 个测试，含真实子进程 e2e；会随开发增长，以实跑为准）
 npm run lint         # eslint src/ tests/
 npm run build        # tsc 编译到 dist/
 ```
@@ -59,7 +59,7 @@ npm run build        # tsc 编译到 dist/
 | 文档 | 内容 |
 |------|------|
 | [SKILL.md](./skill/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、失败模式） |
-| [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
+| [CONTEXT.md](./CONTEXT.md) | 统一语言（16 action / 两层 status / 核心架构概念） |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
 | [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |

@@ -9,14 +9,14 @@
 | 维度 | 值 | 来源 |
 |---|---|---|
 | 测试框架 | vitest ^3.0.0 | package.json devDependencies |
-| 测试数量 | 743 passed（41 文件） | `npm test` 实跑（截至 commit `5762657`，会随开发增长，以实跑为准） |
+| 测试数量 | 801 passed（45 文件） | `npm test` 实跑（会随开发增长，以实跑为准） |
 | 覆盖率工具 | 无（未配 c8/istanbul） | package.json 无 coverage 脚本 |
 | Mock 框架 | 零（无 vi.fn / 无 mock 库） | tests/ 全量 grep 无 mock 调用 |
 | 运行命令 | `npm test` → `vitest run` | package.json scripts.test |
 
-> **数字口径**：743/41 是会随开发增长的基线，不是定数。旧文档（AGENTS.md/README/PRODUCT）各自记的 1380/464/393 互相打架且已过时，一律以 `npm test` 实跑为准。
+> **数字口径**：801/45 是会随开发增长的基线，不是定数。旧文档（AGENTS.md/README/PRODUCT）各自记的 1380/464/393/743 互相打架且已过时，一律以 `npm test` 实跑为准。
 
-测试文件清单（`tests/` 目录，41 个 `.test.ts`）：
+测试文件清单（`tests/` 目录，45 个 `.test.ts`）：
 
 ### 单元（纯函数，零 IO）
 
@@ -39,6 +39,7 @@
 | `guidance-planning-templates.test.ts` | 18 | 三层 ACTION_SCHEMA 基建 + planning 静态方法论模板 |
 | `planning-guidance-snapshot.test.ts` | 31 | 三层 PlanningUnit guidance 段落结构快照 |
 | `subagent-guidance.test.ts` | 25 | subagent 分级表 + buildSubagentGuidance 集成 |
+| `guidance-gates-spec.test.ts` | 17 | C1-C6 增强回归：ActionResult.children / handoff FR-AC / layerSpecific schema 注入 / retrospect optional / duplicateSplitSlug gate |
 | `readonly-handoff.test.ts` | 18 | `renderHandoff` 纯函数（scope=self，接 WorkUnitRecord 不读 fs） |
 | `list-enhance.test.ts` | 22 | cw list 增强：跨 cwd/分页/分组/模糊匹配/--long |
 
@@ -247,7 +248,7 @@ describe("create wave happy path", () => {
 | `closeout` | `--unitId` | `{ summary?, artifacts? }` | CloseoutInput (handlers/types.ts:243) |
 | `replan` | `--unitId` + `--abandonedIds` + `--note`（或走 `--input`/stdin；可选 `--abandonParentItems`） | `{ abandonedIds, note }`（feature 可加 `addedSpecItems`） | ReplanInput (handlers/types.ts:251) |
 | `abort` | `--unitId`（可选 `--reason`） | `{ reason? }`（可空） | AbortInput (handlers/types.ts:271) |
-| `tree` / `status` / `list` / `handoff` | `--unitId`（list 可用 `--all`/`--layer`/`--grep`/`--limit`/`--offset`/`--long`；handoff 可用 `--scope`） | 无（只读，不经 dispatch、不写 store） | cli.ts READONLY_QUERIES |
+| `tree` / `status` / `list` / `handoff` / `frontier` | `--unitId`（list 可用 `--all`/`--layer`/`--grep`/`--limit`/`--offset`/`--long`；handoff 可用 `--scope`；frontier 用 `--root`） | 无（只读，不经 dispatch、不写 store） | cli.ts READONLY_QUERIES |
 
 **ID 格式约定**：
 - unitId：`<scope>:<slug>`（如 `wave:auth-w1`），子 unit slug = `${parent.slug}::${split.slug}`（`::` 分隔，如 `slice:auth::w1`）。出处 `src/core/workunit.ts`（id 格式）
