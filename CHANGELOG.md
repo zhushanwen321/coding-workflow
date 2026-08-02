@@ -1,5 +1,24 @@
 # Changelog
 
+## [v1.1.0] - 2026-08-02
+
+### Features
+- feat(c1): add children field to ActionResult for recursive scheduling (47e5b97)
+- feat(c2): add cw frontier readonly command for recursive BFS scheduling (522bcd0)
+- feat(c3-c6): handoff FR/AC, layerSpecific schema, retrospect optional, dup-slug gate (e943383)
+- feat(frontier): expose lastStatusHistoryAction for replan detection (a7f0af1)
+
+### Bug Fixes
+- fix: address review suggestions (S1/S2/INFO-1/INFO-2) (974e117)
+- fix: handoff guidance command uses current action (not nextAction) (a2a5ba9)
+- fix: address review suggestions (S1/S2/S5/S7/S8) (6083a9c)
+
+### Miscellaneous
+- feat(pr-cr-fix): add adaptive worktree/flock isolation for parallel worker commits (1cb50c3)
+- docs: sync all docs with recursive cw enhancements (C1-C6 + frontier) (63a97ef)
+- docs(cw-cli skill): fix --input/execute flags + add frontier command (c98a77e)
+- chore: gitignore .review/ (pr-cr-fix review artifacts, machine-consumed) (adc7d7a)
+
 ## [v1.0.3] - 2026-07-27
 
 ### Features
