@@ -5,48 +5,19 @@
  * frontier 是聚合视图——只输出未完成的节点，并标注每个节点是否被阻塞及原因，
  * 供 agent 快速定位「下一步该碰哪个 unit」。
  *
- * 架构约束：core 层不能 import readonly 层（反向依赖）。
- * 故 WAVE_STATUS_TO_ACTION / PLANNING_STATUS_TO_ACTION / TERMINAL_STATUSES
- * 在本文件内重定义（与 src/readonly/render.ts 同源，见下方注释）。
+ * status→action 映射表（WAVE_STATUS_TO_ACTION / PLANNING_STATUS_TO_ACTION /
+ * TERMINAL_STATUSES）从 core/status.ts import——与 render.ts 共享单一定义源，
+ * 消除此前两处重定义的手维护负担。
  */
 import type { WorkUnitRecord } from "../store/schema.js";
 import type { ChildDeliveryRecord } from "./evidence.js";
 import { resolveChildDependsOn } from "./hierarchy.js";
 import type { Split } from "./plan.js";
-
-// 注意：以下三张表与 src/readonly/render.ts 的同名表同源。
-// core 层不能 import readonly（反向依赖），故在此重定义。
-// 若 status 枚举变化，两处需同步。后续可提取到 core/status.ts。
-
-/** wave（ExecutionStatus）→ WaveAction。execute 完成后 status=executing，下一步是 test。 */
-const WAVE_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "test",
-  tested: "exec-review",
-  "exec-reviewed": "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** planning（PlanningStatus，epic/feature/slice 共用）→ PlanningAction。
- * planning 无 test/exec-review：execute 下沉子层后 status=executing，下一步直接是 retrospect。 */
-const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** 终态 status 集合（frontier 不输出这些节点）。 */
-const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
+import {
+  PLANNING_STATUS_TO_ACTION,
+  TERMINAL_STATUSES,
+  WAVE_STATUS_TO_ACTION,
+} from "./status.js";
 
 /** planning 层 scope 集合（epic/feature/slice 共用一套状态机）。 */
 const PLANNING_SCOPES = new Set(["epic", "feature", "slice"]);

@@ -162,10 +162,10 @@ export function buildSchemaGenFile(): Record<string, SchemaGenEntry> {
 }
 
 /**
- * 定位预计算 schema 产物路径（dist/guidance/schemas.gen.json）。
+ * 定位预计算 schema 产物路径（schemas.gen.json）。
  *
- * 本文件在 src/guidance/schema-injector.ts 或 dist/guidance/schema-injector.js 中运行，
- * 向上两层即项目根目录，再拼 dist/guidance/schemas.gen.json。
+ * schema-injector.{ts,js} 与 schemas.gen.json 同在 guidance/ 目录
+ * （src/guidance/ 开发态、dist/guidance/ 打包态），取同目录文件即可。
  *
  * 供四层 get*SchemaText 共享（提取 readSchemaText 后不再各写一份）。
  */

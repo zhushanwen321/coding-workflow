@@ -15,6 +15,11 @@
 import type { Clarification, FeatureSpec } from "../core/clarifications.js";
 import { CwError } from "../core/errors.js";
 import type { FrontierResult } from "../core/frontier.js";
+import {
+  PLANNING_STATUS_TO_ACTION,
+  TERMINAL_STATUSES,
+  WAVE_STATUS_TO_ACTION,
+} from "../core/status.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
 import { buildEpicCurrentActionGuidance } from "../handlers/epic/epic-internal.js";
 import { buildFeatureCurrentActionGuidance } from "../handlers/feature/feature-internal.js";
@@ -505,44 +510,8 @@ const TIMESTAMP_SLICE_LEN = 19;
 // renderHandoff — 单 unit 的交接摘要（供 agent 接手）
 // ═══════════════════════════════════════════════════════════════
 
-/** status → 接手 agent 下一步该执行的 action（同时是调 build{Scope}NextAction 的阶段 action）。
- *
- * 语义：status=created 意味着「create 完成，现在该跑 clarify」。终态(closed/aborted)为 undefined。
- *
- * 按 scope 拆两表：wave 和 planning 的状态机不同（planning 无 test/exec-review），
- * 且 executing 状态在两层的下一步不同（wave→test，planning→retrospect）。
- * 混用一表是原 bug 源头（曾把 wave 的 executing 错写成 execute、把两层的语义混在一起）。
- */
-
-/** wave（ExecutionStatus）→ WaveAction。execute 完成后 status=executing，下一步是 test（不是 execute）。 */
-const WAVE_STATUS_TO_ACTION: Readonly<Record<string, WaveAction | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "test",
-  tested: "exec-review",
-  "exec-reviewed": "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** planning（PlanningStatus，epic/feature/slice 共用）→ PlanningAction。
- * planning 无 test/exec-review：execute 下沉子层后 status=executing，下一步直接是 retrospect。 */
-const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, PlanningAction | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** 终态 status 集合（不输出「下一步」段）。 */
-const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
+// status → action 映射表（WAVE_STATUS_TO_ACTION / PLANNING_STATUS_TO_ACTION）+
+// 终态集合（TERMINAL_STATUSES）已提取到 core/status.ts，本文件从它 import 共享单一定义源。
 
 /** handoff 视图范围：self=仅焦点 unit；upstream=父链+焦点；full=父链+焦点+子树。 */
 export type HandoffScope = "self" | "upstream" | "full";
