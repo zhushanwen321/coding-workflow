@@ -140,7 +140,13 @@ create → clarify → plan → design-review → execute → test → exec-revi
 | `replan` | `cw replan --unitId <id> --abandonedIds '["T2"]' --note "原因"` | flags |
 | `abort` | `cw abort --unitId <id> [--reason "原因"]` | flags |
 
-`--input` 支持文件路径（如 `.cw/<slug>/plan.json`，相对项目根）、`-`（stdin）、或直接传 JSON 字符串。guidance 给的命令已自带 `.cw/<slug>/<action>.json` 路径，中间产物按此路径写入即可（`.cw/` 已在 .gitignore，不进 git）。
+`--input` 支持**文件路径**（如 `.cw/<slug>/plan.json`，相对项目根）或 `-`（stdin 读管道）。
+
+[MANDATORY] **不要直接传 JSON 字符串**——CLI 会把整段 JSON 当文件路径解析，报 `--input 文件不存在: .../{"clarifications":...}`。正确写法二选一：
+- 写文件：`echo '{...}' > .cw/<slug>/<action>.json && cw <action> --input .cw/<slug>/<action>.json`
+- 用 stdin：`echo '{...}' | cw <action> --input -`
+
+guidance 给的命令已自带 `.cw/<slug>/<action>.json` 路径，中间产物按此路径写入即可（`.cw/` 已在 .gitignore，不进 git）。
 
 ## guidance 的渐进式特性
 
@@ -178,6 +184,7 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 | `cw tree [--unitId <id>]` | 以某 unit 为根的父子树（缩进），看拆解结构用 |
 | `cw status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传） |
 | `cw handoff --unitId <id>` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
+| `cw frontier --root <id>` | 以某 unit 为根，列出所有非终态节点 + 各自可推进性（`blocked`/`blockedReason`/`dependsOn`）。**递归调度器（BFS）的主循环驱动**——每轮调取可推进节点。也供 agent / 人查看树的整体进度 |
 
 ### list 定位 topic（新 agent 接手的第一步）
 
@@ -231,7 +238,7 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 - `plan`（slice）：`{split,techChoices,interfaces,dataModels,errorSpecs,decisions?}`（与 wave 的 plan input **完全不同**，按 layer 区分；dispatch 按 unit.scope 路由到对应 handler）
 - `clarify`：`{clarifications:[...]}`
 - `design-review`：`{designReviewJudgment:{...}}`
-- `execute`（wave）：`{commitHash,...}`；`execute`（slice）：无 input（按 plan.split 自动创建 child wave，忽略 input）
+- `execute`（wave/slice/epic/feature）：**用 `--commitHash` flag，不用 `--input`**：`cw execute --unitId <id> --commitHash <sha>`（wave 记录 commit；planning 层按 plan.split 自动创建子层 unit，忽略 commitHash）。传 `--input` 报「execute 需要 --commitHash」。
 - `retrospect`（wave）：`{retrospectData:{...}}`；`retrospect`（slice）：`{retrospectData:{...}}`（但 retrospectData 是 PlanningRetrospectData，含 deliveryVerdict/childUnitIdsEvidence/splitFulfillment，比 wave 宽）
 cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.cw/<encodedCwd>/store.json` 的 workUnits[0].plan 确认实际存储结构。
 

@@ -23,10 +23,10 @@ import {
   buildPrefix,
   buildSubagentGuidance,
   deriveFailureCount,
-  injectSchema,
   PLANNING_ACTION_TO_NEXT,
   PLANNING_STAGE_TEMPLATES,
   PLANNING_STATUS_DISPLAY,
+  readSchemaText,
 } from "../../guidance/index.js";
 import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
@@ -38,66 +38,38 @@ import type { CwDeps, CwNextAction } from "../types.js";
 // guidance 填充静态基建（w1 新增，w2 接入 buildSliceNextAction 主体）
 // ═══════════════════════════════════════════════════════════════
 //
-// 以下 5 个 export 是 w1 的纯新增基建：ACTION_SCHEMA / getSchemaText / STATUS_DISPLAY /
-// ACTION_TO_NEXT / FLAT_INPUT_HINT。w1 不改 buildSliceNextAction/buildSliceFailureNextAction
-// 主体（w2 任务），这些常量声明为 exported const 避免 eslint unused 报错，w2 接入时使用。
-// 模式照 wave internal.ts（handlers/internal.ts）。
+// ACTION_SCHEMA（action→core schema 来源）+ STATUS_DISPLAY + ACTION_TO_NEXT + FLAT_INPUT_HINT
+// 是 slice handler 编排所需的静态映射表。ACTION_SCHEMA（SLICE_ACTION_SCHEMA）与 wave 同源，
+// 定义集中在 guidance/action-schemas.ts（四层一处管理 + 供 buildSchemaGenFile 消费，
+// 避免 schema-injector 反向 import handlers 造成 ESM 循环依赖）。
+
+/** re-export：tests 与部分调用方按 layer 从本文件取 schema 表（保持原 import 路径稳定）。 */
+export { SLICE_ACTION_SCHEMA } from "../../guidance/action-schemas.js";
+import { SLICE_ACTION_SCHEMA } from "../../guidance/action-schemas.js";
 
 /**
- * action → 该 action 的 input schema 来源（core 源文件 + interface 名）。
- *
- * IF5 映射（slice 层）：clarify→Clarification@clarifications.ts、plan→SliceTechChoice@plan.ts。
- * create/execute/replan/abort 无结构化 input（execute 按 split 下沉，不接收 input）。
- */
-interface SchemaSource {
-  sourceFilePath: string;
-  interfaceName: string;
-}
-
-export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
-  create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanSliceInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
-  execute: undefined, // 下沉创建 child wave，不接收 input
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
-  replan: undefined,
-  abort: undefined,
-};
-
-/**
- * schema 文本缓存（按 action，模块级，整个进程只读一次源文件）。
+ * schema 文本缓存（key 用 `${scope}:${action}`，与 schemas.gen.json 的 key 格式一致）。
  *
  * 照 wave internal.ts 模式：injectSchema 会 createSourceFile 解析 core TS（有成本），
- * 且 schema 是静态的，缓存避免每次 handler 调用都重读重解析。
+ * 且 schema 是静态的，缓存避免每次 handler 调用都重读重解析。实际读取逻辑下沉到
+ * guidance/readSchemaText（四层共享），缓存 Map 各层自持避免跨 scope 串扰。
  */
 const sliceSchemaCache = new Map<string, string>();
 
 /**
- * 取某 action 的 input schema 文本（带缓存 + 降级）。
+ * 取某 action 的 input schema 文本（缓存优先：dist/guidance/schemas.gen.json → injectSchema → 兜底）。
  *
- * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错）。
- * - 同一 action 第二次调用命中缓存。
+ * 优先读预计算产物 `slice:${action}` 条目（npm pack 后 src/core 不存在，靠此命中）；
+ * 未命中降级到 injectSchema 实时解析（开发时无 build 产物）。同一 action 第二次调用命中缓存。
  */
 export function getSliceSchemaText(action: string): string {
-  const cached = sliceSchemaCache.get(action);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const source = SLICE_ACTION_SCHEMA[action];
-  let text: string;
-  if (source === undefined) {
-    text = SLICE_FLAT_INPUT_HINT[action] ?? "（无结构化 input schema）";
-  } else {
-    try {
-      text = injectSchema(source.sourceFilePath, source.interfaceName);
-    } catch {
-      text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
-    }
-  }
-  sliceSchemaCache.set(action, text);
-  return text;
+  return readSchemaText({
+    scope: "slice",
+    action,
+    source: SLICE_ACTION_SCHEMA[action],
+    flatHint: SLICE_FLAT_INPUT_HINT[action],
+    cache: sliceSchemaCache,
+  });
 }
 
 /**
@@ -211,6 +183,12 @@ export function buildSliceNextAction(
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
   const schemaText = getSliceSchemaText(action);
+  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
+  // 这里追加 slice 专属 6 字段名，提示 agent 必须填这些 key（机器 gate layer-specific-non-empty 会验）。
+  const finalSchemaText =
+    action === "design-review"
+      ? `${schemaText}\nlayerSpecific 必须包含以下 key: techChoiceRationale, interfaceContractNote, dataModelSoundness, errorCoverage, testabilityNote, crossWaveContractNote`
+      : schemaText;
 
   const nextAction = opts?.nextActionOverride ?? SLICE_ACTION_TO_NEXT_PUBLIC[action];
   const command = buildSliceCommand(action, unit.id, nextAction, unit.slug);
@@ -220,7 +198,7 @@ export function buildSliceNextAction(
     nextAction: action,
     goal,
     command,
-    schemaText,
+    schemaText: finalSchemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("planning", action),
   });
@@ -257,6 +235,68 @@ function buildSliceCommand(
     SLICE_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 为 handoff 路径构建「当前步」命令（command 用当前 action，不是 nextAction）。
+ *
+ * 与 buildSliceCommand 的区别：后者用 nextAction 组装命令（导航下一步）；
+ * 本函数用 action 自身组装命令（重建「现在该跑什么」认知）。handoff 的接手 agent
+ * 看 guidance 应得到与外层「下一步执行」一致的命令，而非「跑完后再跑的下一步」。
+ */
+function buildSliceCurrentCommand(
+  action: PlanningAction,
+  unitId: string,
+  slug: string,
+): string {
+  const hasInput = SLICE_ACTION_SCHEMA[action] !== undefined ||
+    SLICE_FLAT_INPUT_HINT[action] !== undefined;
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";
+  return buildCommand(action, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 构建 slice handler handoff 路径的「当前步」guidance（command 用当前 action）。
+ *
+ * 与 buildSliceNextAction 的区别：后者返回「跑完 action 后的下一步导航」
+ * （command 用 nextAction，供 handler 填 ActionResult.nextAction）；本函数返回
+ * 「现在该跑的 guidance」（command 用当前 action，供 handoff 重建当前步认知）。
+ * 其余片段（prefix/goal/template/schemaText）复用与 buildSliceNextAction 完全一致的查表逻辑，
+ * 因为这些片段本就基于「当前 action」，与 nextAction 无关。
+ *
+ * @param unit 待交接的 Slice
+ * @param action 接手 agent 现在该跑的 PlanningAction（handoff 视角的当前步）
+ */
+export function buildSliceCurrentActionGuidance(unit: Slice, action: PlanningAction): string {
+  const statusDisplay = SLICE_STATUS_DISPLAY[unit.status] ?? unit.status;
+  const prefix = buildPrefix({
+    layer: "slice",
+    unitId: unit.id,
+    status: statusDisplay,
+    parentUnitId: unit.parentUnitId,
+  });
+
+  const template = PLANNING_STAGE_TEMPLATES[action];
+  const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
+  const baseSchemaText = getSliceSchemaText(action);
+  // design-review 特判：与 buildSliceNextAction 一致（layerSpecific 必含 slice 专属 6 key）。
+  const schemaText =
+    action === "design-review"
+      ? `${baseSchemaText}\nlayerSpecific 必须包含以下 key: techChoiceRationale, interfaceContractNote, dataModelSoundness, errorCoverage, testabilityNote, crossWaveContractNote`
+      : baseSchemaText;
+
+  const command = buildSliceCurrentCommand(action, unit.id, unit.slug);
+
+  return buildNormalGuidance({
+    prefix,
+    nextAction: action,
+    goal,
+    command,
+    schemaText,
+    templateText,
+    commonGuidance: buildSubagentGuidance("planning", action),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

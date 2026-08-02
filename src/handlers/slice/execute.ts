@@ -23,10 +23,11 @@
  * 不变量：execute 不跑 gate（split DAG 无环在 design-review 已验）。child wave 创建后立即 save。
  */
 import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/evidence.js";
+import { type ChildDependency,resolveChildDependsOn } from "../../core/hierarchy.js";
 import type { Slice } from "../../core/workunit.js";
 import { createWave } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
-import type { ActionResult, CwDeps, CwNextAction } from "../types.js";
+import type { ActionResult, ChildInfo, CwDeps, CwNextAction } from "../types.js";
 import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -68,6 +69,19 @@ export function handleExecuteSlice(
     unit.evidence.childDelivery.push(record);
   }
 
+  // ── 构造 ActionResult.children（供递归调度器消费）──
+  // 复用 hierarchy.resolveChildDependsOn（同构：slugToChildId Map + split.dependsOn 映射）。
+  // plan 决策 D4 原定「execute 内联构建，不经 resolveChildDependsOn」，但实现期发现
+  // resolveChildDependsOn 的逻辑与内联构建同构（都用 slug→child.id 映射），复用更 DRY，
+  // 故采纳——这是对 D4 的实现期优化（功能等价，消除两套同义映射）。
+  // filter 掉 childUnitId undefined 项（slug 失配，该 split 无对应子 unit，不应下沉）。
+  const children: ChildInfo[] = resolveChildDependsOn(
+    unit.plan.split,
+    unit.evidence.childDelivery,
+  )
+    .filter((d): d is ChildDependency & { childUnitId: string } => d.childUnitId !== undefined)
+    .map((d) => ({ unitId: d.childUnitId, dependsOn: d.dependsOn }));
+
   // generatedAt 首次生成时间（progressive 场景下 execute 可能重跑，已填则保留）
   if (!unit.evidence.generatedAt) {
     unit.evidence.generatedAt = at;
@@ -92,6 +106,7 @@ export function handleExecuteSlice(
     unitId: unit.id,
     status: unit.status,
     ok: true,
+    children,
     nextAction: buildSliceNextAction(unit, "execute", { crossLayer }),
   };
 }

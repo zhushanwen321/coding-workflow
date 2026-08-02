@@ -35,8 +35,8 @@ export { CwEngineError,dispatch,getUnitScope } from "./dispatch.js";
 export { CwStore } from "./store/cw-store.js";
 export type { CwJsonFile,WorkUnitRecord } from "./store/schema.js";
 
-// readonly 查询渲染（tree/status/list 只读命令用）
-export { renderHandoff, renderList, renderStatus, renderTree } from "./readonly/index.js";
+// readonly 查询渲染（tree/status/list/frontier 只读命令用）
+export { renderFrontier, renderHandoff, renderList, renderStatus, renderTree } from "./readonly/index.js";
 
 // rules（外部测试 / 组合 gate 时需要）
 // wave + slice（PlanningUnit）两层状态机对称导出

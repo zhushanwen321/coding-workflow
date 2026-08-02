@@ -1,7 +1,13 @@
 /**
- * v1 状态 + 变更记录（领域模型，零依赖）。
+ * v1 状态 + 变更记录 + status→action 映射（领域模型，零依赖）。
  *
  * 来源：v5 model §3.1/§3.2（状态枚举）、§4.4（StatusChange）、§5.6.1（AbandonedRef）。
+ *
+ * 映射表（WAVE_STATUS_TO_ACTION / PLANNING_STATUS_TO_ACTION / TERMINAL_STATUSES）是
+ * frontier.ts（core 层）与 render.ts（readonly 层）的共享单一定义源——此前两处各维护
+ * 一份同源表靠手维护，无交叉校验，status 枚举新增时易漏改一处。core 层不能 import
+ * rules/state-machine.ts 的 WaveAction/PlanningAction（会破坏 core→rules 依赖方向），
+ * 故映射值用 string；readonly 层消费时按需 as 收窄到具体 action 类型。
  */
 // ═══════════════════════════════════════════════════════════════
 // 状态枚举
@@ -73,3 +79,46 @@ export interface AbandonedRef {
   /** 何时被废弃影响（ISO 8601 时间戳）。 */
   abandonedAt: string;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// status → action 映射表（frontier + render 共享单一定义源）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * wave（ExecutionStatus）→ WaveAction。
+ *
+ * execute 完成后 status=executing，下一步是 test（不是 execute）。
+ * 终态（closed/aborted）为 undefined。
+ */
+export const WAVE_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>> = {
+  created: "clarify",
+  clarifying: "clarify",
+  planning: "plan",
+  "design-reviewed": "execute",
+  executing: "test",
+  tested: "exec-review",
+  "exec-reviewed": "retrospect",
+  retrospected: "closeout",
+  closed: undefined,
+  aborted: undefined,
+};
+
+/**
+ * planning（PlanningStatus，epic/feature/slice 共用）→ PlanningAction。
+ *
+ * planning 无 test/exec-review：execute 下沉子层后 status=executing，
+ * 下一步直接是 retrospect。终态（closed/aborted）为 undefined。
+ */
+export const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>> = {
+  created: "clarify",
+  clarifying: "clarify",
+  planning: "plan",
+  "design-reviewed": "execute",
+  executing: "retrospect",
+  retrospected: "closeout",
+  closed: undefined,
+  aborted: undefined,
+};
+
+/** 终态 status 集合（frontier 不输出这些节点；render 不输出「下一步」段）。 */
+export const TERMINAL_STATUSES = new Set(["closed", "aborted"]);

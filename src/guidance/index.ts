@@ -29,7 +29,7 @@ export type {
   InterfaceDescriptor,
   MemberDescriptor,
 } from "./schema-injector.js";
-export { injectSchema } from "./schema-injector.js";
+export { injectSchema, readSchemaText } from "./schema-injector.js";
 
 // wave 静态方法论模板
 export type { WaveStageTemplate } from "./templates/wave.js";

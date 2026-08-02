@@ -78,14 +78,14 @@ describe("buildSubagentGuidance: wave 层", () => {
     });
   });
 
-  // 禁止委派：retrospect（过程依赖）
-  describe("禁止委派档（forbidden）", () => {
-    it("retrospect → 不建议委派 + 过程依赖理由 + 不含嵌套决策树", () => {
+  // 按需委派：retrospect（C5：forbidden→optional，递归模式下可由独立 agent 复盘）
+  describe("按需委派档（optional）", () => {
+    it("retrospect → 按需委派 + 综合方向 + 追加嵌套决策树", () => {
       const g = buildSubagentGuidance("wave", "retrospect");
-      expect(g).toContain("【不建议委派】");
-      expect(g).toContain("执行轨迹");
-      // 禁止档不追加嵌套决策树（连 handoff 也救不了过程依赖）
-      expect(g).not.toContain("支持嵌套");
+      expect(g).toContain("【按需委派】");
+      expect(g).toContain("综合");
+      // optional 档末尾追加嵌套决策树（与 mandatory/optional 一致，区别于 forbidden）
+      expect(g).toContain("支持嵌套");
     });
   });
 });
@@ -129,12 +129,15 @@ describe("buildSubagentGuidance: planning 层", () => {
       expect(g).toContain("编排决策");
       expect(g).not.toContain("支持嵌套");
     });
+  });
 
-    it("retrospect → 不建议委派 + 过程依赖理由", () => {
+  // C5：planning retrospect 从 forbidden 改为 optional（递归模式下可委派）
+  describe("按需委派档（optional）", () => {
+    it("retrospect → 按需委派 + 综合方向 + 追加嵌套决策树", () => {
       const g = buildSubagentGuidance("planning", "retrospect");
-      expect(g).toContain("【不建议委派】");
-      expect(g).toContain("执行轨迹");
-      expect(g).not.toContain("支持嵌套");
+      expect(g).toContain("【按需委派】");
+      expect(g).toContain("综合");
+      expect(g).toContain("支持嵌套");
     });
   });
 });

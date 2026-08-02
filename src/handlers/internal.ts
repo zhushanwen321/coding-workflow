@@ -13,10 +13,6 @@
  * 不变量：transitionStatus / saveUnit / appendFailRecord 是纯编排（IO 仅经 deps）；guidance 填充
  *      读 core 源文件生成 schema（构建期/运行期均可，内部按 action 缓存，每 action 仅读一次）。
  */
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import type { AbandonedRef, ExecutionStatus, StatusChange } from "../core/status.js";
 import type { ExecutionUnit, WorkUnitBase } from "../core/workunit.js";
 import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
@@ -27,7 +23,7 @@ import {
   buildPrefix,
   buildSubagentGuidance,
   deriveFailureCount,
-  injectSchema,
+  readSchemaText,
   WAVE_STAGE_TEMPLATES,
 } from "../guidance/index.js";
 import type { WaveAction } from "../rules/state-machine.js";
@@ -154,74 +150,25 @@ const ACTION_TO_NEXT: Readonly<Record<string, string | undefined>> = {
 };
 
 /**
- * schema 文本缓存（按 action，模块级，整个进程只读一次源文件）。
+ * schema 文本缓存（key 用 `${scope}:${action}`，与 schemas.gen.json 的 key 格式一致）。
  *
- * 优先读取 build 阶段预生成的 dist/guidance/schemas.gen.json；未命中时降级到
- * injectSchema 实时解析 src/core/*.ts（开发时无 build 产物仍可工作）。
+ * 实际读取逻辑下沉到 guidance/readSchemaText（四层共享），缓存 Map 各层自持避免跨 scope 串扰。
  */
 const schemaCache = new Map<string, string>();
 
-/** 从预计算 JSON 产物读取某 action 的 schema 文本。 */
-interface SchemaGenFile {
-  [action: string]: { schemaText: string } | undefined;
-}
-
 /**
- * 定位预计算 schema 产物路径。
+ * 取某 action 的 input schema 文本（缓存优先：dist/guidance/schemas.gen.json → injectSchema → 兜底）。
  *
- * 本文件在 src/handlers/internal.ts 或 dist/handlers/internal.js 中运行，
- * 向上三层即项目根目录，再拼 dist/guidance/schemas.gen.json。
- */
-function getSchemaGenFilePath(): string {
-  const currentFile = fileURLToPath(import.meta.url);
-  const projectRoot = dirname(dirname(dirname(currentFile)));
-  return resolve(projectRoot, "dist", "guidance", "schemas.gen.json");
-}
-
-/**
- * 取某 action 的 input schema 文本（带缓存 + 优先读预计算产物 + 降级）。
- *
- * - 命中 dist/guidance/schemas.gen.json 中对应 action → 直接返回产物中的 schemaText。
- * - 产物缺失或损坏 → 降级到 injectSchema 实时解析 src/core/*.ts。
- * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错，guidance 不应因 schema 生成失败而中断；
- *   schema 是给 agent 看的辅助信息，缺失只降级体验）。
- * - 同一 action 第二次调用命中缓存。
+ * 优先读预计算产物 `wave:${action}` 条目；未命中降级到 injectSchema 实时解析。同一 action 第二次调用命中缓存。
  */
 function getSchemaText(action: string): string {
-  const cached = schemaCache.get(action);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const source = ACTION_SCHEMA[action];
-  let text: string;
-  if (source === undefined) {
-    // 无结构化 schema 的 action（create / execute / replan / abort）：用扁平参数提示。
-    text = FLAT_INPUT_HINT[action] ?? "（无结构化 input schema）";
-  } else {
-    const genPath = getSchemaGenFilePath();
-    if (existsSync(genPath)) {
-      try {
-        const genFile = JSON.parse(readFileSync(genPath, "utf-8")) as SchemaGenFile;
-        const entry = genFile[action];
-        if (entry?.schemaText !== undefined) {
-          text = entry.schemaText;
-        } else {
-          text = injectSchema(source.sourceFilePath, source.interfaceName);
-        }
-      } catch {
-        text = injectSchema(source.sourceFilePath, source.interfaceName);
-      }
-    } else {
-      try {
-        text = injectSchema(source.sourceFilePath, source.interfaceName);
-      } catch {
-        // 降级：源文件缺失或 interface 不存在时给出可读提示，不阻断 guidance。
-        text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
-      }
-    }
-  }
-  schemaCache.set(action, text);
-  return text;
+  return readSchemaText({
+    scope: "wave",
+    action,
+    source: ACTION_SCHEMA[action],
+    flatHint: FLAT_INPUT_HINT[action],
+    cache: schemaCache,
+  });
 }
 
 /**
@@ -271,7 +218,13 @@ export function buildNextAction(
   const template = WAVE_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
-  const schemaText = opts?.schemaTextOverride ?? getSchemaText(action);
+  const baseSchemaText = opts?.schemaTextOverride ?? getSchemaText(action);
+  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
+  // wave 的 4 个专属字段全 optional（WaveDesignReviewLayerSpecific），用「建议包含」措辞。
+  const schemaText =
+    action === "design-review"
+      ? `${baseSchemaText}\nlayerSpecific 建议包含以下 key: testCaseCoverageNote, boundaryConditionNote, mockStrategyNote, tddRedReadinessNote`
+      : baseSchemaText;
 
   const nextAction = opts?.nextActionOverride ?? ACTION_TO_NEXT[action];
   const command = buildWaveNextCommand(action, unit.id, nextAction, unit.slug);
@@ -408,6 +361,67 @@ function buildWaveNextCommand(
     FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 为 handoff 路径构建「当前步」命令（command 用当前 action，不是 nextAction）。
+ *
+ * 与 buildWaveNextCommand 的区别：后者用 nextAction 组装命令（导航下一步）；
+ * 本函数用 action 自身组装命令（重建「现在该跑什么」认知）。handoff 的接手 agent
+ * 看 guidance 应得到与外层「下一步执行」一致的命令，而非「跑完后再跑的下一步」。
+ */
+function buildWaveCurrentCommand(
+  action: WaveAction,
+  unitId: string,
+  slug: string,
+): string {
+  const hasInput = ACTION_SCHEMA[action] !== undefined ||
+    FLAT_INPUT_HINT[action] !== undefined;
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";
+  return buildCommand(action, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 构建 wave handler handoff 路径的「当前步」guidance（command 用当前 action）。
+ *
+ * 与 buildNextAction 的区别：后者返回「跑完 action 后的下一步导航」（command 用 nextAction，
+ * 供 handler 填 ActionResult.nextAction）；本函数返回「现在该跑的 guidance」（command 用当前 action，
+ * 供 handoff 重建当前步认知）。其余片段（prefix/goal/template/schemaText）复用与 buildNextAction
+ * 完全一致的查表逻辑。
+ *
+ * @param unit 待交接的 ExecutionUnit
+ * @param action 接手 agent 现在该跑的 WaveAction（handoff 视角的当前步）
+ */
+export function buildWaveCurrentActionGuidance(unit: ExecutionUnit, action: WaveAction): string {
+  const statusDisplay = STATUS_DISPLAY[unit.status] ?? unit.status;
+  const prefix = buildPrefix({
+    layer: "wave",
+    unitId: unit.id,
+    status: statusDisplay,
+    parentUnitId: unit.parentUnitId,
+  });
+
+  const template = WAVE_STAGE_TEMPLATES[action];
+  const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
+  const baseSchemaText = getSchemaText(action);
+  // design-review 特判：与 buildNextAction 一致（wave 4 key 全 optional，「建议包含」措辞）。
+  const schemaText =
+    action === "design-review"
+      ? `${baseSchemaText}\nlayerSpecific 建议包含以下 key: testCaseCoverageNote, boundaryConditionNote, mockStrategyNote, tddRedReadinessNote`
+      : baseSchemaText;
+
+  const command = buildWaveCurrentCommand(action, unit.id, unit.slug);
+
+  return buildNormalGuidance({
+    prefix,
+    nextAction: action,
+    goal,
+    command,
+    schemaText,
+    templateText,
+    commonGuidance: buildSubagentGuidance("wave", action),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

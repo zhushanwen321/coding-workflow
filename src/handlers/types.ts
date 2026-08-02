@@ -106,8 +106,19 @@ export interface ActionResult {
   freezeViolations?: FreezeViolation[];
   /** 同一 action 连续 fail 次数（从 statusHistory 派生，跨 session 不重置）。 */
   failureCount?: number;
+  /** execute 后新建的子层 unit 信息（仅 epic/feature/slice 三层 planning-execute 返回）。
+   * 含 unitId + dependsOn，供递归调度器（如 BFS workflow）拓扑排序消费。 */
+  children?: ChildInfo[];
   /** 下一步导航（含 guidance + 结构化字段）。 */
   nextAction?: CwNextAction;
+}
+
+/** ActionResult.children 的元素类型——execute 返回的子层信息。 */
+export interface ChildInfo {
+  /** 子层 unit 的 id（如 "wave:xxx::w1"）。 */
+  unitId: string;
+  /** 该子层依赖的兄弟 unit id 列表（从 plan.split[].dependsOn 的 slug 经 childDelivery 映射转换）。 */
+  dependsOn: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════

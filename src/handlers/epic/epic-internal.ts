@@ -26,10 +26,10 @@ import {
   buildPrefix,
   buildSubagentGuidance,
   deriveFailureCount,
-  injectSchema,
   PLANNING_ACTION_TO_NEXT,
   PLANNING_STAGE_TEMPLATES,
   PLANNING_STATUS_DISPLAY,
+  readSchemaText,
 } from "../../guidance/index.js";
 import {
   allWavesClosed,
@@ -51,61 +51,31 @@ import type { CwDeps, CwNextAction } from "../types.js";
 // guidance 填充静态基建（w1 新增，w2 接入 buildEpicNextAction 主体）
 // ═══════════════════════════════════════════════════════════════
 //
-// 以下 5 个 export 是 w1 的纯新增基建：ACTION_SCHEMA / getSchemaText / STATUS_DISPLAY /
-// ACTION_TO_NEXT / FLAT_INPUT_HINT。w1 不改 buildEpicNextAction/buildEpicFailureNextAction
-// 主体（w2 任务），这些常量声明为 exported const 避免 eslint unused 报错，w2 接入时使用。
-// 模式照 wave internal.ts。
+// ACTION_SCHEMA（EPIC_ACTION_SCHEMA）与 wave 同源，定义集中在 guidance/action-schemas.ts
+// （四层一处管理 + 供 buildSchemaGenFile 消费，避免 schema-injector 反向 import handlers 造成
+// ESM 循环依赖）。
 
-/**
- * action → 该 action 的 input schema 来源（core 源文件 + interface 名）。
- *
- * IF5 映射（epic 层）：clarify→Clarification@clarifications.ts（裸数组，与 slice 同）、
- * plan→Split@plan.ts（与 feature 同，Plan 基类只拆下层）。
- */
-interface SchemaSource {
-  sourceFilePath: string;
-  interfaceName: string;
-}
+/** re-export：tests 与部分调用方按 layer 从本文件取 schema 表（保持原 import 路径稳定）。 */
+export { EPIC_ACTION_SCHEMA } from "../../guidance/action-schemas.js";
+import { EPIC_ACTION_SCHEMA } from "../../guidance/action-schemas.js";
 
-export const EPIC_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
-  create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanEpicInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
-  execute: undefined, // 下沉创建 child feature，不接收 input
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
-  replan: undefined,
-  abort: undefined,
-};
-
-/** schema 文本缓存（按 action，模块级）。照 wave internal.ts 模式。 */
+/** schema 文本缓存（key 用 `${scope}:${action}`，与 schemas.gen.json 的 key 格式一致）。照 wave internal.ts 模式。 */
 const epicSchemaCache = new Map<string, string>();
 
 /**
- * 取某 action 的 input schema 文本（带缓存 + 降级）。
+ * 取某 action 的 input schema 文本（缓存优先：dist/guidance/schemas.gen.json → injectSchema → 兜底）。
  *
- * - 源文件缺失 / interface 不存在 → 返回降级提示文本（不抛错）。
- * - 同一 action 第二次调用命中缓存。
+ * 优先读预计算产物 `epic:${action}` 条目（npm pack 后 src/core 不存在，靠此命中）；
+ * 未命中降级到 injectSchema 实时解析（开发时无 build 产物）。同一 action 第二次调用命中缓存。
  */
 export function getEpicSchemaText(action: string): string {
-  const cached = epicSchemaCache.get(action);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const source = EPIC_ACTION_SCHEMA[action];
-  let text: string;
-  if (source === undefined) {
-    text = EPIC_FLAT_INPUT_HINT[action] ?? "（无结构化 input schema）";
-  } else {
-    try {
-      text = injectSchema(source.sourceFilePath, source.interfaceName);
-    } catch {
-      text = `（无法从 ${source.sourceFilePath} 提取 ${source.interfaceName} schema，请检查源文件）`;
-    }
-  }
-  epicSchemaCache.set(action, text);
-  return text;
+  return readSchemaText({
+    scope: "epic",
+    action,
+    source: EPIC_ACTION_SCHEMA[action],
+    flatHint: EPIC_FLAT_INPUT_HINT[action],
+    cache: epicSchemaCache,
+  });
 }
 
 /**
@@ -215,6 +185,12 @@ export function buildEpicNextAction(
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
   const schemaText = getEpicSchemaText(action);
+  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
+  // 这里追加 epic 专属 5 字段名，提示 agent 必须填这些 key（机器 gate layer-specific-non-empty 会验）。
+  const finalSchemaText =
+    action === "design-review"
+      ? `${schemaText}\nlayerSpecific 必须包含以下 key: strategicAlignment, featureSplitRationale, scopeBoundary, priorityRationale, resourceEstimate`
+      : schemaText;
 
   const nextAction = opts?.nextActionOverride ?? EPIC_ACTION_TO_NEXT_PUBLIC[action];
   const command = buildEpicCommand(action, unit.id, nextAction, unit.slug);
@@ -224,7 +200,7 @@ export function buildEpicNextAction(
     nextAction: action,
     goal,
     command,
-    schemaText,
+    schemaText: finalSchemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("planning", action),
   });
@@ -259,6 +235,67 @@ function buildEpicCommand(
     EPIC_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
   return buildCommand(nextAction, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 为 handoff 路径构建「当前步」命令（command 用当前 action，不是 nextAction）。
+ *
+ * 与 buildEpicCommand 的区别：后者用 nextAction 组装命令（导航下一步）；
+ * 本函数用 action 自身组装命令（重建「现在该跑什么」认知）。handoff 的接手 agent
+ * 看 guidance 应得到与外层「下一步执行」一致的命令，而非「跑完后再跑的下一步」。
+ */
+function buildEpicCurrentCommand(
+  action: PlanningAction,
+  unitId: string,
+  slug: string,
+): string {
+  const hasInput = EPIC_ACTION_SCHEMA[action] !== undefined ||
+    EPIC_FLAT_INPUT_HINT[action] !== undefined;
+  const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";
+  return buildCommand(action, `--unitId ${unitId}`, inputPart);
+}
+
+/**
+ * 构建 epic handler handoff 路径的「当前步」guidance（command 用当前 action）。
+ *
+ * 与 buildEpicNextAction 的区别：后者返回「跑完 action 后的下一步导航」
+ * （command 用 nextAction，供 handler 填 ActionResult.nextAction）；本函数返回
+ * 「现在该跑的 guidance」（command 用当前 action，供 handoff 重建当前步认知）。
+ * 其余片段（prefix/goal/template/schemaText）复用与 buildEpicNextAction 完全一致的查表逻辑。
+ *
+ * @param unit 待交接的 Epic
+ * @param action 接手 agent 现在该跑的 PlanningAction（handoff 视角的当前步）
+ */
+export function buildEpicCurrentActionGuidance(unit: Epic, action: PlanningAction): string {
+  const statusDisplay = EPIC_STATUS_DISPLAY[unit.status] ?? unit.status;
+  const prefix = buildPrefix({
+    layer: "epic",
+    unitId: unit.id,
+    status: statusDisplay,
+    parentUnitId: unit.parentUnitId,
+  });
+
+  const template = PLANNING_STAGE_TEMPLATES[action];
+  const templateText = template?.constraint ?? "";
+  const goal = template?.goal ?? `（${action} 阶段）`;
+  const baseSchemaText = getEpicSchemaText(action);
+  // design-review 特判：与 buildEpicNextAction 一致（layerSpecific 必含 epic 专属 5 key）。
+  const schemaText =
+    action === "design-review"
+      ? `${baseSchemaText}\nlayerSpecific 必须包含以下 key: strategicAlignment, featureSplitRationale, scopeBoundary, priorityRationale, resourceEstimate`
+      : baseSchemaText;
+
+  const command = buildEpicCurrentCommand(action, unit.id, unit.slug);
+
+  return buildNormalGuidance({
+    prefix,
+    nextAction: action,
+    goal,
+    command,
+    schemaText,
+    templateText,
+    commonGuidance: buildSubagentGuidance("planning", action),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

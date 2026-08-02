@@ -12,13 +12,19 @@
  *     objective / status 字段需类型收窄为 string（store 不裁剪 core 字段，
  *     但渲染层只关心可读字符串，未知字段降级为空串）。
  */
-import type { Clarification } from "../core/clarifications.js";
+import type { Clarification, FeatureSpec } from "../core/clarifications.js";
 import { CwError } from "../core/errors.js";
+import type { FrontierResult } from "../core/frontier.js";
+import {
+  PLANNING_STATUS_TO_ACTION,
+  TERMINAL_STATUSES,
+  WAVE_STATUS_TO_ACTION,
+} from "../core/status.js";
 import type { Epic,ExecutionUnit, Feature, Slice } from "../core/workunit.js";
-import { buildEpicNextAction } from "../handlers/epic/epic-internal.js";
-import { buildFeatureNextAction } from "../handlers/feature/feature-internal.js";
-import { buildNextAction } from "../handlers/internal.js";
-import { buildSliceNextAction } from "../handlers/slice/slice-internal.js";
+import { buildEpicCurrentActionGuidance } from "../handlers/epic/epic-internal.js";
+import { buildFeatureCurrentActionGuidance } from "../handlers/feature/feature-internal.js";
+import { buildWaveCurrentActionGuidance } from "../handlers/internal.js";
+import { buildSliceCurrentActionGuidance } from "../handlers/slice/slice-internal.js";
 import type { PlanningAction,WaveAction } from "../rules/state-machine.js";
 import type { CwStore } from "../store/cw-store.js";
 import type { RepoMeta, WorkUnitRecord } from "../store/schema.js";
@@ -103,6 +109,16 @@ function renderTreeNode(
  */
 export function renderStatus(unit: WorkUnitRecord): string {
   return JSON.stringify(unit, null, JSON_INDENT) + "\n";
+}
+
+/**
+ * renderFrontier — frontier 命令的 JSON 格式化输出（纯渲染，计算逻辑在 core/frontier.ts）。
+ *
+ * 与 renderStatus 同模式：接收已计算好的 FrontierResult，输出 JSON。
+ * 计算逻辑（两遍扫描、blocked 判定）全在 core/frontier.ts，本函数只做序列化。
+ */
+export function renderFrontier(result: FrontierResult): string {
+  return JSON.stringify(result, null, JSON_INDENT) + "\n";
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -494,44 +510,8 @@ const TIMESTAMP_SLICE_LEN = 19;
 // renderHandoff — 单 unit 的交接摘要（供 agent 接手）
 // ═══════════════════════════════════════════════════════════════
 
-/** status → 接手 agent 下一步该执行的 action（同时是调 build{Scope}NextAction 的阶段 action）。
- *
- * 语义：status=created 意味着「create 完成，现在该跑 clarify」。终态(closed/aborted)为 undefined。
- *
- * 按 scope 拆两表：wave 和 planning 的状态机不同（planning 无 test/exec-review），
- * 且 executing 状态在两层的下一步不同（wave→test，planning→retrospect）。
- * 混用一表是原 bug 源头（曾把 wave 的 executing 错写成 execute、把两层的语义混在一起）。
- */
-
-/** wave（ExecutionStatus）→ WaveAction。execute 完成后 status=executing，下一步是 test（不是 execute）。 */
-const WAVE_STATUS_TO_ACTION: Readonly<Record<string, WaveAction | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "test",
-  tested: "exec-review",
-  "exec-reviewed": "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** planning（PlanningStatus，epic/feature/slice 共用）→ PlanningAction。
- * planning 无 test/exec-review：execute 下沉子层后 status=executing，下一步直接是 retrospect。 */
-const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, PlanningAction | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
-  "design-reviewed": "execute",
-  executing: "retrospect",
-  retrospected: "closeout",
-  closed: undefined,
-  aborted: undefined,
-};
-
-/** 终态 status 集合（不输出「下一步」段）。 */
-const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
+// status → action 映射表（WAVE_STATUS_TO_ACTION / PLANNING_STATUS_TO_ACTION）+
+// 终态集合（TERMINAL_STATUSES）已提取到 core/status.ts，本文件从它 import 共享单一定义源。
 
 /** handoff 视图范围：self=仅焦点 unit；upstream=父链+焦点；full=父链+焦点+子树。 */
 export type HandoffScope = "self" | "upstream" | "full";
@@ -847,6 +827,27 @@ function renderDecisionsSection(unit: WorkUnitRecord): string[] {
     }
   }
 
+  // feature 层专属：FR/AC（model §5.7）。spec 在 FeatureClarification 容器内，仅 feature 产生。
+  const spec = readFeatureSpec(unit);
+  if (spec) {
+    const frs = asArray<Record<string, unknown>>(spec.functionalRequirements);
+    const acs = asArray<Record<string, unknown>>(spec.acceptanceCriteria);
+    if (frs.length > 0 || acs.length > 0) {
+      lines.push("### 功能需求与验收条件");
+      for (const fr of frs) {
+        const id = asString(fr.id) ?? "?";
+        const title = asString(fr.title) ?? "";
+        const acRefs = asArray<string>(fr.ac).map((a) => String(a));
+        lines.push(`- FR ${id}: ${title}${acRefs.length > 0 ? ` (验收: ${acRefs.join(", ")})` : ""}`);
+      }
+      for (const ac of acs) {
+        const id = asString(ac.id) ?? "?";
+        const condition = asString(ac.condition) ?? "";
+        lines.push(`- AC ${id}: ${condition}`);
+      }
+    }
+  }
+
   // design-review 的 alternatives/tradeoffs/risks（各层共用 DesignReviewJudgment 结构）
   const judgment = readField<Record<string, unknown>>(unit, "designReviewJudgment");
   if (judgment) {
@@ -898,6 +899,21 @@ function readClarifications(unit: WorkUnitRecord): Clarification[] {
   return [];
 }
 
+/**
+ * 从 feature 容器读 FeatureSpec（仅 feature 层；其他层返回 undefined）。
+ *
+ * feature 的 clarifications 是 FeatureClarification 容器（{ clarifications, spec }），
+ * spec 才是 FR/AC 来源。WorkUnitRecord 是宽松类型，这里做结构 guard 而非类型断言，
+ * 避免其他层 unit 误带 spec 字段时崩溃。
+ */
+function readFeatureSpec(unit: WorkUnitRecord): FeatureSpec | undefined {
+  if (unit.scope !== "feature") return undefined;
+  const raw = unit.clarifications;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const spec = (raw as Record<string, unknown>).spec;
+  return spec && typeof spec === "object" ? (spec as FeatureSpec) : undefined;
+}
+
 /** 把宽松的 WorkUnitRecord 安全断言为具名 unit 类型 T（handoff 只读访问）。
  *
  * WorkUnitRecord 有 `[key:string]:unknown` 索引签名，具名 unit（ExecutionUnit/Slice/Feature/Epic）
@@ -916,9 +932,13 @@ function asUnit<T extends { scope: string }>(
   return unit as unknown as T;
 }
 
-/** 按 scope 调对应的 build{Scope}NextAction 取阶段 guidance。
+/** 按 scope 调对应的 build{Scope}CurrentActionGuidance 取阶段 guidance。
  *
- * 四个函数签名同构（均返回 CwNextAction），但 action 类型不同（WaveAction vs PlanningAction）、
+ * 关键：handoff 的 action 是「接手 agent 现在该跑什么」（由 status→action 映射得出），
+ * 因此 guidance 必须用 build*CurrentActionGuidance（command 用当前 action）而非 build*NextAction
+ * （后者返回「跑完 action 后的下一步导航」，command 用 nextAction，会与外层「下一步执行」自相矛盾）。
+ *
+ * 四个函数签名同构（均返回 guidance 字符串），但 action 类型不同（WaveAction vs PlanningAction）、
  * unit 类型不同（ExecutionUnit vs Slice/Feature/Epic）。WorkUnitRecord 与具名 unit 类型结构上
  * 后者是前者的超集；handoff 只读访问，断言安全（字段缺失时 build 内部 helper 降级，不 crash）。
  * 返回 undefined 表示该 scope 未配置 build 函数或调用抛出。 */
@@ -930,27 +950,27 @@ function buildGuidanceForScope(
   const action = (scope === "wave" ? WAVE_STATUS_TO_ACTION : PLANNING_STATUS_TO_ACTION)[status];
   if (!action) return undefined;
   try {
-    let next: { guidance: string };
+    let guidance: string;
     if (scope === "wave") {
       const exec = asUnit<ExecutionUnit>(unit, "wave");
       if (!exec) return undefined;
-      next = buildNextAction(exec, action as WaveAction);
+      guidance = buildWaveCurrentActionGuidance(exec, action as WaveAction);
     } else if (scope === "slice") {
       const slice = asUnit<Slice>(unit, "slice");
       if (!slice) return undefined;
-      next = buildSliceNextAction(slice, action as PlanningAction);
+      guidance = buildSliceCurrentActionGuidance(slice, action as PlanningAction);
     } else if (scope === "feature") {
       const feature = asUnit<Feature>(unit, "feature");
       if (!feature) return undefined;
-      next = buildFeatureNextAction(feature, action as PlanningAction);
+      guidance = buildFeatureCurrentActionGuidance(feature, action as PlanningAction);
     } else if (scope === "epic") {
       const epic = asUnit<Epic>(unit, "epic");
       if (!epic) return undefined;
-      next = buildEpicNextAction(epic, action as PlanningAction);
+      guidance = buildEpicCurrentActionGuidance(epic, action as PlanningAction);
     } else {
       return undefined;
     }
-    return { action, guidance: next.guidance };
+    return { action, guidance };
   } catch {
     return { action, guidance: "" };
   }
