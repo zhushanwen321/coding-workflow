@@ -186,8 +186,9 @@ export function buildCreateIdempotentResult(args: CreateIdempotentArgs): ActionR
  * status → 中文展示（prefix-builder 的 status 参数要中文字符串）。
  *
  * 设计来源：v5 cli-and-guidance §4.x 示例（位置段用中文状态）。
+ * #12：导出供 replan.ts 复用（与 buildNextAction 的 prefix 输出一致）。
  */
-const STATUS_DISPLAY: Readonly<Record<ExecutionStatus, string>> = {
+export const STATUS_DISPLAY: Readonly<Record<ExecutionStatus, string>> = {
   created: "已创建",
   clarifying: "需求澄清中",
   planning: "计划编写中",

@@ -85,8 +85,8 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * BYTES_PER_MB;
 /** JSON 序列化缩进空格数。 */
 const JSON_INDENT = 2;
 
-/** v1 list 默认每页条数（与 render.ts DEFAULT_LIMIT 一致）。 */
-const CW_LIST_DEFAULT_LIMIT = 10;
+/** v1 list 默认每页条数（与 render.ts DEFAULT_LIMIT 一致，AXI-2 #10：10 → 20）。 */
+const CW_LIST_DEFAULT_LIMIT = 20;
 
 /** process.argv 中用户参数的起始索引（[0]=node, [1]=脚本路径）。 */
 const ARGV_USER_PARAMS_START = 2;
@@ -903,7 +903,8 @@ async function runReadonly(
     if (unit === null) {
       throw new CwError(`unit not found: ${unitId}`);
     }
-    process.stdout.write(renderStatus(unit));
+    // #10：--full 透传（默认大字段截断，--full 全量）。flag 已登记进 #5 白名单 status 集合。
+    process.stdout.write(renderStatus(unit, { full: parsed.full === true }));
     return;
   }
 

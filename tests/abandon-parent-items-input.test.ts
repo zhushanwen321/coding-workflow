@@ -20,8 +20,9 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { buildPrefix } from "../src/guidance/index.js";
 import { handleExecute } from "../src/handlers/execute.js";
-import { mergeAbandonParentItems } from "../src/handlers/internal.js";
+import { mergeAbandonParentItems, STATUS_DISPLAY } from "../src/handlers/internal.js";
 import { handlePlan } from "../src/handlers/plan.js";
 import { handleReplan } from "../src/handlers/replan.js";
 import { handlePlanSlice } from "../src/handlers/slice/plan.js";
@@ -340,5 +341,46 @@ describe("handleExecute trailer 解析集成（顺便通道）", () => {
     const reloaded = env.deps.store.load(wave.id);
     // TC3 去重 + TC5 新增
     expect(reloaded?.abandonedParentItems).toEqual(["TC3", "TC5"]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Part 5（W3 #12）：wave replan guidance prefix 与 buildPrefix 一致（T3.7）
+// ═══════════════════════════════════════════════════════════════
+
+describe("wave replan guidance prefix（#12，T3.7）", () => {
+  it("replan 后 guidance prefix 与 buildPrefix 输出一致（STATUS_DISPLAY 中文 + 父单元段）", () => {
+    const w = makeWaveUnit("test-wave");
+    w.status = "design-reviewed";
+    // wave replan 需要 plan 有条目可废弃
+    w.plan = {
+      split: [],
+      testCases: [{ ...makeValidTestCase("TC1"), status: "active" as const }],
+      tasks: [],
+      files: [],
+      contracts: [],
+    };
+    env.deps.store.save(w as unknown as WorkUnitRecord);
+
+    const result = handleReplan(
+      w,
+      { abandonedIds: ["TC1"], note: "测试 replan prefix" },
+      env.deps,
+    );
+    const guidance = result.nextAction!.guidance;
+
+    // 与 buildPrefix 输出逐字一致（含 STATUS_DISPLAY 中文映射 + 父单元段）
+    const expected = buildPrefix({
+      layer: "wave",
+      unitId: w.id,
+      status: `${STATUS_DISPLAY[w.status]}（replan 后原地）`,
+      parentUnitId: w.parentUnitId,
+    });
+    expect(guidance).toContain(expected);
+
+    // 具体形态：不再是手写内联 [wave:<slug>]（无中文映射、无父单元段）
+    expect(guidance).toContain("[wave:test-wave] 状态：已过设计审查（replan 后原地）｜父单元：slice:test-slice");
+    // 无旧内联形态残留（英文 status + 无父单元段）
+    expect(guidance).not.toContain("[wave:test-wave] 状态：design-reviewed（replan 后原地）");
   });
 });

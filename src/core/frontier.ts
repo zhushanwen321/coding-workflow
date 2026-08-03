@@ -52,6 +52,10 @@ export interface FrontierNode {
 export interface FrontierResult {
   rootUnitId: string;
   nodes: FrontierNode[];
+  /** nodes 中可推进（blocked === false）的节点数（#10，一次 reduce 累计）。 */
+  advanceableCount: number;
+  /** nodes 中被阻塞（blocked === true）的节点数（#10，一次 reduce 累计）。 */
+  blockedCount: number;
 }
 
 /** frontier 需要的 store 接口（结构同 HandoffStore，避免 import readonly 层）。 */
@@ -155,7 +159,7 @@ export function computeFrontier(
   const root = store.load(rootUnitId);
   if (root === null) {
     // 防御：cli 层已校验 not found，到不了这里。
-    return { rootUnitId, nodes: [] };
+    return { rootUnitId, nodes: [], advanceableCount: 0, blockedCount: 0 };
   }
 
   // Pass 1: 递归收集整棵树。
@@ -230,7 +234,19 @@ export function computeFrontier(
     }
   }
 
-  return { rootUnitId, nodes };
+  // 聚合计数（#10，AC-4.1）：在既有遍历后一次 reduce，无二次遍历。
+  // 语义：blocked=false 的节点可推进（agent 可跑它的 nextAction），blocked=true 被阻塞。
+  let advanceableCount = 0;
+  let blockedCount = 0;
+  for (const node of nodes) {
+    if (node.blocked) {
+      blockedCount++;
+    } else {
+      advanceableCount++;
+    }
+  }
+
+  return { rootUnitId, nodes, advanceableCount, blockedCount };
 }
 
 /**
