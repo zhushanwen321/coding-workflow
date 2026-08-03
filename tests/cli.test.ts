@@ -298,6 +298,65 @@ describe("W8: cw <action> 未知/缺 unitId → exit 1", () => {
   });
 });
 
+describe("W8: cw help / version（标准命令）", () => {
+  // package.json version 字段（与 dist/cli.js 读到的同一份，用于 version 断言）。
+  const pkgPath = join(__dirname, "..", "package.json");
+  const expectedVersion = (
+    JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string }
+  ).version;
+
+  it("cw version → exit 0 + stdout 含 `cw` 和版本号", () => {
+    const result = runCwCli(["version"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("cw");
+    expect(result.stdout).toContain(expectedVersion);
+    // 格式：单行 `cw <version>`
+    expect(result.stdout.trim()).toBe(`cw ${expectedVersion}`);
+  });
+
+  it("cw --version → 同 cw version", () => {
+    const result = runCwCli(["--version"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(`cw ${expectedVersion}`);
+  });
+
+  it("cw -v → 同 cw version", () => {
+    const result = runCwCli(["-v"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(`cw ${expectedVersion}`);
+  });
+
+  it("cw help → exit 0 + stdout 含用法/create/list 等关键词", () => {
+    const result = runCwCli(["help"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    for (const keyword of ["用法", "create", "list", "help", "version"]) {
+      expect(result.stdout).toContain(keyword);
+    }
+  });
+
+  it("cw --help → 同 cw help", () => {
+    const result = runCwCli(["--help"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("用法");
+  });
+
+  it("cw -h → 同 cw help", () => {
+    const result = runCwCli(["-h"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("用法");
+  });
+
+  it("cw（无参）→ exit 0 + stdout 显示 help（Unix 惯例）", () => {
+    const result = runCwCli([], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("用法");
+    expect(result.stdout).toContain("create");
+  });
+});
+
 describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
   it("create → clarify（--input @file.json）→ status=clarifying + clarifications 落盘", () => {
     // 1. 先 create 一个 wave

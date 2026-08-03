@@ -23,7 +23,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
@@ -577,6 +577,76 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
 }
 
 /**
+ * readCliVersion — 读 package.json 的 version 字段。
+ *
+ * 路径解析：import.meta.url 在 dist/cli.js 或 src/cli.ts，dirname 后 ../package.json
+ * 都指向包根的 package.json（dist 和 src 的上一级都是项目根）。
+ * 失败（文件缺失/解析失败）返回 "unknown"——version 不该 crash CLI。
+ */
+function readCliVersion(): string {
+  try {
+    const packageJsonPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../package.json",
+    );
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      version?: unknown;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * renderHelp — 返回 help 文本（面向人读，分组手写保证格式稳定）。
+ *
+ * 触发场景：`cw help` / `cw --help` / `cw -h` / `cw`（无参）。
+ * action 列表分组与 ALL_ACTIONS = VALID_ACTIONS ∪ READONLY_QUERIES 对齐，
+ * help/version 单列一组（它们不进 dispatch、不写 store）。
+ */
+function renderHelp(): string {
+  return `cw — Agent-agnostic 编码流程编排 CLI
+
+用法：
+  cw <action> [layer] [options]
+  cw <readonly-query> [options]
+
+工作流 action（推进编码流程，经 dispatch + store）：
+  create <layer>          建 topic（layer: wave | slice | feature | epic）
+  clarify                 澄清需求
+  plan                    编写执行计划
+  design-review           设计审查
+  execute                 执行（wave 写代码 / planning 按 split 下沉）
+  test                    测试验收
+  exec-review             执行审查
+  retrospect              复盘
+  closeout                冻结交付
+  replan                  重规划（废弃条目 + 重建）
+  abort                   放弃 topic
+
+只读查询（不经 dispatch、不写 store）：
+  list                    列出 unit（定位 topic，新 agent 接手第一步）
+  tree                    父子树结构
+  status                  单 unit 完整 JSON
+  handoff                 交接摘要（五段式 markdown）
+  frontier                非终态节点 + 可推进性
+
+其他：
+  help                    显示本帮助
+  version                 显示版本号
+
+常用 flags：
+  --unitId <id>           指定 unit（大多数 action 需要）
+  --input <file|->        input JSON（文件路径或 - 读 stdin）
+  --commitHash <sha>      execute 关联的 commit（wave 层）
+  --workspace <path>      指定工作目录（默认 cwd）
+
+完整文档：见 SKILL.md（cw-cli skill）。首次使用：cw create <layer>。
+`;
+}
+
+/**
  * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
  *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 store.json）
@@ -952,9 +1022,27 @@ async function main(argv: string[]): Promise<void> {
   debugLog("verbose mode enabled");
   const rawAction = parsed._[0];
 
-  if (rawAction === undefined) {
-    process.stderr.write("错误：未指定 action。用法：cw <action> [options]\n");
-    process.exit(EXIT_CW_ERROR);
+  // help / --help / -h / 无参：显示 help（Unix 惯例：显示用法不是错误）。
+  // 放在迁移逻辑之前——help/version 不碰 store。`--help` 等 flag 会让 parsed._ 为空，
+  // 所以放在无参分支之前判定（否则 --help 会被当成无参走 help，没问题；但 --version 会被
+  // 当成无参而显示 help，故 version flag 必须在此分支之前判）。
+  if (parsed.version === true || parsed.v === true) {
+    process.stdout.write(`cw ${readCliVersion()}\n`);
+    return;
+  }
+  if (
+    rawAction === undefined ||
+    rawAction === "help" ||
+    parsed.help === true ||
+    parsed.h === true
+  ) {
+    process.stdout.write(renderHelp());
+    return;
+  }
+  // version 作为 action（cw version）。
+  if (rawAction === "version") {
+    process.stdout.write(`cw ${readCliVersion()}\n`);
+    return;
   }
   const action = String(rawAction);
 
@@ -978,9 +1066,10 @@ async function main(argv: string[]): Promise<void> {
   }
 
   // 未识别的 action 一律拒绝（含旧的 `v1` 前缀——Wave 3 起彻底切断，不再做向后兼容）。
+  // 合法列表 = ALL_ACTIONS（dispatch/只读）+ help/version（独立入口，不进 ALL_ACTIONS）。
   process.stderr.write(
     `错误：未知 action "${action}"。请改用：${buildCommand("<action>", "[layer]", "[options]")}\n` +
-      `（合法 action: ${[...ALL_ACTIONS].join(", ")}）\n`,
+      `（合法 action: ${[...ALL_ACTIONS, "help", "version"].join(", ")}）\n`,
   );
   process.exit(EXIT_CW_ERROR);
 }
