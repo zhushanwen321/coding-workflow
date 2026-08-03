@@ -361,6 +361,12 @@ function buildWaveNextCommand(
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
+  // execute 特判：wave execute 用 --commitHash flag，不用 --input
+  // （CLI 要求 commitHash，input.json 里没有；agent 提交代码后跑 git rev-parse HEAD 取 hash 替换占位符）。
+  // FLAT_INPUT_HINT.execute 仍 defined，被 getSchemaText("execute") 用作 schema 段兜底文本，故这里必须特判跳过。
+  if (nextAction === "execute") {
+    return buildCommand(nextAction, `--unitId ${unitId}`, "--commitHash <HEAD commit hash>");
+  }
   const hasInput = ACTION_SCHEMA[nextAction] !== undefined ||
     FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
@@ -379,6 +385,10 @@ function buildWaveCurrentCommand(
   unitId: string,
   slug: string,
 ): string {
+  // execute 特判：与 buildWaveNextCommand 一致，wave execute 用 --commitHash flag（CLI 要求 commitHash）。
+  if (action === "execute") {
+    return buildCommand(action, `--unitId ${unitId}`, "--commitHash <HEAD commit hash>");
+  }
   const hasInput = ACTION_SCHEMA[action] !== undefined ||
     FLAT_INPUT_HINT[action] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";

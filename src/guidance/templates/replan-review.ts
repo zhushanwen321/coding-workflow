@@ -38,6 +38,12 @@ export function buildReplanReviewText(args: {
   sections.push("- 兼容性：破坏已有 interface 契约了吗？");
   sections.push("");
   sections.push("审视完后，重新 plan 并重新 design-review（plan → design-review → execute 完整重走）。");
+  sections.push("");
+  sections.push(
+    "replan input 还支持可选字段 abandonParentItems: string[]（声明脱离 parent 条目，" +
+      "CLI: --abandonParentItems '[\"TC1\"]'）——" +
+      "如果你废弃条目的同时也要声明脱离 parent 的某些条目，可一并带上。",
+  );
 
   // 渐进式递进提示（阈值：第 2 次起加系统性问题警告，第 3 次起强烈建议 abort）
   const REPLAN_WARN_THRESHOLD = 2;

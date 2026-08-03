@@ -50,7 +50,11 @@ export const WAVE_CLARIFY_TEMPLATE: WaveStageTemplate = {
 export const WAVE_PLAN_TEMPLATE: WaveStageTemplate = {
   goal: "编写执行计划，定义 testCases / tasks / files / contracts。",
   constraint:
-    "关键约束：testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan。",
+    "关键约束：testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan。" +
+    "如果你设计 plan 时发现 parent 的某个条目实际不适用（如 slice 的某个 interface 定义错了），" +
+    "可在 plan input 里带 abandonParentItems: [\"<条目id>\"] 声明脱离" +
+    "（CLI 用 --abandonParentItems '[\"TC1\"]'）。" +
+    "这是 append-only 的——一旦声明不可撤回。不确定是否需要脱离时不要声明。",
 };
 
 /** design-review 阶段（7 gate + 写 designReviewJudgment）。 */

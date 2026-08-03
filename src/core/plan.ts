@@ -202,12 +202,23 @@ export interface SliceErrorSpec extends WorkUnitItem {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * 声明脱离 parent 条目的 input 基类（append-only）。
+ *
+ * 被 Plan*Input / ReplanInput 继承。abandonParentItems 声明脱离 parent 的某些条目——
+ * append-only，一旦声明不可撤回。用于「我实际不用 parent 的这个条目」的场景。
+ */
+export interface AbandonParentItemsInput {
+  /** 声明脱离的 parent 条目 id 列表。append-only——一旦声明不可撤回。 */
+  abandonParentItems?: string[];
+}
+
+/**
  * plan handler 输入（写 WavePlan 4 类条目）。
  *
  * 由 schema-injector 从 core 源码自动提取 schema 文本，注入 plan 阶段 guidance。
  * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.plan 能指向它。
  */
-export interface PlanInput {
+export interface PlanInput extends AbandonParentItemsInput {
   testCases: WaveTestCase[];
   tasks: WaveTask[];
   files: WaveFile[];
@@ -223,7 +234,7 @@ export interface PlanInput {
  * decisions 可选——不传时由 handler 从本层 Clarification 投影（model §5.10）。
  * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.plan 能指向它。
  */
-export interface PlanSliceInput {
+export interface PlanSliceInput extends AbandonParentItemsInput {
   techChoices: SliceTechChoice[];
   interfaces: SliceInterface[];
   dataModels: SliceDataModel[];
@@ -239,7 +250,7 @@ export interface PlanSliceInput {
  * 与 slice 的 PlanSliceInput 完全不同：feature 不产技术方案，plan 只拆 slice 清单。
  * 原定义在 handlers/types.ts，搬入 core/plan.ts 保持类型归位一致性。
  */
-export interface PlanFeatureInput {
+export interface PlanFeatureInput extends AbandonParentItemsInput {
   split: Split[];
 }
 
@@ -248,6 +259,6 @@ export interface PlanFeatureInput {
  *
  * epic 与 feature 的 plan 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
  */
-export interface PlanEpicInput {
+export interface PlanEpicInput extends AbandonParentItemsInput {
   split: Split[];
 }

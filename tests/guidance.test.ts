@@ -624,6 +624,14 @@ describe("templates/wave: 关键约束", () => {
     expect(WAVE_PLAN_TEMPLATE.goal).toContain("执行计划");
   });
 
+  it("plan 模板含 abandonParentItems 提示（ADR-0010 补充，schema 缺口修复）", () => {
+    // plan 阶段也告知 abandonParentItems 选项——设计阶段发现 parent 条目不适用就该声明，
+    // 不必等到 execute。CLI 用法 + append-only 性质必须在 constraint 里点明。
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("abandonParentItems");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("--abandonParentItems");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("append-only");
+  });
+
   it("replan 模板含「重走 design-review」提示（§6.1 / wave §8.3）", () => {
     expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("重新 design-review");
     expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("plan → design-review → execute");

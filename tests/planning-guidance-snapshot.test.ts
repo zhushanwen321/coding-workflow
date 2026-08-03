@@ -354,3 +354,53 @@ describe("TC6: ERR4 三层 guidance 产出无旧 W4 一句话占位文案", () =
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TC7：三层 execute 命令渲染（不接收 input，不带 --input / --commitHash）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 守护：planning execute 命令渲染。
+ *
+ * design-review 完成后 nextAction=execute。planning execute 按 plan.split 自动创建
+ * child（slice→wave / feature→slice / epic→feature），CLI 忽略 --input。
+ * 旧 bug：因为 *_FLAT_INPUT_HINT.execute 非 undefined（被 schema 段兜底文本用），
+ * hasInput 误判为 true，命令被拼上误导性的 --input .cw/<slug>/execute.json。
+ * 修复：execute 在 hasInput 判定前特判，直接返回无 flag 的命令。
+ *
+ * 本组测试确保 execute 命令既不含 --input（planning 不读），也不含 --commitHash（wave 专属）。
+ */
+describe("TC7: 三层 execute 命令渲染（无 --input，无 --commitHash）", () => {
+  it("slice design-review 完成 → nextAction=execute + guidance 含 cw execute --unitId slice:<slug>，不含 --input / --commitHash", () => {
+    const unit = freshSlice();
+    const nextAction = buildSliceNextAction(unit, "design-review");
+    expect(nextAction.action).toBe("execute");
+    expect(nextAction.guidance).toContain(
+      "cw execute --unitId slice:snap-slice",
+    );
+    expect(nextAction.guidance).not.toContain("--input");
+    expect(nextAction.guidance).not.toContain("--commitHash");
+  });
+
+  it("feature design-review 完成 → nextAction=execute + guidance 含 cw execute --unitId feature:<slug>，不含 --input / --commitHash", () => {
+    const unit = freshFeature();
+    const nextAction = buildFeatureNextAction(unit, "design-review");
+    expect(nextAction.action).toBe("execute");
+    expect(nextAction.guidance).toContain(
+      "cw execute --unitId feature:snap-feature",
+    );
+    expect(nextAction.guidance).not.toContain("--input");
+    expect(nextAction.guidance).not.toContain("--commitHash");
+  });
+
+  it("epic design-review 完成 → nextAction=execute + guidance 含 cw execute --unitId epic:<slug>，不含 --input / --commitHash", () => {
+    const unit = freshEpic();
+    const nextAction = buildEpicNextAction(unit, "design-review");
+    expect(nextAction.action).toBe("execute");
+    expect(nextAction.guidance).toContain(
+      "cw execute --unitId epic:snap-epic",
+    );
+    expect(nextAction.guidance).not.toContain("--input");
+    expect(nextAction.guidance).not.toContain("--commitHash");
+  });
+});

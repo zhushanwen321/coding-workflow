@@ -235,6 +235,11 @@ function buildEpicCommand(
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
+  // execute 特判：planning execute 按 plan.split 自动创建 child feature，不接收 input（CLI 忽略 --input）。
+  // EPIC_FLAT_INPUT_HINT.execute 仍 defined，被 getEpicSchemaText("execute") 用作 schema 段兜底文本，故这里必须特判跳过。
+  if (nextAction === "execute") {
+    return buildCommand(nextAction, `--unitId ${unitId}`);
+  }
   const hasInput = EPIC_ACTION_SCHEMA[nextAction] !== undefined ||
     EPIC_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
@@ -253,6 +258,10 @@ function buildEpicCurrentCommand(
   unitId: string,
   slug: string,
 ): string {
+  // execute 特判：与 buildEpicCommand 一致，planning execute 不接收 input（按 plan.split 自动创建 child feature）。
+  if (action === "execute") {
+    return buildCommand(action, `--unitId ${unitId}`);
+  }
   const hasInput = EPIC_ACTION_SCHEMA[action] !== undefined ||
     EPIC_FLAT_INPUT_HINT[action] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";

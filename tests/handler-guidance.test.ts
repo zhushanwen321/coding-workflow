@@ -228,6 +228,27 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("cw test --unitId wave:g-exec");
   });
 
+  it("design-review 完成 → nextAction=execute + guidance 含 cw execute --commitHash，不含 --input（wave execute 用 commitHash flag）", () => {
+    // 守护：wave execute 命令渲染必须用 --commitHash flag，不能拼 --input
+    // （CLI src/cli.ts 要求 commitHash；input.json 里没有 commitHash，照 --input 走会立即失败）。
+    const unitId = advanceTo("g-exec-cmd", "planning");
+    const r = dispatch(
+      {
+        action: "design-review",
+        unitId,
+        input: { designReviewJudgment: makeValidDesignReviewJudgment() },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.action).toBe("execute");
+    expect(r.nextAction!.guidance).toContain(
+      "cw execute --unitId wave:g-exec-cmd --commitHash",
+    );
+    // execute 命令行不得带 --input（CLI 不读 input.json，commitHash 是 flag）
+    expect(r.nextAction!.guidance).not.toContain("--input");
+  });
+
   it("unitPath 含 layer=wave + unitId + parentUnitId + rootUnitId", () => {
     const r = dispatch(
       {

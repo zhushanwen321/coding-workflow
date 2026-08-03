@@ -235,6 +235,11 @@ function buildSliceCommand(
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
+  // execute 特判：planning execute 按 plan.split 自动创建 child wave，不接收 input（CLI 忽略 --input）。
+  // SLICE_FLAT_INPUT_HINT.execute 仍 defined，被 getSliceSchemaText("execute") 用作 schema 段兜底文本，故这里必须特判跳过。
+  if (nextAction === "execute") {
+    return buildCommand(nextAction, `--unitId ${unitId}`);
+  }
   const hasInput = SLICE_ACTION_SCHEMA[nextAction] !== undefined ||
     SLICE_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
@@ -253,6 +258,10 @@ function buildSliceCurrentCommand(
   unitId: string,
   slug: string,
 ): string {
+  // execute 特判：与 buildSliceCommand 一致，planning execute 不接收 input（按 plan.split 自动创建 child wave）。
+  if (action === "execute") {
+    return buildCommand(action, `--unitId ${unitId}`);
+  }
   const hasInput = SLICE_ACTION_SCHEMA[action] !== undefined ||
     SLICE_FLAT_INPUT_HINT[action] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";
