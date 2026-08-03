@@ -12,6 +12,7 @@
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, mergeAbandonParentItems, saveUnit,transitionStatus } from "./internal.js";
 import type { ActionResult, CwDeps,PlanInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 plan action（progressive）。
@@ -25,6 +26,7 @@ export function handlePlan(
   input: PlanInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("plan", "wave", input);
   // 写产物：整体替换 plan 的 4 类条目（wave 是叶子，split 恒为 []）
   unit.plan = {
     split: [],

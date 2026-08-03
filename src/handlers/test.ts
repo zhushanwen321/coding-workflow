@@ -33,6 +33,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,TestInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 test action。
@@ -46,6 +47,7 @@ export function handleTest(
   input: TestInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("test", "wave", input);
   // testRunner 仅 wave test handler 需要（slice 无 test 阶段），CwDeps 声明为可选。
   // wave test handler 一定有 testRunner（dispatch 为 wave action 构造 deps 时必填），断言非空。
   if (!deps.testRunner) {

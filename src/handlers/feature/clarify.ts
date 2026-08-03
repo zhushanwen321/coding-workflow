@@ -20,6 +20,7 @@
 import type { Feature } from "../../core/workunit.js";
 import { validateFeatureSpec } from "../../rules/spec-schema.js";
 import type { ActionResult, CwDeps,FeatureClarifyInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -40,6 +41,7 @@ export function handleClarifyFeature(
   input: FeatureClarifyInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("clarify", "feature", input);
   // 写入前先校验 spec 结构（防畸形 spec 入库导致下游 gate undefined 崩溃）。
   // 校验失败短路：不覆盖 unit.clarifications.spec、不改 status，只 append fail 记录
   // 供 failureCount 派生，返回可读 error（含具体字段路径）让 agent 修正后重提。

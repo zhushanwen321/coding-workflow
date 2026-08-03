@@ -27,6 +27,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,RetrospectInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 retrospect action。
@@ -40,6 +41,7 @@ export function handleRetrospect(
   input: RetrospectInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("retrospect", "wave", input);
   // ── 跑 2 个 gate ──
   const gateResults = [
     lessonsLearnedNonEmpty(input.retrospectData),

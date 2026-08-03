@@ -28,6 +28,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,ExecReviewInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 exec-review action。
@@ -41,6 +42,7 @@ export function handleExecReview(
   input: ExecReviewInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("exec-review", "wave", input);
   // ── 跑 4 个 gate ──
   const gateResults = [
     execReviewReadabilityNonEmpty(input.execReviewJudgment),

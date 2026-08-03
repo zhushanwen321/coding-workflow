@@ -22,6 +22,7 @@
 import type { Slice } from "../../core/workunit.js";
 import { runSliceRetrospectGates } from "../../rules/gates/retrospect.js";
 import type { ActionResult, CwDeps,RetrospectSliceInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -42,6 +43,7 @@ export function handleRetrospectSlice(
   input: RetrospectSliceInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("retrospect", "slice", input);
   // ── 查 child wave 状态（rules 层零 IO，由 handler 注入 gate）──
   const children = deps.store.findChildren(unit.id);
   const childStatuses = children.map((c) => {

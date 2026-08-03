@@ -38,6 +38,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,ReplanInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 replan action（旁路，不改 status）。
@@ -51,6 +52,7 @@ export function handleReplan(
   input: ReplanInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("replan", "wave", input);
   // ── before 快照（structuredClone 保证深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
 

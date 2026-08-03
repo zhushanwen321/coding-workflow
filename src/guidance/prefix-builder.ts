@@ -36,7 +36,14 @@ export interface BuildPrefixArgs {
  */
 export function buildPrefix(args: BuildPrefixArgs): string {
   const { layer, unitId, status, parentUnitId } = args;
-  const head = `[${layer}:${unitId}] 状态：${status}`;
+  // 剥离 unitId 自带的 <layer>: 前缀（#9，T2.10）：unit.id 常带 scope 前缀（如 "wave:auth"），
+  // 与渲染格式 [layer:unitId] 的 layer 段重复会产出 [wave:wave:auth] 错误形态。
+  // JSDoc 契约 unitId=完整 id 保持不变（调用方零改动）；渲染层循环剥离防嵌套前缀 slug（K-6）。
+  let id = unitId;
+  while (id.startsWith(`${layer}:`)) {
+    id = id.slice(layer.length + 1);
+  }
+  const head = `[${layer}:${id}] 状态：${status}`;
   if (parentUnitId === undefined || parentUnitId === "") {
     return head;
   }

@@ -11,6 +11,7 @@
  */
 import type { Slice } from "../../core/workunit.js";
 import type { ActionResult, ClarifyInput, CwDeps } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -25,6 +26,7 @@ export function handleClarifySlice(
   input: ClarifyInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("clarify", "slice", input);
   // append clarifications（progressive，不覆盖历史）
   unit.clarifications = [...unit.clarifications, ...input.clarifications];
 

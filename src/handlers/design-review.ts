@@ -28,6 +28,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,DesignReviewInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 design-review action。
@@ -41,6 +42,7 @@ export function handleDesignReview(
   input: DesignReviewInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("design-review", "wave", input);
   // ── 跑 9 个 gate ──
   // 先 load 兄弟 wave 的 plan.files（rules 层零 IO，由 handler 注入聚合 gate）。
   // 照 slice/retrospect.ts:46-58 注入模式：从 store.findChildren load 数据再注入。

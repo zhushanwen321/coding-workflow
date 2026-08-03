@@ -20,6 +20,7 @@
 import type { Epic } from "../../core/workunit.js";
 import { runEpicDesignReviewGates } from "../../rules/gates/design-review.js";
 import type { ActionResult, CwDeps,DesignReviewInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendEpicFailRecord,
   buildEpicFailureNextAction,
@@ -40,6 +41,7 @@ export function handleDesignReviewEpic(
   input: DesignReviewInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("design-review", "epic", input);
   // 先写 judgment（gate 里 epicLayerSpecificNonEmpty 依赖已写入的 designReviewJudgment.layerSpecific）
   unit.designReviewJudgment = input.designReviewJudgment;
 

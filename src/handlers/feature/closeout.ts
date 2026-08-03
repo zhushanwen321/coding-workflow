@@ -21,6 +21,7 @@ import { computeParallelSiblingsAfterCloseout } from "../../guidance/index.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CloseoutInput, CwDeps, CwNextAction } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -41,6 +42,7 @@ export function handleCloseoutFeature(
   input: CloseoutInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("closeout", "feature", input);
   // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
   assertEvidenceNotFrozen(unit.evidence, "closeout");
 

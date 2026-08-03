@@ -744,6 +744,102 @@ describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// W2: flag 白名单 + per-command help（#5，D-019 合并 #11）
+// ═══════════════════════════════════════════════════════════════
+
+describe("W2: unknown flag 白名单校验（#5）", () => {
+  it("T2.1: 拼错 flag（--unid）→ exit 1 + unknown flag + 合法 flag 列表", () => {
+    // validateFlags 在 buildParams 之前拦截：不报「需要 --unitId」而是报 unknown flag
+    const result = runCwCli(["clarify", "--unid", "wave:x"], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown flag --unid");
+    expect(result.stderr).toContain("unitId");
+  });
+
+  it("T2.1: readonly action 同样拦截未知 flag（--bogus-flag 不再被静默忽略）", () => {
+    const result = runCwCli(["list", "--bogus-flag"], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown flag --bogus-flag");
+  });
+
+  it("T2.3: 全局基础集全放行（--help/-h/--version/--workspace/--verbose）", () => {
+    // --help → per-command help（exit 0，非 unknown flag）
+    const help = runCwCli(["status", "--help"], e);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("合法 flags");
+    // -h 同
+    const h = runCwCli(["status", "-h"], e);
+    expect(h.exitCode).toBe(0);
+    expect(h.stdout).toContain("合法 flags");
+    // --version → 版本输出
+    const ver = runCwCli(["status", "--version"], e);
+    expect(ver.exitCode).toBe(0);
+    expect(ver.stdout).toContain("cw ");
+    // --verbose + --workspace：list 正常渲染（不报 unknown flag）
+    const list = runCwCli(["list", "--verbose", "--workspace", e.workspaceDir], e);
+    expect(list.exitCode).toBe(0);
+    expect(list.stderr).not.toContain("unknown flag");
+  });
+
+  it("create 缺 layer + 合法 flag → 仍走选层 guidance（validateFlags 不误伤，K-7）", () => {
+    const result = runCwCli(["create", "--slug", "x", "--objective", "y"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("选择 layer");
+  });
+});
+
+describe("W2: per-command help 双入口（#11 并入 #5）", () => {
+  it("T3.4: cw help <action> 显示合法 flag 列表（AC-6.1）", () => {
+    const result = runCwCli(["help", "execute"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("合法 flags");
+    expect(result.stdout).toContain("--commitHash");
+    expect(result.stdout).toContain("--unitId");
+  });
+
+  it("T3.5: cw <action> --help 与 cw help <action> 等价（AC-6.2）", () => {
+    const a = runCwCli(["help", "execute"], e);
+    const b = runCwCli(["execute", "--help"], e);
+    expect(a.exitCode).toBe(0);
+    expect(b.exitCode).toBe(0);
+    expect(b.stdout).toBe(a.stdout);
+  });
+
+  it("T3.6: cw help <未知> → exit 1（AC-6.3）", () => {
+    const result = runCwCli(["help", "bogus-action"], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("bogus-action");
+  });
+
+  it("cw help / cw --help / cw -h 仍是全局 help", () => {
+    for (const args of [["help"], ["--help"], ["-h"]] as const) {
+      const result = runCwCli([...args], e);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("工作流 action");
+    }
+  });
+});
+
+describe("W2: handler input shape 校验（#6，e2e）", () => {
+  it("T2.4: clarify {} → CwError「input.clarifications …」exit 1（非 crash exit 2）", () => {
+    const created = parseStdout(
+      runCwCli(
+        ["create", "wave", "--slug", "w2-shape", "--objective", "shape e2e"],
+        e,
+      ),
+    );
+    const unitId = created.unitId as string;
+    const result = runCwCli(["clarify", "--unitId", unitId, "--input", "-"], e, {
+      input: "{}",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("input.clarifications");
+    // 非内部异常：不输出堆栈（exit 2 才有堆栈）
+    expect(result.stderr).not.toContain("堆栈");
+  });
+});
+
 // ── 辅助：在 CW_HOME 树里找 store.json ────────────────────────
 
 function findStoreJson(dir: string): string | null {

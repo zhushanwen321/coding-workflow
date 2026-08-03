@@ -20,6 +20,7 @@ import type { StatusChange, WorkUnitStatus } from "../../core/status.js";
 import type { Slice } from "../../core/workunit.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { AbortInput, ActionResult, CwDeps } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildSliceNextAction, readRecordStatus, readRecordStatusHistory, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -34,6 +35,7 @@ export function handleAbortSlice(
   input: AbortInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("abort", "slice", input);
   const at = deps.clock.now();
 
   // ── 自身 status 流转 → aborted ──
