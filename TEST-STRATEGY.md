@@ -312,3 +312,14 @@ describe("create wave happy path", () => {
   - 子进程层：`dist/cli.js` create/clarify（`--input @file.json` 管道）/handoff 端到端可用，缺参数 → exit 1，unit not found → exit 1 + CwEngineError 语义
 - **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂（事务不回滚导致脏数据，或某层跨链下沉/回溯断裂），agent 无法完成或无法正确推进编码任务
 - **关联约束**：NFR V-1
+
+### RB-5 契约级加固防线  [guidance 正确性 + 输入防线 + 幂等]  [from: cw-guidance-hardening §execution-plan]
+
+- **用例来源**：`tests/handler-guidance.test.ts`（schema 取 nextAction + replan 透传 + 终态无 schema）+ `tests/cli.test.ts`（unknown flag / per-command help / input 校验）+ `tests/validate-input.test.ts`（13 schema × 34 入口）+ `tests/cli-params.test.ts`（白名单表）+ `tests/test-cwd-e2e.test.ts`（--testCwd 实际生效）+ `tests/gates.test.ts`（retrospect key 防御 + 报告两段）+ `tests/e2e-handoff.test.ts`（handoff schema 例外）
+- **断言**：
+  - guidance 的 schema 段与命令段同指 nextAction（create 后显示 clarify 的 clarifications 字段）；handoff 路径保持当前 action 取值；终态无 schema 段；replan 后 guidance 含 plan 的 schema 段
+  - 重复 create 同 slug（非空态）→ no-op 返回 existing + `idempotent: true`，store 不被覆盖；aborted/closed 终态 → guidance 含「重建请用新 slug」；created 空态允许覆盖
+  - `cw test --testCwd <dir>` 的 runner 实际 cwd = 指定目录（fixture 写 process.cwd() 断言）
+  - unknown flag → CwError exit 1 + 合法 flag 列表；`{}` input → CwError 非 crash exit 2；retrospect gate 失败报告含期望全集 + 缺失子集两段且无垃圾 key
+- **破坏即**：agent 照 guidance 走拿到错参数结构（被迫读源码）；重复 create 静默抹进度；--testCwd 静默失效回退根目录跑全量；垃圾 key 让 retrospect gate 无法一次通过
+- **关联约束**：NFR O-2/O-3，ADR-0012

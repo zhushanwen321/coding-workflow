@@ -24,8 +24,6 @@ describe("buildSubagentGuidance: wave 层", () => {
       expect(g).toContain("【建议委派】");
       expect(g).toContain("代码实现");
       expect(g).not.toContain("按需");
-      // 强制档末尾追加嵌套决策树
-      expect(g).toContain("支持嵌套");
     });
 
     it("design-review → 建议委派 + 审查方向", () => {
@@ -48,7 +46,6 @@ describe("buildSubagentGuidance: wave 层", () => {
       const g = buildSubagentGuidance("wave", "clarify");
       expect(g).toContain("【按需委派】");
       expect(g).toContain("代码探索");
-      expect(g).toContain("支持嵌套");
     });
 
     it("plan → 按需委派 + 探索方向", () => {
@@ -78,14 +75,12 @@ describe("buildSubagentGuidance: wave 层", () => {
     });
   });
 
-  // 按需委派：retrospect（C5：forbidden→optional，递归模式下可由独立 agent 复盘）
+  // 按需委派：retrospect（输入含执行轨迹，规模大时可委派）
   describe("按需委派档（optional）", () => {
-    it("retrospect → 按需委派 + 综合方向 + 追加嵌套决策树", () => {
+    it("retrospect → 按需委派 + 综合方向", () => {
       const g = buildSubagentGuidance("wave", "retrospect");
       expect(g).toContain("【按需委派】");
       expect(g).toContain("综合");
-      // optional 档末尾追加嵌套决策树（与 mandatory/optional 一致，区别于 forbidden）
-      expect(g).toContain("支持嵌套");
     });
   });
 });
@@ -131,13 +126,12 @@ describe("buildSubagentGuidance: planning 层", () => {
     });
   });
 
-  // C5：planning retrospect 从 forbidden 改为 optional（递归模式下可委派）
+  // 按需委派：retrospect（输入含执行轨迹，规模大时可委派）
   describe("按需委派档（optional）", () => {
-    it("retrospect → 按需委派 + 综合方向 + 追加嵌套决策树", () => {
+    it("retrospect → 按需委派 + 综合方向", () => {
       const g = buildSubagentGuidance("planning", "retrospect");
       expect(g).toContain("【按需委派】");
       expect(g).toContain("综合");
-      expect(g).toContain("支持嵌套");
     });
   });
 });
@@ -218,7 +212,7 @@ describe("buildNormalGuidance: commonGuidance 第 4 段渲染", () => {
     expect(guidance).not.toContain("## subagent 调度");
   });
 
-  it("集成：wave execute 的 commonGuidance 经 buildSubagentGuidance 生成 → 含强制委派 + 嵌套决策树", () => {
+  it("集成：wave execute 的 commonGuidance 经 buildSubagentGuidance 生成 → 含强制委派", () => {
     const guidance = buildNormalGuidance({
       ...baseArgs,
       nextAction: "execute",
@@ -227,6 +221,5 @@ describe("buildNormalGuidance: commonGuidance 第 4 段渲染", () => {
     expect(guidance).toContain("## subagent 调度");
     expect(guidance).toContain("【建议委派】");
     expect(guidance).toContain("代码实现");
-    expect(guidance).toContain("支持嵌套");
   });
 });

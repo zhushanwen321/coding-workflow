@@ -18,7 +18,7 @@ import type {
   SliceDesignReviewLayerSpecific,
   WaveDesignReviewLayerSpecific,
 } from "../../core/judgments.js";
-import type { Split } from "../../core/plan.js";
+import type { Split,WaveFile } from "../../core/plan.js";
 import type { Epic, ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
 import { type GateResult,runGateSafely } from "./types.js";
 
@@ -101,6 +101,125 @@ export function waveLayerSpecificNonEmpty(
     passed: true,
     report: "wave-layer-specific-non-empty: 4 个 layerSpecific 字段都非空",
   };
+}
+
+/**
+ * 跨 wave 文件冲突检查：当前 wave 的 plan.files 与兄弟 wave 的 plan.files path 交集。
+ *
+ * 来源：design §3.4（recursive 并行模式新增）。
+ *
+ * 并行 wave execute 场景下，两个 wave 同时改同一文件会产生 git 冲突。
+ * 本 gate 在 wave design-review 阶段检查：当前 wave 的 files[].path 与任一兄弟 wave
+ * （同 parent）的 files[].path 有交集 → fail。
+ *
+ * 照 allWavesClosed 模式（retrospect.ts:197）：rules 层零 IO，兄弟 wave 数据由 handler
+ * load 后注入（siblingFiles 参数），gate 不查 store。
+ *
+ * 交集规则：
+ * - action="delete" 的文件不参与冲突（删除不冲突——并行删除同一文件罕见且 git 能处理）
+ * - 空 selfFiles → pass（wave 无文件声明不冲突）
+ * - 冲突时 report 列出所有冲突 path + 对应兄弟 unitId
+ *
+ * @param selfFiles 当前 wave 的 plan.files（由 handler 从 unit.plan.files 注入）
+ * @param siblingFiles 兄弟 wave 的 plan.files（由 handler 从 store.findChildren load 后注入，
+ *   每项含 unitId + 该兄弟的 files 数组）
+ */
+export function noSiblingWaveFileConflict(
+  selfFiles: ReadonlyArray<WaveFile>,
+  siblingFiles: ReadonlyArray<{ unitId: string; files: ReadonlyArray<WaveFile> }>,
+): GateResult {
+  // 空 selfFiles → 无可比较的 path，pass（wave 无文件声明不冲突）
+  if (selfFiles.length === 0) {
+    return {
+      passed: true,
+      report: "no-sibling-wave-file-conflict: 当前 wave 无 plan.files，不冲突",
+    };
+  }
+  // 收集当前 wave 的 path 集合（action !== "delete" 才参与——删除不冲突）
+  const selfPaths = new Set<string>();
+  for (const f of selfFiles) {
+    if (f.action !== "delete") selfPaths.add(f.path);
+  }
+  if (selfPaths.size === 0) {
+    // selfFiles 全是 delete → 无可冲突 path
+    return {
+      passed: true,
+      report: "no-sibling-wave-file-conflict: 当前 wave plan.files 全为 delete，不冲突",
+    };
+  }
+
+  // 遍历兄弟，收集冲突 path + 对应兄弟 unitId
+  const conflicts: Array<{ path: string; siblingUnitId: string }> = [];
+  for (const sibling of siblingFiles) {
+    for (const f of sibling.files) {
+      if (f.action === "delete") continue; // 兄弟的 delete 也不参与冲突
+      if (selfPaths.has(f.path)) {
+        conflicts.push({ path: f.path, siblingUnitId: sibling.unitId });
+      }
+    }
+  }
+
+  if (conflicts.length > 0) {
+    const lines = conflicts
+      .map((c) => `path="${c.path}" 与兄弟 wave ${c.siblingUnitId} 冲突`)
+      .join("\n- ");
+    return {
+      passed: false,
+      report:
+        `跨 wave 文件冲突: 当前 wave 的 plan.files 与兄弟 wave 存在交集:\n- ${lines}\n` +
+        `请调整 plan.files 划分（各 wave 改不同文件），或在 parent slice 的 split 里声明 dependsOn 串行化（串行 wave 不会同时改同一文件）`,
+    };
+  }
+
+  return {
+    passed: true,
+    report: `no-sibling-wave-file-conflict: 与 ${siblingFiles.length} 个兄弟 wave 无文件冲突`,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// wave design-review gate 聚合
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 跑 wave design-review 全部 8 个 gate（wave §11 WAVE_DESIGN_REVIEW_GATES 清单）。
+ *
+ * 与 slice/feature/epic 聚合函数对称（runSliceDesignReviewGates 等），用 runGateSafely 逐个包裹。
+ * 顺序对应原 wave handler 的 inline 数组（design-review.ts:48-57）：
+ *   2 个 testCases 结构 gate + 5 个 judgment 非空 gate + 1 个 wave layerSpecific 非空 gate
+ *   + 1 个跨 wave 文件冲突 gate（本次新增，design §3.4）。
+ *
+ * siblingFiles 由 handler 注入（rules 层零 IO）：handler 从 store.findChildren(parentUnitId)
+ * load 兄弟 wave 的 plan.files 后传入。parentUnitId 为空（独子/孤立 wave）时传空数组，
+ * gate 自然 pass。
+ *
+ * 注意：judgment gate（necessity/sufficiency/...）接收的 judgment 参数取自 input（即
+ * 待写入的 designReviewJudgment），而非 unit.designReviewJudgment（此时还未写入）。
+ * 与原 wave handler inline 调用保持一致：testCases 结构 gate + layerSpecific gate 用 input 数据，
+ * judgment gate 用 input.designReviewJudgment。
+ *
+ * @param unit 待校验的 ExecutionUnit（已含 plan.testCases）
+ * @param judgment 待写入的 designReviewJudgment（design-review input）
+ * @param layerSpecific judgment.layerSpecific（wave 专属 4 字段）
+ * @param siblingFiles 兄弟 wave 的 plan.files（handler 注入，rules 层零 IO）
+ */
+export function runWaveDesignReviewGates(
+  unit: ExecutionUnit,
+  judgment: DesignReviewJudgment,
+  layerSpecific: WaveDesignReviewLayerSpecific | undefined,
+  siblingFiles: ReadonlyArray<{ unitId: string; files: ReadonlyArray<WaveFile> }>,
+): GateResult[] {
+  return [
+    runGateSafely("test-cases-non-empty", testCasesNonEmpty, unit),
+    runGateSafely("test-cases-have-expected", testCasesHaveExpected, unit),
+    runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
+    runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
+    runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),
+    runGateSafely("design-review-tradeoffs-present", designReviewTradeoffsPresent, judgment),
+    runGateSafely("design-review-risks-present", designReviewRisksPresent, judgment),
+    runGateSafely("wave-layer-specific-non-empty", waveLayerSpecificNonEmpty, layerSpecific),
+    runGateSafely("no-sibling-wave-file-conflict", noSiblingWaveFileConflict, unit.plan.files, siblingFiles),
+  ];
 }
 
 // ═══════════════════════════════════════════════════════════════

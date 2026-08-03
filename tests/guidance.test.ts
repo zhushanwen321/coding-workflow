@@ -21,7 +21,7 @@ import {
 } from "../src/guidance/cross-layer.js";
 import { buildFailureHint, deriveFailureCount } from "../src/guidance/failure-hint.js";
 import { buildPrefix } from "../src/guidance/prefix-builder.js";
-import { injectSchema } from "../src/guidance/schema-injector.js";
+import { buildSchemaGenFile,injectSchema } from "../src/guidance/schema-injector.js";
 import {
   WAVE_PLAN_TEMPLATE,
   WAVE_REPLAN_TEMPLATE,
@@ -117,6 +117,61 @@ describe("schema-injector: 其他 interface", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// schema-injector: 跨文件 resolve（A1 — 缺口 1 修复）
+// 映射外层 Input 接口后，字段类型（如 DesignReviewJudgment）在另一个文件，
+// injectSchema 需跨文件解析 import 并内联展开。
+// ═══════════════════════════════════════════════════════════════
+
+describe("schema-injector: 跨文件 resolve（外层 Input 接口）", () => {
+  it("DesignReviewInput 含外层包裹 key + 内联展开 DesignReviewJudgment 字段", () => {
+    const schema = injectSchema("src/handlers/types.ts", "DesignReviewInput");
+    // 外层包裹 key
+    expect(schema).toContain('"designReviewJudgment"');
+    // 跨文件内联展开（DesignReviewJudgment 在 core/judgments.ts）
+    expect(schema).toContain('"necessity"');
+    expect(schema).toContain('"sufficiency"');
+    expect(schema).toContain('"tradeoffs"');
+    expect(schema).toContain('"risks"');
+    // 嵌套展开（sufficiency 内的 gaps/overlaps/meceNote）
+    expect(schema).toContain('"gaps"');
+    expect(schema).toContain('"meceNote"');
+  });
+
+  it("ClarifyInput 含外层 clarifications 包裹 + 内联展开 Clarification 字段", () => {
+    const schema = injectSchema("src/handlers/types.ts", "ClarifyInput");
+    expect(schema).toContain('"clarifications"');
+    // Clarification 在 core/clarifications.ts，跨文件展开
+    expect(schema).toContain('"question"');
+    expect(schema).toContain('"type": "research" | "grilling"');
+  });
+
+  it("CloseoutInput 含外层 summary/artifacts 包裹 + 内联展开 ArtifactRef", () => {
+    const schema = injectSchema("src/handlers/types.ts", "CloseoutInput");
+    expect(schema).toContain('"summary');
+    expect(schema).toContain('"artifacts');
+    // ArtifactRef 在 core/evidence.ts，跨文件展开
+    expect(schema).toContain('"kind"');
+    expect(schema).toContain('"ref"');
+  });
+
+  it("type alias 穿透：RetrospectEpicInput = RetrospectSliceInput → 含 retrospectData", () => {
+    // RetrospectEpicInput 是 type alias（handlers/types.ts），应穿透到 RetrospectSliceInput
+    const schema = injectSchema("src/handlers/types.ts", "RetrospectEpicInput");
+    expect(schema).toContain('"retrospectData"');
+    // PlanningRetrospectData 在 core/judgments.ts，跨文件展开
+    expect(schema).toContain('"reviewedItems"');
+    expect(schema).toContain('"lessonsLearned"');
+  });
+
+  it("TestInput 含外层 testJudgment 包裹 + 内联展开 TestJudgment 字段", () => {
+    const schema = injectSchema("src/handlers/types.ts", "TestInput");
+    expect(schema).toContain('"testJudgment"');
+    expect(schema).toContain('"necessityMet"');
+    expect(schema).toContain('"tradeoffCostRealized"');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // prefix-builder
 // ═══════════════════════════════════════════════════════════════
 
@@ -163,6 +218,46 @@ describe("prefix-builder", () => {
       });
       expect(prefix).toContain(`[${layer}:x]`);
     }
+  });
+
+  // T2.10（#9 prefix 双 layer 修复）：unit.id 自带 scope 前缀（如 "wave:auth"）时，
+  // 渲染层剥离 <layer>: 前缀，产出 [wave:auth] 而非 [wave:wave:auth]（AC-4.5）。
+  it("unitId 自带 <layer>: 前缀 → 剥离（[wave:auth] 非 [wave:wave:auth]，T2.10）", () => {
+    const prefix = buildPrefix({
+      layer: "wave",
+      unitId: "wave:auth",
+      status: "clarified",
+    });
+    expect(prefix).toBe("[wave:auth] 状态：clarified");
+    expect(prefix).not.toContain("[wave:wave:auth]");
+  });
+
+  it("嵌套重复前缀循环剥离（wave:wave:auth → wave:auth）", () => {
+    const prefix = buildPrefix({
+      layer: "wave",
+      unitId: "wave:wave:auth",
+      status: "created",
+    });
+    expect(prefix).toBe("[wave:auth] 状态：created");
+  });
+
+  it("非本 layer 的前缀不剥离（只剥 <layer>: 自身前缀）", () => {
+    const prefix = buildPrefix({
+      layer: "slice",
+      unitId: "wave:w1",
+      status: "created",
+    });
+    expect(prefix).toBe("[slice:wave:w1] 状态：created");
+  });
+
+  it("带 parent 时剥离后仍含「父单元」段", () => {
+    const prefix = buildPrefix({
+      layer: "wave",
+      unitId: "wave:auth",
+      status: "clarified",
+      parentUnitId: "slice:auth-login",
+    });
+    expect(prefix).toBe("[wave:auth] 状态：clarified｜父单元：slice:auth-login");
   });
 });
 
@@ -486,6 +581,44 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
     expect(g).toContain("## input schema + 关键约束");
     expect(g).toContain("{}");
   });
+
+  it("schemaText 为空时不渲染 schema block（#1 终态守卫）", () => {
+    const g = buildNormalGuidance({
+      prefix: "[wave:x] 状态：closed",
+      nextAction: "closeout",
+      goal: "（closeout 阶段）",
+      command: "（当前 closeout 已结束本层流程，无下一步命令）",
+      schemaText: "",
+      templateText: "",
+    });
+    expect(g).not.toContain("## input schema + 关键约束");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// buildSchemaGenFile（T1.5，AC-1.3）：22 keys + 每 key 含外层包裹
+// ═══════════════════════════════════════════════════════════════
+
+describe("build-guidance: buildSchemaGenFile（#1，T1.5）", () => {
+  it("返回 22 个 ${scope}:${action} keys，每 key 的 schemaText 含外层包裹", () => {
+    const gen = buildSchemaGenFile();
+    const keys = Object.keys(gen);
+    // wave 7（clarify/plan/design-review/test/exec-review/retrospect/closeout）
+    // + slice/feature/epic 各 5（clarify/plan/design-review/retrospect/closeout）= 22
+    expect(keys.length).toBe(22);
+    for (const key of keys) {
+      expect(key).toMatch(/^(wave|slice|feature|epic):[a-z-]+$/);
+      const text = gen[key].schemaText;
+      // 每 key schema 含外层包裹（injectSchema 输出 { ... } 结构）
+      expect(text.trim().startsWith("{"), `${key} 缺外层 {`).toBe(true);
+      expect(text.trim().endsWith("}"), `${key} 缺外层 }`).toBe(true);
+    }
+    // 四层覆盖抽查：wave:clarify / slice:plan / feature:retrospect / epic:closeout
+    expect(gen["wave:clarify"]).toBeDefined();
+    expect(gen["slice:plan"]).toBeDefined();
+    expect(gen["feature:retrospect"]).toBeDefined();
+    expect(gen["epic:closeout"]).toBeDefined();
+  });
 });
 
 describe("build-guidance: buildFailureGuidance（四段式）", () => {
@@ -564,6 +697,14 @@ describe("templates/wave: 关键约束", () => {
     // 验证 subagent 文案已从 constraint 剥离干净
     expect(WAVE_PLAN_TEMPLATE.constraint).not.toContain("subagent");
     expect(WAVE_PLAN_TEMPLATE.goal).toContain("执行计划");
+  });
+
+  it("plan 模板含 abandonParentItems 提示（ADR-0010 补充，schema 缺口修复）", () => {
+    // plan 阶段也告知 abandonParentItems 选项——设计阶段发现 parent 条目不适用就该声明，
+    // 不必等到 execute。CLI 用法 + append-only 性质必须在 constraint 里点明。
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("abandonParentItems");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("--abandonParentItems");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("append-only");
   });
 
   it("replan 模板含「重走 design-review」提示（§6.1 / wave §8.3）", () => {

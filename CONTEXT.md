@@ -45,7 +45,7 @@ epic → feature → slice → wave
 | `clarify` | progressive | 澄清需求/决策，append clarifications（不改 status 或留在 clarifying） |
 | `plan` | progressive | 写 plan 条目（wave: testCases/tasks/files/contracts；slice: 技术方案+split；上层: 只 split） |
 | `design-review` | 线性 | 审方案合理性，写 designReviewJudgment，跑 design-review gate |
-| `execute` | 线性 | wave: 记录 commitHash；PlanningUnit: 按 split 下沉创建子 unit |
+| `execute` | 线性 | wave: 记录 commitHash；PlanningUnit: 按 split 下沉创建子 unit（nextAction 填 crossLayer.descend 指向第一个 child） |
 | `test` | 线性（wave 专属） | 跑测试 + 4 gate（commitExists/testsAllPass/testCasesExecuted/testReferencesDesignReview） |
 | `exec-review` | 线性（wave 专属） | 代码品味审查（纯人审，写 execReviewJudgment） |
 | `retrospect` | 线性 | 复盘，写 retrospectData（PlanningUnit 含 deliveryVerdict 验收子层） |
@@ -110,7 +110,7 @@ guard（`guardWave`/`guardPlanning`，`src/rules/state-machine.ts`）只验状�
 | **ActionResult** | engine 统一返回：unitId/status/ok/gateResults?/nextAction?/failureCount?/children? | `src/handlers/types.ts:87` |
 | **nextAction** | engine 返回的导航信息：action? + guidance + unitPath + crossLayer? | `src/handlers/types.ts:126` CwNextAction |
 | **guidance** | 拼入 nextAction 的纯文本提示词，agent 的唯一导航来源；正常三段式/异常四段式 | `src/guidance/build-guidance.ts` |
-| **crossLayer** | closeout 后跨层导航：descend（下沉首个子）/ sibling（横向兄弟）/ ascend（回父 retrospect） | `src/guidance/cross-layer.ts:60` |
+| **crossLayer** | closeout 后跨层导航：descend（下沉首个子）/ sibling（横向兄弟）/ ascend（回父 retrospect）；单值，向后兼容串行导航 | `src/guidance/cross-layer.ts:60` |
 | **CwDeps** | engine 依赖注入接口：store/gitValidator/testRunner?/fileExists/workspacePath/clock | `src/handlers/types.ts:61` |
 | **CwStore** | store.json 持久化层：POSIX 原子写 + 跨进程文件锁 + 内存事务（深拷贝+ROLLBACK） | `src/store/cw-store.ts:70` |
 | **熔断不阻断** | 连续 gate fail 5 次后 guidance 加「强烈建议 abort」文案，但不阻止 agent 继续重试 | `src/guidance/failure-hint.ts` |

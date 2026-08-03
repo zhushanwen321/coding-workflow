@@ -86,10 +86,10 @@ describe("PLANNING_STATUS_DISPLAY / PLANNING_ACTION_TO_NEXT 公共表", () => {
 });
 
 describe("slice ACTION_SCHEMA（IF5 映射）", () => {
-  it("clarify → Clarification@clarifications.ts", () => {
+  it("clarify → ClarifyInput@handlers/types.ts（外层 Input，含包裹 key）", () => {
     expect(SLICE_ACTION_SCHEMA.clarify).toEqual({
-      sourceFilePath: "src/core/clarifications.ts",
-      interfaceName: "Clarification",
+      sourceFilePath: "src/handlers/types.ts",
+      interfaceName: "ClarifyInput",
     });
   });
 
@@ -100,11 +100,11 @@ describe("slice ACTION_SCHEMA（IF5 映射）", () => {
     });
   });
 
-  it("design-review/retrospect/closeout 指向 core 源文件", () => {
-    expect(SLICE_ACTION_SCHEMA["design-review"]?.sourceFilePath).toBe("src/core/judgments.ts");
-    expect(SLICE_ACTION_SCHEMA["design-review"]?.interfaceName).toBe("DesignReviewJudgment");
-    expect(SLICE_ACTION_SCHEMA.retrospect?.interfaceName).toBe("PlanningRetrospectData");
-    expect(SLICE_ACTION_SCHEMA.closeout?.sourceFilePath).toBe("src/core/evidence.ts");
+  it("design-review/retrospect/closeout 指向外层 Input 接口（handlers/types.ts）", () => {
+    expect(SLICE_ACTION_SCHEMA["design-review"]?.sourceFilePath).toBe("src/handlers/types.ts");
+    expect(SLICE_ACTION_SCHEMA["design-review"]?.interfaceName).toBe("DesignReviewInput");
+    expect(SLICE_ACTION_SCHEMA.retrospect?.interfaceName).toBe("RetrospectSliceInput");
+    expect(SLICE_ACTION_SCHEMA.closeout?.sourceFilePath).toBe("src/handlers/types.ts");
   });
 
   it("create/execute/replan/abort 无结构化 schema（undefined）", () => {
@@ -116,10 +116,10 @@ describe("slice ACTION_SCHEMA（IF5 映射）", () => {
 });
 
 describe("feature ACTION_SCHEMA（IF5 映射）", () => {
-  it("clarify → FeatureClarification@clarifications.ts", () => {
+  it("clarify → FeatureClarifyInput@handlers/types.ts（容器型，含 clarifications+spec）", () => {
     expect(FEATURE_ACTION_SCHEMA.clarify).toEqual({
-      sourceFilePath: "src/core/clarifications.ts",
-      interfaceName: "FeatureClarification",
+      sourceFilePath: "src/handlers/types.ts",
+      interfaceName: "FeatureClarifyInput",
     });
   });
 
@@ -130,18 +130,18 @@ describe("feature ACTION_SCHEMA（IF5 映射）", () => {
     });
   });
 
-  it("design-review/retrospect/closeout 与 slice 共用同一 core 源", () => {
+  it("design-review/retrospect/closeout 指向外层 Input 接口", () => {
     expect(FEATURE_ACTION_SCHEMA["design-review"]).toEqual(SLICE_ACTION_SCHEMA["design-review"]);
-    expect(FEATURE_ACTION_SCHEMA.retrospect).toEqual(SLICE_ACTION_SCHEMA.retrospect);
+    expect(FEATURE_ACTION_SCHEMA.retrospect?.interfaceName).toBe("RetrospectFeatureInput");
     expect(FEATURE_ACTION_SCHEMA.closeout).toEqual(SLICE_ACTION_SCHEMA.closeout);
   });
 });
 
 describe("epic ACTION_SCHEMA（IF5 映射）", () => {
-  it("clarify → Clarification@clarifications.ts（与 slice 同，裸数组）", () => {
+  it("clarify → ClarifyInput@handlers/types.ts（与 slice 同，裸数组）", () => {
     expect(EPIC_ACTION_SCHEMA.clarify).toEqual({
-      sourceFilePath: "src/core/clarifications.ts",
-      interfaceName: "Clarification",
+      sourceFilePath: "src/handlers/types.ts",
+      interfaceName: "ClarifyInput",
     });
   });
 

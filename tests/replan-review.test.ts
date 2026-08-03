@@ -56,6 +56,18 @@ describe("buildReplanReviewText", () => {
       expect(text).toMatch(/重新 plan/);
       expect(text).toMatch(/design-review/);
     });
+
+    it("含 abandonParentItems 提示（声明脱离 parent 条目的可选项）", () => {
+      const text = buildReplanReviewText({
+        abandonedIds: ["slice-1"],
+        replanCount: 1,
+      });
+      // replan 时如需一并声明脱离 parent 条目，可带 abandonParentItems 字段
+      expect(text).toContain("abandonParentItems");
+      expect(text).toContain("--abandonParentItems");
+      // 应在基础文案段（replanCount=1 即可出现），而非渐进警告段
+      expect(text).toContain("声明脱离 parent");
+    });
   });
 
   describe("replanCount < 2：仅基础文案，无系统性警告", () => {

@@ -45,6 +45,9 @@ import { makeStubDeps } from "./helpers/env.js";
  */
 const NORMAL_SECTIONS = ["## 位置", "## 下一步", "## input schema + 关键约束"] as const;
 
+/** 终态（nextAction=undefined）时 guidance 不再渲染 schema 段（#1 终态守卫）。 */
+const TERMINAL_SECTIONS = ["## 位置", "## 下一步"] as const;
+
 /**
  * 失败路径 guidance 必含的三段段头（buildFailureGuidance §3.5）。
  * 「## 递进提示」仅 failureCount >= 2 时出现，不在固定段头集合内。
@@ -106,7 +109,13 @@ describe("TC1: slice 正常路径三段式 guidance", () => {
       const unit = freshSlice();
       const nextAction = buildSliceNextAction(unit, action);
 
-      expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      // 终态（closeout）守卫：nextAction=undefined 时无 schema 段（#1）
+      if (action === "closeout") {
+        expectSectionsInOrder(nextAction.guidance, TERMINAL_SECTIONS);
+        expect(nextAction.guidance).not.toContain("## input schema + 关键约束");
+      } else {
+        expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      }
       // command 出现在 guidance（cw <nextAction> --unitId <id>，closeout 终态为例外）
       if (action === "closeout") {
         expect(nextAction.guidance).toContain("已结束本层流程");
@@ -115,7 +124,7 @@ describe("TC1: slice 正常路径三段式 guidance", () => {
         expect(nextAction.guidance).toContain("命令：cw ");
       }
       // prefix 段含层标识
-      expect(nextAction.guidance).toContain("[slice:slice:snap-slice]");
+      expect(nextAction.guidance).toContain("[slice:snap-slice]");
       // unitPath 层正确
       expect(nextAction.unitPath.layer).toBe("slice");
       expect(nextAction.unitPath.unitId).toBe("slice:snap-slice");
@@ -129,14 +138,19 @@ describe("TC2: feature 正常路径三段式 guidance", () => {
       const unit = freshFeature();
       const nextAction = buildFeatureNextAction(unit, action);
 
-      expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      if (action === "closeout") {
+        expectSectionsInOrder(nextAction.guidance, TERMINAL_SECTIONS);
+        expect(nextAction.guidance).not.toContain("## input schema + 关键约束");
+      } else {
+        expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      }
       if (action === "closeout") {
         expect(nextAction.guidance).toContain("已结束本层流程");
       } else {
         expect(nextAction.guidance).toContain("--unitId feature:snap-feature");
         expect(nextAction.guidance).toContain("命令：cw ");
       }
-      expect(nextAction.guidance).toContain("[feature:feature:snap-feature]");
+      expect(nextAction.guidance).toContain("[feature:snap-feature]");
       expect(nextAction.unitPath.layer).toBe("feature");
     });
   }
@@ -148,18 +162,57 @@ describe("TC3: epic 正常路径三段式 guidance", () => {
       const unit = freshEpic();
       const nextAction = buildEpicNextAction(unit, action);
 
-      expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      if (action === "closeout") {
+        expectSectionsInOrder(nextAction.guidance, TERMINAL_SECTIONS);
+        expect(nextAction.guidance).not.toContain("## input schema + 关键约束");
+      } else {
+        expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      }
       if (action === "closeout") {
         expect(nextAction.guidance).toContain("已结束本层流程");
       } else {
         expect(nextAction.guidance).toContain("--unitId epic:snap-epic");
         expect(nextAction.guidance).toContain("命令：cw ");
       }
-      expect(nextAction.guidance).toContain("[epic:epic:snap-epic]");
+      expect(nextAction.guidance).toContain("[epic:snap-epic]");
       expect(nextAction.unitPath.layer).toBe("epic");
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TC8：三层 create 后 schema 段取 nextAction（#1，T1.3）
+// ═══════════════════════════════════════════════════════════════
+
+describe("TC8: 三层 create 后 schema 段取 nextAction（#1）", () => {
+  it("slice create → schema 段显示 clarify 的 clarifications，非 create 的 slug/objective", () => {
+    const unit = freshSlice();
+    const nextAction = buildSliceNextAction(unit, "create");
+    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.guidance).toContain("## input schema + 关键约束");
+    expect(nextAction.guidance).toContain("clarifications");
+    expect(nextAction.guidance).not.toContain("slug: string");
+  });
+
+  it("feature create → schema 段同取 nextAction（feature clarify 容器含 spec）", () => {
+    const unit = freshFeature();
+    const nextAction = buildFeatureNextAction(unit, "create");
+    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.guidance).toContain("## input schema + 关键约束");
+    expect(nextAction.guidance).toContain("spec");
+    expect(nextAction.guidance).not.toContain("slug: string");
+  });
+
+  it("epic create → schema 段同取 nextAction（epic clarify 裸数组）", () => {
+    const unit = freshEpic();
+    const nextAction = buildEpicNextAction(unit, "create");
+    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.guidance).toContain("## input schema + 关键约束");
+    expect(nextAction.guidance).toContain("clarifications");
+    expect(nextAction.guidance).not.toContain("slug: string");
+  });
+});
+
 
 // ═══════════════════════════════════════════════════════════════
 // TC4：三层失败路径四段式 + problem 原文 + 递进提示三档
@@ -235,7 +288,7 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
 
     expectSectionsInOrder(nextAction.guidance, FAILURE_SECTIONS);
     expect(nextAction.guidance).toContain(problem);
-    expect(nextAction.guidance).toContain("[feature:feature:snap-feature]");
+    expect(nextAction.guidance).toContain("[feature:snap-feature]");
     // fail 路径 prefix 标注 status 未变
     expect(nextAction.guidance).toContain("未变");
     expect(failureCount).toBe(1);
@@ -251,7 +304,7 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
 
     expectSectionsInOrder(nextAction.guidance, FAILURE_SECTIONS);
     expect(nextAction.guidance).toContain(problem);
-    expect(nextAction.guidance).toContain("[epic:epic:snap-epic]");
+    expect(nextAction.guidance).toContain("[epic:snap-epic]");
     expect(failureCount).toBe(1);
     expect(nextAction.unitPath.layer).toBe("epic");
   });
@@ -353,4 +406,54 @@ describe("TC6: ERR4 三层 guidance 产出无旧 W4 一句话占位文案", () =
       expect(failure).not.toContain(phrase);
     });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TC7：三层 execute 命令渲染（不接收 input，不带 --input / --commitHash）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 守护：planning execute 命令渲染。
+ *
+ * design-review 完成后 nextAction=execute。planning execute 按 plan.split 自动创建
+ * child（slice→wave / feature→slice / epic→feature），CLI 忽略 --input。
+ * 旧 bug：因为 *_FLAT_INPUT_HINT.execute 非 undefined（被 schema 段兜底文本用），
+ * hasInput 误判为 true，命令被拼上误导性的 --input .cw/<slug>/execute.json。
+ * 修复：execute 在 hasInput 判定前特判，直接返回无 flag 的命令。
+ *
+ * 本组测试确保 execute 命令既不含 --input（planning 不读），也不含 --commitHash（wave 专属）。
+ */
+describe("TC7: 三层 execute 命令渲染（无 --input，无 --commitHash）", () => {
+  it("slice design-review 完成 → nextAction=execute + guidance 含 cw execute --unitId slice:<slug>，不含 --input / --commitHash", () => {
+    const unit = freshSlice();
+    const nextAction = buildSliceNextAction(unit, "design-review");
+    expect(nextAction.action).toBe("execute");
+    expect(nextAction.guidance).toContain(
+      "cw execute --unitId slice:snap-slice",
+    );
+    expect(nextAction.guidance).not.toContain("--input");
+    expect(nextAction.guidance).not.toContain("--commitHash");
+  });
+
+  it("feature design-review 完成 → nextAction=execute + guidance 含 cw execute --unitId feature:<slug>，不含 --input / --commitHash", () => {
+    const unit = freshFeature();
+    const nextAction = buildFeatureNextAction(unit, "design-review");
+    expect(nextAction.action).toBe("execute");
+    expect(nextAction.guidance).toContain(
+      "cw execute --unitId feature:snap-feature",
+    );
+    expect(nextAction.guidance).not.toContain("--input");
+    expect(nextAction.guidance).not.toContain("--commitHash");
+  });
+
+  it("epic design-review 完成 → nextAction=execute + guidance 含 cw execute --unitId epic:<slug>，不含 --input / --commitHash", () => {
+    const unit = freshEpic();
+    const nextAction = buildEpicNextAction(unit, "design-review");
+    expect(nextAction.action).toBe("execute");
+    expect(nextAction.guidance).toContain(
+      "cw execute --unitId epic:snap-epic",
+    );
+    expect(nextAction.guidance).not.toContain("--input");
+    expect(nextAction.guidance).not.toContain("--commitHash");
+  });
 });

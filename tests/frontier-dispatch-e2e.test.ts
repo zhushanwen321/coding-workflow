@@ -383,3 +383,59 @@ describe("FTC6：replan 后 frontier 输出 lastStatusHistoryAction（后备检�
     expect(sliceNode!.lastStatusHistoryAction).toBe("execute");
   });
 });
+
+describe("T3.1：frontier 聚合字段 advanceableCount/blockedCount（#10，W3，AC-4.1）", () => {
+  it("blocked 节点计数 = blockedCount，可推进节点计数 = advanceableCount，两者之和 = nodes.length", () => {
+    // slice executing + 2 wave：w1 created（可推进）、w2 dependsOn w1（blocked）
+    const { sliceId, waveIds } = setupSliceExecuting("ftc-aggr", [
+      { slug: "w1", description: "wave 1", dependsOn: [], inheritedItemIds: ["IF1"] },
+      { slug: "w2", description: "wave 2", dependsOn: ["w1"], inheritedItemIds: ["DM1"] },
+    ]);
+    const [w1Id] = waveIds;
+
+    const result = computeFrontier(sliceId, env.store);
+    expect(result.nodes.length).toBeGreaterThan(0);
+
+    // 按 nodes 分类计数与聚合字段一致（一次 reduce 的等价断言）
+    const expectedAdvanceable = result.nodes.filter((n) => !n.blocked).length;
+    const expectedBlocked = result.nodes.filter((n) => n.blocked).length;
+    expect(result.advanceableCount).toBe(expectedAdvanceable);
+    expect(result.blockedCount).toBe(expectedBlocked);
+    expect(result.advanceableCount + result.blockedCount).toBe(result.nodes.length);
+
+    // 具体值：w2 blocked（依赖 w1 未完成）、slice executing 但子层未终态 → blocked、
+    // w1 created → 可推进。至少 blockedCount >= 1 且 advanceableCount >= 1
+    expect(result.advanceableCount).toBeGreaterThanOrEqual(1);
+    expect(result.blockedCount).toBeGreaterThanOrEqual(1);
+
+    // w2 节点的 blocked=true（依赖 w1）
+    const w2Node = result.nodes.find((n) => n.unitId === waveIds[1]);
+    expect(w2Node!.blocked).toBe(true);
+    expect(w1Id).toBeDefined();
+  });
+
+  it("全终态树 → nodes=[] 且两个聚合字段均为 0", () => {
+    const { sliceId } = setupSliceExecuting("ftc-aggr2", [
+      { slug: "w1", description: "wave 1", dependsOn: [], inheritedItemIds: ["IF1"] },
+    ]);
+    // 所有 child wave closed + slice closeout（复用 FTC5 模式）
+    const waveIds = env.store.findChildren(sliceId).map((c) => c.id);
+    for (const wid of waveIds) {
+      advanceWaveToClosed(env.deps, wid);
+    }
+    dispatch(
+      {
+        action: "retrospect",
+        unitId: sliceId,
+        input: { retrospectData: makeRetrospectDataFromStore(env.deps, sliceId) },
+      },
+      env.deps,
+    );
+    dispatch({ action: "closeout", unitId: sliceId, input: { artifacts: [] } }, env.deps);
+
+    const result = computeFrontier(sliceId, env.store);
+    expect(result.nodes).toEqual([]);
+    expect(result.advanceableCount).toBe(0);
+    expect(result.blockedCount).toBe(0);
+  });
+});

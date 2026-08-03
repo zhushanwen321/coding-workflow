@@ -184,15 +184,22 @@ export function buildFeatureNextAction(
   const template = PLANNING_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
-  const schemaText = getFeatureSchemaText(action);
-  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
-  // 这里追加 feature 专属 6 字段名，提示 agent 必须填这些 key（机器 gate layer-specific-non-empty 会验）。
-  const finalSchemaText =
-    action === "design-review"
-      ? `${schemaText}\nlayerSpecific 必须包含以下 key: specMeceNote, sliceSplitRationale, acVerifiabilityNote, consistencyNote, frAcCoverageNote, sliceSpecCoverageNote`
-      : schemaText;
 
+  // #1 schema 错位修复：nextAction 提前计算，schema 段取 nextAction（与命令段同指下一步）。
   const nextAction = opts?.nextActionOverride ?? FEATURE_ACTION_TO_NEXT_PUBLIC[action];
+  // 终态守卫：closeout/abort 后 nextAction=undefined，无「下一步 input」可展示 → 跳过 schema 段。
+  let schemaText = "";
+  if (nextAction !== undefined) {
+    const baseSchemaText = getFeatureSchemaText(nextAction);
+    // design-review 特判（跟随 nextAction）：基类 DesignReviewJudgment 的 layerSpecific 下界
+    // 是 Record<string,string>，这里追加 feature 专属 6 字段名，提示 agent 必须填这些 key
+    //（机器 gate layer-specific-non-empty 会验）。
+    schemaText =
+      nextAction === "design-review"
+        ? `${baseSchemaText}\nlayerSpecific 必须包含以下 key: specMeceNote, sliceSplitRationale, acVerifiabilityNote, consistencyNote, frAcCoverageNote, sliceSpecCoverageNote`
+        : baseSchemaText;
+  }
+
   const command = buildFeatureCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({
@@ -200,7 +207,7 @@ export function buildFeatureNextAction(
     nextAction: action,
     goal,
     command,
-    schemaText: finalSchemaText,
+    schemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("planning", action),
   });
@@ -231,6 +238,11 @@ function buildFeatureCommand(
   if (nextAction === undefined) {
     return `（当前 ${currentAction} 已结束本层流程，无下一步命令）`;
   }
+  // execute 特判：planning execute 按 plan.split 自动创建 child slice，不接收 input（CLI 忽略 --input）。
+  // FEATURE_FLAT_INPUT_HINT.execute 仍 defined，被 getFeatureSchemaText("execute") 用作 schema 段兜底文本，故这里必须特判跳过。
+  if (nextAction === "execute") {
+    return buildCommand(nextAction, `--unitId ${unitId}`);
+  }
   const hasInput = FEATURE_ACTION_SCHEMA[nextAction] !== undefined ||
     FEATURE_FLAT_INPUT_HINT[nextAction] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, nextAction)}` : "";
@@ -249,6 +261,10 @@ function buildFeatureCurrentCommand(
   unitId: string,
   slug: string,
 ): string {
+  // execute 特判：与 buildFeatureCommand 一致，planning execute 不接收 input（按 plan.split 自动创建 child slice）。
+  if (action === "execute") {
+    return buildCommand(action, `--unitId ${unitId}`);
+  }
   const hasInput = FEATURE_ACTION_SCHEMA[action] !== undefined ||
     FEATURE_FLAT_INPUT_HINT[action] !== undefined;
   const inputPart = hasInput ? `--input ${inputFilePath(slug, action)}` : "";

@@ -17,6 +17,7 @@ import type { Decision } from "../../core/clarifications.js";
 import type { Slice } from "../../core/workunit.js";
 import { mergeAbandonParentItems } from "../internal.js";
 import type { ActionResult, CwDeps,PlanSliceInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildSliceNextAction, saveSlice, sliceTransition } from "./slice-internal.js";
 
 /**
@@ -31,6 +32,7 @@ export function handlePlanSlice(
   input: PlanSliceInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("plan", "slice", input);
   const decisions = input.decisions ?? projectDecisionsFromClarifications(unit);
 
   unit.plan = {

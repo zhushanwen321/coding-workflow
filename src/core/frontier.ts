@@ -52,6 +52,10 @@ export interface FrontierNode {
 export interface FrontierResult {
   rootUnitId: string;
   nodes: FrontierNode[];
+  /** nodes 中可推进（blocked === false）的节点数（#10，一次 reduce 累计）。 */
+  advanceableCount: number;
+  /** nodes 中被阻塞（blocked === true）的节点数（#10，一次 reduce 累计）。 */
+  blockedCount: number;
 }
 
 /** frontier 需要的 store 接口（结构同 HandoffStore，避免 import readonly 层）。 */
@@ -155,7 +159,7 @@ export function computeFrontier(
   const root = store.load(rootUnitId);
   if (root === null) {
     // 防御：cli 层已校验 not found，到不了这里。
-    return { rootUnitId, nodes: [] };
+    return { rootUnitId, nodes: [], advanceableCount: 0, blockedCount: 0 };
   }
 
   // Pass 1: 递归收集整棵树。
@@ -211,15 +215,21 @@ export function computeFrontier(
         const myDep = childDeps.find((d) => d.childUnitId === node.unitId);
         if (myDep !== undefined && myDep.dependsOn.length > 0) {
           node.dependsOn = myDep.dependsOn;
-          // 查依赖的 wave 是否全终态。
-          const nonTerminalDeps = myDep.dependsOn
-            .map((id) => store.load(id))
-            .filter(
+          // 一次遍历同时得 blocked 判定（任一依赖 null 或非终态 → 未满足）和 report 数据
+          // （未终态依赖 id 列表），避免 isDependencySatisfied（内部逐个 store.load）再
+          // .map(store.load) 的双倍 IO（S2）。「依赖 load 不到（null）」按 isDependencySatisfied
+          // 语义视为未满足（保守判定），但不列入 report（与原逻辑一致）。
+          const loadedDeps = myDep.dependsOn.map((id) => store.load(id));
+          const isSatisfied = loadedDeps.every(
+            (r) =>
+              r !== null && TERMINAL_STATUSES.has(getStringField(r, "status")),
+          );
+          if (!isSatisfied) {
+            node.blocked = true;
+            const nonTerminalDeps = loadedDeps.filter(
               (r): r is WorkUnitRecord =>
                 r !== null && !TERMINAL_STATUSES.has(getStringField(r, "status")),
             );
-          if (nonTerminalDeps.length > 0) {
-            node.blocked = true;
             node.blockedReason = `依赖未完成: ${nonTerminalDeps
               .map((r) => getStringField(r, "id"))
               .join(", ")}`;
@@ -229,7 +239,19 @@ export function computeFrontier(
     }
   }
 
-  return { rootUnitId, nodes };
+  // 聚合计数（#10，AC-4.1）：在既有遍历后一次 reduce，无二次遍历。
+  // 语义：blocked=false 的节点可推进（agent 可跑它的 nextAction），blocked=true 被阻塞。
+  let advanceableCount = 0;
+  let blockedCount = 0;
+  for (const node of nodes) {
+    if (node.blocked) {
+      blockedCount++;
+    } else {
+      advanceableCount++;
+    }
+  }
+
+  return { rootUnitId, nodes, advanceableCount, blockedCount };
 }
 
 /**

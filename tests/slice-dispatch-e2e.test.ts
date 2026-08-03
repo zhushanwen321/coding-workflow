@@ -159,6 +159,52 @@ describe("dispatch 完整 slice 生命周期", () => {
     ]);
   });
 
+  it("execute 依赖链 split：A dependsOn B → crossLayer 指向声明顺序第一个 child A（main 语义）", () => {
+    // 回退说明：parallelTargets / 就绪批次已删除，execute 恢复 main 语义——
+    // crossLayer 指向 childUnitIds[0]（声明顺序首个 child），不检查依赖阻塞。
+    // split = [A, B]，A.slug="a" dependsOn ["b"]，B.slug="b" 无依赖。
+    // execute 后所有 child 刚 created：A 被阻塞（依赖 B 未终态），B 就绪（无依赖）。
+    const unitId = "slice:e2e-dep-chain";
+
+    dispatch(
+      { action: "create", input: { slug: "e2e-dep-chain", objective: "o", layer: "slice" } },
+      env.deps,
+    );
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
+    dispatch(
+      {
+        action: "plan",
+        unitId,
+        input: {
+          ...makeValidSlicePlan(),
+          split: [
+            { slug: "a", description: "wave A（依赖 B）", dependsOn: ["b"], inheritedItemIds: ["IF1"] },
+            { slug: "b", description: "wave B（无依赖）", dependsOn: [], inheritedItemIds: ["DM1"] },
+          ],
+        },
+      },
+      env.deps,
+    );
+    dispatch(
+      { action: "design-review", unitId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } },
+      env.deps,
+    );
+
+    const execute = dispatch(sliceExecute(unitId), env.deps);
+    expect(execute.ok).toBe(true);
+    expect(execute.status).toBe("executing");
+
+    const slice = loadSlice(unitId);
+    const aId = "wave:e2e-dep-chain::a"; // childUnitIds[0]（声明顺序第一）
+    const bId = "wave:e2e-dep-chain::b"; // childUnitIds[1]（唯一就绪）
+    expect(slice.executeResult.childUnitIds).toEqual([aId, bId]);
+
+    // crossLayer.kind=descend，指向声明顺序第一个 child（A），不检查依赖阻塞
+    expect(execute.nextAction?.crossLayer?.kind).toBe("descend");
+    expect(execute.nextAction?.crossLayer?.targetLayer).toBe("wave");
+    expect(execute.nextAction?.crossLayer?.targetUnitId).toBe(aId);
+  });
+
   it("slice 有 parentUnitId → closeout 后 crossLayer.ascend 指向 parent", () => {
     const unitId = "slice:e2e-ascend";
     dispatch(

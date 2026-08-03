@@ -19,6 +19,7 @@
 import type { Slice } from "../../core/workunit.js";
 import { runSliceDesignReviewGates } from "../../rules/gates/design-review.js";
 import type { ActionResult, CwDeps,DesignReviewInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -39,6 +40,7 @@ export function handleDesignReviewSlice(
   input: DesignReviewInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("design-review", "slice", input);
   // 先写 judgment（gate 里 layerSpecificNonEmpty 依赖已写入的 designReviewJudgment.layerSpecific）
   unit.designReviewJudgment = input.designReviewJudgment;
 

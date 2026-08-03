@@ -95,6 +95,20 @@
 - **验证**：fail 记录函数（src/handlers/internal.ts，note 形态 `gate fail: <reason>`，§5.1 派生算法按此标记扫描）；`gateResults` 字段（src/handlers/types.ts `ActionResult.gateResults: GateResult[]`）；`StatusChange` 结构（src/core/status.ts，append-only）
 - **例外**：gate pass 不单独写一条 fail 记录——pass 直接 `transitionStatus` 前进（前进本身就是留痕，statusHistory 记 from→to 转换）。
 
+### O-2 gate 失败报告列期望全集 + 缺失子集  [from: cw-guidance-hardening §non-functional-design]
+
+- **约束**：retrospect gate 失败时 failure 报告必须包含「期望全集（含已覆盖 itemId）+ 缺失子集」两段（字符串拼接，不新建机制）；codeSmell/followup/tradeoff/risk 的 itemId 生成必须防御类型违规输入（typeof 防御，string 原样/对象稳定序列化），不得产 `[object Object]` / `followup:undefined` / `undefined` 垃圾 key。
+- **为什么**：45% 的 retrospect gate fail 根因是 agent 不知道要覆盖哪些 itemId——缺失清单会让 agent 逐轮试错补漏；垃圾 key 让 agent 不敢照抄 missing 清单。列全集消除信息不对称，key 防御让清单可照抄。
+- **验证**：`src/rules/gates/retrospect.ts`（139-146 key 防御 + 166-170 报告扩展 + 266-293 slice 层 tradeoff/risk id 防御）；T2.7/T2.7b 用例断言两段文案与无垃圾 key
+- **例外**：无。
+
+### O-3 unknown flag 报错列合法 flag  [from: cw-guidance-hardening §non-functional-design]
+
+- **约束**：CLI 解析到 unknown flag 必须报 `CwError`（exit 1）且错误文案列出该 action 的合法 flag 列表（含全局共享基础集）；白名单表与 per-command help 同源（`src/cli-params.ts`）。
+- **为什么**：minimist 默认静默吞 unknown flag，agent 拼错 flag 会拿到假成功或困惑报错；列合法 flag 让错误可操作（AXI §6c）。
+- **验证**：`src/cli-params.ts`（FlagWhitelist + validateFlags）+ `src/cli.ts`（buildParams 前校验）；T2.1/T2.2/T2.3 用例
+- **例外**：`--` positional 分隔符后的键不校验。
+
 ## 已知残余风险
 
 > 跨主题累积。下次设计会先读这里，避免重复发现已知问题。
@@ -103,3 +117,6 @@
 |----|------|---------|---------|------|
 | RISK-1 | 跨进程文件锁高并发下未压测——stale lock 检测基于 PID + 30s 超时指纹（`openSync(path,"wx")` + pid/timestamp 比对），极端情况（如 PID 复用 + 时间戳未过期）可能误打破活锁 | CW 是 session 级工具（单 WorkUnit 树生命周期），高并发场景概率极低；误打破的后果是单次写失败重试，非数据损坏 | stale lock 打破日志（verbose 模式 `logVerbose`） | [from: cw-cli-extract] |
 | RISK-2 | testRunner 大测试套件性能——`cw test` 经 `spawnSync` 实跑测试命令（默认 `npx vitest run`），超时 120s；超大/慢测试套件可能接近超时被强杀 | CW 只验测试 exit 0；慢是工程现实（测试套件规模由项目决定），120s 超时是防死循环的上限，线性退化非数据风险 | 测试耗时 / `TestRunResult` 计数 | [from: W1-changedFiles] |
+| RISK-3 | flag 白名单漏登记新增 action 的合法 flag → 合法调用被误拒 | 单源提取（从 buildParams 现有 case）+ T2.2 反向断言（表 keys ⊆ 代码消费 flag 键）在新增 action 首测即暴露 | 新增 action 的 dispatch 层测试 | [from: cw-guidance-hardening §non-functional-design] |
+| RISK-4 | input schema 与 types.ts 类型漂移（改 types.ts 忘改 typebox schema） | 编译期双向 assignability 断言（Type.Static 互 assignable，T2.6）+ 既有 949 测试基线在过严漂移时变红；过松漂移由行为用例兜底 | npm test 全绿 | [from: cw-guidance-hardening §non-functional-design] |
+| RISK-5 | create 空态覆盖判定的跨进程并发 save 窗口 | session 级单用户工具，C-1 文件锁 + RISK-1 已接受高并发未压测；existing 分支不写、空态窗口极窄 | 无（接受） | [from: cw-guidance-hardening §non-functional-design] |

@@ -155,7 +155,7 @@ guidance 是**渐进式**的——每个 action 返回的 guidance 只包含「�
 - **正常走（ok=true）**：三段式（位置 / 下一步+命令 / input schema+关键约束）
 - **gate fail（ok=false）**：四段式（位置 / 问题 / 怎么修 / 递进提示）
   - 第 1 次 fail：只说问题
-  - 第 3 次 fail：加三出口（回到 clarify / replan / abort）
+  - 第 2 次 fail 起：加三出口（回到 clarify / replan / abort）
   - 第 5 次 fail：强烈建议先 abort 跳出重审
 
 **replan 的三层渐进**（解决「agent 不知道 replan 存在就调不了」的悖论）：
@@ -232,15 +232,28 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 
 ## 失败模式
 
-### input 顶层包裹错误（plan 等）
-各 action 的 `--input` JSON 顶层结构因 action 和 **layer** 而异，**不要自作主张加包裹 key**：
-- `plan`（wave）：顶层直接是 `{split,testCases,tasks,files,contracts}`（**不是** `{plan:{...}}`）
-- `plan`（slice）：`{split,techChoices,interfaces,dataModels,errorSpecs,decisions?}`（与 wave 的 plan input **完全不同**，按 layer 区分；dispatch 按 unit.scope 路由到对应 handler）
-- `clarify`：`{clarifications:[...]}`
+### input 顶层包裹（layer-specific）
+各 action 的 `--input` JSON 顶层结构因 action 和 **layer** 而异。guidance 的 schema block 会显示完整的顶层包裹 + 内联展开的字段结构（从 `handlers/types.ts` 的 Input 接口自动提取），**直接照 schema block 写即可**。以下是快速参考：
+
+**plan（四层各异，最易出错）**：
+- `plan`（wave）：`{testCases,tasks,files,contracts}`（**无 split**；可选 `abandonParentItems`）
+- `plan`（slice）：`{split,techChoices,interfaces,dataModels,errorSpecs,decisions?}`（与 wave 完全不同）
+- `plan`（feature/epic）：`{split}`（仅 split）
+
+**其他 action 的顶层包裹**：
+- `clarify`（wave/slice/epic）：`{clarifications:[...]}`
+- `clarify`（feature）：`{clarifications:[...], spec:{...}}`（多 spec 字段）
 - `design-review`：`{designReviewJudgment:{...}}`
-- `execute`（wave/slice/epic/feature）：**用 `--commitHash` flag，不用 `--input`**：`cw execute --unitId <id> --commitHash <sha>`（wave 记录 commit；planning 层按 plan.split 自动创建子层 unit，忽略 commitHash）。传 `--input` 报「execute 需要 --commitHash」。
-- `retrospect`（wave）：`{retrospectData:{...}}`；`retrospect`（slice）：`{retrospectData:{...}}`（但 retrospectData 是 PlanningRetrospectData，含 deliveryVerdict/childUnitIdsEvidence/splitFulfillment，比 wave 宽）
-cw 的 guidance 里 schema 提取常失败（占位提示「无法从 src/... 提取 schema」），不能依赖它，要查 `src/handlers/types.ts` 的 `XxxInput` 接口。2026-07-23 事故：plan input 误用 `{plan:{...}}` 包裹，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 `testCasesNonEmpty` crash（`unit.plan.testCases.length` undefined.length）。排查：直接读 `~/.cw/<encodedCwd>/store.json` 的 workUnits[0].plan 确认实际存储结构。
+- `test`（wave 专属）：`{testJudgment:{...}}`
+- `exec-review`（wave 专属）：`{execReviewJudgment:{...}}`
+- `retrospect`（wave）：`{retrospectData:{...}}`（RetrospectData）
+- `retrospect`（slice/feature/epic）：`{retrospectData:{...}}`（PlanningRetrospectData，多 deliveryVerdict/childUnitIdsEvidence/splitFulfillment）
+- `closeout`：`{summary?, artifacts?:[...]}`
+- `replan`：`{abandonedIds, note}`（可选 `abandonParentItems` / feature 的 `addedSpecItems`）
+
+**execute 特殊**（用 flag 不用 input）：`cw execute --unitId <id> --commitHash <sha>`（wave 记录 commit；planning 层按 plan.split 自动创建子层 unit，忽略 commitHash）。
+
+历史教训：plan input 误用 `{plan:{...}}` 包裹时，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 crash。**plan 阶段的错误 input 不会立即报错，会在下游 gate 延迟失败**——写完后用 `cw status --unitId <id>` 确认 plan 字段正确存储了。
 
 ### illegal_transition（跳阶段）
 调了状态机不允许的 action → CwEngineError（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。

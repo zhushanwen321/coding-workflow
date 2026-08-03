@@ -21,6 +21,7 @@ import type { Epic } from "../../core/workunit.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CloseoutInput, CwDeps, CwNextAction } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendEpicFailRecord,
   buildEpicFailureNextAction,
@@ -41,6 +42,7 @@ export function handleCloseoutEpic(
   input: CloseoutInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("closeout", "epic", input);
   // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
   assertEvidenceNotFrozen(unit.evidence, "closeout");
   
@@ -101,7 +103,7 @@ export function handleCloseoutEpic(
     rollupChildDelivery(deps, unit.id);
   }
 
-  // ── crossLayer：回溯父单元（epic 顶层无 parent，天然 undefined——孤立终点）──
+  // ── crossLayer：回溯父单元（无 parent 则孤立终点）──
   const crossLayer: CwNextAction["crossLayer"] | undefined =
     unit.parentUnitId !== undefined && unit.parentUnitId !== ""
       ? {

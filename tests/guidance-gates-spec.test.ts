@@ -113,10 +113,8 @@ describe("GTC1（C3）: feature handoff 输出含 FeatureSpec 的 FR/AC", () => 
 // ═══════════════════════════════════════════════════════════════
 
 describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名", () => {
-  it("wave design-review → guidance 含 wave 4 字段名（建议包含措辞）", () => {
-    // buildNextAction 接 ExecutionUnit；用 makeWaveUnit 的等价最小 unit（createWave 直接调不便在此 import，
-    // 这里用一个 wave-scope 的 record 即可——buildNextAction 只读 id/status/slug/parentUnitId 做位置）。
-    // 简化：直接构造满足 buildNextAction 读取字段的最小 ExecutionUnit。
+  it("wave design-review 提示（plan 后，特判跟随 nextAction）→ guidance 含 wave 4 字段名（建议包含措辞）", () => {
+    // #1 后特判跟随 nextAction：plan 完成后下一步是 design-review，schema 段才注入 layerSpecific 提示。
     const unit = {
       id: "wave:design-review",
       scope: "wave",
@@ -124,7 +122,7 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
       status: "planning",
       parentUnitId: "slice:parent",
     } as unknown as Parameters<typeof buildNextAction>[0];
-    const { guidance } = buildNextAction(unit, "design-review");
+    const { guidance } = buildNextAction(unit, "plan");
 
     expect(guidance).toContain("layerSpecific 建议包含以下 key");
     expect(guidance).toContain("testCaseCoverageNote");
@@ -133,9 +131,9 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("tddRedReadinessNote");
   });
 
-  it("slice design-review → guidance 含 slice 6 字段名（必须包含措辞）", () => {
+  it("slice design-review 提示（plan 后）→ guidance 含 slice 6 字段名（必须包含措辞）", () => {
     const unit = makeSliceUnit();
-    const { guidance } = buildSliceNextAction(unit, "design-review");
+    const { guidance } = buildSliceNextAction(unit, "plan");
 
     expect(guidance).toContain("layerSpecific 必须包含以下 key");
     expect(guidance).toContain("techChoiceRationale");
@@ -146,9 +144,9 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("crossWaveContractNote");
   });
 
-  it("feature design-review → guidance 含 feature 6 字段名", () => {
+  it("feature design-review 提示（plan 后）→ guidance 含 feature 6 字段名", () => {
     const unit = makeFeatureUnit();
-    const { guidance } = buildFeatureNextAction(unit, "design-review");
+    const { guidance } = buildFeatureNextAction(unit, "plan");
 
     expect(guidance).toContain("layerSpecific 必须包含以下 key");
     expect(guidance).toContain("specMeceNote");
@@ -159,9 +157,9 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("sliceSpecCoverageNote");
   });
 
-  it("epic design-review → guidance 含 epic 5 字段名", () => {
+  it("epic design-review 提示（plan 后）→ guidance 含 epic 5 字段名", () => {
     const unit = makeEpicUnit();
-    const { guidance } = buildEpicNextAction(unit, "design-review");
+    const { guidance } = buildEpicNextAction(unit, "plan");
 
     expect(guidance).toContain("layerSpecific 必须包含以下 key");
     expect(guidance).toContain("strategicAlignment");
@@ -171,10 +169,10 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("resourceEstimate");
   });
 
-  it("非 design-review action 不注入 layerSpecific 字段名（确认注入点条件性）", () => {
+  it("非 design-review next 的 action 不注入 layerSpecific 字段名（确认注入点条件性）", () => {
     const unit = makeSliceUnit();
-    const { guidance } = buildSliceNextAction(unit, "plan");
-    // plan 不追加 layerSpecific 字段名提示
+    // clarify 后 nextAction=plan，不是 design-review → 不注入
+    const { guidance } = buildSliceNextAction(unit, "clarify");
     expect(guidance).not.toContain("layerSpecific 必须包含以下 key");
   });
 });
@@ -189,15 +187,12 @@ describe("GTC3（C5）: retrospect 委派从 forbidden → optional", () => {
     // optional 档文案
     expect(g).toContain("【按需委派】");
     expect(g).not.toContain("【不建议委派】");
-    // optional 档追加嵌套决策树（forbidden 不追加）
-    expect(g).toContain("支持嵌套");
   });
 
   it("planning retrospect → 按需委派（optional），非 forbidden", () => {
     const g = buildSubagentGuidance("planning", "retrospect");
     expect(g).toContain("【按需委派】");
     expect(g).not.toContain("【不建议委派】");
-    expect(g).toContain("支持嵌套");
   });
 });
 

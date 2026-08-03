@@ -9,8 +9,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { ChildDeliveryRecord } from "../src/core/evidence.js";
-import { resolveChildDependsOn } from "../src/core/hierarchy.js";
+import { isDependencySatisfied, resolveChildDependsOn } from "../src/core/hierarchy.js";
 import type { Split } from "../src/core/plan.js";
+import type { WorkUnitRecord } from "../src/store/schema.js";
 
 describe("resolveChildDependsOn", () => {
   it("split.slug 与 childDelivery 匹配 → 返回 childUnitId + dependsOn（childUnitId 列表）", () => {
@@ -75,5 +76,66 @@ describe("resolveChildDependsOn", () => {
     const result = resolveChildDependsOn(splits, delivery);
 
     expect(result[0]).toEqual({ childUnitId: "wave:r::w1", dependsOn: [] });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// isDependencySatisfied — 依赖全终态判定（共享函数，§5.2）
+// ═══════════════════════════════════════════════════════════════
+
+/** 构造最小内存 store：load 命中 records[id]，否则 null。非 mock 框架，只是内存对象。 */
+function makeStore(records: Record<string, WorkUnitRecord>): {
+  load: (id: string) => WorkUnitRecord | null;
+} {
+  return { load: (id) => records[id] ?? null };
+}
+
+/** 构造一条 status 指定的最小 record。 */
+function rec(id: string, status: string): WorkUnitRecord {
+  return { id, scope: "wave", status };
+}
+
+describe("isDependencySatisfied", () => {
+  it("空 dependsOn → true（无依赖即满足）", () => {
+    const store = makeStore({});
+    expect(isDependencySatisfied([], store)).toBe(true);
+  });
+
+  it("依赖全部 closed → true", () => {
+    const store = makeStore({
+      "wave:a": rec("wave:a", "closed"),
+      "wave:b": rec("wave:b", "closed"),
+    });
+    expect(isDependencySatisfied(["wave:a", "wave:b"], store)).toBe(true);
+  });
+
+  it("依赖全部 aborted（也是终态）→ true", () => {
+    const store = makeStore({
+      "wave:a": rec("wave:a", "aborted"),
+    });
+    expect(isDependencySatisfied(["wave:a"], store)).toBe(true);
+  });
+
+  it("依赖含非终态（created）→ false", () => {
+    const store = makeStore({
+      "wave:a": rec("wave:a", "closed"),
+      "wave:b": rec("wave:b", "created"),
+    });
+    expect(isDependencySatisfied(["wave:a", "wave:b"], store)).toBe(false);
+  });
+
+  it("依赖 load 不到（null，不在 store）→ false", () => {
+    const store = makeStore({});
+    expect(isDependencySatisfied(["wave:missing"], store)).toBe(false);
+  });
+
+  it("部分依赖 load 不到 → false（任一 null 即不满足）", () => {
+    const store = makeStore({ "wave:a": rec("wave:a", "closed") });
+    expect(isDependencySatisfied(["wave:a", "wave:missing"], store)).toBe(false);
+  });
+
+  it("status 字段非 string（脏数据）→ 视为非终态 → false", () => {
+    const store = makeStore({ "wave:a": { id: "wave:a", scope: "wave", status: 123 } });
+    expect(isDependencySatisfied(["wave:a"], store)).toBe(false);
   });
 });

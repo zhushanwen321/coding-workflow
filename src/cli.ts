@@ -23,11 +23,16 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
 
+import {
+  FLAG_WHITELIST,
+  GLOBAL_FLAGS,
+  validateFlags,
+} from "./cli-params.js";
 import { CwError } from "./core/errors.js";
 import type { TestRunResult } from "./core/evidence.js";
 import { computeFrontier } from "./core/frontier.js";
@@ -80,8 +85,8 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * BYTES_PER_MB;
 /** JSON 序列化缩进空格数。 */
 const JSON_INDENT = 2;
 
-/** v1 list 默认每页条数（与 render.ts DEFAULT_LIMIT 一致）。 */
-const CW_LIST_DEFAULT_LIMIT = 10;
+/** v1 list 默认每页条数（与 render.ts DEFAULT_LIMIT 一致，AXI-2 #10：10 → 20）。 */
+const CW_LIST_DEFAULT_LIMIT = 20;
 
 /** process.argv 中用户参数的起始索引（[0]=node, [1]=脚本路径）。 */
 const ARGV_USER_PARAMS_START = 2;
@@ -577,6 +582,97 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
 }
 
 /**
+ * readCliVersion — 读 package.json 的 version 字段。
+ *
+ * 路径解析：import.meta.url 在 dist/cli.js 或 src/cli.ts，dirname 后 ../package.json
+ * 都指向包根的 package.json（dist 和 src 的上一级都是项目根）。
+ * 失败（文件缺失/解析失败）返回 "unknown"——version 不该 crash CLI。
+ */
+function readCliVersion(): string {
+  try {
+    const packageJsonPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../package.json",
+    );
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      version?: unknown;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * renderHelp — 返回 help 文本（面向人读，分组手写保证格式稳定）。
+ *
+ * 触发场景：`cw help` / `cw --help` / `cw -h` / `cw`（无参）。
+ * action 列表分组与 ALL_ACTIONS = VALID_ACTIONS ∪ READONLY_QUERIES 对齐，
+ * help/version 单列一组（它们不进 dispatch、不写 store）。
+ */
+function renderHelp(): string {
+  return `cw — Agent-agnostic 编码流程编排 CLI
+
+用法：
+  cw <action> [layer] [options]
+  cw <readonly-query> [options]
+
+工作流 action（推进编码流程，经 dispatch + store）：
+  create <layer>          建 topic（layer: wave | slice | feature | epic）
+  clarify                 澄清需求
+  plan                    编写执行计划
+  design-review           设计审查
+  execute                 执行（wave 写代码 / planning 按 split 下沉）
+  test                    测试验收
+  exec-review             执行审查
+  retrospect              复盘
+  closeout                冻结交付
+  replan                  重规划（废弃条目 + 重建）
+  abort                   放弃 topic
+
+只读查询（不经 dispatch、不写 store）：
+  list                    列出 unit（定位 topic，新 agent 接手第一步）
+  tree                    父子树结构
+  status                  单 unit 完整 JSON
+  handoff                 交接摘要（五段式 markdown）
+  frontier                非终态节点 + 可推进性
+
+其他：
+  help                    显示本帮助
+  version                 显示版本号
+
+常用 flags：
+  --unitId <id>           指定 unit（大多数 action 需要）
+  --input <file|->        input JSON（文件路径或 - 读 stdin）
+  --commitHash <sha>      execute 关联的 commit（wave 层）
+  --workspace <path>      指定工作目录（默认 cwd）
+
+完整文档：见 SKILL.md（cw-cli skill）。首次使用：cw create <layer>。
+`;
+}
+
+/**
+ * renderActionHelp — per-command help（#11 并入 #5）：显示该 action 的合法 flag 列表。
+ *
+ * 触发场景：`cw help <action>` 与 `cw <action> --help` 双入口（main 的 help 分支判定）。
+ * flag 列表来自 FLAG_WHITELIST + GLOBAL_FLAGS（单源，不另维护文案），camel 形态展示。
+ */
+function renderActionHelp(action: string): string {
+  const names = [...new Set([...GLOBAL_FLAGS, ...(FLAG_WHITELIST[action] ?? [])])].sort();
+  const lines = names
+    .map((name) => `  ${name.length === 1 ? `-${name}` : `--${name}`}`)
+    .join("\n");
+  return `cw ${action} — 参数帮助
+
+用法：
+  cw ${action} [options]
+
+合法 flags（全局共享 + 本 action 专属）：
+${lines}
+`;
+}
+
+/**
  * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
  *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 store.json）
@@ -711,6 +807,10 @@ async function runWithAction(
     process.exit(EXIT_CW_ERROR);
   }
 
+  // flag 白名单校验（#5）：在 create 缺 layer 早返回分支之前——缺 layer + 拼错 flag 时
+  // unknown flag 不被吞（K-7）。readonly action 已在 runReadonly 内校验（早返回，不经过这里）。
+  validateFlags(action, parsed);
+
   // create 缺 layer → 返回选层 guidance + exit 0（强制拦截点，不进 dispatch）。
   // 与 readonly 查询分支同类：CLI 参数层早返回，不写 store。agent 必经 create 入口，
   // layer 缺失时被引导选层，避免凭直觉选错层级。
@@ -777,6 +877,10 @@ async function runReadonly(
 ): Promise<void> {
   const store = new CwStore(workspacePath);
 
+  // flag 白名单校验（#5）：readonly 各 action 分支先校验（未知 flag → CwError exit 1）。
+  // 校验点统一放入口（action 已定，白名单按 action 取），分支内不再重复。
+  validateFlags(action, parsed);
+
   if (action === "tree") {
     // --unitId 可选；缺省取第一个无 parentUnitId 的 root unit。
     const unitId = flag(parsed, "unitId");
@@ -799,7 +903,8 @@ async function runReadonly(
     if (unit === null) {
       throw new CwError(`unit not found: ${unitId}`);
     }
-    process.stdout.write(renderStatus(unit));
+    // #10：--full 透传（默认大字段截断，--full 全量）。flag 已登记进 #5 白名单 status 集合。
+    process.stdout.write(renderStatus(unit, { full: parsed.full === true }));
     return;
   }
 
@@ -952,9 +1057,51 @@ async function main(argv: string[]): Promise<void> {
   debugLog("verbose mode enabled");
   const rawAction = parsed._[0];
 
-  if (rawAction === undefined) {
-    process.stderr.write("错误：未指定 action。用法：cw <action> [options]\n");
-    process.exit(EXIT_CW_ERROR);
+  // help / --help / -h / 无参：显示 help（Unix 惯例：显示用法不是错误）。
+  // 放在迁移逻辑之前——help/version 不碰 store。`--help` 等 flag 会让 parsed._ 为空，
+  // 所以放在无参分支之前判定（否则 --help 会被当成无参走 help，没问题；但 --version 会被
+  // 当成无参而显示 help，故 version flag 必须在此分支之前判）。
+  if (parsed.version === true || parsed.v === true) {
+    process.stdout.write(`cw ${readCliVersion()}\n`);
+    return;
+  }
+  if (
+    rawAction === undefined ||
+    rawAction === "help" ||
+    parsed.help === true ||
+    parsed.h === true
+  ) {
+    // per-command help 双入口（#11 并入 #5）：
+    //   1. `cw <action> --help`：rawAction 是合法 action 且带 --help/-h
+    //   2. `cw help <action>`：rawAction === "help"，parsed._[1] 是目标 action
+    // 目标 ∈ ALL_ACTIONS → 渲染该 action 的合法 flag 列表；`cw help <未知>` → CwError exit 1。
+    const target =
+      rawAction === "help"
+        ? String(parsed._[1] ?? "")
+        : rawAction !== undefined
+          ? String(rawAction)
+          : "";
+    if (target !== "" && ALL_ACTIONS.has(target)) {
+      process.stdout.write(renderActionHelp(target));
+      return;
+    }
+    if (
+      rawAction === "help" &&
+      target !== "" &&
+      target !== "help" &&
+      target !== "version"
+    ) {
+      // `cw help <未知>`（help/version 是命令不是 action，放行到全局 help）
+      // 合法列表 = ALL_ACTIONS + help/version，与下方「未知 action」分支一致
+      throw new CwError(`未知 action "${target}"，合法: ${[...ALL_ACTIONS, "help", "version"].join(", ")}`);
+    }
+    process.stdout.write(renderHelp());
+    return;
+  }
+  // version 作为 action（cw version）。
+  if (rawAction === "version") {
+    process.stdout.write(`cw ${readCliVersion()}\n`);
+    return;
   }
   const action = String(rawAction);
 
@@ -978,9 +1125,10 @@ async function main(argv: string[]): Promise<void> {
   }
 
   // 未识别的 action 一律拒绝（含旧的 `v1` 前缀——Wave 3 起彻底切断，不再做向后兼容）。
+  // 合法列表 = ALL_ACTIONS（dispatch/只读）+ help/version（独立入口，不进 ALL_ACTIONS）。
   process.stderr.write(
     `错误：未知 action "${action}"。请改用：${buildCommand("<action>", "[layer]", "[options]")}\n` +
-      `（合法 action: ${[...ALL_ACTIONS].join(", ")}）\n`,
+      `（合法 action: ${[...ALL_ACTIONS, "help", "version"].join(", ")}）\n`,
   );
   process.exit(EXIT_CW_ERROR);
 }

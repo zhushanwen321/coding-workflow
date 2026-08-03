@@ -32,6 +32,7 @@ import type {
 import type { WorkUnitStatus } from "../../core/status.js";
 import type { Slice } from "../../core/workunit.js";
 import { buildReplanGuidance } from "../../guidance/build-guidance.js";
+import { buildPrefix } from "../../guidance/index.js";
 import { checkFreezePlanning } from "../../rules/freeze.js";
 import { computeImpactCascade } from "../../rules/replan.js";
 import { buildCommand, inputFilePath } from "../../utils/command.js";
@@ -43,12 +44,15 @@ import {
 } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CwDeps,ReplanInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
   buildSliceNextAction,
+  getSliceSchemaText,
   readRecordStatus,
   saveSlice,
+  SLICE_STATUS_DISPLAY,
   sliceTransition,
 } from "./slice-internal.js";
 
@@ -64,6 +68,7 @@ export function handleReplanSlice(
   input: ReplanInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("replan", "slice", input);
   // ── before 快照（深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
 
@@ -131,12 +136,20 @@ export function handleReplanSlice(
     `pendingRebuild: ${replanImpact.pendingRebuild.length > 0 ? replanImpact.pendingRebuild.join(", ") : "（无）"}`,
   ].join("\n");
   const base = buildSliceNextAction(unit, "replan");
+  // #12：prefix 复用 buildPrefix（含 SLICE_STATUS_DISPLAY 中文映射 + 父单元段），与 buildSliceNextAction 输出一致。
   base.guidance = buildReplanGuidance({
-    prefix: `[slice:${unit.slug}] 状态：${unit.status}（replan 后原地）`,
+    prefix: buildPrefix({
+      layer: "slice",
+      unitId: unit.id,
+      status: `${SLICE_STATUS_DISPLAY[unit.status] ?? unit.status}（replan 后原地）`,
+      parentUnitId: unit.parentUnitId,
+    }),
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
     nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
+    // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
+    schemaText: getSliceSchemaText("plan"),
   });
 
   return {

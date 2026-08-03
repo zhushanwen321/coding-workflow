@@ -25,6 +25,7 @@ import type {
 } from "../core/plan.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
+import { buildPrefix } from "../guidance/index.js";
 import { checkFreeze } from "../rules/freeze.js";
 import { computeImpact } from "../rules/replan.js";
 import { buildCommand, inputFilePath } from "../utils/command.js";
@@ -32,11 +33,14 @@ import {
   appendFailRecord,
   buildFailureNextAction,
   buildNextAction,
+  getSchemaText,
   mergeAbandonParentItems,
   saveUnit,
+  STATUS_DISPLAY,
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,ReplanInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 replan action（旁路，不改 status）。
@@ -50,6 +54,7 @@ export function handleReplan(
   input: ReplanInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("replan", "wave", input);
   // ── before 快照（structuredClone 保证深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
 
@@ -112,12 +117,20 @@ export function handleReplan(
     `pendingRebuild: ${replanImpact.pendingRebuild.length > 0 ? replanImpact.pendingRebuild.join(", ") : "（无）"}`,
   ].join("\n");
   const base = buildNextAction(unit, "replan");
+  // #12：prefix 复用 buildPrefix（含 STATUS_DISPLAY 中文映射 + 父单元段），与 buildNextAction 输出一致。
   base.guidance = buildReplanGuidance({
-    prefix: `[wave:${unit.slug}] 状态：${unit.status}（replan 后原地）`,
+    prefix: buildPrefix({
+      layer: "wave",
+      unitId: unit.id,
+      status: `${STATUS_DISPLAY[unit.status] ?? unit.status}（replan 后原地）`,
+      parentUnitId: unit.parentUnitId,
+    }),
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
     nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
+    // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
+    schemaText: getSchemaText("plan"),
   });
 
   return {

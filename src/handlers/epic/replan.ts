@@ -36,6 +36,7 @@ import {
 } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CwDeps,ReplanInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   buildEpicNextAction,
   epicTransition,
@@ -55,6 +56,7 @@ export function handleReplanEpic(
   input: ReplanInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("replan", "epic", input);
   const at = deps.clock.now();
 
   // ── 本地变更 Step 1：把 abandonedIds 命中的 epic Clarification 标 status='abandoned'（append-only，不删）──

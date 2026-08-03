@@ -9,10 +9,11 @@ import { describe, expect,it } from "vitest";
 import type {
   DesignReviewJudgment,
   ExecReviewJudgment,
+  PlanningRetrospectData,
   RetrospectData,
   TestJudgment,
 } from "../src/core/judgments.js";
-import type { WaveTestCase } from "../src/core/plan.js";
+import type { WaveFile,WaveTestCase } from "../src/core/plan.js";
 import type { ExecutionUnit } from "../src/core/workunit.js";
 import { createWave } from "../src/core/workunit.js";
 import {
@@ -21,6 +22,8 @@ import {
   designReviewRisksPresent,
   designReviewSufficiencyComplete,
   designReviewTradeoffsPresent,
+  noSiblingWaveFileConflict,
+  runWaveDesignReviewGates,
   testCasesHaveExpected,
   testCasesNonEmpty,
 } from "../src/rules/gates/design-review.js";
@@ -33,6 +36,7 @@ import {
 import {
   lessonsLearnedNonEmpty,
   retrospectCoversJudgments,
+  reviewedItemsCoverDesignReview,
 } from "../src/rules/gates/retrospect.js";
 import {
   commitExists,
@@ -65,6 +69,29 @@ function fullDesignReviewJudgment(): DesignReviewJudgment {
     tradeoffs: [{ id: "TF1", decision: "d", reason: "r", cost: "c" }],
     risks: [{ id: "RK1", item: "i", severity: "low", mitigation: "m" }],
   };
+}
+
+/** 合法的 wave layerSpecific（4 字段都非空，过 wave-layer-specific-non-empty gate）。 */
+function fullWaveLayerSpecific() {
+  return {
+    testCaseCoverageNote: "covered",
+    boundaryConditionNote: "boundary",
+    mockStrategyNote: "mock",
+    tddRedReadinessNote: "ready",
+  };
+}
+
+/** 构造一个 WaveFile（默认 action="modify"）。 */
+function wf(path: string, action: WaveFile["action"] = "modify"): WaveFile {
+  return { id: `F-${path}`, status: "active", path, action, description: `file ${path}` };
+}
+
+/** 构造一个含合法 plan（testCases/files）的 wave，过 testCases 结构 gate。 */
+function waveWithPlan(): ExecutionUnit {
+  const unit = emptyWave();
+  unit.plan.testCases = [tc("TC1")];
+  unit.plan.files = [wf("src/a.ts")];
+  return unit;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -154,6 +181,131 @@ describe("design-review gates", () => {
     });
     it("risks 非空 → pass", () => {
       expect(designReviewRisksPresent(fullDesignReviewJudgment()).passed).toBe(true);
+    });
+  });
+
+  // 跨 wave 文件冲突 gate（design §3.4）
+  describe("noSiblingWaveFileConflict", () => {
+    it("无兄弟（siblingFiles 空）→ pass", () => {
+      const r = noSiblingWaveFileConflict([wf("src/a.ts")], []);
+      expect(r.passed).toBe(true);
+      expect(r.report).toMatch(/no-sibling-wave-file-conflict/);
+    });
+
+    it("无冲突（path 不交集）→ pass", () => {
+      const r = noSiblingWaveFileConflict(
+        [wf("src/a.ts")],
+        [{ unitId: "wave:sib", files: [wf("src/b.ts")] }],
+      );
+      expect(r.passed).toBe(true);
+    });
+
+    it("path 交集 → fail（report 含冲突 path + 兄弟 unitId）", () => {
+      const r = noSiblingWaveFileConflict(
+        [wf("src/foo.ts"), wf("src/bar.ts")],
+        [{ unitId: "wave:sib-1", files: [wf("src/foo.ts"), wf("src/other.ts")] }],
+      );
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/跨 wave 文件冲突/);
+      expect(r.report).toContain("src/foo.ts");
+      expect(r.report).toContain("wave:sib-1");
+      // 没有交集的 path 不出现在 report
+      expect(r.report).not.toContain("src/bar.ts");
+    });
+
+    it("多个兄弟多个冲突 path → 全列出", () => {
+      const r = noSiblingWaveFileConflict(
+        [wf("src/x.ts"), wf("src/y.ts")],
+        [
+          { unitId: "wave:sib-1", files: [wf("src/x.ts")] },
+          { unitId: "wave:sib-2", files: [wf("src/y.ts")] },
+        ],
+      );
+      expect(r.passed).toBe(false);
+      expect(r.report).toContain("src/x.ts");
+      expect(r.report).toContain("wave:sib-1");
+      expect(r.report).toContain("src/y.ts");
+      expect(r.report).toContain("wave:sib-2");
+    });
+
+    it("action=delete 的文件跳过（删除不冲突）", () => {
+      // 当前 wave 与兄弟都声明 delete 同一 path → 不算冲突
+      const r = noSiblingWaveFileConflict(
+        [wf("src/old.ts", "delete")],
+        [{ unitId: "wave:sib", files: [wf("src/old.ts", "delete")] }],
+      );
+      expect(r.passed).toBe(true);
+      expect(r.report).toMatch(/全为 delete/);
+    });
+
+    it("self delete + sibling modify 同一 path → 不冲突（self 删除不参与）", () => {
+      const r = noSiblingWaveFileConflict(
+        [wf("src/old.ts", "delete")],
+        [{ unitId: "wave:sib", files: [wf("src/old.ts", "modify")] }],
+      );
+      expect(r.passed).toBe(true);
+    });
+
+    it("self modify + sibling delete 同一 path → 不冲突（sibling 删除不参与）", () => {
+      const r = noSiblingWaveFileConflict(
+        [wf("src/old.ts", "modify")],
+        [{ unitId: "wave:sib", files: [wf("src/old.ts", "delete")] }],
+      );
+      expect(r.passed).toBe(true);
+    });
+
+    it("空 selfFiles → pass", () => {
+      const r = noSiblingWaveFileConflict([], [{ unitId: "wave:sib", files: [wf("src/a.ts")] }]);
+      expect(r.passed).toBe(true);
+      expect(r.report).toMatch(/无 plan\.files/);
+    });
+  });
+
+  // wave design-review 聚合 gate
+  describe("runWaveDesignReviewGates", () => {
+    it("聚合返回 9 个 GateResult（7 原有 + 1 layerSpecific + 1 文件冲突）", () => {
+      const unit = waveWithPlan();
+      const r = runWaveDesignReviewGates(
+        unit,
+        fullDesignReviewJudgment(),
+        fullWaveLayerSpecific(),
+        [],
+      );
+      expect(r).toHaveLength(9);
+      // 全 pass（合法 unit + 无兄弟）
+      expect(r.every((g) => g.passed)).toBe(true);
+    });
+
+    it("siblingFiles 有冲突 → 最后一个（文件冲突）gate fail", () => {
+      const unit = waveWithPlan(); // plan.files 含 src/a.ts
+      // 让 self 的 src/a.ts 与兄弟冲突——改 unit.plan.files 的 path 到与兄弟一致
+      unit.plan.files = [wf("src/conflict.ts")];
+      const r = runWaveDesignReviewGates(
+        unit,
+        fullDesignReviewJudgment(),
+        fullWaveLayerSpecific(),
+        [{ unitId: "wave:sib", files: [wf("src/conflict.ts")] }],
+      );
+      // 前 8 个 pass，最后一个（文件冲突）fail
+      expect(r.slice(0, 8).every((g) => g.passed)).toBe(true);
+      const last = r[8]!;
+      expect(last.passed).toBe(false);
+      expect(last.report).toContain("src/conflict.ts");
+    });
+
+    it("testCases 空 → 第一个 gate（test-cases-non-empty）fail，其余仍跑（不短路）", () => {
+      const unit = emptyWave(); // 空 testCases + 空 files
+      const r = runWaveDesignReviewGates(
+        unit,
+        fullDesignReviewJudgment(),
+        fullWaveLayerSpecific(),
+        [],
+      );
+      expect(r[0]!.passed).toBe(false); // test-cases-non-empty
+      expect(r[0]!.report).toMatch(/test-cases-non-empty/);
+      // 文件冲突 gate 仍执行（聚合不短路）——空 files → pass
+      const last = r[8]!;
+      expect(last.passed).toBe(true);
     });
   });
 });
@@ -470,6 +622,118 @@ describe("retrospect gates", () => {
       const rd = coversAll();
       rd.reviewedItems = rd.reviewedItems.filter((r) => r.itemId !== "necessity");
       expect(retrospectCoversJudgments(rd, dr).passed).toBe(false);
+    });
+
+    // ── #3：codeSmell 稳定 key + followup 容错 + failure 报告扩展（T1.9-T1.11 / T2.7）──
+
+    it("codeSmell 对象元素 → 不产 [object Object] 垃圾 key（T1.9，AC-3.2）", () => {
+      const rd = coversAll(); // 未覆盖 codeSmell key → fail，报告含缺失清单
+      const erj: ExecReviewJudgment = {
+        readability: { score: 4 },
+        architecture: { score: 4 },
+        overallVerdict: "pass",
+        // 运行时类型违规：items 声明 string[]，agent 填了对象
+        codeSmells: { items: [{ name: "magic-string", file: "src/a.ts" }] as unknown as string[] },
+      };
+      const r = retrospectCoversJudgments(rd, dr, undefined, erj);
+      expect(r.passed).toBe(false);
+      // 缺失清单含稳定序列化 key，而非 [object Object]
+      expect(r.report).toContain("codeSmell:");
+      expect(r.report).toContain("magic-string");
+      expect(r.report).not.toContain("[object Object]");
+    });
+
+    it("followupActions string 元素（legacy）→ 不产 followup:undefined（T1.10，AC-3.3）", () => {
+      const rd = coversAll();
+      const erj: ExecReviewJudgment = {
+        readability: { score: 4 },
+        architecture: { score: 4 },
+        overallVerdict: "needs-followup",
+        // legacy 违规形状：agent 存 string[] 而非 FollowupAction[]
+        followupActions: ["extract token service"] as unknown as ExecReviewJudgment["followupActions"],
+      };
+      const r = retrospectCoversJudgments(rd, dr, undefined, erj);
+      expect(r.passed).toBe(false);
+      expect(r.report).not.toContain("followup:undefined");
+      // string 元素原样保留为 key（legacy 兼容）
+      expect(r.report).toContain("followup:extract token service");
+    });
+
+    it("存量 string codeSmell/followup key 不失配：覆盖后 pass（T1.11）", () => {
+      const rd = coversAll();
+      rd.reviewedItems = [
+        ...rd.reviewedItems,
+        { itemId: "readability", outcome: "fulfilled" },
+        { itemId: "architecture", outcome: "fulfilled" },
+        { itemId: "codeSmell:magic-string", outcome: "fulfilled" },
+        { itemId: "followup:extract token service", outcome: "fulfilled" },
+      ];
+      const erj: ExecReviewJudgment = {
+        readability: { score: 4 },
+        architecture: { score: 4 },
+        overallVerdict: "needs-followup",
+        codeSmells: { items: ["magic-string"] },
+        followupActions: ["extract token service"] as unknown as ExecReviewJudgment["followupActions"],
+      };
+      const r = retrospectCoversJudgments(rd, dr, undefined, erj);
+      expect(r.passed).toBe(true);
+    });
+
+    it("failure 报告含「期望全集 + 缺失子集」两段（T2.7，AC-3.1）", () => {
+      const rd = coversAll();
+      rd.reviewedItems = rd.reviewedItems.filter((r) => r.itemId !== "TF1");
+      const r = retrospectCoversJudgments(rd, dr);
+      expect(r.passed).toBe(false);
+      // 期望全集（含已覆盖的 necessity/sufficiency/alternatives/RK1）+ 缺失子集（TF1）
+      expect(r.report).toContain("期望全集:");
+      expect(r.report).toContain("necessity");
+      expect(r.report).toContain("RK1");
+      expect(r.report).toContain("缺失: TF1");
+    });
+  });
+
+  describe("reviewedItemsCoverDesignReview（slice 层）", () => {
+    function sliceCoversAll(): PlanningRetrospectData {
+      return {
+        reviewedItems: [
+          { itemId: "necessity", outcome: "fulfilled" },
+          { itemId: "sufficiency", outcome: "fulfilled" },
+          { itemId: "alternatives", outcome: "fulfilled" },
+          { itemId: "TF1", outcome: "fulfilled" },
+          { itemId: "RK1", outcome: "fulfilled" },
+        ],
+        lessonsLearned: "ok",
+        splitFulfillment: [],
+        childUnitIdsEvidence: [],
+        deliveryVerdict: "delivered",
+      };
+    }
+
+    it("缺 id 的 tradeoff/risk 不产 undefined key，failure 含两段（T2.7b，M-6）", () => {
+      const rd = sliceCoversAll();
+      const drMissingId: DesignReviewJudgment = {
+        necessity: "n",
+        sufficiency: { gaps: [], overlaps: [], meceNote: "m" },
+        alternatives: "a",
+        // 类型违规：tradeoff 缺 id（运行时无保障）
+        tradeoffs: [{ decision: "JWT over session", reason: "r", cost: "c" } as unknown as DesignReviewJudgment["tradeoffs"][number]],
+        risks: [{ item: "token leak", severity: "medium", mitigation: "short TTL" } as unknown as DesignReviewJudgment["risks"][number]],
+      };
+      const r = reviewedItemsCoverDesignReview(rd, drMissingId);
+      expect(r.passed).toBe(false);
+      expect(r.report).not.toContain("undefined");
+      // 输入验证错误列出缺 id 项
+      expect(r.report).toContain("缺少 id");
+      // 全量缺失子集格式由下一条用例验证（本用例只有输入验证错误、无缺失项）
+    });
+
+    it("slice 层 failure 报告含「期望全集 + 缺失子集」两段", () => {
+      const rd = sliceCoversAll();
+      rd.reviewedItems = rd.reviewedItems.filter((r) => r.itemId !== "RK1");
+      const r = reviewedItemsCoverDesignReview(rd, fullDesignReviewJudgment());
+      expect(r.passed).toBe(false);
+      expect(r.report).toContain("期望全集:");
+      expect(r.report).toContain("缺失: RK1");
     });
   });
 });

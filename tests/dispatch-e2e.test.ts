@@ -9,6 +9,7 @@
  */
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
+import { CwError } from "../src/core/errors.js";
 import type { ExecutionUnit } from "../src/core/workunit.js";
 import { CwEngineError,dispatch } from "../src/dispatch.js";
 import {
@@ -339,6 +340,65 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     expect(lastAfterSecond).toBeDefined();
     expect(lastAfterSecond?.note).toMatch(/gate fail/);
   });
+
+  /**
+   * design §3.4 验证：跨 wave 文件冲突 gate（dispatch 层）。
+   *
+   * 场景：同一 parent slice 下的两个兄弟 wave（W1 W2），plan.files 都含 path "src/shared.ts"。
+   * - W1 先 design-review → 通过（此时无已 design-review 的兄弟，文件冲突 gate pass）
+   * - W2 后 design-review → 文件冲突 gate fail（W1 已 design-reviewed，plan.files 含 "src/shared.ts"）
+   *   → ok=false，status 不变（仍是 planning），judgment 未写入
+   */
+  it("wave design-review 跨兄弟文件冲突 → ok=false（W1 先过，W2 fail）", () => {
+    const parent = "slice:conflict-parent";
+    const w1 = "wave:conflict-w1";
+    const w2 = "wave:conflict-w2";
+    const conflictPath = "src/shared.ts";
+
+    /** 把一个 wave 从 create 推到 planning（plan.files 含冲突 path，未 design-review）。 */
+    const setupWave = (id: string, slug: string): void => {
+      dispatch({ action: "create", input: {
+        slug, objective: `obj-${slug}`, parentUnitId: parent, basedOnParent: [],
+      } }, env.deps);
+      dispatch({ action: "clarify", unitId: id, input: { clarifications: [] } }, env.deps);
+      // plan 含冲突 path（action="modify"，参与冲突判定）
+      dispatch({ action: "plan", unitId: id, input: {
+        testCases: [makeValidTestCase("TC1")],
+        tasks: [makeValidTask("TK1")],
+        files: [{ id: "F1", status: "active", path: conflictPath, action: "modify", description: "shared file" }],
+        contracts: [makeValidContract("C1")],
+      } }, env.deps);
+    };
+
+    setupWave(w1, "conflict-w1");
+    setupWave(w2, "conflict-w2");
+
+    // W1 先 design-review → 通过（无已 design-review 的兄弟）
+    const dr1 = dispatch({ action: "design-review", unitId: w1, input: {
+      designReviewJudgment: makeValidDesignReviewJudgment(),
+    } }, env.deps);
+    expect(dr1.ok).toBe(true);
+    expect(dr1.status).toBe("design-reviewed");
+
+    // W2 后 design-review → 跨 wave 文件冲突 gate fail（W1 已 design-reviewed）
+    const dr2 = dispatch({ action: "design-review", unitId: w2, input: {
+      designReviewJudgment: makeValidDesignReviewJudgment(),
+    } }, env.deps);
+
+    expect(dr2.ok).toBe(false);
+    expect(dr2.gateResults).toBeDefined();
+    // 至少一个 gate fail，且 report 含冲突 path + 兄弟 id
+    const failed = dr2.gateResults!.filter((g) => !g.passed);
+    expect(failed.length).toBeGreaterThan(0);
+    const conflictReport = failed.map((g) => g.report).join("; ");
+    expect(conflictReport).toMatch(/跨 wave 文件冲突/);
+    expect(conflictReport).toContain(conflictPath);
+    expect(conflictReport).toContain(w1);
+    // status 未推进（仍是 planning）
+    expect(loadUnit(w2).status).toBe("planning");
+    // judgment 未写入
+    expect(loadUnit(w2).designReviewJudgment.necessity).toBe("");
+  });
 });
 
 describe("E: dispatch replan 旁路（不改 status）", () => {
@@ -380,5 +440,75 @@ describe("E: dispatch replan 旁路（不改 status）", () => {
     // replanImpact（wave 叶子，aborted 为空）
     expect(result.replanImpact).toBeDefined();
     expect(result.replanImpact!.aborted).toEqual([]);
+  });
+});
+
+describe("E3: execute commitHash 前置校验（#8，W3）", () => {
+  /** 推进 wave 到 design-reviewed（合法 plan + 合法 judgment）。 */
+  function advanceToDesignReviewed(slug: string): string {
+    const unitId = `wave:${slug}`;
+    dispatch(
+      { action: "create", input: { slug, objective: "o", parentUnitId: "slice:s", basedOnParent: [] } },
+      env.deps,
+    );
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
+    dispatch(
+      { action: "plan", unitId, input: {
+        testCases: [makeValidTestCase("TC1")],
+        tasks: [makeValidTask("TK1")],
+        files: [makeValidFile("F1")],
+        contracts: [makeValidContract("C1")],
+      } },
+      env.deps,
+    );
+    dispatch(
+      { action: "design-review", unitId, input: { designReviewJudgment: makeValidDesignReviewJudgment() } },
+      env.deps,
+    );
+    return unitId;
+  }
+
+  it("T2.9: 无效 commitHash → 前置失败（CwError），status 停留 design-reviewed（AC-2.5）", () => {
+    const unitId = advanceToDesignReviewed("e2e-commitcheck");
+    // gitValidator 校验失败（commit 不存在）
+    const badDeps = { ...env.deps, gitValidator: { exists: () => false } };
+
+    expect(() =>
+      dispatch({ action: "execute", unitId, input: { commitHash: "deadbeef" } }, badDeps),
+    ).toThrow(CwError);
+
+    // status 未推进（transition 未发生）+ 产物未写入——不产生 executing 卡死态，可重试
+    const unit = loadUnit(unitId);
+    expect(unit.status).toBe("design-reviewed");
+    expect(unit.evidence.commitHash).toBe("");
+    expect(unit.executeResult.commitHash).toBe("");
+
+    // 修复后重试成功（前置校验不阻碍正常路径）
+    const retry = dispatch(
+      { action: "execute", unitId, input: { commitHash: "deadbeef" } },
+      env.deps,
+    );
+    expect(retry.ok).toBe(true);
+    expect(retry.status).toBe("executing");
+  });
+
+  it("T2.8: execute 成功后 test gate 仍验 commit 存在（纵深防御保留）", () => {
+    const unitId = advanceToDesignReviewed("e2e-depth");
+    const exec = dispatch(
+      { action: "execute", unitId, input: { commitHash: "abc123" } },
+      env.deps,
+    );
+    expect(exec.ok).toBe(true);
+    expect(exec.status).toBe("executing");
+
+    // test 时 git 校验失败 → gate fail（ok=false，不抛错），status 停留 executing
+    const badDeps = { ...env.deps, gitValidator: { exists: () => false } };
+    const test = dispatch(
+      { action: "test", unitId, input: { testJudgment: makeValidTestJudgment() } },
+      badDeps,
+    );
+    expect(test.ok).toBe(false);
+    expect(test.gateResults!.some((g) => !g.passed)).toBe(true);
+    expect(loadUnit(unitId).status).toBe("executing");
   });
 });

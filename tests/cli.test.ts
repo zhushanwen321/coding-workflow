@@ -298,6 +298,65 @@ describe("W8: cw <action> 未知/缺 unitId → exit 1", () => {
   });
 });
 
+describe("W8: cw help / version（标准命令）", () => {
+  // package.json version 字段（与 dist/cli.js 读到的同一份，用于 version 断言）。
+  const pkgPath = join(__dirname, "..", "package.json");
+  const expectedVersion = (
+    JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string }
+  ).version;
+
+  it("cw version → exit 0 + stdout 含 `cw` 和版本号", () => {
+    const result = runCwCli(["version"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("cw");
+    expect(result.stdout).toContain(expectedVersion);
+    // 格式：单行 `cw <version>`
+    expect(result.stdout.trim()).toBe(`cw ${expectedVersion}`);
+  });
+
+  it("cw --version → 同 cw version", () => {
+    const result = runCwCli(["--version"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(`cw ${expectedVersion}`);
+  });
+
+  it("cw -v → 同 cw version", () => {
+    const result = runCwCli(["-v"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(`cw ${expectedVersion}`);
+  });
+
+  it("cw help → exit 0 + stdout 含用法/create/list 等关键词", () => {
+    const result = runCwCli(["help"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    for (const keyword of ["用法", "create", "list", "help", "version"]) {
+      expect(result.stdout).toContain(keyword);
+    }
+  });
+
+  it("cw --help → 同 cw help", () => {
+    const result = runCwCli(["--help"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("用法");
+  });
+
+  it("cw -h → 同 cw help", () => {
+    const result = runCwCli(["-h"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("用法");
+  });
+
+  it("cw（无参）→ exit 0 + stdout 显示 help（Unix 惯例）", () => {
+    const result = runCwCli([], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("用法");
+    expect(result.stdout).toContain("create");
+  });
+});
+
 describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
   it("create → clarify（--input @file.json）→ status=clarifying + clarifications 落盘", () => {
     // 1. 先 create 一个 wave
@@ -685,6 +744,102 @@ describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// W2: flag 白名单 + per-command help（#5，D-019 合并 #11）
+// ═══════════════════════════════════════════════════════════════
+
+describe("W2: unknown flag 白名单校验（#5）", () => {
+  it("T2.1: 拼错 flag（--unid）→ exit 1 + unknown flag + 合法 flag 列表", () => {
+    // validateFlags 在 buildParams 之前拦截：不报「需要 --unitId」而是报 unknown flag
+    const result = runCwCli(["clarify", "--unid", "wave:x"], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown flag --unid");
+    expect(result.stderr).toContain("unitId");
+  });
+
+  it("T2.1: readonly action 同样拦截未知 flag（--bogus-flag 不再被静默忽略）", () => {
+    const result = runCwCli(["list", "--bogus-flag"], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown flag --bogus-flag");
+  });
+
+  it("T2.3: 全局基础集全放行（--help/-h/--version/--workspace/--verbose）", () => {
+    // --help → per-command help（exit 0，非 unknown flag）
+    const help = runCwCli(["status", "--help"], e);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("合法 flags");
+    // -h 同
+    const h = runCwCli(["status", "-h"], e);
+    expect(h.exitCode).toBe(0);
+    expect(h.stdout).toContain("合法 flags");
+    // --version → 版本输出
+    const ver = runCwCli(["status", "--version"], e);
+    expect(ver.exitCode).toBe(0);
+    expect(ver.stdout).toContain("cw ");
+    // --verbose + --workspace：list 正常渲染（不报 unknown flag）
+    const list = runCwCli(["list", "--verbose", "--workspace", e.workspaceDir], e);
+    expect(list.exitCode).toBe(0);
+    expect(list.stderr).not.toContain("unknown flag");
+  });
+
+  it("create 缺 layer + 合法 flag → 仍走选层 guidance（validateFlags 不误伤，K-7）", () => {
+    const result = runCwCli(["create", "--slug", "x", "--objective", "y"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("选择 layer");
+  });
+});
+
+describe("W2: per-command help 双入口（#11 并入 #5）", () => {
+  it("T3.4: cw help <action> 显示合法 flag 列表（AC-6.1）", () => {
+    const result = runCwCli(["help", "execute"], e);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("合法 flags");
+    expect(result.stdout).toContain("--commitHash");
+    expect(result.stdout).toContain("--unitId");
+  });
+
+  it("T3.5: cw <action> --help 与 cw help <action> 等价（AC-6.2）", () => {
+    const a = runCwCli(["help", "execute"], e);
+    const b = runCwCli(["execute", "--help"], e);
+    expect(a.exitCode).toBe(0);
+    expect(b.exitCode).toBe(0);
+    expect(b.stdout).toBe(a.stdout);
+  });
+
+  it("T3.6: cw help <未知> → exit 1（AC-6.3）", () => {
+    const result = runCwCli(["help", "bogus-action"], e);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("bogus-action");
+  });
+
+  it("cw help / cw --help / cw -h 仍是全局 help", () => {
+    for (const args of [["help"], ["--help"], ["-h"]] as const) {
+      const result = runCwCli([...args], e);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("工作流 action");
+    }
+  });
+});
+
+describe("W2: handler input shape 校验（#6，e2e）", () => {
+  it("T2.4: clarify {} → CwError「input.clarifications …」exit 1（非 crash exit 2）", () => {
+    const created = parseStdout(
+      runCwCli(
+        ["create", "wave", "--slug", "w2-shape", "--objective", "shape e2e"],
+        e,
+      ),
+    );
+    const unitId = created.unitId as string;
+    const result = runCwCli(["clarify", "--unitId", unitId, "--input", "-"], e, {
+      input: "{}",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("input.clarifications");
+    // 非内部异常：不输出堆栈（exit 2 才有堆栈）
+    expect(result.stderr).not.toContain("堆栈");
+  });
+});
+
 // ── 辅助：在 CW_HOME 树里找 store.json ────────────────────────
 
 function findStoreJson(dir: string): string | null {
@@ -718,5 +873,47 @@ describe("W7b: buildLayerPromptGuidance 纯函数（create 缺 layer 的 guidanc
     expect(guidance).toContain("规模");
     expect(guidance).toContain("epic → feature → slice → wave");
     expect(guidance).toContain("反模式");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// W3（#10）：cw status 大字段默认截断 + --full 全量（T3.3，AC-4.3）
+// ═══════════════════════════════════════════════════════════════
+
+describe("W3: cw status 大字段默认截断 + --full 全量（#10，T3.3）", () => {
+  it("status 默认截断大字段 + 提示 --full；--full 输出全量（AC-4.3）", () => {
+    const unitId = "wave:w3-status";
+    runCwCli(["create", "wave", "--slug", "w3-status", "--objective", "W3 状态截断测试"], e);
+    // clarify 填超长 clarifications（触发大字段截断）
+    const clarify = runCwCli(
+      ["clarify", "--unitId", unitId],
+      e,
+      {
+        input: JSON.stringify({
+          clarifications: [
+            { id: "Q1", status: "active", question: "x".repeat(600), resolution: "y".repeat(600), type: "grilling" },
+          ],
+        }),
+      },
+    );
+    expect(clarify.exitCode).toBe(0);
+
+    // 默认：首行截断提示（设计 #10：输出首行提示），其余行仍是合法 JSON
+    const s1 = runCwCli(["status", "--unitId", unitId], e);
+    expect(s1.exitCode).toBe(0);
+    expect(s1.stdout).toMatch(/^（字段已截断，用 --full 查看全量）/);
+    const truncated = JSON.parse(
+      s1.stdout.split("\n").slice(1).join("\n"),
+    ) as { id: string };
+    expect(truncated.id).toBe(unitId);
+
+    // --full：无截断提示，clarifications 完整（question 长度 600）
+    const s2 = runCwCli(["status", "--unitId", unitId, "--full"], e);
+    expect(s2.exitCode).toBe(0);
+    expect(s2.stdout).not.toMatch(/已截断/);
+    const full = JSON.parse(s2.stdout) as {
+      clarifications: Array<{ question: string }>;
+    };
+    expect(full.clarifications[0].question.length).toBe(600);
   });
 });

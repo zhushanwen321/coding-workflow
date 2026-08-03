@@ -20,6 +20,7 @@
 import type { Feature } from "../../core/workunit.js";
 import { runFeatureDesignReviewGates } from "../../rules/gates/design-review.js";
 import type { ActionResult, CwDeps,DesignReviewInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendFeatureFailRecord,
   buildFeatureFailureNextAction,
@@ -40,6 +41,7 @@ export function handleDesignReviewFeature(
   input: DesignReviewInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("design-review", "feature", input);
   // 先写 judgment（gate 里 featureLayerSpecificNonEmpty 依赖已写入的 designReviewJudgment.layerSpecific）
   unit.designReviewJudgment = input.designReviewJudgment;
 

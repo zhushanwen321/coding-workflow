@@ -21,6 +21,7 @@
  */
 import type { Epic } from "../../core/workunit.js";
 import type { ActionResult, CwDeps,RetrospectFeatureInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendEpicFailRecord,
   buildEpicFailureNextAction,
@@ -42,6 +43,7 @@ export function handleRetrospectEpic(
   input: RetrospectFeatureInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("retrospect", "epic", input);
   // ── 查 child feature 状态（rules 层零 IO，由 handler 注入 gate）──
   const children = deps.store.findChildren(unit.id);
   const childStatuses = children.map((c) => {

@@ -21,6 +21,7 @@ import type { WorkUnitRecord } from "../store/schema.js";
 import { buildNextAction, saveUnit } from "./internal.js";
 import { rollupChildDelivery } from "./rollup.js";
 import type { AbortInput, ActionResult, CwDeps } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 abort action（级联）。
@@ -34,6 +35,7 @@ export function handleAbort(
   input: AbortInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("abort", "wave", input);
   const at = deps.clock.now();
 
   // ── 级联 abort 子孙（wave 叶子通常无子孙，机制通用）──

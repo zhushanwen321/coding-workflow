@@ -13,10 +13,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { WorkUnitBase } from "../src/core/workunit.js";
 import { createWave } from "../src/core/workunit.js";
+import { buildPrefix } from "../src/guidance/index.js";
 import { handleClarify } from "../src/handlers/clarify.js";
 import { handlePlan } from "../src/handlers/plan.js";
 import { handleExecuteSlice } from "../src/handlers/slice/execute.js";
 import { handleReplanSlice } from "../src/handlers/slice/replan.js";
+import { SLICE_STATUS_DISPLAY } from "../src/handlers/slice/slice-internal.js";
 import { computeImpactCascade } from "../src/rules/replan.js";
 import type { WorkUnitRecord } from "../src/store/schema.js";
 import type { CwEnv } from "./helpers/env.js";
@@ -577,5 +579,34 @@ describe("abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnit
 
     const waveAfter = env.store.load(waveId)!;
     expect((waveAfter as unknown as { status: string }).status).toBe("aborted");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// W3（#12）：slice replan guidance prefix 与 buildPrefix 一致（T3.8）
+// ═══════════════════════════════════════════════════════════════
+
+describe("slice replan guidance prefix（#12，T3.8）", () => {
+  it("replan 后 guidance prefix 与 buildPrefix 输出一致（SLICE_STATUS_DISPLAY 中文 + 父单元段）", () => {
+    const slice = setupToSliceDesignReviewed(env.deps, "prefix-slice");
+
+    const result = handleReplanSlice(
+      slice,
+      { abandonedIds: [], note: "prefix 测试" },
+      env.deps,
+    );
+    const guidance = result.nextAction!.guidance;
+
+    // 与 buildPrefix 输出逐字一致（SLICE_STATUS_DISPLAY 中文映射 + 父单元段）
+    const expected = buildPrefix({
+      layer: "slice",
+      unitId: slice.id,
+      status: `${SLICE_STATUS_DISPLAY[slice.status]}（replan 后原地）`,
+      parentUnitId: slice.parentUnitId,
+    });
+    expect(guidance).toContain(expected);
+
+    // 具体形态：无旧内联形态残留（英文 status）
+    expect(guidance).not.toContain("[slice:prefix-slice] 状态：design-reviewed（replan 后原地）");
   });
 });

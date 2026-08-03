@@ -27,6 +27,7 @@ import type {
   TestJudgment,
 } from "../core/judgments.js";
 import type {
+  AbandonParentItemsInput,
   SliceDataModel,
   SliceErrorSpec,
   SliceInterface,
@@ -111,6 +112,8 @@ export interface ActionResult {
   children?: ChildInfo[];
   /** 下一步导航（含 guidance + 结构化字段）。 */
   nextAction?: CwNextAction;
+  /** #2 create 幂等：slug 已存在时 no-op 返回 existing（true），未写 store。正常 create 无此字段。 */
+  idempotent?: boolean;
 }
 
 /** ActionResult.children 的元素类型——execute 返回的子层信息。 */
@@ -196,22 +199,20 @@ export interface CreateInput {
 /**
  * 声明脱离 parent 条目的通用能力（跨层跨时机）。
  *
- * 任何层的 plan/replan 都能传——append-only 合并到 unit.abandonedParentItems。
- * 语义：本 WorkUnit 声明「不再依赖 parent 的这些条目」，后续 parent replan 废弃这些条目时
- * 不触发对本 WorkUnit 的级联 abort（model §5.6.2 命中规则的例外）。
+ * 定义已搬入 core/plan.ts（与 Plan*Input 同文件，让 schema-injector 能解析 extends 链）。
+ * 此处 re-export 保持现有引用不破坏——PlanInput / ReplanInput / PlanSliceInput /
+ * PlanFeatureInput 的 extends 语句无需改动，TS 经此 re-export 能 resolve 到 core。
  *
- * 一旦声明不可撤回（append-only）。详见 ADR-0010。
+ * 语义见 core/plan.ts 的 AbandonParentItemsInput 注释，此处不重复。
  */
-export interface AbandonParentItemsInput {
-  /** 声明脱离的 parent 条目 id 列表。handler 用 Set 去重 append 到 unit.abandonedParentItems。 */
-  abandonParentItems?: string[];
-}
+export type { AbandonParentItemsInput };
 
 /** clarify handler 输入（progressive append clarifications）。 */
 export interface ClarifyInput {
   clarifications: Clarification[];
 }
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /** plan handler 输入（写 WavePlan 4 类条目）。 */
 export interface PlanInput extends AbandonParentItemsInput {
   testCases: WaveTestCase[];
@@ -293,6 +294,7 @@ export interface AbortInput {
 // 不同的（PlanSliceInput / RetrospectSliceInput）。slice execute 不接收 input（按
 // split 自动创建 child wave），故无 ExecuteSliceInput。
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
  * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
  *
@@ -342,6 +344,7 @@ export interface FeatureClarifyInput {
   spec: FeatureSpec;
 }
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
  * feature plan handler 输入（Plan 基类，只 split）。
  *
@@ -351,6 +354,7 @@ export interface PlanFeatureInput extends AbandonParentItemsInput {
   split: Split[];
 }
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名定义必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
  * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
  *

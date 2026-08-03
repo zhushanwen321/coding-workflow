@@ -8,10 +8,18 @@
  *
  * 不变量：create 不接收已有 unit（它是入口）；产物字段全空态，各后续 handler 逐步填充。
  */
+import { WAVE_STATUS_TO_ACTION } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { createWave } from "../core/workunit.js";
+import type { WaveAction } from "../rules/state-machine.js";
 import { buildCommand } from "../utils/command.js";
-import { buildNextAction, saveUnit } from "./internal.js";
+import {
+  buildCreateIdempotentResult,
+  buildNextAction,
+  buildWaveCurrentActionGuidance,
+  isCreateEmptyState,
+  saveUnit,
+} from "./internal.js";
 import type { ActionResult, CreateInput,CwDeps } from "./types.js";
 
 /** testRunner 配置提示（create 时提前告知 monorepo 用户）。 */
@@ -65,6 +73,32 @@ export function handleCreate(
   args: CreateInput,
   deps: CwDeps,
 ): ActionResult & { unit: ExecutionUnit } {
+  // #2 create 幂等预检（D-002）：按 layer 定界（id=`wave:<slug>`），save 之前 load。
+  // slug 已存在且非 created 空态 → no-op 返回 existing（不覆盖、不 save）。
+  const existing = deps.store.load(`wave:${args.slug}`);
+  if (existing !== null && !isCreateEmptyState(existing)) {
+    const status = typeof existing.status === "string" ? existing.status : "created";
+    const currentAction = WAVE_STATUS_TO_ACTION[status];
+    const currentGuidance =
+      currentAction !== undefined
+        ? buildWaveCurrentActionGuidance(
+            // eslint-disable-next-line taste/no-unsafe-cast -- 只读 id/status/parentUnitId/slug（CurrentActionGuidance 仅用这 4 字段），record 是具名 unit 超集
+            existing as unknown as ExecutionUnit,
+            currentAction as WaveAction,
+          )
+        : "";
+    return {
+      ...buildCreateIdempotentResult({
+        existing,
+        layer: "wave",
+        currentAction,
+        currentGuidance,
+      }),
+      // eslint-disable-next-line taste/no-unsafe-cast -- 同上：existing 字段透传存储，断言安全
+      unit: existing as unknown as ExecutionUnit,
+    };
+  }
+
   const unit = createWave({
     slug: args.slug,
     objective: args.objective,

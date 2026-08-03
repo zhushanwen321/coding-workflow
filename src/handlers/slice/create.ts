@@ -9,9 +9,17 @@
  * 与 wave create 的差异：layer='slice' 时走本 handler（createSlice 工厂），
  * layer='wave'（默认）走 wave 的 handleCreate。
  */
+import { PLANNING_STATUS_TO_ACTION } from "../../core/status.js";
+import type { Slice } from "../../core/workunit.js";
 import { createSlice } from "../../core/workunit.js";
+import type { PlanningAction } from "../../rules/state-machine.js";
+import { buildCreateIdempotentResult, isCreateEmptyState } from "../internal.js";
 import type { ActionResult, CreateInput, CwDeps } from "../types.js";
-import { buildSliceNextAction, saveSlice } from "./slice-internal.js";
+import {
+  buildSliceCurrentActionGuidance,
+  buildSliceNextAction,
+  saveSlice,
+} from "./slice-internal.js";
 
 /**
  * 执行 slice create action。
@@ -23,7 +31,32 @@ import { buildSliceNextAction, saveSlice } from "./slice-internal.js";
 export function handleCreateSlice(
   args: CreateInput,
   deps: CwDeps,
-): ActionResult & { unit: import("../../core/workunit.js").Slice } {
+): ActionResult & { unit: Slice } {
+  // #2 create 幂等预检（D-002）：按 layer 定界（id=`slice:<slug>`），save 之前 load。
+  const existing = deps.store.load(`slice:${args.slug}`);
+  if (existing !== null && !isCreateEmptyState(existing)) {
+    const status = typeof existing.status === "string" ? existing.status : "created";
+    const currentAction = PLANNING_STATUS_TO_ACTION[status];
+    const currentGuidance =
+      currentAction !== undefined
+        ? buildSliceCurrentActionGuidance(
+            // eslint-disable-next-line taste/no-unsafe-cast -- 只读 id/status/parentUnitId/slug，record 是具名 unit 超集
+            existing as unknown as Slice,
+            currentAction as PlanningAction,
+          )
+        : "";
+    return {
+      ...buildCreateIdempotentResult({
+        existing,
+        layer: "slice",
+        currentAction,
+        currentGuidance,
+      }),
+      // eslint-disable-next-line taste/no-unsafe-cast -- 同上：existing 字段透传存储，断言安全
+      unit: existing as unknown as Slice,
+    };
+  }
+
   const unit = createSlice({
     slug: args.slug,
     objective: args.objective,

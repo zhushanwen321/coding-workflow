@@ -78,7 +78,7 @@ const WAVE_RULES: Readonly<Record<string, Rule>> = {
   retrospect: {
     level: "optional",
     direction: "综合",
-    reason: "递归模式下由独立 agent 执行本 wave 复盘",
+    reason: "复盘本 wave 执行过程与经验，输入含执行轨迹，规模大时可委派（交接 cw handoff + 本层 session）",
   },
   closeout: {
     level: "optional",
@@ -97,7 +97,7 @@ const WAVE_RULES: Readonly<Record<string, Rule>> = {
  *
  * planning 是下沉导航层。planning execute 是拆分+创建子 unit+下沉的编排决策，主 agent 不可卸载（禁止）；
  * planning design-review 审查刚做的 Split 设计，确认偏差风险与 wave 一致（强制委派·审查方向）；
- * planning retrospect 递归模式下可委派，agent 读 cw handoff + 子层 session 做复盘（按需委派·综合方向）。
+ * planning retrospect 可委派，agent 读 cw handoff + 子层 session 做复盘（按需委派·综合方向）。
  */
 const PLANNING_RULES: Readonly<Record<string, Rule>> = {
   clarify: {
@@ -123,7 +123,7 @@ const PLANNING_RULES: Readonly<Record<string, Rule>> = {
   retrospect: {
     level: "optional",
     direction: "综合",
-    reason: "递归模式下可委派，agent 读 cw handoff + 子层 session 做复盘",
+    reason: "复盘本层执行过程，agent 读 cw handoff + 子层 session 可重建上下文",
   },
   closeout: {
     level: "optional",
@@ -131,14 +131,6 @@ const PLANNING_RULES: Readonly<Record<string, Rule>> = {
     reason: "closeout 是聚合已有产物的收尾动作，主 agent 有全程跟踪时自己做信息更全",
   },
 };
-
-/** 平台嵌套/handoff 决策树（跨 action 通用，所有非禁止档位末尾追加）。 */
-const NESTING_DECISION_TREE = [
-  "平台嵌套能力判断：你的 agent 平台是否支持 subagent 内部继续派 subagent？",
-  "- 支持嵌套：委派后该 subagent 可作为新主 agent 继续跑下一层 cw（委派树）。",
-  "- 不支持嵌套：委派为叶子节点，当前层完成后用 cw handoff 把状态交接给独立 session 做下一层。",
-  "具体能力请查你的 agent 平台文档。",
-].join("\n");
 
 /** layer 参数合法值（对应 cw 的四层 unit）。 */
 export type GuidanceLayer = "wave" | "planning";
@@ -165,15 +157,11 @@ export function buildSubagentGuidance(layer: GuidanceLayer, action: string): str
       return [
         `【建议委派】${rule.reason}。`,
         `建议派专门做${rule.direction}方向的 subagent 隔离上下文——此收益结构性稳定，不随任务规模改变。`,
-        "",
-        NESTING_DECISION_TREE,
       ].join("\n");
     case "optional":
       return [
         `【按需委派】${rule.reason}。`,
         `规模较大或上下文占用明显时，考虑派专门做${rule.direction}方向的 subagent 隔离上下文；任务较小时主 agent 自行处理即可。`,
-        "",
-        NESTING_DECISION_TREE,
       ].join("\n");
     case "forbidden":
       return [
