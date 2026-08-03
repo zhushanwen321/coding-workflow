@@ -28,6 +28,11 @@ import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
 
+import {
+  FLAG_WHITELIST,
+  GLOBAL_FLAGS,
+  validateFlags,
+} from "./cli-params.js";
 import { CwError } from "./core/errors.js";
 import type { TestRunResult } from "./core/evidence.js";
 import { computeFrontier } from "./core/frontier.js";
@@ -647,6 +652,27 @@ function renderHelp(): string {
 }
 
 /**
+ * renderActionHelp — per-command help（#11 并入 #5）：显示该 action 的合法 flag 列表。
+ *
+ * 触发场景：`cw help <action>` 与 `cw <action> --help` 双入口（main 的 help 分支判定）。
+ * flag 列表来自 FLAG_WHITELIST + GLOBAL_FLAGS（单源，不另维护文案），camel 形态展示。
+ */
+function renderActionHelp(action: string): string {
+  const names = [...new Set([...GLOBAL_FLAGS, ...(FLAG_WHITELIST[action] ?? [])])].sort();
+  const lines = names
+    .map((name) => `  ${name.length === 1 ? `-${name}` : `--${name}`}`)
+    .join("\n");
+  return `cw ${action} — 参数帮助
+
+用法：
+  cw ${action} [options]
+
+合法 flags（全局共享 + 本 action 专属）：
+${lines}
+`;
+}
+
+/**
  * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
  *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 store.json）
@@ -781,6 +807,10 @@ async function runWithAction(
     process.exit(EXIT_CW_ERROR);
   }
 
+  // flag 白名单校验（#5）：在 create 缺 layer 早返回分支之前——缺 layer + 拼错 flag 时
+  // unknown flag 不被吞（K-7）。readonly action 已在 runReadonly 内校验（早返回，不经过这里）。
+  validateFlags(action, parsed);
+
   // create 缺 layer → 返回选层 guidance + exit 0（强制拦截点，不进 dispatch）。
   // 与 readonly 查询分支同类：CLI 参数层早返回，不写 store。agent 必经 create 入口，
   // layer 缺失时被引导选层，避免凭直觉选错层级。
@@ -846,6 +876,10 @@ async function runReadonly(
   workspacePath: string,
 ): Promise<void> {
   const store = new CwStore(workspacePath);
+
+  // flag 白名单校验（#5）：readonly 各 action 分支先校验（未知 flag → CwError exit 1）。
+  // 校验点统一放入口（action 已定，白名单按 action 取），分支内不再重复。
+  validateFlags(action, parsed);
 
   if (action === "tree") {
     // --unitId 可选；缺省取第一个无 parentUnitId 的 root unit。
@@ -1036,6 +1070,29 @@ async function main(argv: string[]): Promise<void> {
     parsed.help === true ||
     parsed.h === true
   ) {
+    // per-command help 双入口（#11 并入 #5）：
+    //   1. `cw <action> --help`：rawAction 是合法 action 且带 --help/-h
+    //   2. `cw help <action>`：rawAction === "help"，parsed._[1] 是目标 action
+    // 目标 ∈ ALL_ACTIONS → 渲染该 action 的合法 flag 列表；`cw help <未知>` → CwError exit 1。
+    const target =
+      rawAction === "help"
+        ? String(parsed._[1] ?? "")
+        : rawAction !== undefined
+          ? String(rawAction)
+          : "";
+    if (target !== "" && ALL_ACTIONS.has(target)) {
+      process.stdout.write(renderActionHelp(target));
+      return;
+    }
+    if (
+      rawAction === "help" &&
+      target !== "" &&
+      target !== "help" &&
+      target !== "version"
+    ) {
+      // `cw help <未知>`（help/version 是命令不是 action，放行到全局 help）
+      throw new CwError(`未知 action "${target}"，合法: ${[...ALL_ACTIONS].join(", ")}`);
+    }
     process.stdout.write(renderHelp());
     return;
   }

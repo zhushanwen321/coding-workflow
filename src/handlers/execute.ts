@@ -19,6 +19,7 @@ import { extractChangedFiles, parseAbandonMarkers } from "../core/git.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, mergeAbandonParentItems, saveUnit, transitionStatus } from "./internal.js";
 import type { ActionResult, CwDeps,ExecuteInput } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 execute action。
@@ -32,6 +33,7 @@ export function handleExecute(
   input: ExecuteInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("execute", "wave", input);
   // ── 检测 replan 后重新 execute：旧 commitHash 需要 append 进 statusHistory ──
   const oldCommitHash = unit.executeResult?.commitHash;
   if (oldCommitHash && oldCommitHash !== input.commitHash) {

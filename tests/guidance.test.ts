@@ -219,6 +219,46 @@ describe("prefix-builder", () => {
       expect(prefix).toContain(`[${layer}:x]`);
     }
   });
+
+  // T2.10（#9 prefix 双 layer 修复）：unit.id 自带 scope 前缀（如 "wave:auth"）时，
+  // 渲染层剥离 <layer>: 前缀，产出 [wave:auth] 而非 [wave:wave:auth]（AC-4.5）。
+  it("unitId 自带 <layer>: 前缀 → 剥离（[wave:auth] 非 [wave:wave:auth]，T2.10）", () => {
+    const prefix = buildPrefix({
+      layer: "wave",
+      unitId: "wave:auth",
+      status: "clarified",
+    });
+    expect(prefix).toBe("[wave:auth] 状态：clarified");
+    expect(prefix).not.toContain("[wave:wave:auth]");
+  });
+
+  it("嵌套重复前缀循环剥离（wave:wave:auth → wave:auth）", () => {
+    const prefix = buildPrefix({
+      layer: "wave",
+      unitId: "wave:wave:auth",
+      status: "created",
+    });
+    expect(prefix).toBe("[wave:auth] 状态：created");
+  });
+
+  it("非本 layer 的前缀不剥离（只剥 <layer>: 自身前缀）", () => {
+    const prefix = buildPrefix({
+      layer: "slice",
+      unitId: "wave:w1",
+      status: "created",
+    });
+    expect(prefix).toBe("[slice:wave:w1] 状态：created");
+  });
+
+  it("带 parent 时剥离后仍含「父单元」段", () => {
+    const prefix = buildPrefix({
+      layer: "wave",
+      unitId: "wave:auth",
+      status: "clarified",
+      parentUnitId: "slice:auth-login",
+    });
+    expect(prefix).toBe("[wave:auth] 状态：clarified｜父单元：slice:auth-login");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════

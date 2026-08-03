@@ -17,6 +17,7 @@
  */
 import type { Epic } from "../../core/workunit.js";
 import type { ActionResult, CwDeps,PlanFeatureInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.js";
 
 /**
@@ -31,6 +32,7 @@ export function handlePlanEpic(
   input: PlanFeatureInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("plan", "epic", input);
   unit.plan = { split: input.split };
 
   epicTransition(unit, "plan", deps.clock.now());

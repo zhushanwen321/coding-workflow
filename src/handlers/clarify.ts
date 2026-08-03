@@ -11,6 +11,7 @@
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildNextAction, saveUnit,transitionStatus } from "./internal.js";
 import type { ActionResult, ClarifyInput,CwDeps } from "./types.js";
+import { validateInput } from "./validate-input.js";
 
 /**
  * 执行 clarify action（progressive）。
@@ -24,6 +25,7 @@ export function handleClarify(
   input: ClarifyInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("clarify", "wave", input);
   // 写产物：append clarifications（progressive，不覆盖历史）
   unit.clarifications = [...unit.clarifications, ...input.clarifications];
 

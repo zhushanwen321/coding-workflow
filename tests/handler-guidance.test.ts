@@ -172,7 +172,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toBeTruthy();
     expect(r.nextAction!.action).toBe("clarify");
     expect(r.nextAction!.guidance).toContain("## 位置");
-    expect(r.nextAction!.guidance).toContain("[wave:wave:g-create]");
+    expect(r.nextAction!.guidance).toContain("[wave:g-create]");
     expect(r.nextAction!.guidance).toContain("## 下一步");
     expect(r.nextAction!.guidance).toContain("cw clarify --unitId wave:g-create");
     // create 时追加 testRunner 配置提示
@@ -698,7 +698,7 @@ describe("W7: abort guidance（流程结束）", () => {
     expect(r.nextAction).toBeDefined();
     expect(r.nextAction!.action).toBeUndefined();
     expect(r.nextAction!.guidance).toContain("## 位置");
-    expect(r.nextAction!.guidance).toContain("[wave:wave:g-abort]");
+    expect(r.nextAction!.guidance).toContain("[wave:g-abort]");
     expect(r.nextAction!.guidance).toContain("已结束");
     // 终态无下一步命令
     expect(r.nextAction!.guidance).not.toContain("cw ");

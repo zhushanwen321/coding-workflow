@@ -26,6 +26,7 @@ import { computeParallelSiblingsAfterCloseout } from "../../guidance/index.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CloseoutInput, CwDeps, CwNextAction } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -46,6 +47,7 @@ export function handleCloseoutSlice(
   input: CloseoutInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("closeout", "slice", input);
   // ── 检查 evidence 是否已冻结（防止重复 closeout） ──
   assertEvidenceNotFrozen(unit.evidence, "closeout");
   

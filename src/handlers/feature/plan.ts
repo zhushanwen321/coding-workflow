@@ -16,6 +16,7 @@
 import type { Feature } from "../../core/workunit.js";
 import { mergeAbandonParentItems } from "../internal.js";
 import type { ActionResult, CwDeps,PlanFeatureInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildFeatureNextAction, featureTransition, saveFeature } from "./feature-internal.js";
 
 /**
@@ -30,6 +31,7 @@ export function handlePlanFeature(
   input: PlanFeatureInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("plan", "feature", input);
   unit.plan = { split: input.split };
 
   // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems

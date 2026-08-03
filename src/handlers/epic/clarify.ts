@@ -14,6 +14,7 @@
  */
 import type { Epic } from "../../core/workunit.js";
 import type { ActionResult, ClarifyInput, CwDeps } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildEpicNextAction, epicTransition, saveEpic } from "./epic-internal.js";
 
 /**
@@ -28,6 +29,7 @@ export function handleClarifyEpic(
   input: ClarifyInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("clarify", "epic", input);
   // append clarifications（progressive，不覆盖历史——同 slice 模式，非 feature 容器覆盖）
   unit.clarifications = [...unit.clarifications, ...input.clarifications];
 

@@ -115,7 +115,7 @@ describe("TC1: slice 正常路径三段式 guidance", () => {
         expect(nextAction.guidance).toContain("命令：cw ");
       }
       // prefix 段含层标识
-      expect(nextAction.guidance).toContain("[slice:slice:snap-slice]");
+      expect(nextAction.guidance).toContain("[slice:snap-slice]");
       // unitPath 层正确
       expect(nextAction.unitPath.layer).toBe("slice");
       expect(nextAction.unitPath.unitId).toBe("slice:snap-slice");
@@ -136,7 +136,7 @@ describe("TC2: feature 正常路径三段式 guidance", () => {
         expect(nextAction.guidance).toContain("--unitId feature:snap-feature");
         expect(nextAction.guidance).toContain("命令：cw ");
       }
-      expect(nextAction.guidance).toContain("[feature:feature:snap-feature]");
+      expect(nextAction.guidance).toContain("[feature:snap-feature]");
       expect(nextAction.unitPath.layer).toBe("feature");
     });
   }
@@ -155,7 +155,7 @@ describe("TC3: epic 正常路径三段式 guidance", () => {
         expect(nextAction.guidance).toContain("--unitId epic:snap-epic");
         expect(nextAction.guidance).toContain("命令：cw ");
       }
-      expect(nextAction.guidance).toContain("[epic:epic:snap-epic]");
+      expect(nextAction.guidance).toContain("[epic:snap-epic]");
       expect(nextAction.unitPath.layer).toBe("epic");
     });
   }
@@ -235,7 +235,7 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
 
     expectSectionsInOrder(nextAction.guidance, FAILURE_SECTIONS);
     expect(nextAction.guidance).toContain(problem);
-    expect(nextAction.guidance).toContain("[feature:feature:snap-feature]");
+    expect(nextAction.guidance).toContain("[feature:snap-feature]");
     // fail 路径 prefix 标注 status 未变
     expect(nextAction.guidance).toContain("未变");
     expect(failureCount).toBe(1);
@@ -251,7 +251,7 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
 
     expectSectionsInOrder(nextAction.guidance, FAILURE_SECTIONS);
     expect(nextAction.guidance).toContain(problem);
-    expect(nextAction.guidance).toContain("[epic:epic:snap-epic]");
+    expect(nextAction.guidance).toContain("[epic:snap-epic]");
     expect(failureCount).toBe(1);
     expect(nextAction.unitPath.layer).toBe("epic");
   });

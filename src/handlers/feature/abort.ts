@@ -19,6 +19,7 @@ import type { StatusChange, WorkUnitStatus } from "../../core/status.js";
 import type { Feature } from "../../core/workunit.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { AbortInput, ActionResult, CwDeps } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import { buildFeatureNextAction, featureTransition, readRecordStatus, readRecordStatusHistory, saveFeature } from "./feature-internal.js";
 
 /**
@@ -33,6 +34,7 @@ export function handleAbortFeature(
   input: AbortInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("abort", "feature", input);
   const at = deps.clock.now();
 
   // ── 自身 status 流转 → aborted ──

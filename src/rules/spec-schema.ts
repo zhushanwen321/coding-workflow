@@ -36,7 +36,7 @@ const itemStatus = Type.Union([Type.Literal("active"), Type.Literal("abandoned")
  * 额外字段（priority/statement 等 agent 自创字段）用 Optional 允许：不破坏已入库数据，
  * agent 附加信息无害（gate 不读这些字段）。
  */
-const FunctionalRequirementSchema = Type.Object({
+export const FunctionalRequirementSchema = Type.Object({
   id: Type.String(),
   status: itemStatus,
   title: Type.String(),
@@ -52,7 +52,7 @@ const FunctionalRequirementSchema = Type.Object({
  *
  * 必填：id / status / condition。verification 可选（沿用 cw 0.x 命名）。
  */
-const AcceptanceCriterionSchema = Type.Object({
+export const AcceptanceCriterionSchema = Type.Object({
   id: Type.String(),
   status: itemStatus,
   condition: Type.String(),
@@ -66,7 +66,7 @@ const AcceptanceCriterionSchema = Type.Object({
  *
  * 必填：id / status / actor / scenario / expectedResult。
  */
-const BusinessCaseSchema = Type.Object({
+export const BusinessCaseSchema = Type.Object({
   id: Type.String(),
   status: itemStatus,
   actor: Type.String(),

@@ -43,6 +43,7 @@ import {
 } from "../internal.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CwDeps,ReplanInput } from "../types.js";
+import { validateInput } from "../validate-input.js";
 import {
   appendSliceFailRecord,
   buildSliceFailureNextAction,
@@ -64,6 +65,7 @@ export function handleReplanSlice(
   input: ReplanInput,
   deps: CwDeps,
 ): ActionResult {
+  validateInput("replan", "slice", input);
   // ── before 快照（深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
 
