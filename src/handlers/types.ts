@@ -212,6 +212,7 @@ export interface ClarifyInput {
   clarifications: Clarification[];
 }
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /** plan handler 输入（写 WavePlan 4 类条目）。 */
 export interface PlanInput extends AbandonParentItemsInput {
   testCases: WaveTestCase[];
@@ -293,6 +294,7 @@ export interface AbortInput {
 // 不同的（PlanSliceInput / RetrospectSliceInput）。slice execute 不接收 input（按
 // split 自动创建 child wave），故无 ExecuteSliceInput。
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
  * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
  *
@@ -342,6 +344,7 @@ export interface FeatureClarifyInput {
   spec: FeatureSpec;
 }
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
  * feature plan handler 输入（Plan 基类，只 split）。
  *
@@ -351,6 +354,7 @@ export interface PlanFeatureInput extends AbandonParentItemsInput {
   split: Split[];
 }
 
+// ⚠️ 双份定义：与 src/core/plan.ts 同名定义必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
  * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
  *

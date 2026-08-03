@@ -212,6 +212,7 @@ export interface AbandonParentItemsInput {
   abandonParentItems?: string[];
 }
 
+// ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
  * plan handler 输入（写 WavePlan 4 类条目）。
  *
@@ -225,6 +226,7 @@ export interface PlanInput extends AbandonParentItemsInput {
   contracts: WaveContract[];
 }
 
+// ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
  * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
  *
@@ -244,6 +246,7 @@ export interface PlanSliceInput extends AbandonParentItemsInput {
   decisions?: Decision[];
 }
 
+// ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
  * feature plan handler 输入（Plan 基类，只 split）。
  *
@@ -254,6 +257,7 @@ export interface PlanFeatureInput extends AbandonParentItemsInput {
   split: Split[];
 }
 
+// ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
  * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
  *

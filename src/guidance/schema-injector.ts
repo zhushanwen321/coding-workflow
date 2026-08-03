@@ -238,6 +238,7 @@ export function readSchemaText({
           text = injectSchema(source.sourceFilePath, source.interfaceName);
         }
       } catch {
+        // schemas.gen.json 损坏/格式不符/读取失败 → 降级实时解析
         text = injectSchema(source.sourceFilePath, source.interfaceName);
       }
     } else {

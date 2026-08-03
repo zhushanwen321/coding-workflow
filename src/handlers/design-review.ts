@@ -18,6 +18,7 @@
  * 故 siblingFiles 由本 handler 从 store.findChildren load 后注入（照 retrospect.ts:46-58 模式）。
  */
 import type { WaveFile } from "../core/plan.js";
+import { isPostDesignReview } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { runWaveDesignReviewGates } from "../rules/gates/design-review.js";
 import {
@@ -56,9 +57,9 @@ export function handleDesignReview(
           if (id === unit.id || scope !== "wave") return false;
           // 兄弟未 design-review 的 plan 可能为空或未定，只查已过 design-review 的
           const status = typeof r.status === "string" ? r.status : "";
-          const reviewed = ["design-reviewed", "executing", "tested", "exec-reviewed", "retrospected"].includes(status);
-          // 终态（closed/aborted）的兄弟不会并行 execute，跳过
-          return reviewed;
+          // 已过 design-review 的兄弟 wave（plan.files 已定稿）；派生自状态机单源 isPostDesignReview（S3），
+          // 终态（closed/aborted）由「非终态」语义自动排除，未来新增 post 状态自动跟进。
+          return isPostDesignReview(status);
         })
         .map((r) => {
           const plan = r.plan as { files?: WaveFile[] } | undefined;

@@ -604,7 +604,15 @@ export function validateInput(action: string, layer: HandlerLayer, input: unknow
     throw new CwError(`input 校验失败: 未登记 (${layer}, ${action}) 的 schema`);
   }
   if (Value.Check(schema, input)) return;
-  const first = Array.from(Value.Errors(schema, input))[0];
+  const errors = Array.from(Value.Errors(schema, input));
+  const first = errors[0];
+  if (!first) {
+    // 防御性兜底：Value.Check=false 但 Errors 空迭代（typebox 边界），保持 exit 1 语义
+    // （校验失败 → CwError），而非让 first.path 抛 TypeError 被归为 exit 2 内部异常（S6）。
+    throw new CwError(
+      "input 校验失败: 未知错误（schema 校验未通过但无错误详情）",
+    );
+  }
   const field = first.path === "" ? "input" : first.path.replace(/^\//, "");
   throw new CwError(`input.${field} 校验失败: ${first.message}`);
 }

@@ -288,8 +288,14 @@ export function renderList(
 /**
  * 判定 unit 是否可推进（非终态且状态机有下一步 action）。
  *
- * advanceable/blocked 语义（与 frontier 对齐）：终态（closed/aborted）或状态机无
- * 下一步 action 的 status 无法推进 → 计入 blocked；其余计入 advanceable。
+ * list 视角的 advanceable/blocked 语义（注意：与 frontier 的 blocked 不同义）：
+ * 终态（closed/aborted）或状态机无下一步 action 的 status 无法推进 → 计入 blocked；
+ * 其余计入 advanceable。
+ *
+ * ⚠ 此处 blocked = total - advanceable，含「终态 + 无下一步 action 的 status」；
+ * 而 frontier（core/frontier.ts）的 blocked 仅指依赖未全终态的节点。两者同名不同义，
+ * 勿混淆（同一 unit 在 cw list 可能 blocked=true、在 cw frontier 却 blocked=false）。
+ *
  * 按 scope 选映射表（wave 用 WAVE_STATUS_TO_ACTION，planning 三层共用 PLANNING_STATUS_TO_ACTION）。
  */
 function isAdvanceable(unit: WorkUnitRecord): boolean {
@@ -301,6 +307,9 @@ function isAdvanceable(unit: WorkUnitRecord): boolean {
 
 /**
  * 渲染列表尾行总览：total/advanceable/blocked 计数 + next-step 建议。
+ *
+ * advanceable/blocked 计数语义见 isAdvanceable（list 视角：blocked 含终态 + 无下一步
+ * action 的 status，与 frontier 的 blocked 仅指依赖阻塞不同义）。
  *
  * next-step 取排序后第一个非终态 unit（filtered 全集，与分页无关）；--all 模式
  * （跨 cwd 聚合）带 `--cwd <unit 所在目录>`（K-5），单 cwd 模式省略。
@@ -1064,7 +1073,10 @@ function buildGuidanceForScope(
       return undefined;
     }
     return { action, guidance };
-  } catch {
+  } catch (e) {
+    // guidance 生成失败不阻断主流程：降级返回空串（调用方输出固定降级文案），
+    // 但记录错误便于排查——guidance 是 cw 核心产物，链路 bug 不可静默。
+    console.error(`[render] guidance 生成失败 scope=${scope} action=${action}: ${(e as Error).message}`);
     return { action, guidance: "" };
   }
 }

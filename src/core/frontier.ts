@@ -11,7 +11,7 @@
  */
 import type { WorkUnitRecord } from "../store/schema.js";
 import type { ChildDeliveryRecord } from "./evidence.js";
-import { isDependencySatisfied, resolveChildDependsOn } from "./hierarchy.js";
+import { resolveChildDependsOn } from "./hierarchy.js";
 import type { Split } from "./plan.js";
 import {
   PLANNING_STATUS_TO_ACTION,
@@ -215,16 +215,21 @@ export function computeFrontier(
         const myDep = childDeps.find((d) => d.childUnitId === node.unitId);
         if (myDep !== undefined && myDep.dependsOn.length > 0) {
           node.dependsOn = myDep.dependsOn;
-          // 查依赖的 wave 是否全终态（复用 isDependencySatisfied 共享函数，§5.2）。
-          if (!isDependencySatisfied(myDep.dependsOn, store)) {
+          // 一次遍历同时得 blocked 判定（任一依赖 null 或非终态 → 未满足）和 report 数据
+          // （未终态依赖 id 列表），避免 isDependencySatisfied（内部逐个 store.load）再
+          // .map(store.load) 的双倍 IO（S2）。「依赖 load 不到（null）」按 isDependencySatisfied
+          // 语义视为未满足（保守判定），但不列入 report（与原逻辑一致）。
+          const loadedDeps = myDep.dependsOn.map((id) => store.load(id));
+          const isSatisfied = loadedDeps.every(
+            (r) =>
+              r !== null && TERMINAL_STATUSES.has(getStringField(r, "status")),
+          );
+          if (!isSatisfied) {
             node.blocked = true;
-            // blockedReason 仍需列出未终态的具体依赖 id，故保留 nonTerminalDeps 计算用于 report。
-            const nonTerminalDeps = myDep.dependsOn
-              .map((id) => store.load(id))
-              .filter(
-                (r): r is WorkUnitRecord =>
-                  r !== null && !TERMINAL_STATUSES.has(getStringField(r, "status")),
-              );
+            const nonTerminalDeps = loadedDeps.filter(
+              (r): r is WorkUnitRecord =>
+                r !== null && !TERMINAL_STATUSES.has(getStringField(r, "status")),
+            );
             node.blockedReason = `依赖未完成: ${nonTerminalDeps
               .map((r) => getStringField(r, "id"))
               .join(", ")}`;

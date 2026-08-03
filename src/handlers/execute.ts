@@ -12,7 +12,9 @@
  * 4. 填 evidence.generatedAt（首次生成时间；若已填则保留，不覆盖——progressive 场景）
  * 5. status 流转（design-reviewed → executing）→ save
  *
- * 不变量：execute 不跑 gate（仅前置 commitExists 校验；其余 gate 在 test 阶段验，避免 executing 状态因无效 commit 卡死）。
+ * 不变量：execute 不跑 gate 机器检查机制（不聚合 GateResult / 不 appendFailRecord / 不写 statusHistory），
+ * 仅复用 commitExists 函数做入口参数前置校验（失败抛 CwError exit 1，status 停留 design-reviewed 可重试），
+ * 纵深防御仍在 test gate（完整 commitExists 机器检查写 statusHistory）。
  */
 import { CwError } from "../core/errors.js";
 import type { WaveEvidence } from "../core/evidence.js";

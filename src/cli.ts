@@ -1092,7 +1092,8 @@ async function main(argv: string[]): Promise<void> {
       target !== "version"
     ) {
       // `cw help <未知>`（help/version 是命令不是 action，放行到全局 help）
-      throw new CwError(`未知 action "${target}"，合法: ${[...ALL_ACTIONS].join(", ")}`);
+      // 合法列表 = ALL_ACTIONS + help/version，与下方「未知 action」分支一致
+      throw new CwError(`未知 action "${target}"，合法: ${[...ALL_ACTIONS, "help", "version"].join(", ")}`);
     }
     process.stdout.write(renderHelp());
     return;

@@ -122,3 +122,25 @@ export const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, string | undefin
 
 /** 终态 status 集合（frontier 不输出这些节点；render 不输出「下一步」段）。 */
 export const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
+
+/** design-review action 之前的状态（plan 尚未定稿）。
+ *
+ * created/clarifying/planning——design-review 是 plan→execute 的 gate，处于此三种状态的
+ * unit 其 plan.files 尚不确定，跨 wave 冲突 gate 不应纳入。design-reviewed 及其之后的状态
+ * 才算「已过 design-review」（plan.files 已定）。 */
+export const PRE_DESIGN_REVIEW_STATUSES = new Set([
+  "created",
+  "clarifying",
+  "planning",
+]);
+
+/** 判断 status 是否「已过 design-review」（plan 已定稿，plan.files 确定）。
+ *
+ * 派生自状态机单源：非终态 且 非 pre-design-review。被 design-review handler 的跨 wave
+ * 冲突 gate 筛选兄弟 wave 时消费，避免各 handler 手抄 status 字面量数组——未来新增
+ * design-review 之后的非终态 status 会自动跟进。 */
+export function isPostDesignReview(status: string): boolean {
+  return (
+    !TERMINAL_STATUSES.has(status) && !PRE_DESIGN_REVIEW_STATUSES.has(status)
+  );
+}
