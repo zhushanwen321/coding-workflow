@@ -21,7 +21,7 @@ import {
 } from "../src/guidance/cross-layer.js";
 import { buildFailureHint, deriveFailureCount } from "../src/guidance/failure-hint.js";
 import { buildPrefix } from "../src/guidance/prefix-builder.js";
-import { injectSchema } from "../src/guidance/schema-injector.js";
+import { buildSchemaGenFile,injectSchema } from "../src/guidance/schema-injector.js";
 import {
   WAVE_PLAN_TEMPLATE,
   WAVE_REPLAN_TEMPLATE,
@@ -540,6 +540,44 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
     });
     expect(g).toContain("## input schema + 关键约束");
     expect(g).toContain("{}");
+  });
+
+  it("schemaText 为空时不渲染 schema block（#1 终态守卫）", () => {
+    const g = buildNormalGuidance({
+      prefix: "[wave:x] 状态：closed",
+      nextAction: "closeout",
+      goal: "（closeout 阶段）",
+      command: "（当前 closeout 已结束本层流程，无下一步命令）",
+      schemaText: "",
+      templateText: "",
+    });
+    expect(g).not.toContain("## input schema + 关键约束");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// buildSchemaGenFile（T1.5，AC-1.3）：22 keys + 每 key 含外层包裹
+// ═══════════════════════════════════════════════════════════════
+
+describe("build-guidance: buildSchemaGenFile（#1，T1.5）", () => {
+  it("返回 22 个 ${scope}:${action} keys，每 key 的 schemaText 含外层包裹", () => {
+    const gen = buildSchemaGenFile();
+    const keys = Object.keys(gen);
+    // wave 7（clarify/plan/design-review/test/exec-review/retrospect/closeout）
+    // + slice/feature/epic 各 5（clarify/plan/design-review/retrospect/closeout）= 22
+    expect(keys.length).toBe(22);
+    for (const key of keys) {
+      expect(key).toMatch(/^(wave|slice|feature|epic):[a-z-]+$/);
+      const text = gen[key].schemaText;
+      // 每 key schema 含外层包裹（injectSchema 输出 { ... } 结构）
+      expect(text.trim().startsWith("{"), `${key} 缺外层 {`).toBe(true);
+      expect(text.trim().endsWith("}"), `${key} 缺外层 }`).toBe(true);
+    }
+    // 四层覆盖抽查：wave:clarify / slice:plan / feature:retrospect / epic:closeout
+    expect(gen["wave:clarify"]).toBeDefined();
+    expect(gen["slice:plan"]).toBeDefined();
+    expect(gen["feature:retrospect"]).toBeDefined();
+    expect(gen["epic:closeout"]).toBeDefined();
   });
 });
 

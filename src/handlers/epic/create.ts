@@ -10,9 +10,17 @@
  * Clarification[] 数组（同 slice/wave，非 feature 的容器对象），plan 为 Plan 基类（只 split）。
  * epic 是 4 层顶层无父层：createEpic 不写入 parentUnitId（即使 args 传也忽略）。
  */
+import { PLANNING_STATUS_TO_ACTION } from "../../core/status.js";
+import type { Epic } from "../../core/workunit.js";
 import { createEpic } from "../../core/workunit.js";
+import type { PlanningAction } from "../../rules/state-machine.js";
+import { buildCreateIdempotentResult, isCreateEmptyState } from "../internal.js";
 import type { ActionResult, CreateInput, CwDeps } from "../types.js";
-import { buildEpicNextAction, saveEpic } from "./epic-internal.js";
+import {
+  buildEpicCurrentActionGuidance,
+  buildEpicNextAction,
+  saveEpic,
+} from "./epic-internal.js";
 
 /**
  * 执行 epic create action。
@@ -25,7 +33,32 @@ import { buildEpicNextAction, saveEpic } from "./epic-internal.js";
 export function handleCreateEpic(
   args: CreateInput,
   deps: CwDeps,
-): ActionResult & { unit: import("../../core/workunit.js").Epic } {
+): ActionResult & { unit: Epic } {
+  // #2 create 幂等预检（D-002）：按 layer 定界（id=`epic:<slug>`），save 之前 load。
+  const existing = deps.store.load(`epic:${args.slug}`);
+  if (existing !== null && !isCreateEmptyState(existing)) {
+    const status = typeof existing.status === "string" ? existing.status : "created";
+    const currentAction = PLANNING_STATUS_TO_ACTION[status];
+    const currentGuidance =
+      currentAction !== undefined
+        ? buildEpicCurrentActionGuidance(
+            // eslint-disable-next-line taste/no-unsafe-cast -- 只读 id/status/parentUnitId/slug，record 是具名 unit 超集
+            existing as unknown as Epic,
+            currentAction as PlanningAction,
+          )
+        : "";
+    return {
+      ...buildCreateIdempotentResult({
+        existing,
+        layer: "epic",
+        currentAction,
+        currentGuidance,
+      }),
+      // eslint-disable-next-line taste/no-unsafe-cast -- 同上：existing 字段透传存储，断言安全
+      unit: existing as unknown as Epic,
+    };
+  }
+
   const unit = createEpic({
     slug: args.slug,
     objective: args.objective,

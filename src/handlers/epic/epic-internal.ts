@@ -186,15 +186,22 @@ export function buildEpicNextAction(
   const template = PLANNING_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
-  const schemaText = getEpicSchemaText(action);
-  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
-  // 这里追加 epic 专属 5 字段名，提示 agent 必须填这些 key（机器 gate layer-specific-non-empty 会验）。
-  const finalSchemaText =
-    action === "design-review"
-      ? `${schemaText}\nlayerSpecific 必须包含以下 key: strategicAlignment, featureSplitRationale, scopeBoundary, priorityRationale, resourceEstimate`
-      : schemaText;
 
+  // #1 schema 错位修复：nextAction 提前计算，schema 段取 nextAction（与命令段同指下一步）。
   const nextAction = opts?.nextActionOverride ?? EPIC_ACTION_TO_NEXT_PUBLIC[action];
+  // 终态守卫：closeout/abort 后 nextAction=undefined，无「下一步 input」可展示 → 跳过 schema 段。
+  let schemaText = "";
+  if (nextAction !== undefined) {
+    const baseSchemaText = getEpicSchemaText(nextAction);
+    // design-review 特判（跟随 nextAction）：基类 DesignReviewJudgment 的 layerSpecific 下界
+    // 是 Record<string,string>，这里追加 epic 专属 5 字段名，提示 agent 必须填这些 key
+    //（机器 gate layer-specific-non-empty 会验）。
+    schemaText =
+      nextAction === "design-review"
+        ? `${baseSchemaText}\nlayerSpecific 必须包含以下 key: strategicAlignment, featureSplitRationale, scopeBoundary, priorityRationale, resourceEstimate`
+        : baseSchemaText;
+  }
+
   const command = buildEpicCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({
@@ -202,7 +209,7 @@ export function buildEpicNextAction(
     nextAction: action,
     goal,
     command,
-    schemaText: finalSchemaText,
+    schemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("planning", action),
     parallelTargets: opts?.parallelTargets,

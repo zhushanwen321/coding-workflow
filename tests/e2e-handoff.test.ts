@@ -114,6 +114,28 @@ describe("TC5: cw handoff --unitId <id> 端到端", () => {
     expect(out).toContain("## 历史与变更");
     expect(out).toContain("create → created");
   });
+
+  it("create 后 handoff 的 schema 段保持当前 action（#1 例外路径锁定，T1.4）", () => {
+    // handoff 重建「当前步」认知：阶段 guidance 用 build*CurrentActionGuidance，
+    // schema 必须保持当前 action（clarify）而非 nextAction——create 完成后手交，
+    // 接手 agent 要跑的是 clarify，需要 clarify 的 input schema。
+    const created = runCwCli(
+      ["create", "wave", "--slug", "tc5-handoff-schema", "--objective", "handoff schema"],
+      e,
+    );
+    expect(created.exitCode).toBe(0);
+
+    const result = runCwCli(["handoff", "--unitId", "wave:tc5-handoff-schema"], e);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout;
+
+    expect(out).toContain("下一步执行：cw clarify --unitId wave:tc5-handoff-schema");
+    // 阶段 guidance 含 clarify 的 input schema（clarifications 数组）
+    expect(out).toContain("clarifications");
+    // 不得出现 create 的扁平提示（slug/objective）
+    expect(out).not.toContain("slug: string");
+    expect(out).not.toContain("objective: string");
+  });
 });
 
 // ── TC6: handoff 缺 --unitId → exit 1 ───────────────────────

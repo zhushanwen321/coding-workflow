@@ -115,11 +115,15 @@ export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
     "## 下一步",
     goal,
     `命令：${command}`,
-    "",
-    "## input schema + 关键约束",
-    schemaText,
-    constraintSection,
   ];
+
+  // #1 终态守卫：schemaText 为空（nextAction=undefined）时不渲染 schema block
+  // （closeout/abort 后无「下一步 input」可展示，空段只会产生噪声）。
+  if (schemaText.trim() !== "") {
+    sections.push("", "## input schema + 关键约束", schemaText, constraintSection);
+  } else if (constraintSection !== "") {
+    sections.push("", constraintSection);
+  }
 
   // command 含 --input（该 action 产生中间产物 JSON）时追加「中间产物管理」段。
   if (command.includes("--input")) {
@@ -216,6 +220,11 @@ export interface BuildReplanGuidanceArgs {
   impactSummary: string;
   /** 下一步命令（如 "cw plan --unitId slice:auth --input .cw/<slug>/plan.json"）。 */
   nextCommand: string;
+  /**
+   * 下一步的 input schema 文本（#1 D-017：replan 后下一步是 plan，agent 需要 plan 的 input schema）。
+   * 由调用方按层取 getSchemaText("plan") 传入；不传/为空则不渲染 schema 段。
+   */
+  schemaText?: string;
 }
 
 /**
@@ -239,12 +248,12 @@ export interface BuildReplanGuidanceArgs {
  * 审视引导文本来自 replan-review.ts 模板（渐进式：第 2 次加警告，第 3 次建议 abort）。
  */
 export function buildReplanGuidance(args: BuildReplanGuidanceArgs): string {
-  const { prefix, abandonedIds, replanCount, impactSummary, nextCommand } = args;
+  const { prefix, abandonedIds, replanCount, impactSummary, nextCommand, schemaText } = args;
 
   // 审视引导来自模板
   const reviewText = buildReplanReviewTextInner(abandonedIds, replanCount);
 
-  return [
+  const sections = [
     "## 位置",
     prefix,
     "",
@@ -252,11 +261,22 @@ export function buildReplanGuidance(args: BuildReplanGuidanceArgs): string {
     "",
     "## 影响面",
     impactSummary,
+  ];
+
+  // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段（agent 重新提交方案需要）。
+  const schema = schemaText?.trim() ?? "";
+  if (schema !== "") {
+    sections.push("", "## input schema + 关键约束", schema);
+  }
+
+  sections.push(
     "",
     "## 下一步",
     "审视完后重新提交方案：",
     `命令：${nextCommand}`,
-  ].join("\n");
+  );
+
+  return sections.join("\n");
 }
 
 // 内部函数：直接调模板（避免循环依赖——模板是纯文本，这里直接 import）

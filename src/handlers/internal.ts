@@ -13,7 +13,8 @@
  * 不变量：transitionStatus / saveUnit / appendFailRecord 是纯编排（IO 仅经 deps）；guidance 填充
  *      读 core 源文件生成 schema（构建期/运行期均可，内部按 action 缓存，每 action 仅读一次）。
  */
-import type { AbandonedRef, ExecutionStatus, StatusChange } from "../core/status.js";
+import type { AbandonedRef, ExecutionStatus, StatusChange, WorkUnitStatus } from "../core/status.js";
+import { TERMINAL_STATUSES } from "../core/status.js";
 import type { ExecutionUnit, WorkUnitBase } from "../core/workunit.js";
 import { ACTION_SCHEMA } from "../guidance/action-schemas.js";
 import {
@@ -31,7 +32,7 @@ import { nextWaveStatus } from "../rules/state-machine.js";
 import type { CwStore } from "../store/cw-store.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import { buildCommand, inputFilePath } from "../utils/command.js";
-import type { CwDeps,CwNextAction } from "./types.js";
+import type { ActionResult, CwDeps,CwNextAction } from "./types.js";
 
 /**
  * 流转 unit status：算 next → append StatusChange → 更新 unit.status。
@@ -111,6 +112,76 @@ export function mergeAbandonParentItems(
 // 放这里而不是 guidance/ 下——因为这些映射只服务于 wave handler 编排，
 // 且会随 action 增减而变（guidance/ 是通用渲染层，不感知 wave 的 action 列表）。
 
+// ═══════════════════════════════════════════════════════════════
+// #2 create 幂等防护（D-002 / D-015 / D-018 / K-4）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * created 空态判定：status=created 且 statusHistory 无 gate fail 记录 → 允许覆盖重建。
+ *
+ * 空态判定用显式全量扫描（note 含 "gate fail"），不复用 deriveFailureCount（尾部连续计数语义，K-4）。
+ */
+export function isCreateEmptyState(record: WorkUnitRecord): boolean {
+  if (record.status !== "created") return false;
+  const h = record.statusHistory;
+  if (!Array.isArray(h)) return true;
+  // 显式全量扫描（K-4）：note 含 "gate fail" 标记即视为非空态。
+  // StatusChange 具名接口有必填字段（from/to/at/action），断言安全（同 readRecordStatusHistory）。
+  const history = h as StatusChange[];
+  return !history.some((e) => typeof e?.note === "string" && e.note.includes("gate fail"));
+}
+
+/** buildCreateIdempotentResult 入参。 */
+export interface CreateIdempotentArgs {
+  /** 已存在的 unit record（来自 store.load，不 save、不覆盖）。 */
+  existing: WorkUnitRecord;
+  /** 本层名（unitPath.layer）。 */
+  layer: "wave" | "slice" | "feature" | "epic";
+  /** 续行 action（status→action 映射，终态为 undefined）。 */
+  currentAction: string | undefined;
+  /** 续行 guidance（build*CurrentActionGuidance 产物，终态为空串）。 */
+  currentGuidance: string;
+}
+
+/**
+ * existing 分支的 no-op ActionResult：不 save、不覆盖，返回 existing 的续行导航。
+ *
+ * - 非终态：action=status→action 映射，guidance 首行「unit 已存在（status=X），未覆盖」
+ *   + build*CurrentActionGuidance 重建当前步认知（§3.2 时序图）。
+ * - 终态（aborted/closed，D-015）：status→action 映射为 undefined，无法构造续行 guidance——
+ *   一律 no-op + guidance 显式提示「终态不可续行，重建请用新 slug」。
+ * - 两种分支都带 idempotent: true 提示字段。
+ */
+export function buildCreateIdempotentResult(args: CreateIdempotentArgs): ActionResult {
+  const { existing, layer, currentAction, currentGuidance } = args;
+  // record.status 是透传字段（unknown），收窄为 WorkUnitStatus 联合（ActionResult.status 的静态类型）。
+  const status =
+    typeof existing.status === "string" ? (existing.status as WorkUnitStatus) : ("created" as WorkUnitStatus);
+  const unitPath = {
+    layer,
+    unitId: existing.id,
+    parentUnitId: existing.parentUnitId,
+    rootUnitId: existing.id,
+  };
+
+  const isTerminal = TERMINAL_STATUSES.has(status);
+  const guidance = isTerminal
+    ? `unit 已存在（status=${status}），终态不可续行，重建请用新 slug`
+    : `unit 已存在（status=${status}），未覆盖\n\n${currentGuidance}`;
+
+  return {
+    unitId: existing.id,
+    status,
+    ok: true,
+    idempotent: true,
+    nextAction: {
+      action: isTerminal ? undefined : currentAction,
+      guidance,
+      unitPath,
+    },
+  };
+}
+
 /**
  * status → 中文展示（prefix-builder 的 status 参数要中文字符串）。
  *
@@ -160,8 +231,9 @@ const schemaCache = new Map<string, string>();
  * 取某 action 的 input schema 文本（缓存优先：dist/guidance/schemas.gen.json → injectSchema → 兜底）。
  *
  * 优先读预计算产物 `wave:${action}` 条目；未命中降级到 injectSchema 实时解析。同一 action 第二次调用命中缓存。
+ * 导出供 replan handler 透传 plan schema 段（#1 D-017：replan 后下一步是 plan）。
  */
-function getSchemaText(action: string): string {
+export function getSchemaText(action: string): string {
   return readSchemaText({
     scope: "wave",
     action,
@@ -220,15 +292,22 @@ export function buildNextAction(
   const template = WAVE_STAGE_TEMPLATES[action];
   const templateText = template?.constraint ?? "";
   const goal = template?.goal ?? `（${action} 阶段）`;
-  const baseSchemaText = opts?.schemaTextOverride ?? getSchemaText(action);
-  // design-review 特判：基类 DesignReviewJudgment 的 layerSpecific 下界是 Record<string,string>，
-  // wave 的 4 个专属字段全 optional（WaveDesignReviewLayerSpecific），用「建议包含」措辞。
-  const schemaText =
-    action === "design-review"
-      ? `${baseSchemaText}\nlayerSpecific 建议包含以下 key: testCaseCoverageNote, boundaryConditionNote, mockStrategyNote, tddRedReadinessNote`
-      : baseSchemaText;
 
+  // #1 schema 错位修复：nextAction 提前计算，schema 段取 nextAction（与命令段同指下一步）。
   const nextAction = opts?.nextActionOverride ?? ACTION_TO_NEXT[action];
+  // 终态守卫：closeout/abort 后 nextAction=undefined，无「下一步 input」可展示 → 跳过 schema 段。
+  let schemaText = "";
+  if (nextAction !== undefined) {
+    const baseSchemaText = opts?.schemaTextOverride ?? getSchemaText(nextAction);
+    // design-review 特判（跟随 nextAction）：基类 DesignReviewJudgment 的 layerSpecific 下界
+    // 是 Record<string,string>，wave 的 4 个专属字段全 optional（WaveDesignReviewLayerSpecific），
+    // 用「建议包含」措辞。
+    schemaText =
+      nextAction === "design-review"
+        ? `${baseSchemaText}\nlayerSpecific 建议包含以下 key: testCaseCoverageNote, boundaryConditionNote, mockStrategyNote, tddRedReadinessNote`
+        : baseSchemaText;
+  }
+
   const command = buildWaveNextCommand(action, unit.id, nextAction, unit.slug);
 
   const guidance = buildNormalGuidance({

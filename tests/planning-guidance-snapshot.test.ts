@@ -45,6 +45,9 @@ import { makeStubDeps } from "./helpers/env.js";
  */
 const NORMAL_SECTIONS = ["## 位置", "## 下一步", "## input schema + 关键约束"] as const;
 
+/** 终态（nextAction=undefined）时 guidance 不再渲染 schema 段（#1 终态守卫）。 */
+const TERMINAL_SECTIONS = ["## 位置", "## 下一步"] as const;
+
 /**
  * 失败路径 guidance 必含的三段段头（buildFailureGuidance §3.5）。
  * 「## 递进提示」仅 failureCount >= 2 时出现，不在固定段头集合内。
@@ -106,7 +109,13 @@ describe("TC1: slice 正常路径三段式 guidance", () => {
       const unit = freshSlice();
       const nextAction = buildSliceNextAction(unit, action);
 
-      expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      // 终态（closeout）守卫：nextAction=undefined 时无 schema 段（#1）
+      if (action === "closeout") {
+        expectSectionsInOrder(nextAction.guidance, TERMINAL_SECTIONS);
+        expect(nextAction.guidance).not.toContain("## input schema + 关键约束");
+      } else {
+        expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      }
       // command 出现在 guidance（cw <nextAction> --unitId <id>，closeout 终态为例外）
       if (action === "closeout") {
         expect(nextAction.guidance).toContain("已结束本层流程");
@@ -129,7 +138,12 @@ describe("TC2: feature 正常路径三段式 guidance", () => {
       const unit = freshFeature();
       const nextAction = buildFeatureNextAction(unit, action);
 
-      expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      if (action === "closeout") {
+        expectSectionsInOrder(nextAction.guidance, TERMINAL_SECTIONS);
+        expect(nextAction.guidance).not.toContain("## input schema + 关键约束");
+      } else {
+        expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      }
       if (action === "closeout") {
         expect(nextAction.guidance).toContain("已结束本层流程");
       } else {
@@ -148,7 +162,12 @@ describe("TC3: epic 正常路径三段式 guidance", () => {
       const unit = freshEpic();
       const nextAction = buildEpicNextAction(unit, action);
 
-      expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      if (action === "closeout") {
+        expectSectionsInOrder(nextAction.guidance, TERMINAL_SECTIONS);
+        expect(nextAction.guidance).not.toContain("## input schema + 关键约束");
+      } else {
+        expectSectionsInOrder(nextAction.guidance, NORMAL_SECTIONS);
+      }
       if (action === "closeout") {
         expect(nextAction.guidance).toContain("已结束本层流程");
       } else {
@@ -160,6 +179,40 @@ describe("TC3: epic 正常路径三段式 guidance", () => {
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TC8：三层 create 后 schema 段取 nextAction（#1，T1.3）
+// ═══════════════════════════════════════════════════════════════
+
+describe("TC8: 三层 create 后 schema 段取 nextAction（#1）", () => {
+  it("slice create → schema 段显示 clarify 的 clarifications，非 create 的 slug/objective", () => {
+    const unit = freshSlice();
+    const nextAction = buildSliceNextAction(unit, "create");
+    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.guidance).toContain("## input schema + 关键约束");
+    expect(nextAction.guidance).toContain("clarifications");
+    expect(nextAction.guidance).not.toContain("slug: string");
+  });
+
+  it("feature create → schema 段同取 nextAction（feature clarify 容器含 spec）", () => {
+    const unit = freshFeature();
+    const nextAction = buildFeatureNextAction(unit, "create");
+    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.guidance).toContain("## input schema + 关键约束");
+    expect(nextAction.guidance).toContain("spec");
+    expect(nextAction.guidance).not.toContain("slug: string");
+  });
+
+  it("epic create → schema 段同取 nextAction（epic clarify 裸数组）", () => {
+    const unit = freshEpic();
+    const nextAction = buildEpicNextAction(unit, "create");
+    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.guidance).toContain("## input schema + 关键约束");
+    expect(nextAction.guidance).toContain("clarifications");
+    expect(nextAction.guidance).not.toContain("slug: string");
+  });
+});
+
 
 // ═══════════════════════════════════════════════════════════════
 // TC4：三层失败路径四段式 + problem 原文 + 递进提示三档
