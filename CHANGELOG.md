@@ -73,3 +73,26 @@
 - refactor(store): rename _v1.json → store.json + filename migration (0fb1f83)
 - refactor: rename V1* identifiers to Cw* + cleanup stale docs + fix migrate lint (bb28e31)
 
+
+## [v1.2.0] - 2026-08-03
+
+### Features
+- Merge pull request #7 from zhushanwen321/cw-hardening-w1w2 (95a7a0f)
+- feat(W3): execute commitHash pre-check, readonly aggregation, replan prefix consistency (#8/#10/#12) (e9727a4)
+- feat(cli): flag whitelist + per-command help + input shape validation + prefix strip (W2 #5/#6/#9) (f75bfbe)
+- feat(cli): add help and version commands (71709d0)
+- feat(schema-injector): cross-file type resolution for outer Input wrappers (gap 1, A1) (2edf4b5)
+- feat(recursive): parallel scheduling + cross-wave file conflict gate (65b0425)
+
+### Bug Fixes
+- fix(review): address round-1 suggestions S1-S9 (20336aa)
+- fix(W3-review): replan prefix status fallback (?? unit.status) to match project convention (1ce9c02)
+- fix(W1): schema nextAction alignment, create idempotency, retrospect gate keys, testCwd e2e lock (ddf0955)
+- fix(guidance): execute command render + abandonParentItems schema (gap 5 & 6) (8de2263)
+
+### Reverts
+- revert(recursive): drop parallelTargets scheduling and recursive-subagent guidance (0583666)
+
+### Miscellaneous
+- docs(closeout): distill cw-guidance-hardening conclusions (ADR-0012 + NFR O-2/O-3 + ARCHITECTURE + TEST-STRATEGY RB-5) (c0027eb)
+- docs(skill): fix wave plan structure, failure hint threshold, schema block note (gap 2/3) (48329a8)
