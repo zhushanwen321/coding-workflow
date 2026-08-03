@@ -141,7 +141,7 @@ export function handleReplanSlice(
     prefix: buildPrefix({
       layer: "slice",
       unitId: unit.id,
-      status: `${SLICE_STATUS_DISPLAY[unit.status]}（replan 后原地）`,
+      status: `${SLICE_STATUS_DISPLAY[unit.status] ?? unit.status}（replan 后原地）`,
       parentUnitId: unit.parentUnitId,
     }),
     abandonedIds: input.abandonedIds,

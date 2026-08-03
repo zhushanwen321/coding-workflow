@@ -122,7 +122,7 @@ export function handleReplan(
     prefix: buildPrefix({
       layer: "wave",
       unitId: unit.id,
-      status: `${STATUS_DISPLAY[unit.status]}（replan 后原地）`,
+      status: `${STATUS_DISPLAY[unit.status] ?? unit.status}（replan 后原地）`,
       parentUnitId: unit.parentUnitId,
     }),
     abandonedIds: input.abandonedIds,
