@@ -28,7 +28,6 @@
  */
 import { assertEvidenceNotFrozen, type ChildDeliveryRecord } from "../../core/evidence.js";
 import { type ChildDependency,resolveChildDependsOn } from "../../core/hierarchy.js";
-import { computeReadyChildren } from "../../core/scheduling.js";
 import type { Epic } from "../../core/workunit.js";
 import { createFeature } from "../../core/workunit.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
@@ -96,29 +95,22 @@ export function handleExecuteEpic(
 
   saveEpic(deps, unit);
 
-  // ── crossLayer：下沉到首个就绪 child（§3.1.3）──
-  // parallelTargets = 所有就绪 child（依赖满足的）；crossLayer 绑定首个就绪（§3.1.6 一致性）
-  // 全阻塞时兜底 childUnitIds[0]（保持 descend 语义不断链）
-  const readyTargets = computeReadyChildren(unit.id, deps.store);
-  const firstReadyId = readyTargets[0]?.unitId;
-  const firstChildId = firstReadyId ?? unit.executeResult.childUnitIds[0];
+  // ── crossLayer：下沉到第一个 child feature ──
+  const firstChildId = unit.executeResult.childUnitIds[0];
   const crossLayer: CwNextAction["crossLayer"] | undefined = firstChildId !== undefined
     ? {
         kind: "descend",
         targetLayer: "feature",
         targetUnitId: firstChildId,
-        reason: readyTargets.length > 0
-          ? `epic 已拆 ${unit.plan.split.length} 个 feature，${readyTargets.length} 个就绪，去推进首个就绪 child feature`
-          : `epic 已拆 ${unit.plan.split.length} 个 feature（全部被依赖阻塞），去推进第一个 child feature`,
+        reason: `epic 已拆 ${unit.plan.split.length} 个 feature，去推进第一个 child feature`,
       }
     : undefined;
-  const parallelTargets = readyTargets.length > 0 ? readyTargets : undefined;
 
   return {
     unitId: unit.id,
     status: unit.status,
     ok: true,
     children,
-    nextAction: buildEpicNextAction(unit, "execute", { crossLayer, parallelTargets }),
+    nextAction: buildEpicNextAction(unit, "execute", { crossLayer }),
   };
 }

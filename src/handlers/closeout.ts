@@ -19,7 +19,6 @@ import { assertEvidenceNotFrozen } from "../core/evidence.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import {
   computeCrossLayerAfterCloseout,
-  computeParallelSiblingsAfterCloseout,
 } from "../guidance/index.js";
 import type { GateResult } from "../rules/gates/types.js";
 import {
@@ -121,43 +120,18 @@ export function handleCloseout(
     rollupChildDelivery(deps, unit.id);
   }
 
-  // closeout 后回溯父单元（wave 是叶子，closeout 后按 §7.3 算 crossLayer + §3.1.4.1 并行就绪兄弟）。
-  // 先算两个视图：crossLayer（非终态判据，sibling/ascend/undefined 三态）+ parallelTargets（就绪判据）。
-  const parallelTargets = computeParallelSiblingsAfterCloseout({
+  // closeout 后回溯父单元（wave 是叶子，closeout 后按 §7.3 算 crossLayer）。
+  const crossLayer = computeCrossLayerAfterCloseout({
     store: deps.store,
     unitId: unit.id,
     parentUnitId: unit.parentUnitId,
   });
-  let crossLayer = computeCrossLayerAfterCloseout({
-    store: deps.store,
-    unitId: unit.id,
-    parentUnitId: unit.parentUnitId,
-  });
-
-  // 一致性守卫（§3.1.4.1 / §3.1.6）：消除 crossLayer 与 parallelTargets 的发散态。
-  // computeCrossLayerAfterCloseout 用「非终态」判据，可能把 sibling 指向「非终态但被依赖阻塞」的
-  // 兄弟（死胡同）；computeParallelSiblingsAfterCloseout 用「就绪」判据，被阻塞的兄弟不算就绪。
-  // - 有就绪兄弟 → crossLayer 锚定 parallelTargets[0]（真正可推进的目标，一致性规则 §3.1.6）
-  // - 兄弟非终态但全被依赖阻塞 → 降级 ascend（回 parent 等待，不指向死胡同）
-  // parentUnitId 此处必非空：computeCrossLayerAfterCloseout 无 parent 时返回 undefined（cross-layer.ts:66-68），
-  // 进入 sibling 分支说明有 parent。
-  if (crossLayer?.kind === "sibling") {
-    if (parallelTargets.length > 0) {
-      crossLayer = { ...crossLayer, targetUnitId: parallelTargets[0].unitId };
-    } else {
-      crossLayer = {
-        kind: "ascend",
-        targetUnitId: unit.parentUnitId!,
-        reason: `兄弟 wave 均被依赖阻塞，回父单元 ${unit.parentUnitId} 等待`,
-      };
-    }
-  }
 
   return {
     unitId: unit.id,
     status: unit.status,
     gateResults,
     ok: true,
-    nextAction: buildNextAction(unit, "closeout", { crossLayer, parallelTargets }),
+    nextAction: buildNextAction(unit, "closeout", { crossLayer }),
   };
 }

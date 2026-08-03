@@ -18,7 +18,6 @@
  */
 import { assertEvidenceNotFrozen } from "../../core/evidence.js";
 import type { Epic } from "../../core/workunit.js";
-import { computeParallelSiblingsAfterCloseout } from "../../guidance/index.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CloseoutInput, CwDeps, CwNextAction } from "../types.js";
@@ -104,26 +103,9 @@ export function handleCloseoutEpic(
     rollupChildDelivery(deps, unit.id);
   }
 
-  // ── crossLayer + parallelTargets：探测就绪兄弟（§3.1.4.2 / §3.1.6）──
-  // 有就绪兄弟 → sibling（锚定 parallelTargets[0]）；无 → ascend（回父）；无 parent → undefined。
-  // epic 通常顶层无 parent，天然走 undefined 分支（孤立终点）。
-  const hasParent =
-    unit.parentUnitId !== undefined && unit.parentUnitId !== "";
-  const parallelTargets = hasParent
-    ? computeParallelSiblingsAfterCloseout({
-        store: deps.store,
-        unitId: unit.id,
-        parentUnitId: unit.parentUnitId,
-      })
-    : [];
-
-  const crossLayer: CwNextAction["crossLayer"] | undefined = parallelTargets.length > 0
-    ? {
-        kind: "sibling",
-        targetUnitId: parallelTargets[0].unitId,
-        reason: `epic 已 closeout，有 ${parallelTargets.length} 个就绪兄弟，横向推进`,
-      }
-    : hasParent
+  // ── crossLayer：回溯父单元（无 parent 则孤立终点）──
+  const crossLayer: CwNextAction["crossLayer"] | undefined =
+    unit.parentUnitId !== undefined && unit.parentUnitId !== ""
       ? {
           kind: "ascend",
           targetUnitId: unit.parentUnitId,
@@ -136,6 +118,6 @@ export function handleCloseoutEpic(
     status: unit.status,
     gateResults,
     ok: true,
-    nextAction: buildEpicNextAction(unit, "closeout", { crossLayer, parallelTargets }),
+    nextAction: buildEpicNextAction(unit, "closeout", { crossLayer }),
   };
 }

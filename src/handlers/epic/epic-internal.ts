@@ -156,8 +156,6 @@ export interface BuildEpicNextActionOpts {
   nextActionOverride?: string;
   /** 跨层建议（execute 下沉 / closeout 回溯）。 */
   crossLayer?: CwNextAction["crossLayer"];
-  /** 并行目标批次（execute 下沉 / closeout 回溯时填，供程序化读取并行调度）。 */
-  parallelTargets?: CwNextAction["parallelTargets"];
 }
 
 /**
@@ -212,7 +210,6 @@ export function buildEpicNextAction(
     schemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("planning", action),
-    parallelTargets: opts?.parallelTargets,
   });
 
   return {
@@ -225,7 +222,6 @@ export function buildEpicNextAction(
       rootUnitId: unit.id,
     },
     ...(opts?.crossLayer !== undefined ? { crossLayer: opts.crossLayer } : {}),
-    ...(opts?.parallelTargets !== undefined ? { parallelTargets: opts.parallelTargets } : {}),
   };
 }
 

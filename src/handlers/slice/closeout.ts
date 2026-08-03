@@ -15,14 +15,11 @@
  * drift 短路语义同 wave closeout：closeout 是终态转换（→ closed 不可逆），drift 不允许冻结。
  *
  * 与 wave closeout 的差异：
- * - crossLayer 探测就绪兄弟（§3.1.4.2）：有就绪兄弟 → sibling（锚定 parallelTargets[0]），
- *   无就绪兄弟 → ascend（回父 feature/epic），无 parent → undefined（孤立终点）。
- *   wave closeout 走 guidance 的 computeCrossLayerAfterCloseout（非终态判据）+ 守卫降级，
- *   slice 只用就绪判据驱动（天然无发散态）。
+ * - crossLayer 用 ascend（slice closeout 后回父 feature/epic），wave closeout 走 guidance 的
+ *   computeCrossLayerAfterCloseout（兄弟/回溯复合路由）。slice 直接给最小 ascend。
  */
 import { assertEvidenceNotFrozen } from "../../core/evidence.js";
 import type { Slice } from "../../core/workunit.js";
-import { computeParallelSiblingsAfterCloseout } from "../../guidance/index.js";
 import type { GateResult } from "../../rules/gates/types.js";
 import { rollupChildDelivery } from "../rollup.js";
 import type { ActionResult, CloseoutInput, CwDeps, CwNextAction } from "../types.js";
@@ -108,27 +105,9 @@ export function handleCloseoutSlice(
     rollupChildDelivery(deps, unit.id);
   }
 
-  // ── crossLayer + parallelTargets：探测就绪兄弟（§3.1.4.2 / §3.1.6）──
-  // 有就绪兄弟 → sibling（锚定 parallelTargets[0]）；无 → ascend（回父）；无 parent → undefined。
-  // 三层 closeout 天然无发散态：只用就绪判据（computeParallelSiblingsAfterCloseout）驱动 crossLayer，
-  // 不调 computeCrossLayerAfterCloseout（非终态判据），故不会出现「sibling 指向被阻塞兄弟」。
-  const hasParent =
-    unit.parentUnitId !== undefined && unit.parentUnitId !== "";
-  const parallelTargets = hasParent
-    ? computeParallelSiblingsAfterCloseout({
-        store: deps.store,
-        unitId: unit.id,
-        parentUnitId: unit.parentUnitId,
-      })
-    : [];
-
-  const crossLayer: CwNextAction["crossLayer"] | undefined = parallelTargets.length > 0
-    ? {
-        kind: "sibling",
-        targetUnitId: parallelTargets[0].unitId,
-        reason: `slice 已 closeout，有 ${parallelTargets.length} 个就绪兄弟，横向推进`,
-      }
-    : hasParent
+  // ── crossLayer：回溯父单元（无 parent 则孤立终点）──
+  const crossLayer: CwNextAction["crossLayer"] | undefined =
+    unit.parentUnitId !== undefined && unit.parentUnitId !== ""
       ? {
           kind: "ascend",
           targetUnitId: unit.parentUnitId,
@@ -141,6 +120,6 @@ export function handleCloseoutSlice(
     status: unit.status,
     gateResults,
     ok: true,
-    nextAction: buildSliceNextAction(unit, "closeout", { crossLayer, parallelTargets }),
+    nextAction: buildSliceNextAction(unit, "closeout", { crossLayer }),
   };
 }

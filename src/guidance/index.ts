@@ -110,7 +110,6 @@ export const PLANNING_ACTION_TO_NEXT: Readonly<Record<string, string | undefined
 export type { ComputeCrossLayerArgs } from "./cross-layer.js";
 export {
   computeCrossLayerAfterCloseout,
-  computeParallelSiblingsAfterCloseout,
   isTerminalStatus,
 } from "./cross-layer.js";
 

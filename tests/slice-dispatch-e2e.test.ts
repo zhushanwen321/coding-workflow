@@ -118,13 +118,6 @@ describe("dispatch 完整 slice 生命周期", () => {
     expect(execute.nextAction!.crossLayer!.kind).toBe("descend");
     expect(execute.nextAction!.crossLayer!.targetLayer).toBe("wave");
     expect(execute.nextAction!.crossLayer!.targetUnitId).toBe(executingSlice.executeResult.childUnitIds[0]);
-    // parallelTargets：split 无依赖 → 所有 child 就绪（§3.1.3）
-    expect(execute.nextAction?.parallelTargets).toBeDefined();
-    expect(execute.nextAction!.parallelTargets).toHaveLength(executingSlice.executeResult.childUnitIds.length);
-    // 一致性规则（§3.1.6）：crossLayer 绑定 parallelTargets[0]
-    expect(execute.nextAction!.crossLayer!.targetUnitId).toBe(execute.nextAction!.parallelTargets![0].unitId);
-    // 无依赖时 parallelTargets[0] 与 childUnitIds[0] 一致
-    expect(execute.nextAction!.parallelTargets![0].unitId).toBe(executingSlice.executeResult.childUnitIds[0]);
 
     // 6. 推进 child wave 到 closed（用 advanceWaveToClosed helper）
     for (const childId of executingSlice.executeResult.childUnitIds) {
@@ -166,9 +159,9 @@ describe("dispatch 完整 slice 生命周期", () => {
     ]);
   });
 
-  it("execute 依赖链 split：A dependsOn B → parallelTargets 只含就绪的 B，crossLayer 锚定 B（≠ childUnitIds[0]）", () => {
-    // 设计文档 §7.2 核心回归用例：锁定 crossLayer.targetUnitId 指向「首个就绪 child」
-    // 而非「声明顺序第一个 child」的新语义。
+  it("execute 依赖链 split：A dependsOn B → crossLayer 指向声明顺序第一个 child A（main 语义）", () => {
+    // 回退说明：parallelTargets / 就绪批次已删除，execute 恢复 main 语义——
+    // crossLayer 指向 childUnitIds[0]（声明顺序首个 child），不检查依赖阻塞。
     // split = [A, B]，A.slug="a" dependsOn ["b"]，B.slug="b" 无依赖。
     // execute 后所有 child 刚 created：A 被阻塞（依赖 B 未终态），B 就绪（无依赖）。
     const unitId = "slice:e2e-dep-chain";
@@ -206,19 +199,10 @@ describe("dispatch 完整 slice 生命周期", () => {
     const bId = "wave:e2e-dep-chain::b"; // childUnitIds[1]（唯一就绪）
     expect(slice.executeResult.childUnitIds).toEqual([aId, bId]);
 
-    // parallelTargets 仅含 B（A 被依赖阻塞）
-    expect(execute.nextAction?.parallelTargets).toBeDefined();
-    expect(execute.nextAction!.parallelTargets).toHaveLength(1);
-    expect(execute.nextAction!.parallelTargets![0].unitId).toBe(bId);
-
-    // crossLayer.kind=descend，锚定首个就绪 child（B），而非 childUnitIds[0]（A）
+    // crossLayer.kind=descend，指向声明顺序第一个 child（A），不检查依赖阻塞
     expect(execute.nextAction?.crossLayer?.kind).toBe("descend");
     expect(execute.nextAction?.crossLayer?.targetLayer).toBe("wave");
-    expect(execute.nextAction?.crossLayer?.targetUnitId).toBe(bId);
-    // 一致性规则（§3.1.6）：crossLayer 绑定 parallelTargets[0]
-    expect(execute.nextAction!.crossLayer!.targetUnitId).toBe(execute.nextAction!.parallelTargets![0].unitId);
-    // 新语义护栏：crossLayer 不指向被阻塞的 A（旧行为会指向 childUnitIds[0]=A）
-    expect(execute.nextAction!.crossLayer!.targetUnitId).not.toBe(aId);
+    expect(execute.nextAction?.crossLayer?.targetUnitId).toBe(aId);
   });
 
   it("slice 有 parentUnitId → closeout 后 crossLayer.ascend 指向 parent", () => {

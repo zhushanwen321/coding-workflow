@@ -187,15 +187,12 @@ describe("GTC3（C5）: retrospect 委派从 forbidden → optional", () => {
     // optional 档文案
     expect(g).toContain("【按需委派】");
     expect(g).not.toContain("【不建议委派】");
-    // optional 档追加嵌套决策树（forbidden 不追加）
-    expect(g).toContain("支持嵌套");
   });
 
   it("planning retrospect → 按需委派（optional），非 forbidden", () => {
     const g = buildSubagentGuidance("planning", "retrospect");
     expect(g).toContain("【按需委派】");
     expect(g).not.toContain("【不建议委派】");
-    expect(g).toContain("支持嵌套");
   });
 });
 

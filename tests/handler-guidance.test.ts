@@ -529,11 +529,11 @@ describe("W7: closeout crossLayer（§7.3 回溯）", () => {
 
   /**
    * 在 store 里补建一个最小 parent slice record（含 plan.split + evidence.childDelivery），
-   * 让 computeReadyChildren 能解析 child 依赖（设计文档 §7.6 Direction 2）。
+   * 让 computeCrossLayerAfterCloseout 能查到兄弟（设计文档 §7.6 Direction 2）。
    *
    * splitSlugToChildId 提供 splitSlug → {childUnitId, dependsOn} 映射，自动生成 split + childDelivery。
-   * 这样 wave closeout 守卫的 computeParallelSiblingsAfterCloseout → computeReadyChildren(parent) 能命中 parent
-   * （而非孤儿降级空数组），正确返回就绪兄弟。
+   * 这样 wave closeout 的 computeCrossLayerAfterCloseout → store.findChildren(parent) 能命中 parent
+   * （而非查不到兄弟），正确返回 sibling/ascend 路由。
    */
   function saveParentSlice(
     parentId: string,
@@ -595,9 +595,6 @@ describe("W7: closeout crossLayer（§7.3 回溯）", () => {
     const unitId = advanceTo("g-closeout-a", "retrospected", parent);
     // 另一个兄弟：未终态
     saveSiblingWave("wave:g-closeout-b", "tested", parent);
-    // 补建 parent slice record（含 plan.split + childDelivery），让 computeReadyChildren 能解析
-    // child 依赖（避免孤儿 parent 降级空数组 → 守卫误降级 ascend）。
-    // 两个 split 均无依赖：A 已 closeout（终态跳过），B 未终态且无依赖 → 就绪。
     saveParentSlice(parent, [
       { slug: "g-closeout-a", childUnitId: "wave:g-closeout-a", dependsOn: [] },
       { slug: "g-closeout-b", childUnitId: "wave:g-closeout-b", dependsOn: [] },
@@ -615,23 +612,15 @@ describe("W7: closeout crossLayer（§7.3 回溯）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    // 守卫分支 1：有就绪兄弟 B → crossLayer 锚定 parallelTargets[0]=B（sibling 不降级）
+    // 非终态判据（§7.3）：B 未终态 → sibling 指向 B
     expect(r.nextAction!.crossLayer!.kind).toBe("sibling");
     expect(r.nextAction!.crossLayer!.targetUnitId).toBe("wave:g-closeout-b");
-    // parallelTargets 非空 + 一致性规则（§3.1.6）：crossLayer.targetUnitId === parallelTargets[0].unitId
-    expect(r.nextAction!.parallelTargets).toBeDefined();
-    expect(r.nextAction!.parallelTargets).toHaveLength(1);
-    expect(r.nextAction!.parallelTargets![0].unitId).toBe("wave:g-closeout-b");
   });
 
-  it("wave closeout 发散态：兄弟非终态但被依赖阻塞 → crossLayer=ascend（守卫降级，§3.1.4.1 分支 2）", () => {
-    // 设计文档 §7.3 核心回归用例：消除发散态（死胡同）。
-    // parent slice 在 store，plan.split 三条：A（自身 closeout）/ B / C，B 与 C 互相 dependsOn（循环）。
-    // A closeout 后：computeCrossLayerAfterCloseout 看到 B/C 非终态 → sibling→B（死胡同）；
-    // 但 computeParallelSiblingsAfterCloseout 看到 B/C 都被依赖阻塞（互相依赖且都非终态）→ 空
-    //   → 守卫分支 2：crossLayer 降级 ascend（回 parent 等待），不指向被阻塞的 B。
-    // 用循环依赖构造「所有非终态兄弟都被阻塞」的纯发散场景——
-    // 这是 parallelTargets 真正为空（触发分支 2）的唯一合法构造。
+  it("closeout 时兄弟非终态但被依赖阻塞 → crossLayer=sibling 指向第一个非终态兄弟（不检查依赖，main 语义）", () => {
+    // 回退说明：发散守卫（sibling 但 parallelTargets 空 → 降级 ascend）已随 parallelTargets 删除，
+    // 恢复 main 行为——computeCrossLayerAfterCloseout 用非终态判据，不查依赖阻塞。
+    // 兄弟 B/C 都非终态且互相 dependsOn（循环）→ 第一个非终态兄弟 B 被选中（死胡同语义回归）。
     const parent = "slice:cl-divergence";
     const unitId = advanceTo("g-divergence-a", "retrospected", parent);
     // 兄弟 B / C：都非终态，互相 dependsOn → 都被阻塞
@@ -655,15 +644,12 @@ describe("W7: closeout crossLayer（§7.3 回溯）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    // 守卫分支 2：B/C 非终态但全被依赖阻塞 → parallelTargets 空 → crossLayer 降级 ascend（回 parent）
-    expect(r.nextAction!.crossLayer!.kind).toBe("ascend");
-    expect(r.nextAction!.crossLayer!.targetUnitId).toBe(parent);
-    // parallelTargets 空（B/C 都不算就绪）
-    expect(r.nextAction!.parallelTargets ?? []).toHaveLength(0);
+    // main 行为：sibling 指向第一个非终态兄弟（B），不检查依赖
+    expect(r.nextAction!.crossLayer!.kind).toBe("sibling");
+    expect(r.nextAction!.crossLayer!.targetUnitId).toBe("wave:g-divergence-b");
   });
 
-  it("wave closeout 正向 sibling：parent 在 store + 无依赖兄弟就绪 → crossLayer=sibling 锚定 parallelTargets[0]（§7.3）", () => {
-    // 设计文档 §7.3 正向 sibling 用例：parent 在 store + 无依赖兄弟 → sibling 路径正确覆盖。
+  it("wave closeout 正向 sibling：parent 在 store + 无依赖兄弟就绪 → crossLayer=sibling 指向兄弟 B（§7.3）", () => {
     const parent = "slice:cl-positive";
     const unitId = advanceTo("g-positive-a", "retrospected", parent);
     // 兄弟 B：无依赖、非终态（tested）→ 就绪
@@ -685,16 +671,9 @@ describe("W7: closeout crossLayer（§7.3 回溯）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    // 守卫分支 1：有就绪兄弟 B → crossLayer=sibling 锚定 parallelTargets[0]=B
+    // 非终态判据（§7.3）：B 未终态 → sibling 指向 B
     expect(r.nextAction!.crossLayer!.kind).toBe("sibling");
     expect(r.nextAction!.crossLayer!.targetUnitId).toBe("wave:g-positive-b");
-    expect(r.nextAction!.parallelTargets).toBeDefined();
-    expect(r.nextAction!.parallelTargets).toHaveLength(1);
-    expect(r.nextAction!.parallelTargets![0].unitId).toBe("wave:g-positive-b");
-    // 一致性规则（§3.1.6）：crossLayer.targetUnitId === parallelTargets[0].unitId
-    expect(r.nextAction!.crossLayer!.targetUnitId).toBe(
-      r.nextAction!.parallelTargets![0].unitId,
-    );
   });
 
   it("closeout 后无 parent → crossLayer undefined（孤立终点，流程结束）", () => {

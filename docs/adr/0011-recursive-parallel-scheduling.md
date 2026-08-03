@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted — 2026-08-03
+Accepted — 2026-08-03，Amended — 2026-08-04（并行调度链路回退，见文末「回退」章节）
 
 ## 背景
 
@@ -193,3 +193,27 @@ recursive 模式的**数据底座**：
   `src/rules/gates/design-review.ts`（`noSiblingWaveFileConflict`）、
   `src/guidance/build-guidance.ts`（并行调度段渲染）、
   `src/guidance/templates/planning/execute.ts`（递归下沉触发信号）
+
+## 回退（2026-08-04）
+
+**并行调度链路 + 递归指令载体已全部回退**，仅保留跨 wave 文件冲突 gate（决策点 3）。
+
+原因：pi 的 recursive-split workflow（frontier 驱动 BFS + 每 node 一个 agent）已接管递归 4 层
+调度——并行由 workflow 自算（frontier 视图 + 自有 topoSort），agent 不再需要递归派发 subagent。
+cw 回归 agent-agnostic 边界：只提供数据视图（`cw frontier` / `ActionResult.children`）与单值导航
+（`crossLayer`），调度决策归消费者。
+
+回退清单：
+
+| 原决策点 | 回退结果 |
+|---|---|
+| 1. `parallelTargets` 字段 | 删除（`src/handlers/types.ts`） |
+| 2. `scheduling.ts` + 共享依赖判定 | 删除 `scheduling.ts`；`isDependencySatisfied` 保留（`frontier.ts` 复用） |
+| 3. 跨 wave 文件冲突 gate | **保留**（`noSiblingWaveFileConflict`，并行 wave 防护仍必要） |
+| 4. execute/closeout 并行回溯 | 回退 main 行为：execute 下沉 `childUnitIds[0]`；三层 closeout 硬编码 ascend；wave closeout 恢复 `computeCrossLayerAfterCloseout` 三态（无发散守卫） |
+| 5. guidance「并行调度」段 | 删除（`build-guidance.ts`） |
+| 6. 递归指令载体（AGENTS.md 模板 + execute 触发信号） | 删除 |
+
+已知代价：`crossLayer.targetUnitId` 语义回归 main（声明顺序首个 child，依赖链下可能指向
+被阻塞兄弟）；wave closeout 发散态回归（sibling 可能指向依赖阻塞的死胡同）。串行导航用户
+不再有并行提示——并行能力由 pi workflow 层提供。

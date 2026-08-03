@@ -48,8 +48,7 @@ export function resolveChildDependsOn(
  * 终态 = closed / aborted（core/status.ts TERMINAL_STATUSES）。
  * dependsOn 为空 → 满足（true）。任一依赖 load 不到（null）或非终态 → 未满足（false）。
  *
- * 被 scheduling.computeReadyChildren 和 frontier（类型 B wave 依赖判定）共享，
- * 消除两处重担「依赖全终态判定」的重复实现。
+ * 被 frontier（类型 B wave 依赖判定）消费，消除「依赖全终态判定」的重复实现。
  *
  * @param dependsOn 依赖的 child unit id 列表（来自 resolveChildDependsOn 的 ChildDependency.dependsOn）
  * @param store 只读 load 接口（FrontierStore 或 CwStore 均满足）
