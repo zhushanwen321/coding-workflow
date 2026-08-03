@@ -875,3 +875,45 @@ describe("W7b: buildLayerPromptGuidance 纯函数（create 缺 layer 的 guidanc
     expect(guidance).toContain("反模式");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// W3（#10）：cw status 大字段默认截断 + --full 全量（T3.3，AC-4.3）
+// ═══════════════════════════════════════════════════════════════
+
+describe("W3: cw status 大字段默认截断 + --full 全量（#10，T3.3）", () => {
+  it("status 默认截断大字段 + 提示 --full；--full 输出全量（AC-4.3）", () => {
+    const unitId = "wave:w3-status";
+    runCwCli(["create", "wave", "--slug", "w3-status", "--objective", "W3 状态截断测试"], e);
+    // clarify 填超长 clarifications（触发大字段截断）
+    const clarify = runCwCli(
+      ["clarify", "--unitId", unitId],
+      e,
+      {
+        input: JSON.stringify({
+          clarifications: [
+            { id: "Q1", status: "active", question: "x".repeat(600), resolution: "y".repeat(600), type: "grilling" },
+          ],
+        }),
+      },
+    );
+    expect(clarify.exitCode).toBe(0);
+
+    // 默认：首行截断提示（设计 #10：输出首行提示），其余行仍是合法 JSON
+    const s1 = runCwCli(["status", "--unitId", unitId], e);
+    expect(s1.exitCode).toBe(0);
+    expect(s1.stdout).toMatch(/^（字段已截断，用 --full 查看全量）/);
+    const truncated = JSON.parse(
+      s1.stdout.split("\n").slice(1).join("\n"),
+    ) as { id: string };
+    expect(truncated.id).toBe(unitId);
+
+    // --full：无截断提示，clarifications 完整（question 长度 600）
+    const s2 = runCwCli(["status", "--unitId", unitId, "--full"], e);
+    expect(s2.exitCode).toBe(0);
+    expect(s2.stdout).not.toMatch(/已截断/);
+    const full = JSON.parse(s2.stdout) as {
+      clarifications: Array<{ question: string }>;
+    };
+    expect(full.clarifications[0].question.length).toBe(600);
+  });
+});

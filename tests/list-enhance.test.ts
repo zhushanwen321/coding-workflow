@@ -79,10 +79,10 @@ function makeRepoMeta(overrides: Partial<RepoMeta> = {}): RepoMeta {
 }
 
 describe("Wave B: renderList 默认参数 + 分页", () => {
-  it("TC-B1: 默认 limit=10，超过时尾部显示 Showing 分页元信息", () => {
-    // 12 个 unit（不同 updatedAt）
+  it("TC-B1: 默认 limit=20（AXI-2 #10 提高），超过时尾部显示 Showing 分页元信息", () => {
+    // 25 个 unit（不同 updatedAt）
     const annotated: AnnotatedUnit[] = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 25; i++) {
       annotated.push({
         unit: makeUnit(`wave:u${i}`, {
           statusHistoryAt: `2026-07-26T${String(10 + i).padStart(2, "0")}:00:00.000Z`,
@@ -93,12 +93,12 @@ describe("Wave B: renderList 默认参数 + 分页", () => {
     const out = renderList(annotated, {});
     const lines = out.split("\n").filter((l) => l.length > 0);
 
-    // 表头 + 分隔行 + 10 行数据 + 分页分隔 + 分页元信息
-    expect(out).toMatch(/Showing 1–10 of 12/);
-    expect(out).toMatch(/use --offset 10 for next page/);
-    // 10 行数据（不算表头/分隔/分页）
+    // 表头 + 分隔行 + 20 行数据 + 分页分隔 + 分页元信息
+    expect(out).toMatch(/Showing 1–20 of 25/);
+    expect(out).toMatch(/use --offset 20 for next page/);
+    // 20 行数据（不算表头/分隔/分页/总览）
     const dataLines = lines.filter((l) => l.startsWith("wave:u"));
-    expect(dataLines.length).toBe(10);
+    expect(dataLines.length).toBe(20);
   });
 
   it("TC-B1b: unit 数 ≤ limit 时不显示分页元信息", () => {
@@ -431,4 +431,61 @@ describe("Wave B: CwStore 集成 + --cwd", () => {
   // 「W8: cw list --all 与 --cwd 互斥」describe 覆盖（runCwCli 跑真实 dist/cli.js 子进程，
   // 断言 exit 1 + mutually exclusive）。本文件测 renderList 纯函数，互斥检查在 cli.ts
   // 入口层（line 841-843），不适合纯函数测试。
+});
+
+// ═══════════════════════════════════════════════════════════════
+// W3（#10）：list 尾行总览 + next-step + 去 layer 列（T3.2，AC-4.2）
+// ═══════════════════════════════════════════════════════════════
+
+describe("W3: renderList 尾行总览 + next-step（#10，T3.2）", () => {
+  it("尾行含 total/advanceable/blocked 总览 + next-step 建议（AC-4.2）", () => {
+    const annotated: AnnotatedUnit[] = [
+      { unit: makeUnit("wave:a", { status: "created" }) },
+      { unit: makeUnit("wave:b", { status: "closed" }) }, // 终态
+      { unit: makeUnit("wave:c", { status: "planning" }) },
+    ];
+
+    const out = renderList(annotated, {});
+
+    // 总览行：total = 全部，advanceable = 非终态数，blocked = 终态数
+    expect(out).toMatch(/total: 3/);
+    expect(out).toMatch(/advanceable: 2/);
+    expect(out).toMatch(/blocked: 1/);
+
+    // next-step 取第一个非终态 unit id（按 updatedAt DESC 排序后）
+    expect(out).toMatch(/Run 'cw handoff --unitId wave:a' to resume/);
+  });
+
+  it("无独立 layer 列（AXI-2：layer 可从 unitId 前缀推出，信息等价）", () => {
+    const annotated: AnnotatedUnit[] = [
+      { unit: makeUnit("wave:a") },
+      { unit: makeUnit("slice:b") },
+    ];
+    const out = renderList(annotated, {});
+    // 表头无 layer 列（行首不是 layer），数据行不含独立 layer 值列
+    expect(out).not.toMatch(/^layer\s/m);
+  });
+
+  it("--all 模式 next-step 带 --cwd（K-5）", () => {
+    const annotated: AnnotatedUnit[] = [
+      { unit: makeUnit("wave:a", { status: "created" }), cwd: "/repo/ws-a" },
+      { unit: makeUnit("wave:b", { status: "closed" }), cwd: "/repo/ws-b" },
+    ];
+    const out = renderList(annotated, { all: true });
+    expect(out).toMatch(/Run 'cw handoff --unitId wave:a --cwd \/repo\/ws-a' to resume/);
+  });
+
+  it("全部终态 → next-step 显示 (all units terminal)", () => {
+    const annotated: AnnotatedUnit[] = [
+      { unit: makeUnit("wave:a", { status: "closed" }) },
+      { unit: makeUnit("wave:b", { status: "aborted" }) },
+    ];
+    const out = renderList(annotated, {});
+    expect(out).toMatch(/\(all units terminal\)/);
+  });
+
+  it("空列表 → 无总览行（保留 (no units)）", () => {
+    const out = renderList([], {});
+    expect(out.trim()).toBe("(no units)");
+  });
 });

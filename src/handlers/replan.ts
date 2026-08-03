@@ -25,6 +25,7 @@ import type {
 } from "../core/plan.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
+import { buildPrefix } from "../guidance/index.js";
 import { checkFreeze } from "../rules/freeze.js";
 import { computeImpact } from "../rules/replan.js";
 import { buildCommand, inputFilePath } from "../utils/command.js";
@@ -35,6 +36,7 @@ import {
   getSchemaText,
   mergeAbandonParentItems,
   saveUnit,
+  STATUS_DISPLAY,
   transitionStatus,
 } from "./internal.js";
 import type { ActionResult, CwDeps,ReplanInput } from "./types.js";
@@ -115,8 +117,14 @@ export function handleReplan(
     `pendingRebuild: ${replanImpact.pendingRebuild.length > 0 ? replanImpact.pendingRebuild.join(", ") : "（无）"}`,
   ].join("\n");
   const base = buildNextAction(unit, "replan");
+  // #12：prefix 复用 buildPrefix（含 STATUS_DISPLAY 中文映射 + 父单元段），与 buildNextAction 输出一致。
   base.guidance = buildReplanGuidance({
-    prefix: `[wave:${unit.slug}] 状态：${unit.status}（replan 后原地）`,
+    prefix: buildPrefix({
+      layer: "wave",
+      unitId: unit.id,
+      status: `${STATUS_DISPLAY[unit.status]}（replan 后原地）`,
+      parentUnitId: unit.parentUnitId,
+    }),
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,

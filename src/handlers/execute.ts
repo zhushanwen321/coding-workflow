@@ -6,17 +6,20 @@
  *      state-machine WAVE_TRANSITIONS.execute（design-reviewed → executing）。
  *
  * 职责：
- * 1. 记录 commitHash 到 executeResult（真实存在性校验在 test gate 做，execute 只记录非空）
- * 2. 填 evidence 客观部分：commitHash + changedFiles（cw 从 commit 提取，§4.4 客观字段，不靠 agent 声明）
- * 3. 填 evidence.generatedAt（首次生成时间；若已填则保留，不覆盖——progressive 场景）
- * 4. status 流转（design-reviewed → executing）→ save
+ * 1. 前置校验 commitHash 存在性（#8：入口先验，失败 → CwError 停留 design-reviewed 可重试；test gate 保留纵深防御）
+ * 2. 记录 commitHash 到 executeResult
+ * 3. 填 evidence 客观部分：commitHash + changedFiles（cw 从 commit 提取，§4.4 客观字段，不靠 agent 声明）
+ * 4. 填 evidence.generatedAt（首次生成时间；若已填则保留，不覆盖——progressive 场景）
+ * 5. status 流转（design-reviewed → executing）→ save
  *
- * 不变量：execute 不跑 gate（commit 存在性在 test gate 验，避免 executing 状态因 commit 无效卡死）。
+ * 不变量：execute 不跑 gate（仅前置 commitExists 校验；其余 gate 在 test 阶段验，避免 executing 状态因无效 commit 卡死）。
  */
+import { CwError } from "../core/errors.js";
 import type { WaveEvidence } from "../core/evidence.js";
 import { assertEvidenceNotFrozen } from "../core/evidence.js";
 import { extractChangedFiles, parseAbandonMarkers } from "../core/git.js";
 import type { ExecutionUnit } from "../core/workunit.js";
+import { commitExists } from "../rules/gates/test.js";
 import { buildNextAction, mergeAbandonParentItems, saveUnit, transitionStatus } from "./internal.js";
 import type { ActionResult, CwDeps,ExecuteInput } from "./types.js";
 import { validateInput } from "./validate-input.js";
@@ -34,6 +37,14 @@ export function handleExecute(
   deps: CwDeps,
 ): ActionResult {
   validateInput("execute", "wave", input);
+  // ── #8 前置校验：commit 存在性在 execute 入口先验（transition 之前，任何 mutation 之前）。
+  //    失败 → CwError，status 停留 design-reviewed 可重试（不产生 executing 卡死态）；
+  //    test gate 的 commitExists 保留纵深防御（前置失败 ≠ 移除 test 层检查）。
+  const commitCheck = commitExists(input.commitHash, deps.gitValidator);
+  if (!commitCheck.passed) {
+    throw new CwError(commitCheck.report);
+  }
+
   // ── 检测 replan 后重新 execute：旧 commitHash 需要 append 进 statusHistory ──
   const oldCommitHash = unit.executeResult?.commitHash;
   if (oldCommitHash && oldCommitHash !== input.commitHash) {

@@ -57,6 +57,27 @@ const TREE_OBJECTIVE_MAX = 60;
 /** JSON 序列化缩进空格数（renderStatus 用）。 */
 const JSON_INDENT = 2;
 
+// ═══════════════════════════════════════════════════════════════
+// renderStatus 大字段截断（#10，T3.3，AC-4.3）
+// ═══════════════════════════════════════════════════════════════
+
+/** status 默认视图中参与截断的大字段（超阈值时截断为截断后的 JSON 字符串）。 */
+const STATUS_TRUNCATED_FIELDS = [
+  "plan",
+  "designReviewJudgment",
+  "retrospectData",
+  "clarifications",
+] as const;
+
+/** 大字段序列化长度超过此阈值时截断（字符数）。 */
+const STATUS_FIELD_MAX = 500;
+
+/** renderStatus 的渲染选项。 */
+export interface StatusRenderOptions {
+  /** 全量输出（#10：大字段不截断，走历史行为）。 */
+  full?: boolean;
+}
+
 /**
  * renderTree — 以 rootUnitId 为根的子树文本视图。
  *
@@ -101,14 +122,39 @@ function renderTreeNode(
 }
 
 /**
- * renderStatus — 单 unit 的完整 JSON 快照。
+ * renderStatus — 单 unit 的 JSON 快照（#10 起支持大字段截断）。
  *
- * 直接 JSON.stringify(unit, null, 2)，保留全部字段（core 层字段原样透传）。
+ * 默认（无 --full）：大字段（plan/designReviewJudgment/retrospectData/clarifications）
+ * 序列化超 STATUS_FIELD_MAX 字符时截断为字符串（复用 truncate helper），输出首行提示
+ * 「（字段已截断，用 --full 查看全量）」。截断后仍是合法 JSON（字段值变字符串）。
+ *
+ * full=true：全量 JSON dump（历史行为，保留全部字段）。
  *
  * @param unit  已读出的 WorkUnitRecord（调用方负责 load + not found 判定）
+ * @param opts  渲染选项（full 默认 false）
  */
-export function renderStatus(unit: WorkUnitRecord): string {
-  return JSON.stringify(unit, null, JSON_INDENT) + "\n";
+export function renderStatus(
+  unit: WorkUnitRecord,
+  opts: StatusRenderOptions = {},
+): string {
+  if (opts.full === true) {
+    return JSON.stringify(unit, null, JSON_INDENT) + "\n";
+  }
+  // 默认视图：大字段超阈值截断（浅拷贝 unit，不修改原记录）。
+  const snapshot: Record<string, unknown> = { ...unit };
+  let truncatedAny = false;
+  for (const field of STATUS_TRUNCATED_FIELDS) {
+    const v = snapshot[field];
+    if (v === undefined) continue;
+    const json = JSON.stringify(v);
+    if (json.length > STATUS_FIELD_MAX) {
+      snapshot[field] = truncate(json, STATUS_FIELD_MAX);
+      truncatedAny = true;
+    }
+  }
+  const body = JSON.stringify(snapshot, null, JSON_INDENT);
+  if (!truncatedAny) return body + "\n";
+  return `（字段已截断，用 --full 查看全量）\n${body}\n`;
 }
 
 /**
@@ -156,8 +202,8 @@ const LIST_SEPARATOR_WIDTH = 71;
 /** objective 列截断长度（超出加 …，总长 ≤ 51）。 */
 const LIST_OBJECTIVE_MAX = 50;
 
-/** 默认每页条数（ListOptions.limit 缺省值）。cli 层默认值与此一致。 */
-const DEFAULT_LIMIT = 10;
+/** 默认每页条数（ListOptions.limit 缺省值。cli 层默认值与此一致。AXI-2 #10：10 → 20，减少翻页）。 */
+const DEFAULT_LIMIT = 20;
 
 /** 日期分量的两位补齐宽度（月/日/时/分）。 */
 const DATE_PAD_WIDTH = 2;
@@ -232,7 +278,54 @@ export function renderList(
   if (all) {
     return renderGrouped(page, filtered, childCountIndex, opts, total, offset, pageLen, verbose);
   }
-  return renderSingleCwd(page, childCountIndex, opts, total, offset, pageLen, verbose);
+  return renderSingleCwd(page, filtered, childCountIndex, opts, total, offset, pageLen, verbose);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 尾行总览 + next-step（#10，T3.2，AC-4.2）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 判定 unit 是否可推进（非终态且状态机有下一步 action）。
+ *
+ * advanceable/blocked 语义（与 frontier 对齐）：终态（closed/aborted）或状态机无
+ * 下一步 action 的 status 无法推进 → 计入 blocked；其余计入 advanceable。
+ * 按 scope 选映射表（wave 用 WAVE_STATUS_TO_ACTION，planning 三层共用 PLANNING_STATUS_TO_ACTION）。
+ */
+function isAdvanceable(unit: WorkUnitRecord): boolean {
+  const status = getStringField(unit, "status");
+  if (TERMINAL_STATUSES.has(status)) return false;
+  const action = (unit.scope === "wave" ? WAVE_STATUS_TO_ACTION : PLANNING_STATUS_TO_ACTION)[status];
+  return action !== undefined;
+}
+
+/**
+ * 渲染列表尾行总览：total/advanceable/blocked 计数 + next-step 建议。
+ *
+ * next-step 取排序后第一个非终态 unit（filtered 全集，与分页无关）；--all 模式
+ * （跨 cwd 聚合）带 `--cwd <unit 所在目录>`（K-5），单 cwd 模式省略。
+ * 全部终态时输出 (all units terminal)。
+ */
+function renderOverview(
+  filtered: ReadonlyArray<AnnotatedUnit>,
+  all: boolean,
+): string {
+  const total = filtered.length;
+  const advanceable = filtered.filter(({ unit }) => isAdvanceable(unit)).length;
+  const blocked = total - advanceable;
+  const resume = filtered.find(
+    ({ unit }) => !TERMINAL_STATUSES.has(getStringField(unit, "status")),
+  );
+
+  const lines: string[] = [];
+  lines.push(`total: ${total}, advanceable: ${advanceable}, blocked: ${blocked}`);
+  if (resume) {
+    const cwdPart = all && resume.cwd ? ` --cwd ${resume.cwd}` : "";
+    lines.push(`Run 'cw handoff --unitId ${resume.unit.id}${cwdPart}' to resume`);
+  } else {
+    lines.push("(all units terminal)");
+  }
+  return lines.join("\n") + "\n";
 }
 
 /**
@@ -255,11 +348,12 @@ function buildChildCountIndex(
 }
 
 /**
- * renderSingleCwd — 普通 5 列表格（unitId/layer/status/objective/updated，
- * verbose 时加 children/created）。尾部附分页元信息（total > pageLen 时）。
+ * renderSingleCwd — 普通表格（unitId/status/objective/updated，verbose 时加 children/created）。
+ * 尾部附分页元信息 + 尾行总览/next-step（#10）。
  */
 function renderSingleCwd(
   page: ReadonlyArray<AnnotatedUnit>,
+  filtered: ReadonlyArray<AnnotatedUnit>,
   childCountIndex: ReadonlyMap<string, number>,
   opts: ListOptions,
   total: number,
@@ -267,7 +361,7 @@ function renderSingleCwd(
   pageLen: number,
   verbose: boolean,
 ): string {
-  return renderTable(page, childCountIndex, verbose) + renderPagination(opts, total, offset, pageLen);
+  return renderTable(page, childCountIndex, verbose) + renderPagination(opts, total, offset, pageLen) + renderOverview(filtered, false);
 }
 
 /**
@@ -314,6 +408,9 @@ function renderGrouped(
 
   // 跨组分页元信息（基于 filtered 全量，区别于组内 page 切片）
   out.push(renderPagination(opts, total, offset, pageLen));
+
+  // 尾行总览/next-step（#10）：--all 模式 next-step 带 --cwd（K-5）。基于 filtered 全集（与分页 total 一致）。
+  out.push(renderOverview(filtered, true));
 
   // C2：--all 模式分页可能截断其他 cwd 组（slice 在分组前发生），
   // 让 agent 知道有遗漏的 cwd 组，避免把当前页当作跨 cwd 的完整集合。
@@ -364,6 +461,7 @@ function renderGroupHeader(
  *
  * 列宽按数据动态对齐（与表头比较取最大）。verbose=true 时追加 children/created 两列。
  * objective 列超 LIST_OBJECTIVE_MAX 字符截断加 …（不参与列宽对齐，最后列直接输出）。
+ * AXI-2（#10）：无独立 layer 列——layer 可从 unitId 前缀推出（wave:/slice:/feature:/epic:），信息等价。
  */
 function renderTable(
   annotated: ReadonlyArray<AnnotatedUnit>,
@@ -374,7 +472,6 @@ function renderTable(
     const u = au.unit;
     return {
       unitId: u.id,
-      layer: u.scope,
       status: getStringField(u, "status"),
       objective: truncateObjective(getStringField(u, "objective")),
       updated: formatUpdatedAt(getUpdatedAt(u)),
@@ -385,14 +482,12 @@ function renderTable(
 
   const colWidths = {
     unitId: Math.max("unitId".length, ...rows.map((r) => r.unitId.length)),
-    layer: Math.max("layer".length, ...rows.map((r) => r.layer.length)),
     status: Math.max("status".length, ...rows.map((r) => r.status.length)),
     updated: Math.max("updated".length, ...rows.map((r) => r.updated.length)),
   };
 
   const header =
     pad("unitId", colWidths.unitId) + "  " +
-    pad("layer", colWidths.layer) + "  " +
     pad("status", colWidths.status) + "  " +
     pad("updated", colWidths.updated) + "  " +
     "objective" +
@@ -400,7 +495,6 @@ function renderTable(
 
   const separator =
     "-".repeat(colWidths.unitId) + "  " +
-    "-".repeat(colWidths.layer) + "  " +
     "-".repeat(colWidths.status) + "  " +
     "-".repeat(colWidths.updated) + "  " +
     "----------" +
@@ -409,7 +503,6 @@ function renderTable(
   const body = rows
     .map((r) =>
       pad(r.unitId, colWidths.unitId) + "  " +
-      pad(r.layer, colWidths.layer) + "  " +
       pad(r.status, colWidths.status) + "  " +
       pad(r.updated, colWidths.updated) + "  " +
       r.objective +
