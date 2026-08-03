@@ -79,23 +79,24 @@ interface NodeWithJsDoc {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 从 core 源码提取指定 interface 的 schema 文本。
+ * 从源码提取指定 interface 的 schema 文本（支持跨文件类型引用）。
  *
- * @param sourceFilePath core 源文件路径（相对 cwd，如 "src/core/plan.ts"）
- * @param interfaceName 要提取的 interface 名（如 "WaveTestCase"）
+ * 解析流程：
+ *   1. 解析主源文件，收集其全部 interface + type alias；
+ *   2. 递归收集主文件 import 的辅助文件的 interface（跨文件 resolve）；
+ *   3. 合并成一个全局 interface 表，交给 renderInterface 渲染。
+ *
+ * 跨文件 resolve 让映射「外层 Input 接口」成为可能——Input 接口的字段类型
+ * （如 DesignReviewJudgment）可能在另一个文件，合并表让 all.get(name) 能跨文件命中。
+ *
+ * @param sourceFilePath 源文件路径（相对 cwd，如 "src/handlers/types.ts"）
+ * @param interfaceName 要提取的 interface 名（如 "DesignReviewInput"）
  * @returns 渲染后的 schema 文本（含继承补字段 + 内联展开引用类型 + 注释 + 可选标注）。
  *          interface 不存在时抛错（fail-fast，避免静默返回空 schema 导致 guidance 漂移）。
  */
 export function injectSchema(sourceFilePath: string, interfaceName: string): string {
-  const sourceText = readFileSync(sourceFilePath, "utf-8");
-  const sourceFile = ts.createSourceFile(
-    sourceFilePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-  );
-
-  const allInterfaces = collectInterfaces(sourceFile);
+  const fileCache = new Map<string, Map<string, InterfaceDescriptor>>();
+  const allInterfaces = collectInterfacesRecursive(sourceFilePath, fileCache);
   const target = allInterfaces.get(interfaceName);
   if (target === undefined) {
     throw new Error(
@@ -256,17 +257,140 @@ export function readSchemaText({
 // 内部：解析
 // ═══════════════════════════════════════════════════════════════
 
-/** 收集 SourceFile 里所有 InterfaceDeclaration，按 name 索引。 */
+/**
+ * 收集 SourceFile 里所有 InterfaceDeclaration + TypeAliasDeclaration（type X = Y），按 name 索引。
+ *
+ * type alias `type X = Y`（Y 是 interface 名）记录为「extends Y 的空 interface」，
+ * 这样 resolveMembers 会自动透明地把 X 解析为 Y 的字段。仅处理 `type X = Identifier` 形式，
+ * 不处理 `type X = A & B` 等复杂别名（core/handlers 当前未使用）。
+ */
 function collectInterfaces(sourceFile: ts.SourceFile): Map<string, InterfaceDescriptor> {
   const map = new Map<string, InterfaceDescriptor>();
   function walk(node: ts.Node): void {
     if (ts.isInterfaceDeclaration(node)) {
       map.set(node.name.text, parseInterface(node, sourceFile));
+    } else if (ts.isTypeAliasDeclaration(node)) {
+      // type X = Y → 记录为 extends Y 的空 interface（resolveMembers 会透明穿透）
+      const aliasedText = node.type.getText(sourceFile);
+      // 仅处理单标识符别名（如 `type PlanEpicInput = PlanFeatureInput`）
+      if (/^[A-Z][A-Za-z0-9_]*$/.test(aliasedText)) {
+        map.set(node.name.text, {
+          name: node.name.text,
+          members: [],
+          extendsNames: [aliasedText],
+        });
+      }
     }
     ts.forEachChild(node, walk);
   }
   walk(sourceFile);
   return map;
+}
+
+/**
+ * 递归收集主文件 + 其 import 的辅助文件的全部 interface，合并成一个全局表。
+ *
+ * 跨文件 resolve 的入口：从主文件出发，解析其 `import type { A, B } from "./x.js"`
+ * 语句，对每个辅助文件递归收集（辅助文件可能再 import 其他文件）。结果合并到一张表，
+ * 让 renderInterface 的 all.get(name) 能跨文件命中。
+ *
+ * 文件缓存 fileCache 避免重复解析同一文件（多次 import 同一文件只读一次）。
+ * 递归天然有界——TS 的 import 图无环（循环 import 在 ESM 里是合法的，但类型 import
+ * 不构成运行时环，且 collectInterfaces 是纯解析不执行，安全）。
+ */
+function collectInterfacesRecursive(
+  sourceFilePath: string,
+  fileCache: Map<string, Map<string, InterfaceDescriptor>>,
+): Map<string, InterfaceDescriptor> {
+  const merged = new Map<string, InterfaceDescriptor>();
+
+  function visit(filePath: string): Map<string, InterfaceDescriptor> | undefined {
+    const cached = fileCache.get(filePath);
+    if (cached !== undefined) {
+      return cached;
+    }
+    // 占位防重入（虽然类型 import 无环，防御性）
+    fileCache.set(filePath, new Map());
+
+    let sourceText: string;
+    try {
+      sourceText = readFileSync(filePath, "utf-8");
+    } catch {
+      // 辅助文件读不到（路径解析失败/文件不存在）——返回空表，不阻断
+      return fileCache.get(filePath);
+    }
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      sourceText,
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+    );
+    const localInterfaces = collectInterfaces(sourceFile);
+    fileCache.set(filePath, localInterfaces);
+
+    // 收集该文件的 import，递归辅助文件
+    const importMap = collectImports(sourceFile);
+    for (const importPath of new Set(importMap.values())) {
+      // ESM import 路径用 .js 后缀但源文件是 .ts——替换后缀定位真实源文件
+      const tsPath = importPath.replace(/\.js$/, ".ts").replace(/\.jsx$/, ".tsx");
+      const absPath = resolve(dirname(filePath), tsPath);
+      const imported = visit(absPath);
+      if (imported !== undefined) {
+        for (const [name, desc] of imported) {
+          // 不覆盖本地定义（本地优先，符合 TS 模块语义）
+          if (!localInterfaces.has(name)) {
+            localInterfaces.set(name, desc);
+          }
+        }
+      }
+    }
+    return localInterfaces;
+  }
+
+  const primary = visit(sourceFilePath);
+  if (primary !== undefined) {
+    for (const [name, desc] of primary) {
+      merged.set(name, desc);
+    }
+  }
+  return merged;
+}
+
+/**
+ * 提取 SourceFile 的 `import type { A, B } from "./x.js"` 语句，建立 typeName → importPath 映射。
+ *
+ * 只收集相对路径的 type-only import（core/handlers 的跨文件类型引用模式）。
+ * 不处理 bare import / namespace import / 绝对路径包名（这些不是跨文件 interface 引用）。
+ */
+function collectImports(sourceFile: ts.SourceFile): Map<string, string> {
+  const importMap = new Map<string, string>();
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isImportDeclaration(stmt)) {
+      continue;
+    }
+    // 模块说明符（"./xxx.js"）
+    const moduleSpecifier = stmt.moduleSpecifier;
+    if (!ts.isStringLiteral(moduleSpecifier)) {
+      continue;
+    }
+    const importPath = moduleSpecifier.text;
+    // 只处理相对路径（./ 或 ../），跳过包名（如 "typescript"）
+    if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
+      continue;
+    }
+    // 收集导入的命名（无论是否带 type 关键字——运行时 import 也可能含类型）
+    const importClause = stmt.importClause;
+    if (importClause?.namedBindings === undefined) {
+      continue;
+    }
+    const namedBindings = importClause.namedBindings;
+    if (ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) {
+        importMap.set(element.name.text, importPath);
+      }
+    }
+  }
+  return importMap;
 }
 
 /** 把 InterfaceDeclaration 解析成 InterfaceDescriptor。 */

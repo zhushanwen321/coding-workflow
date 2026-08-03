@@ -117,6 +117,61 @@ describe("schema-injector: 其他 interface", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// schema-injector: 跨文件 resolve（A1 — 缺口 1 修复）
+// 映射外层 Input 接口后，字段类型（如 DesignReviewJudgment）在另一个文件，
+// injectSchema 需跨文件解析 import 并内联展开。
+// ═══════════════════════════════════════════════════════════════
+
+describe("schema-injector: 跨文件 resolve（外层 Input 接口）", () => {
+  it("DesignReviewInput 含外层包裹 key + 内联展开 DesignReviewJudgment 字段", () => {
+    const schema = injectSchema("src/handlers/types.ts", "DesignReviewInput");
+    // 外层包裹 key
+    expect(schema).toContain('"designReviewJudgment"');
+    // 跨文件内联展开（DesignReviewJudgment 在 core/judgments.ts）
+    expect(schema).toContain('"necessity"');
+    expect(schema).toContain('"sufficiency"');
+    expect(schema).toContain('"tradeoffs"');
+    expect(schema).toContain('"risks"');
+    // 嵌套展开（sufficiency 内的 gaps/overlaps/meceNote）
+    expect(schema).toContain('"gaps"');
+    expect(schema).toContain('"meceNote"');
+  });
+
+  it("ClarifyInput 含外层 clarifications 包裹 + 内联展开 Clarification 字段", () => {
+    const schema = injectSchema("src/handlers/types.ts", "ClarifyInput");
+    expect(schema).toContain('"clarifications"');
+    // Clarification 在 core/clarifications.ts，跨文件展开
+    expect(schema).toContain('"question"');
+    expect(schema).toContain('"type": "research" | "grilling"');
+  });
+
+  it("CloseoutInput 含外层 summary/artifacts 包裹 + 内联展开 ArtifactRef", () => {
+    const schema = injectSchema("src/handlers/types.ts", "CloseoutInput");
+    expect(schema).toContain('"summary');
+    expect(schema).toContain('"artifacts');
+    // ArtifactRef 在 core/evidence.ts，跨文件展开
+    expect(schema).toContain('"kind"');
+    expect(schema).toContain('"ref"');
+  });
+
+  it("type alias 穿透：RetrospectEpicInput = RetrospectSliceInput → 含 retrospectData", () => {
+    // RetrospectEpicInput 是 type alias（handlers/types.ts），应穿透到 RetrospectSliceInput
+    const schema = injectSchema("src/handlers/types.ts", "RetrospectEpicInput");
+    expect(schema).toContain('"retrospectData"');
+    // PlanningRetrospectData 在 core/judgments.ts，跨文件展开
+    expect(schema).toContain('"reviewedItems"');
+    expect(schema).toContain('"lessonsLearned"');
+  });
+
+  it("TestInput 含外层 testJudgment 包裹 + 内联展开 TestJudgment 字段", () => {
+    const schema = injectSchema("src/handlers/types.ts", "TestInput");
+    expect(schema).toContain('"testJudgment"');
+    expect(schema).toContain('"necessityMet"');
+    expect(schema).toContain('"tradeoffCostRealized"');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // prefix-builder
 // ═══════════════════════════════════════════════════════════════
 

@@ -29,14 +29,14 @@ export interface SchemaSource {
  */
 export const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
+  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "ClarifyInput" },
   plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined,
-  test: { sourceFilePath: "src/core/judgments.ts", interfaceName: "TestJudgment" },
-  "exec-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "ExecReviewJudgment" },
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "RetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
+  test: { sourceFilePath: "src/handlers/types.ts", interfaceName: "TestInput" },
+  "exec-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "ExecReviewInput" },
+  retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectInput" },
+  closeout: { sourceFilePath: "src/handlers/types.ts", interfaceName: "CloseoutInput" },
   replan: undefined,
   abort: undefined,
 };
@@ -49,12 +49,12 @@ export const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> =
  */
 export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
+  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "ClarifyInput" },
   plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanSliceInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined, // 下沉创建 child wave，不接收 input
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
+  retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectSliceInput" },
+  closeout: { sourceFilePath: "src/handlers/types.ts", interfaceName: "CloseoutInput" },
   replan: undefined,
   abort: undefined,
 };
@@ -68,12 +68,12 @@ export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefin
  */
 export const FEATURE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "FeatureClarification" },
+  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "FeatureClarifyInput" },
   plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanFeatureInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined, // 下沉创建 child slice，不接收 input
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
+  retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectFeatureInput" },
+  closeout: { sourceFilePath: "src/handlers/types.ts", interfaceName: "CloseoutInput" },
   replan: undefined,
   abort: undefined,
 };
@@ -86,12 +86,12 @@ export const FEATURE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undef
  */
 export const EPIC_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/core/clarifications.ts", interfaceName: "Clarification" },
+  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "ClarifyInput" },
   plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanEpicInput" },
-  "design-review": { sourceFilePath: "src/core/judgments.ts", interfaceName: "DesignReviewJudgment" },
+  "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined, // 下沉创建 child feature，不接收 input
-  retrospect: { sourceFilePath: "src/core/judgments.ts", interfaceName: "PlanningRetrospectData" },
-  closeout: { sourceFilePath: "src/core/evidence.ts", interfaceName: "ArtifactRef" },
+  retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectEpicInput" },
+  closeout: { sourceFilePath: "src/handlers/types.ts", interfaceName: "CloseoutInput" },
   replan: undefined,
   abort: undefined,
 };
