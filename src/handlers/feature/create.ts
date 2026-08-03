@@ -9,9 +9,17 @@
  * 与 slice create 的差异：调 createFeature（不是 createSlice），clarifications 初始化为
  * FeatureClarification 容器对象（含空 spec），plan 为 Plan 基类（只 split）。
  */
+import { PLANNING_STATUS_TO_ACTION } from "../../core/status.js";
+import type { Feature } from "../../core/workunit.js";
 import { createFeature } from "../../core/workunit.js";
+import type { PlanningAction } from "../../rules/state-machine.js";
+import { buildCreateIdempotentResult, isCreateEmptyState } from "../internal.js";
 import type { ActionResult, CreateInput, CwDeps } from "../types.js";
-import { buildFeatureNextAction, saveFeature } from "./feature-internal.js";
+import {
+  buildFeatureCurrentActionGuidance,
+  buildFeatureNextAction,
+  saveFeature,
+} from "./feature-internal.js";
 
 /**
  * 执行 feature create action。
@@ -23,7 +31,32 @@ import { buildFeatureNextAction, saveFeature } from "./feature-internal.js";
 export function handleCreateFeature(
   args: CreateInput,
   deps: CwDeps,
-): ActionResult & { unit: import("../../core/workunit.js").Feature } {
+): ActionResult & { unit: Feature } {
+  // #2 create 幂等预检（D-002）：按 layer 定界（id=`feature:<slug>`），save 之前 load。
+  const existing = deps.store.load(`feature:${args.slug}`);
+  if (existing !== null && !isCreateEmptyState(existing)) {
+    const status = typeof existing.status === "string" ? existing.status : "created";
+    const currentAction = PLANNING_STATUS_TO_ACTION[status];
+    const currentGuidance =
+      currentAction !== undefined
+        ? buildFeatureCurrentActionGuidance(
+            // eslint-disable-next-line taste/no-unsafe-cast -- 只读 id/status/parentUnitId/slug，record 是具名 unit 超集
+            existing as unknown as Feature,
+            currentAction as PlanningAction,
+          )
+        : "";
+    return {
+      ...buildCreateIdempotentResult({
+        existing,
+        layer: "feature",
+        currentAction,
+        currentGuidance,
+      }),
+      // eslint-disable-next-line taste/no-unsafe-cast -- 同上：existing 字段透传存储，断言安全
+      unit: existing as unknown as Feature,
+    };
+  }
+
   const unit = createFeature({
     slug: args.slug,
     objective: args.objective,

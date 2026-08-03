@@ -112,6 +112,8 @@ export interface ActionResult {
   children?: ChildInfo[];
   /** 下一步导航（含 guidance + 结构化字段）。 */
   nextAction?: CwNextAction;
+  /** #2 create 幂等：slug 已存在时 no-op 返回 existing（true），未写 store。正常 create 无此字段。 */
+  idempotent?: boolean;
 }
 
 /** ActionResult.children 的元素类型——execute 返回的子层信息。 */

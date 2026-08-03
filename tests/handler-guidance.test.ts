@@ -282,6 +282,98 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// #1 schema 错位修复：guidance 的 schema 段取 nextAction 而非刚完成的 action
+// ═══════════════════════════════════════════════════════════════
+
+describe("W8: schema 段取 nextAction（#1）", () => {
+  it("create 后 schema 段显示 clarify 的 clarifications 字段，非 create 的 slug/objective（T1.1）", () => {
+    const r = dispatch(
+      {
+        action: "create",
+        input: { slug: "s1", objective: "o", basedOnParent: [] },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.action).toBe("clarify");
+    expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
+    // clarify 的 input schema（clarifications 数组）
+    expect(r.nextAction!.guidance).toContain("clarifications");
+    // create 的扁平提示（slug/objective）不得出现在 schema 段
+    expect(r.nextAction!.guidance).not.toContain("slug: string");
+    expect(r.nextAction!.guidance).not.toContain("objective: string");
+  });
+
+  it("replan 后 guidance 含 plan 的 schema 段（D-017 透传，T1.1）", () => {
+    const unitId = advanceTo("g-replan-schema", "design-reviewed");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: { abandonedIds: ["TC1"], note: "obsolete" },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.action).toBe("plan");
+    // replan 后下一步是 plan，agent 需要 plan 的 input schema
+    expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
+    expect(r.nextAction!.guidance).toContain("testCases");
+  });
+
+  it("closeout 终态 guidance 无 schema 段（T1.2，终态守卫）", () => {
+    const unitId = advanceTo("g-close-schema", "retrospected");
+    const r = dispatch(
+      {
+        action: "closeout",
+        unitId,
+        input: {
+          summary: "done",
+          artifacts: [{ kind: "code", ref: "src/x.ts", note: "main" }],
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.action).toBeUndefined();
+    expect(r.nextAction!.guidance).not.toContain("## input schema + 关键约束");
+  });
+
+  it("plan 后 schema 段含 design-review layerSpecific 提示（T1.2b，特判跟随 nextAction）", () => {
+    const unitId = advanceTo("g-plan-dr", "clarifying");
+    const r = dispatch(
+      {
+        action: "plan",
+        unitId,
+        input: {
+          testCases: [makeValidTestCase("TC1")],
+          tasks: [makeValidTask("TK1")],
+          files: [makeValidFile("F1")],
+          contracts: [makeValidContract("C1")],
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.action).toBe("design-review");
+    // design-review 特判提示（wave 4 key）
+    expect(r.nextAction!.guidance).toContain("layerSpecific 建议包含以下 key");
+    expect(r.nextAction!.guidance).toContain("testCaseCoverageNote");
+  });
+
+  it("abort 终态 guidance 无 schema 段（终态守卫）", () => {
+    const unitId = advanceTo("g-abort-schema", "planning");
+    const r = dispatch(
+      { action: "abort", unitId, input: { reason: "wrong layer" } },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.action).toBeUndefined();
+    expect(r.nextAction!.guidance).not.toContain("## input schema + 关键约束");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // ok=false：gate fail 异常 guidance（四段式）+ statusHistory fail 记录
 // ═══════════════════════════════════════════════════════════════
 
@@ -643,6 +735,132 @@ describe("W7: closeout crossLayer（§7.3 回溯）", () => {
     expect(r.nextAction!.guidance).toContain("drift");
     expect(r.failureCount).toBe(1);
     expect(loadUnit(unitId).status).toBe("retrospected");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// #2 create 幂等防护：slug 已存在 → no-op 返回 existing，不覆盖
+// ═══════════════════════════════════════════════════════════════
+
+describe("W8: create 幂等防护（#2）", () => {
+  it("重复 create 同 slug（tested 态）→ existing unit + idempotent 提示，不覆盖（T1.6）", () => {
+    const unitId = advanceTo("g-idem", "tested");
+    // 记录原 status，验证不被覆盖
+    expect(loadUnit(unitId).status).toBe("tested");
+
+    const r = dispatch(
+      {
+        action: "create",
+        input: { slug: "g-idem", objective: "overwrite attempt", basedOnParent: [] },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.status).toBe("tested");
+    expect(r.idempotent).toBe(true);
+    // guidance 首行提示「unit 已存在（status=tested），未覆盖」
+    expect(r.nextAction!.guidance).toContain("unit 已存在（status=tested），未覆盖");
+    // 续行 guidance 是当前步（exec-review），不是 create 的导航
+    expect(r.nextAction!.action).toBe("exec-review");
+    expect(r.nextAction!.guidance).toContain("cw exec-review --unitId wave:g-idem");
+    // store 未被覆盖：status 仍是 tested（不是 created）
+    expect(loadUnit(unitId).status).toBe("tested");
+  });
+
+  it("重复 create 的 existing 为 aborted 终态 → no-op + guidance 含「重建请用新 slug」（T1.6b，D-015）", () => {
+    const unitId = advanceTo("g-idem-abort", "planning");
+    dispatch(
+      { action: "abort", unitId, input: { reason: "wrong layer" } },
+      env.deps,
+    );
+    expect(loadUnit(unitId).status).toBe("aborted");
+
+    const r = dispatch(
+      {
+        action: "create",
+        input: { slug: "g-idem-abort", objective: "rebuild", basedOnParent: [] },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.status).toBe("aborted");
+    expect(r.idempotent).toBe(true);
+    expect(r.nextAction!.action).toBeUndefined();
+    expect(r.nextAction!.guidance).toContain("unit 已存在（status=aborted）");
+    expect(r.nextAction!.guidance).toContain("终态不可续行");
+    expect(r.nextAction!.guidance).toContain("重建请用新 slug");
+    expect(loadUnit(unitId).status).toBe("aborted");
+  });
+
+  it("created 空态重复 create 允许覆盖重建（T1.7，AC-2.4）", () => {
+    dispatch(
+      { action: "create", input: { slug: "g-idem-empty", objective: "first", basedOnParent: [] } },
+      env.deps,
+    );
+    // created 空态（无 gate fail 记录）→ 允许覆盖
+    const r = dispatch(
+      {
+        action: "create",
+        input: { slug: "g-idem-empty", objective: "second", basedOnParent: [] },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.idempotent).toBeUndefined();
+    expect(r.status).toBe("created");
+    expect(loadUnit("wave:g-idem-empty").objective).toBe("second");
+  });
+
+  it("created 但有 gate fail 记录 → no-op（K-4：显式全量扫描）", () => {
+    const unitId = "wave:g-idem-fail";
+    dispatch(
+      { action: "create", input: { slug: "g-idem-fail", objective: "first", basedOnParent: [] } },
+      env.deps,
+    );
+    // 构造 created + fail 记录状态（appendFailRecord 是真实记录通道）
+    const unit = loadUnit(unitId);
+    unit.statusHistory.push({
+      to: "created",
+      at: "2026-08-03T00:00:00.000Z",
+      action: "clarify",
+      note: "gate fail: simulated",
+    });
+    env.store.save(unit as unknown as Parameters<typeof env.store.save>[0]);
+
+    const r = dispatch(
+      {
+        action: "create",
+        input: { slug: "g-idem-fail", objective: "second", basedOnParent: [] },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.idempotent).toBe(true);
+    expect(r.status).toBe("created");
+    expect(r.nextAction!.guidance).toContain("unit 已存在（status=created），未覆盖");
+    // 未被覆盖：objective 仍是 first
+    expect(loadUnit(unitId).objective).toBe("first");
+  });
+
+  it("跨 layer 同 slug 不互扰（wave:auth vs slice:auth，T1.8）", () => {
+    dispatch(
+      { action: "create", input: { slug: "auth", objective: "wave auth", basedOnParent: [] } },
+      env.deps,
+    );
+    // slice:auth 与 wave:auth 是不同 id，不应触发 wave 的幂等分支
+    const r = dispatch(
+      {
+        action: "create",
+        input: { slug: "auth", objective: "slice auth", layer: "slice", basedOnParent: [] },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.idempotent).toBeUndefined();
+    expect(r.unitId).toBe("slice:auth");
+    expect(r.status).toBe("created");
+    expect(loadUnit("wave:auth").objective).toBe("wave auth");
+    expect(loadUnit("slice:auth").objective).toBe("slice auth");
   });
 });
 

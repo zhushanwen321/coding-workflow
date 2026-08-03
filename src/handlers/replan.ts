@@ -32,6 +32,7 @@ import {
   appendFailRecord,
   buildFailureNextAction,
   buildNextAction,
+  getSchemaText,
   mergeAbandonParentItems,
   saveUnit,
   transitionStatus,
@@ -118,6 +119,8 @@ export function handleReplan(
     replanCount,
     impactSummary,
     nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
+    // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
+    schemaText: getSchemaText("plan"),
   });
 
   return {

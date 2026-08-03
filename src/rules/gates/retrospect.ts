@@ -74,6 +74,9 @@ export function lessonsLearnedNonEmpty(
  * + execReviewJudgment 的所有结构化判断项。testJudgment / execReviewJudgment 为可选
  *（仅 ExecutionUnit 拥有；PlanningUnit 不调用本 gate，而用 reviewedItemsCoverDesignReview）。
  */
+/** 报告中截断描述的最大长度（wave + slice 两个覆盖 gate 共用）。 */
+const MAX_DESC_LENGTH = 30;
+
 export function retrospectCoversJudgments(
   retrospectData: RetrospectData,
   designReviewJudgment: DesignReviewJudgment,
@@ -83,8 +86,6 @@ export function retrospectCoversJudgments(
   // 构造期望被覆盖的 itemId 集合（ref 约定：裸字段→字段名，数组元素→元素 id）
   const expected = new Set<string>();
   const validationErrors: string[] = [];
-  // 报告中截断描述的最大长度
-  const MAX_DESC_LENGTH = 30;
   expected.add("necessity");
   expected.add("sufficiency");
   expected.add("alternatives");
@@ -137,12 +138,22 @@ export function retrospectCoversJudgments(
     expected.add("architecture");
     if (execReviewJudgment.codeSmells) {
       for (const item of execReviewJudgment.codeSmells.items) {
-        expected.add(`codeSmell:${item}`);
+        // #3 typeof 防御（AC-3.2）：items 类型声明 string[]，agent 违规填对象时稳定序列化，
+        // 不产 `codeSmell:[object Object]` 垃圾 key（agent 无法照抄 missing 清单）。
+        // 存量 string 数据原样保留（key 不变，存量 itemId 不失配）。
+        expected.add(`codeSmell:${typeof item === "string" ? item : JSON.stringify(item)}`);
       }
     }
     if (execReviewJudgment.followupActions) {
       for (const fa of execReviewJudgment.followupActions) {
-        expected.add(`followup:${fa.description}`);
+        // #3 followup 容错（AC-3.3）：合法 FollowupAction 对象取 description；
+        // legacy string[] 违规输入原样保留（不产 `followup:undefined`）；
+        // 其他形状（对象缺 description）跳过，不产垃圾 key。
+        if (typeof fa === "string") {
+          expected.add(`followup:${fa}`);
+        } else if (fa !== null && typeof fa === "object" && typeof fa.description === "string") {
+          expected.add(`followup:${fa.description}`);
+        }
       }
     }
   }
@@ -164,7 +175,10 @@ export function retrospectCoversJudgments(
       parts.push(`输入验证错误: ${validationErrors.join("; ")}`);
     }
     if (missing.length > 0) {
-      parts.push(`reviewedItems 未覆盖核心判断项（缺失: ${missing.join(", ")}）`);
+      // #3/#7 报告扩展（AC-3.1）：期望全集（含已覆盖）+ 缺失子集两段，agent 可一次补齐。
+      parts.push(
+        `reviewedItems 未覆盖核心判断项（期望全集: ${Array.from(expected).join(", ")}；缺失: ${missing.join(", ")}）`,
+      );
     }
     return {
       passed: false,
@@ -268,13 +282,25 @@ export function reviewedItemsCoverDesignReview(
   designReviewJudgment: DesignReviewJudgment,
 ): GateResult {
   const expected = new Set<string>();
+  const validationErrors: string[] = [];
   expected.add("necessity");
   expected.add("sufficiency");
   expected.add("alternatives");
   for (const t of designReviewJudgment.tradeoffs) {
+    // #3 防御对齐 wave 版（M-6）：agent 可能漏填 id（类型声明 required 但运行时无保障），
+    // 跳过并记 validationError——不产 `undefined` 垃圾 key（覆盖校验无法匹配）。
+    if (!t.id || typeof t.id !== "string" || t.id.trim() === "") {
+      validationErrors.push(`tradeoff 缺少 id 字段（decision: ${t.decision?.slice(0, MAX_DESC_LENGTH) ?? "??"}）`);
+      continue;
+    }
     expected.add(t.id);
   }
   for (const r of designReviewJudgment.risks) {
+    // 同 tradeoff 防御
+    if (!r.id || typeof r.id !== "string" || r.id.trim() === "") {
+      validationErrors.push(`risk 缺少 id 字段（item: ${r.item?.slice(0, MAX_DESC_LENGTH) ?? "??"}）`);
+      continue;
+    }
     expected.add(r.id);
   }
 
@@ -285,10 +311,20 @@ export function reviewedItemsCoverDesignReview(
       missing.push(id);
     }
   }
-  if (missing.length > 0) {
+  if (missing.length > 0 || validationErrors.length > 0) {
+    const parts: string[] = [];
+    if (validationErrors.length > 0) {
+      parts.push(`输入验证错误: ${validationErrors.join("; ")}`);
+    }
+    if (missing.length > 0) {
+      // #7 报告扩展：期望全集（含已覆盖）+ 缺失子集两段
+      parts.push(
+        `reviewedItems 未覆盖 designReviewJudgment 核心项（期望全集: ${Array.from(expected).join(", ")}；缺失: ${missing.join(", ")}）`,
+      );
+    }
     return {
       passed: false,
-      report: `reviewed-items-cover-design-review: reviewedItems 未覆盖 designReviewJudgment 核心项（缺失: ${missing.join(", ")}）`,
+      report: `reviewed-items-cover-design-review: ${parts.join("; ")}`,
     };
   }
   return {
