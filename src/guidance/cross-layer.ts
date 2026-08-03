@@ -17,6 +17,11 @@
  * 注：本函数返回 CwNextAction["crossLayer"]（结构化字段），不渲染文本。
  *      caller（build-guidance）不依赖此返回做渲染——agent 读结构化字段决定下一步（§7.2 路由）。
  */
+import {
+  computeReadyChildren,
+  type ReadyTarget,
+  type SchedulingStore,
+} from "../core/scheduling.js";
 import type { ExecutionStatus } from "../core/status.js";
 import type { CwNextAction } from "../handlers/types.js";
 import type { CwStore } from "../store/cw-store.js";
@@ -93,6 +98,46 @@ export function computeCrossLayerAfterCloseout(
     targetUnitId: parentUnitId,
     reason: `父单元 ${parentUnitId} 的所有子单元已终态，回父单元 retrospect。`,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// computeParallelSiblingsAfterCloseout
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * closeout 后算并行就绪的兄弟批次（复用 computeReadyChildren）。
+ *
+ * 与 {@link computeCrossLayerAfterCloseout} 的语义差异（设计文档 §3.1.4.1）：
+ * - computeCrossLayerAfterCloseout 用「非终态」判据（`store.findChildren` + `.find()` 取第一个，
+ *   不管依赖是否满足）。
+ * - 本函数用「就绪」判据（非终态 + 依赖全终态，考虑 parent 的 `plan.split.dependsOn`）。
+ *
+ * 这导致真实命中的发散态：兄弟非终态但被依赖阻塞时，{@link computeCrossLayerAfterCloseout}
+ * 返回 `{kind:"sibling", targetUnitId:B}`（B 非终态即命中），而本函数返回 `[]`（B 被阻塞不算就绪）。
+ * 调用方（wave closeout handler）需用守卫处理此发散态（§3.1.4.1 分支 2）：crossLayer=sibling
+ * 但 parallelTargets 空时降级为 ascend，避免指向死胡同。
+ *
+ * 实现委托：parent 不在 store（孤儿 parent 字符串）时，{@link computeReadyChildren}
+ * 的 `load(parent)` 返回 null → 按保守降级返回空数组（§3.1.2 步骤 1）。该降级让孤儿 parent
+ * 的三层 closeout 测试恒走 ascend 分支（§7.6 表），与原硬编码 ascend 行为等价。
+ *
+ * @returns 就绪兄弟 ReadyTarget 数组（排除自身，可能为空）
+ */
+export function computeParallelSiblingsAfterCloseout(
+  args: ComputeCrossLayerArgs,
+): ReadyTarget[] {
+  const { store, unitId, parentUnitId } = args;
+
+  // 无 parent → 孤立终点，无兄弟概念，返回空。
+  if (parentUnitId === undefined || parentUnitId === "") {
+    return [];
+  }
+
+  // 复用 computeReadyChildren（兄弟 = parent 的 children 排除自身）。
+  // CwStore 满足 SchedulingStore（含 load(id) 方法），结构子类型兼容。
+  const schedulingStore: SchedulingStore = store;
+  const ready = computeReadyChildren(parentUnitId, schedulingStore);
+  return ready.filter((t) => t.unitId !== unitId);
 }
 
 // ═══════════════════════════════════════════════════════════════

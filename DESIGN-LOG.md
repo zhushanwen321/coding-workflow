@@ -9,7 +9,8 @@
 
 | Topic | 主题 | 开始 | 归档 | 沉淀去向 | 状态 |
 |-------|------|------|------|---------|------|
-| cw-1-0-lifecycle-redesign | cw 1.0 生命周期重构：4 层 WorkUnit 模型（epic/feature/slice/wave）+ V5 设计文档集 + ADR 0006-0010 | 07-19 | — | `.xyz-harness/cw-1-0-lifecycle-redesign/design-v5-*.md`, `docs/adr/0006-0010`, `src/{core,rules,store,handlers,dispatch}` 五层架构 | in-progress |
+| cw-1-0-lifecycle-redesign | cw 1.0 生命周期重构：4 层 WorkUnit 模型（epic/feature/slice/wave）+ V5 设计文档集 + ADR 0006-0011 | 07-19 | — | `.xyz-harness/cw-1-0-lifecycle-redesign/design-v5-*.md`, `docs/adr/0006-0011`, `src/{core,rules,store,handlers,dispatch}` 五层架构 | in-progress |
+| recursive-parallel-scheduling | recursive 并行优化：parallelTargets 字段 + scheduling.ts（computeReadyChildren）+ 跨 wave 文件冲突 gate + 三层 closeout 并行回溯 + guidance 并行段 + 递归指令载体 | 08-03 | — | `docs/adr/0011-recursive-parallel-scheduling.md`, 设计文档 `/tmp/cw-recursive-parallel-design.md`, `src/core/scheduling.ts`, `src/core/hierarchy.ts`（isDependencySatisfied） | in-progress |
 | metrics-eval-waves | 评估指标体系 Wave 1-5：changedFiles 持久化 + retrospect 结构化 + 三层指标 + review 3-subagent 架构 + assess post-closeout | 07-14 | — | `docs/metrics-design.md`, `docs/metrics-usage.md`（已归档至 `.xyz-harness/deprecated-metrics/`） | deprecated（随 0.x `cw stats`/`cw assess` 一并删除，设计文档归档保留可追溯） |
 | issue-tracking-fix-loop | review_fix / test_fix loop：issue tracking + fix loop 闭环追踪（reviewIssues / testFixLog） | 07-14 | — | `.xyz-harness/issue-tracking-fix-loop/`, types.reviewIssues/testFixLog | in-progress |
 | clarify-adr-mechanism | clarify 阶段 + ADR 机制：create→plan 之间的需求/技术澄清 | 07-14 | — | `cw clarify` 动作, ADR 机制（非正式，见下表） | in-progress |
@@ -40,6 +41,7 @@
 | [0008](./docs/adr/0008-v1-schema-version-and-repometa.md) | store.json 加 schemaVersion + repoMeta | Accepted | cw-1-0-lifecycle-redesign |
 | [0009](./docs/adr/0009-remove-0x-and-v1-prefix.md) | 彻底清理 0.x + 重组 src/v1 到根级 + 去掉 cw v1 前缀 | Accepted | cw-1-0-lifecycle-redesign |
 | [0010](./docs/adr/0010-cross-layer-abandon-parent-items.md) | 跨层跨时机的 abandon parent items 声明能力 | Accepted | cw-1-0-lifecycle-redesign |
+| [0011](./docs/adr/0011-recursive-parallel-scheduling.md) | Recursive 并行调度（parallelTargets + scheduling + 文件冲突 gate） | Accepted | 设计文档 /tmp/cw-recursive-parallel-design.md |
 | D-001 | CLI 协议用子命令风格（cw create --slug X）+ 大 JSON 走 stdin pipe 或 --xxx-file | confirmed | [from: cw-cli-extract] |
 | D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/store.json，env CW_HOME 可覆盖 | confirmed | [from: cw-cli-extract] |
 | D-003 | 产物为独立 npm 包 @zhushanwen/coding-workflow，bin 名 cw；engine+CLI 同包 | confirmed | [from: cw-cli-extract] |

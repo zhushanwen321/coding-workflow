@@ -488,6 +488,64 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
   });
 });
 
+describe("build-guidance: buildNormalGuidance 并行调度段（§3.2.1）", () => {
+  /** 最小可用入参（无 command --input，避免触发 ARTIFACT_HINT 干扰并行段顺序断言）。 */
+  const baseArgs = {
+    prefix: "[wave:x] 状态：s",
+    nextAction: "plan",
+    goal: "执行计划",
+    command: "cw plan --unitId wave:x",
+    schemaText: "{}",
+    templateText: "",
+  } as const;
+
+  it("parallelTargets 2 项 → 渲染「## 并行调度」段 + 两条编号命令", () => {
+    const g = buildNormalGuidance({
+      ...baseArgs,
+      parallelTargets: [
+        { unitId: "wave:a", action: "plan" },
+        { unitId: "wave:b", action: "plan" },
+      ],
+    });
+    expect(g).toContain("## 并行调度");
+    expect(g).toContain("以下子 unit 依赖已满足，可并行推进：");
+    expect(g).toContain("1. `cw plan --unitId wave:a`");
+    expect(g).toContain("2. `cw plan --unitId wave:b`");
+    // 不应出现第 3 条
+    expect(g).not.toContain("3.");
+  });
+
+  it("parallelTargets 1 项 → 不渲染并行调度段（阈值 2，避免噪声）", () => {
+    const g = buildNormalGuidance({
+      ...baseArgs,
+      parallelTargets: [{ unitId: "wave:a", action: "plan" }],
+    });
+    expect(g).not.toContain("## 并行调度");
+    expect(g).not.toContain("可并行推进");
+  });
+
+  it("parallelTargets undefined → 不渲染并行调度段", () => {
+    const g = buildNormalGuidance({ ...baseArgs });
+    expect(g).not.toContain("## 并行调度");
+  });
+
+  it("并行段在「subagent 调度」段之前（先报并行目标，再报委派建议）", () => {
+    const g = buildNormalGuidance({
+      ...baseArgs,
+      commonGuidance: "建议委派 subagent",
+      parallelTargets: [
+        { unitId: "wave:a", action: "plan" },
+        { unitId: "wave:b", action: "plan" },
+      ],
+    });
+    const parallelIdx = g.indexOf("## 并行调度");
+    const subagentIdx = g.indexOf("## subagent 调度");
+    expect(parallelIdx).toBeGreaterThan(-1);
+    expect(subagentIdx).toBeGreaterThan(-1);
+    expect(parallelIdx).toBeLessThan(subagentIdx);
+  });
+});
+
 describe("build-guidance: buildFailureGuidance（四段式）", () => {
   it("含「位置 / 问题 / 怎么修」段 + failureHint 非空时含「递进提示」", () => {
     const guidance = buildFailureGuidance({

@@ -192,6 +192,8 @@ export interface BuildNextActionOpts {
   schemaTextOverride?: string;
   /** 填 crossLayer（closeout 后回溯，由调用方调 computeCrossLayerAfterCloseout 算好传入）。 */
   crossLayer?: CwNextAction["crossLayer"];
+  /** 并行目标批次（closeout 回溯时填，供程序化读取并行调度）。 */
+  parallelTargets?: CwNextAction["parallelTargets"];
 }
 
 /**
@@ -237,6 +239,7 @@ export function buildNextAction(
     schemaText,
     templateText,
     commonGuidance: buildSubagentGuidance("wave", action),
+    parallelTargets: opts?.parallelTargets,
   });
 
   return {
@@ -249,6 +252,7 @@ export function buildNextAction(
       rootUnitId: unit.id,
     },
     ...(opts?.crossLayer !== undefined ? { crossLayer: opts.crossLayer } : {}),
+    ...(opts?.parallelTargets !== undefined ? { parallelTargets: opts.parallelTargets } : {}),
   };
 }
 

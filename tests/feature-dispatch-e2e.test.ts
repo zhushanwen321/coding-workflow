@@ -128,6 +128,13 @@ describe("dispatch 完整 feature 生命周期", () => {
     expect(execute.nextAction?.crossLayer?.kind).toBe("descend");
     expect(execute.nextAction?.crossLayer?.targetLayer).toBe("slice");
     expect(execute.nextAction?.crossLayer?.targetUnitId).toBe(childId);
+    // parallelTargets：split 无依赖 → 所有 child 就绪（§3.1.3）
+    expect(execute.nextAction?.parallelTargets).toBeDefined();
+    expect(execute.nextAction!.parallelTargets).toHaveLength(executingFeature.executeResult.childUnitIds.length);
+    // 一致性规则（§3.1.6）：crossLayer 绑定 parallelTargets[0]
+    expect(execute.nextAction!.crossLayer!.targetUnitId).toBe(execute.nextAction!.parallelTargets![0].unitId);
+    // 无依赖时 parallelTargets[0] 与 childUnitIds[0] 一致
+    expect(execute.nextAction!.parallelTargets![0].unitId).toBe(childId);
 
     // 6. 推进 child slice 到 closed
     advanceChildSlicesToClosed(env.deps, unitId);

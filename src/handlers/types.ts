@@ -161,6 +161,21 @@ export interface CwNextAction {
     targetUnitId?: string;
     reason: string;
   };
+  /**
+   * 并行目标批次（execute 下沉 / closeout 回溯时填）。
+   *
+   * 语义：当前 parent 下一批「可同时推进」的子 unit 集合（依赖已满足的）。
+   * 与 crossLayer 的一致性规则见设计文档 §3.1.6：
+   * - parallelTargets 非空时，crossLayer.kind=sibling 且 targetUnitId=parallelTargets[0].unitId
+   *   （execute 场景是 descend，targetUnitId 绑定 parallelTargets[0]）
+   * - parallelTargets 空/undefined 时，退化为串行单值（crossLayer 单独指向首个就绪/兜底目标）
+   */
+  parallelTargets?: Array<{
+    unitId: string;
+    action: string;
+    /** 该 target 已满足的依赖（列出供 agent 知晓前置） */
+    satisfiedDependencies?: string[];
+  }>;
   /** plan 条目进度。 */
   itemProgress?: Array<{ id: string; status: string }>;
   /** wave 专属：evidence 填充状态。 */

@@ -35,6 +35,12 @@ export interface BuildNormalGuidanceArgs {
    * 为空/undefined 时不渲染第 4 段，保持三段式（§3.1 最小信息原则）。
    */
   commonGuidance?: string;
+  /**
+   * 并行目标批次（closeout 回溯 / execute 下沉时填，依赖已满足、可并行推进的子 unit 列表）。
+   * 2+ 项时渲染「## 并行调度」段（位于「subagent 调度」之前）；<2 或 undefined 不渲染
+   * （§3.2.1 最小信息原则：1 个 target 不构成并行，避免噪声）。
+   */
+  parallelTargets?: Array<{ unitId: string; action: string }>;
 }
 
 /**
@@ -65,6 +71,7 @@ export interface BuildNormalGuidanceArgs {
  *      commonGuidance 是 subagent 委派建议（按 action 性质分强制/建议/禁止三档），为空时省略。
  *      「中间产物管理」段在 command 含 --input（即该 action 产生中间产物 JSON）时自动追加，
  *      无需调用方传参——文案固定，所有有 input 的 action 共用。
+ *      「并行调度」段在 parallelTargets 有 2+ 项时追加（§3.2.1），位于「subagent 调度」之前。
  */
 const ARTIFACT_HINT = [
   "## 中间产物管理",
@@ -73,8 +80,29 @@ const ARTIFACT_HINT = [
   "- 报告类产物（handoff 交接文档、retrospect 经验总结）是人读的，由你视情况存到 docs/ 目录。",
 ].join("\n");
 
+/**
+ * 「并行调度」段渲染的最小 target 数（§3.2.1）。
+ * 1 个 target 不构成并行，渲染只会产生噪声——至少 2 项才出段。
+ */
+const PARALLEL_TARGETS_MIN = 2;
+
+/**
+ * 渲染「## 并行调度」段（§3.2.1）。
+ *
+ * 把 parallelTargets 渲染成可并行的子 unit 命令列表（编号 + `cw <action> --unitId <unitId>`）。
+ * 调用方保证 targets.length >= 2（阈值由 buildNormalGuidance 把关，本函数不重复校验）。
+ */
+function renderParallelTargetsSection(
+  targets: Array<{ unitId: string; action: string }>,
+): string {
+  const lines = targets.map((t, i) =>
+    `${i + 1}. \`cw ${t.action} --unitId ${t.unitId}\``,
+  );
+  return ["## 并行调度", "以下子 unit 依赖已满足，可并行推进：", ...lines].join("\n");
+}
+
 export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
-  const { prefix, goal, command, schemaText, templateText, commonGuidance } = args;
+  const { prefix, goal, command, schemaText, templateText, commonGuidance, parallelTargets } = args;
   // 约束段为空时不留空行；非空时前缀换行。
   const constraintSection = templateText.trim() !== ""
     ? `\n${templateText.trim()}`
@@ -96,6 +124,12 @@ export function buildNormalGuidance(args: BuildNormalGuidanceArgs): string {
   // command 含 --input（该 action 产生中间产物 JSON）时追加「中间产物管理」段。
   if (command.includes("--input")) {
     sections.push("", ARTIFACT_HINT);
+  }
+
+  // 并行调度段：parallelTargets 达到最小并行数时渲染（§3.2.1：1 个 target 不构成并行，避免噪声）。
+  // 段位置在「subagent 调度」之前——先报并行目标，再报委派建议。
+  if (parallelTargets && parallelTargets.length >= PARALLEL_TARGETS_MIN) {
+    sections.push("", renderParallelTargetsSection(parallelTargets));
   }
 
   // 通用引导段为空时省略此段（§3.1 最小信息原则）。
