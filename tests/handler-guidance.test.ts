@@ -92,6 +92,7 @@ function advanceTo(
         tasks: [makeValidTask("TK1")],
         files: [makeValidFile("F1")],
         contracts: [makeValidContract("C1")],
+        testCommand: "npx vitest run",
       },
     },
     env.deps,
@@ -154,7 +155,7 @@ function advanceTo(
 // ═══════════════════════════════════════════════════════════════
 
 describe("W7: ok=true handler guidance（三段式非空）", () => {
-  it("create → nextAction.guidance 非空 + action=clarify + 含位置段 + 含 testRunner 配置提示", () => {
+  it("create → nextAction.guidance 非空 + action=clarify + 含位置段 + 含 testCommand 提示", () => {
     const r = dispatch(
       {
         action: "create",
@@ -175,10 +176,12 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("[wave:g-create]");
     expect(r.nextAction!.guidance).toContain("## 下一步");
     expect(r.nextAction!.guidance).toContain("cw clarify --unitId wave:g-create");
-    // create 时追加 testRunner 配置提示
-    expect(r.nextAction!.guidance).toContain("## testRunner 配置（可选）");
-    expect(r.nextAction!.guidance).toContain("cw.config.json");
-    expect(r.nextAction!.guidance).toContain("--testCwd");
+    // create 时追加 testCommand 提示（per-wave testCommand 改造：plan 阶段填测试命令）
+    expect(r.nextAction!.guidance).toContain("## plan 阶段必须填 testCommand");
+    expect(r.nextAction!.guidance).toContain("不要跑全量回归");
+    // 旧 testRunner config 配置示例已从 hint 移除（cwd 语义由 --testCwd/config.testRunner.cwd 保留，hint 聚焦 testCommand）
+    expect(r.nextAction!.guidance).not.toContain("cw.config.json");
+    expect(r.nextAction!.guidance).not.toContain("--testCwd");
   });
 
   it("clarify → nextAction.guidance 非空 + action=plan + 含 schema 段", () => {
@@ -206,6 +209,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
           tasks: [makeValidTask("TK1")],
           files: [makeValidFile("F1")],
           contracts: [makeValidContract("C1")],
+          testCommand: "npx vitest run",
         },
       },
       env.deps,
@@ -215,6 +219,9 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("testCases 不能为空");
     expect(r.nextAction!.guidance).toContain("冻结");
     expect(r.nextAction!.guidance).toContain("cw design-review --unitId wave:g-plan");
+    // per-wave testCommand 必填约束（WAVE_PLAN_TEMPLATE 经 buildNextAction 输出）
+    expect(r.nextAction!.guidance).toContain("testCommand 必须填");
+    expect(r.nextAction!.guidance).toContain("严禁跑全量");
   });
 
   it("execute → nextAction.guidance 非空 + action=test", () => {
@@ -350,6 +357,7 @@ describe("W8: schema 段取 nextAction（#1）", () => {
           tasks: [makeValidTask("TK1")],
           files: [makeValidFile("F1")],
           contracts: [makeValidContract("C1")],
+          testCommand: "npx vitest run",
         },
       },
       env.deps,
@@ -386,7 +394,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -420,7 +428,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -457,7 +465,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -483,7 +491,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -881,6 +889,87 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
     const tc1 = loadUnit(unitId).plan.testCases.find((t) => t.id === "TC1")!;
     expect(tc1.status).toBe("abandoned");
   });
+
+  it("executing 纯 testCommand 补充 replan → guidance 重定向到 cw test（不含 cw plan，§4.6）", () => {
+    const unitId = advanceTo("g-replan-testcmd", "executing");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: {
+          abandonedIds: [],
+          testCommand: "npx vitest run tests/quota/index.test.ts",
+          note: "补 testCommand",
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    // 重定向：executing → test（plan 在 executing 状态抛 illegal_transition，恢复路径不可达）
+    expect(r.nextAction!.guidance).toContain("cw test --unitId wave:g-replan-testcmd");
+    expect(r.nextAction!.guidance).not.toContain("cw plan");
+    // 机器可读字段与 guidance 同步重定向（action=plan 在 executing 状态是 illegal_transition）
+    expect(r.nextAction!.action).toBe("test");
+  });
+
+  it("design-reviewed 纯 testCommand 补充 replan → nextAction.action=execute（testCommandOnly 重定向）", () => {
+    const unitId = advanceTo("g-replan-testcmd-dr", "design-reviewed");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: {
+          abandonedIds: [],
+          testCommand: "npx vitest run tests/quota/index.test.ts",
+          note: "补 testCommand",
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    // testCommandOnly：design-reviewed 状态映射 action=execute（不推 plan，避免无谓重走 design-review）
+    expect(r.nextAction!.action).toBe("execute");
+    expect(r.nextAction!.guidance).toContain("cw execute --unitId wave:g-replan-testcmd-dr");
+  });
+
+  it("executing 内容 replan（含废弃条目）→ guidance 重定向到 cw test + blockedHint 提示回流不可达（不含 cw plan）", () => {
+    const unitId = advanceTo("g-replan-blocked", "executing");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: { abandonedIds: ["TC1"], note: "TC1 obsolete" },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    // 内容 replan @ executing：plan.from 不含 executing，推 cw plan 必抛 illegal_transition（wave 卡死）
+    // → blockedHint 重定向到状态映射 action（executing→test），并显式提示回流不可达
+    expect(r.nextAction!.guidance).not.toContain("cw plan");
+    expect(r.nextAction!.guidance).toContain("无法回流 replan 内容变更");
+    expect(r.nextAction!.guidance).toContain("plan/design-review 在此状态均 illegal");
+    expect(r.nextAction!.guidance).toContain("只能先执行 test 或 abort 终止");
+    // blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）
+    expect(r.nextAction!.guidance).not.toContain("审视完后重新提交方案");
+    // 机器可读字段与 guidance 同步重定向（action=plan 在 executing 状态是 illegal_transition）
+    expect(r.nextAction!.action).toBe("test");
+    // 状态感知裁剪：审视引导不含「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）
+    expect(r.nextAction!.guidance).not.toContain("重新 plan 并重新 design-review");
+  });
+
+  it("正常 replan（含废弃条目）→ guidance 仍指向 cw plan（原行为不变）", () => {
+    const unitId = advanceTo("g-replan-normal", "design-reviewed");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: { abandonedIds: ["TC1"], note: "TC1 obsolete" },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.guidance).toContain("cw plan --unitId wave:g-replan-normal");
+  });
 });
 
 describe("W7: abort guidance（流程结束）", () => {
@@ -920,7 +1009,7 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
     // 推进到 executing
     dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
     dispatch(
-      { action: "plan", unitId, input: { testCases: [makeValidTestCase()], tasks: [makeValidTask()], files: [makeValidFile()], contracts: [makeValidContract()] } },
+      { action: "plan", unitId, input: { testCases: [makeValidTestCase()], tasks: [makeValidTask()], files: [makeValidFile()], contracts: [makeValidContract()], testCommand: "npx vitest run" } },
       failEnv.deps,
     );
     dispatch(
@@ -943,6 +1032,84 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
     // 验证配置提示
     expect(r.nextAction!.guidance).toContain("cw.config.json");
     expect(r.nextAction!.guidance).toContain("--testCwd");
+    failEnv.cleanup();
+  });
+});
+
+describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断）", () => {
+  it("空 testCommand → guidance 含「plan.testCommand 缺失」根因诊断，而非误导为覆盖不足", () => {
+    // 模拟真实 testRunner 守卫：空 testCommand 短路 → passed:false + 0 计数（不 spawn）
+    const failEnv = createCwEnv();
+    failEnv.deps.testRunner = {
+      run: (unit: ExecutionUnit) => {
+        const cmd = unit.plan.testCommand?.trim() ?? "";
+        return cmd === ""
+          ? { passed: false, passedCount: 0, failedCount: 0 }
+          : { passed: false, passedCount: 0, failedCount: 5 };
+      },
+    };
+    const unitId = "wave:g-test-empty-cmd";
+    dispatch(
+      {
+        action: "create",
+        input: { slug: "g-test-empty-cmd", objective: "o", parentUnitId: "slice:p", basedOnParent: [] },
+      },
+      failEnv.deps,
+    );
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
+    dispatch(
+      {
+        action: "plan",
+        unitId,
+        input: {
+          testCases: [makeValidTestCase()],
+          tasks: [makeValidTask()],
+          files: [makeValidFile()],
+          contracts: [makeValidContract()],
+          // 先填合法 testCommand 过 design-review gate（testCommandNonEmpty）；
+          // 空 testCommand 的 wave 只能以在途迁移形态存在（下面手工清空模拟存量 wave）。
+          testCommand: "npx vitest run",
+        },
+      },
+      failEnv.deps,
+    );
+    dispatch(
+      {
+        action: "design-review",
+        unitId,
+        input: { designReviewJudgment: makeValidDesignReviewJudgment() },
+      },
+      failEnv.deps,
+    );
+    dispatch(
+      {
+        action: "execute",
+        unitId,
+        input: { commitHash: "deadbeef", changedFiles: ["src/x.ts"] },
+      },
+      failEnv.deps,
+    );
+    // 模拟存量在途 wave（plan 无 testCommand 字段，加载为 undefined）：执行后手工清空再 test。
+    const rec = failEnv.store.load(unitId) as unknown as ExecutionUnit;
+    rec.plan.testCommand = "";
+    failEnv.store.save(rec as unknown as Parameters<typeof failEnv.store.save>[0]);
+    const r = dispatch(
+      { action: "test", unitId, input: { testJudgment: makeValidTestJudgment() } },
+      failEnv.deps,
+    );
+    expect(r.ok).toBe(false);
+    // 根因诊断优先：空 testCommand 提示（design-reviewed 走 plan progressive / executing 走 replan 旁路）
+    expect(r.nextAction!.guidance).toContain("plan.testCommand 缺失");
+    expect(r.nextAction!.guidance).toContain("replan");
+    // 上下文化：双 gate fail 归因到 testCommand 缺失（而非暗示覆盖不足）
+    expect(r.nextAction!.guidance).toContain("共同根因");
+    // 「0 次执行」gate report 仍机械进 reason，但必须被 hint 上下文化——
+    // 根因诊断出现在其后（同一 guidance 内），不误导 agent 去补测试而非补 testCommand。
+    const executedZeroIdx = r.nextAction!.guidance.indexOf("只记录了 0 次执行");
+    expect(executedZeroIdx).toBeGreaterThanOrEqual(0);
+    expect(
+      r.nextAction!.guidance.indexOf("plan.testCommand 缺失"),
+    ).toBeGreaterThan(executedZeroIdx);
     failEnv.cleanup();
   });
 });

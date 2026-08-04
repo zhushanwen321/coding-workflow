@@ -26,6 +26,7 @@ import {
   runWaveDesignReviewGates,
   testCasesHaveExpected,
   testCasesNonEmpty,
+  testCommandNonEmpty,
 } from "../src/rules/gates/design-review.js";
 import {
   execReviewArchitectureNonEmpty,
@@ -91,6 +92,7 @@ function waveWithPlan(): ExecutionUnit {
   const unit = emptyWave();
   unit.plan.testCases = [tc("TC1")];
   unit.plan.files = [wf("src/a.ts")];
+  unit.plan.testCommand = "npx vitest run";
   return unit;
 }
 
@@ -130,6 +132,40 @@ describe("design-review gates", () => {
       unit.plan.testCases = [tc("TC1", "y"), tc("TC2", "z")];
       const r = testCasesHaveExpected(unit);
       expect(r.passed).toBe(true);
+    });
+  });
+
+  describe("testCommandNonEmpty", () => {
+    it("testCommand 为空串 → fail", () => {
+      const unit = emptyWave();
+      unit.plan.testCommand = "";
+      const r = testCommandNonEmpty(unit);
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/test-command-non-empty/);
+    });
+
+    it("testCommand 为 undefined → fail", () => {
+      const unit = emptyWave();
+      unit.plan.testCommand = undefined;
+      const r = testCommandNonEmpty(unit);
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/test-command-non-empty/);
+    });
+
+    it("testCommand 为纯空白串 → fail", () => {
+      const unit = emptyWave();
+      unit.plan.testCommand = "   ";
+      const r = testCommandNonEmpty(unit);
+      expect(r.passed).toBe(false);
+      expect(r.report).toMatch(/test-command-non-empty/);
+    });
+
+    it("testCommand 非空 → pass", () => {
+      const unit = emptyWave();
+      unit.plan.testCommand = "npx vitest run src/a.test.ts";
+      const r = testCommandNonEmpty(unit);
+      expect(r.passed).toBe(true);
+      expect(r.report).toMatch(/test-command-non-empty/);
     });
   });
 
@@ -263,7 +299,7 @@ describe("design-review gates", () => {
 
   // wave design-review 聚合 gate
   describe("runWaveDesignReviewGates", () => {
-    it("聚合返回 9 个 GateResult（7 原有 + 1 layerSpecific + 1 文件冲突）", () => {
+    it("聚合返回 10 个 GateResult（7 原有 + 1 testCommand + 1 layerSpecific + 1 文件冲突）", () => {
       const unit = waveWithPlan();
       const r = runWaveDesignReviewGates(
         unit,
@@ -271,8 +307,8 @@ describe("design-review gates", () => {
         fullWaveLayerSpecific(),
         [],
       );
-      expect(r).toHaveLength(9);
-      // 全 pass（合法 unit + 无兄弟）
+      expect(r).toHaveLength(10);
+      // 全 pass（合法 unit，含非空 testCommand + 无兄弟）
       expect(r.every((g) => g.passed)).toBe(true);
     });
 
@@ -286,9 +322,9 @@ describe("design-review gates", () => {
         fullWaveLayerSpecific(),
         [{ unitId: "wave:sib", files: [wf("src/conflict.ts")] }],
       );
-      // 前 8 个 pass，最后一个（文件冲突）fail
-      expect(r.slice(0, 8).every((g) => g.passed)).toBe(true);
-      const last = r[8]!;
+      // 前 9 个 pass，最后一个（文件冲突）fail
+      expect(r.slice(0, 9).every((g) => g.passed)).toBe(true);
+      const last = r[9]!;
       expect(last.passed).toBe(false);
       expect(last.report).toContain("src/conflict.ts");
     });
@@ -304,7 +340,7 @@ describe("design-review gates", () => {
       expect(r[0]!.passed).toBe(false); // test-cases-non-empty
       expect(r[0]!.report).toMatch(/test-cases-non-empty/);
       // 文件冲突 gate 仍执行（聚合不短路）——空 files → pass
-      const last = r[8]!;
+      const last = r[9]!;
       expect(last.passed).toBe(true);
     });
   });

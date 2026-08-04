@@ -59,6 +59,7 @@ function advanceToDesignReviewed(slug: string): ExecutionUnit {
     tasks: [makeValidTask("TK1")],
     files: [makeValidFile("F1")],
     contracts: [makeValidContract("C1")],
+    testCommand: "npx vitest run",
   }, env.deps);
   unit = loadUnit(unit.id);
 

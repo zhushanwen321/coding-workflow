@@ -548,6 +548,7 @@ function buildParams(
 /** cw.config.json 的结构（仅支持 testRunner 配置）。 */
 interface CwConfig {
   testRunner?: {
+    /** @deprecated 已废弃：改用 per-wave plan.testCommand。值不用于执行，仅兼容读取。 */
     command?: string;
     cwd?: string;
   };
@@ -571,7 +572,13 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
     if (typeof obj.testRunner === "object" && obj.testRunner !== null) {
       const tr = obj.testRunner as Record<string, unknown>;
       config.testRunner = {};
-      if (typeof tr.command === "string") config.testRunner.command = tr.command;
+      if (typeof tr.command === "string") {
+        config.testRunner.command = tr.command;
+        // 读取兼容保留：值不用于执行，仅提示迁移。
+        console.error(
+          "[cw] cw.config.json testRunner.command 已废弃,改用 per-wave plan.testCommand(wave plan 阶段填写)。此值不再用于执行测试。",
+        );
+      }
       if (typeof tr.cwd === "string") config.testRunner.cwd = tr.cwd;
     }
     return config;
@@ -682,7 +689,7 @@ ${lines}
  *   - clock：new Date().toISOString()
  *
  * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
- * 命令默认 `npx vitest run`，可通过 cw.config.json 的 testRunner.command 覆盖。
+ * 执行命令：per-wave unit.plan.testCommand（shell 串），cw.config.json 的 testRunner.command 已废弃。
  */
 function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
   debugLog("constructCwDeps workspacePath", workspacePath, "testCwd", testCwd);
@@ -712,28 +719,31 @@ function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
   const runnerCwd = resolvedTestCwd
     ? (isAbsolute(resolvedTestCwd) ? resolvedTestCwd : resolve(workspacePath, resolvedTestCwd))
     : workspacePath;
-  const runnerCommand = config?.testRunner?.command ?? "npx vitest run";
-  const [runnerCmd, ...runnerArgs] = runnerCommand.split(/\s+/);
-  debugLog("constructCwDeps runnerCwd", runnerCwd, "runnerCommand", runnerCommand);
+  debugLog("constructCwDeps runnerCwd", runnerCwd);
 
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
       debugLog("testRunner.run unit", unit.id, "cwd", runnerCwd);
-      // 在 runnerCwd 下跑测试命令；exit 0 视为通过。
-      // 用 spawnSync 同步阻塞，超时 120s（防 agent 误配死循环测试卡死 CLI）。
-      const r = spawnSync(runnerCmd, runnerArgs, {
+      // per-wave 守卫：testCommand 空（含纯空白）短路，不 spawn——
+      // 防 spawnSync(undefined/空白,{shell:true}) 抛 TypeError crash，也防 '   ' 跑空命令 exit 0 假通过。
+      // 与 design-review gate testCommandNonEmpty 判空一致（trim）。
+      const cmd = unit.plan.testCommand?.trim() ?? "";
+      if (cmd === "") {
+        return { passed: false, passedCount: 0, failedCount: 0, failedTests: [] };
+      }
+      // shell:true 支持完整 shell 串（cd <dir> && ...、pnpm test、自定义脚本），最大框架灵活性。
+      // 超时 120s（防 agent 误配死循环测试卡死 CLI）。
+      const r = spawnSync(cmd, {
         cwd: runnerCwd,
+        shell: true,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 120000,
       });
       const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
       const passed = r.status === 0;
-      // 解析逻辑 extract 到纯函数（src/utils/parse-vitest-output.ts）以便直接单测。
-      // [HISTORICAL] 计数解析的历史 bug 见该纯函数 JSDoc（取最后一个 match 拿 Tests 行用例数）。
       const { passedCount, failedCount } = parseVitestCounts(out);
       const failedTests = parseFailedTestNames(out);
-      void unit; // testRunner 接口要求传 unit，当前实现不依赖 unit 内容。
       return { passed, passedCount, failedCount, failedTests };
     },
   };

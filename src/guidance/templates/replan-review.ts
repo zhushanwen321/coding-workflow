@@ -13,8 +13,14 @@
 export function buildReplanReviewText(args: {
   abandonedIds: string[];
   replanCount: number;
+  /**
+   * 状态机是否有回流通道（plan/design-review 是否可达，如 executing 内容 replan 时均 illegal）。
+   * false 时省略「重新 plan 并重新 design-review（完整重走）」引导句——该句在无回流状态与
+   * blockedHint 同屏矛盾，agent 读到仍可能发起非法 cw plan（illegal_transition 死锁）。
+   */
+  planReachable?: boolean;
 }): string {
-  const { abandonedIds, replanCount } = args;
+  const { abandonedIds, replanCount, planReachable = true } = args;
   const idList = abandonedIds.map((id) => `"${id}"`).join("、");
 
   const sections: string[] = [];
@@ -37,8 +43,12 @@ export function buildReplanReviewText(args: {
   sections.push("- 鲁棒性：边界条件成立吗？");
   sections.push("- 兼容性：破坏已有 interface 契约了吗？");
   sections.push("");
-  sections.push("审视完后，重新 plan 并重新 design-review（plan → design-review → execute 完整重走）。");
-  sections.push("");
+  // 有回流通道（plan/design-review 可达）才引导重新 plan + design-review；
+  // 无回流状态省略该句（见 args.planReachable 注释）。
+  if (planReachable) {
+    sections.push("审视完后，重新 plan 并重新 design-review（plan → design-review → execute 完整重走）。");
+    sections.push("");
+  }
   sections.push(
     "replan input 还支持可选字段 abandonParentItems: string[]（声明脱离 parent 条目，" +
       "CLI: --abandonParentItems '[\"TC1\"]'）——" +

@@ -191,6 +191,17 @@ export interface BuildReplanGuidanceArgs {
    * 由调用方按层取 getSchemaText("plan") 传入；不传/为空则不渲染 schema 段。
    */
   schemaText?: string;
+  /**
+   * 状态机无回流通道提示（如 executing 状态内容 replan：plan/design-review 均 illegal，仅 test/abort 合法）。
+   * 非空时「下一步」段渲染此提示，替代「审视完后重新提交方案 + 命令」——plan 语义不适用，避免推非法命令。
+   */
+  blockedHint?: string;
+  /**
+   * 状态机是否有回流通道（plan/design-review 是否可达）。false 时审视引导省略
+   * 「重新 plan 并重新 design-review（完整重走）」句——与 blockedHint 同屏矛盾，agent 仍可能发起非法 cw plan。
+   * 默认 true（保持原行为）。
+   */
+  planReachable?: boolean;
 }
 
 /**
@@ -214,10 +225,10 @@ export interface BuildReplanGuidanceArgs {
  * 审视引导文本来自 replan-review.ts 模板（渐进式：第 2 次加警告，第 3 次建议 abort）。
  */
 export function buildReplanGuidance(args: BuildReplanGuidanceArgs): string {
-  const { prefix, abandonedIds, replanCount, impactSummary, nextCommand, schemaText } = args;
+  const { prefix, abandonedIds, replanCount, impactSummary, nextCommand, schemaText, blockedHint, planReachable = true } = args;
 
   // 审视引导来自模板
-  const reviewText = buildReplanReviewTextInner(abandonedIds, replanCount);
+  const reviewText = buildReplanReviewTextInner(abandonedIds, replanCount, planReachable);
 
   const sections = [
     "## 位置",
@@ -235,12 +246,18 @@ export function buildReplanGuidance(args: BuildReplanGuidanceArgs): string {
     sections.push("", "## input schema + 关键约束", schema);
   }
 
-  sections.push(
-    "",
-    "## 下一步",
-    "审视完后重新提交方案：",
-    `命令：${nextCommand}`,
-  );
+  // 无回流通道（如 executing 内容 replan）：渲染显式提示，不推命令；否则照常推下一步命令。
+  const blocked = blockedHint?.trim() ?? "";
+  if (blocked !== "") {
+    sections.push("", "## 下一步", blocked);
+  } else {
+    sections.push(
+      "",
+      "## 下一步",
+      "审视完后重新提交方案：",
+      `命令：${nextCommand}`,
+    );
+  }
 
   return sections.join("\n");
 }
@@ -251,6 +268,7 @@ import { buildReplanReviewText } from "./templates/replan-review.js";
 function buildReplanReviewTextInner(
   abandonedIds: string[],
   replanCount: number,
+  planReachable: boolean,
 ): string {
-  return buildReplanReviewText({ abandonedIds, replanCount });
+  return buildReplanReviewText({ abandonedIds, replanCount, planReachable });
 }

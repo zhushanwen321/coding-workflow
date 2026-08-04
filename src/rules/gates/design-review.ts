@@ -49,6 +49,20 @@ export function testCasesNonEmpty(unit: ExecutionUnit): GateResult {
 }
 
 /**
+ * wave §2.7 `test-command-non-empty` — plan.testCommand 非空。
+ *
+ * testCommand 是 test 阶段 testRunner 执行的 shell 命令（per-wave，取代全局 config.testRunner.command）。
+ * 仅校验字段非空——不 spawn、不校验文件存在、不解析命令有效性（命令拼错到 test 阶段才暴露）。
+ * 与 testCasesNonEmpty 同层（plan 无独立 gate，结构校验全在 design-review）。
+ */
+export function testCommandNonEmpty(unit: ExecutionUnit): GateResult {
+  const cmd = unit.plan.testCommand?.trim() ?? "";
+  return cmd === ""
+    ? { passed: false, report: "test-command-non-empty: plan.testCommand 为空（plan 阶段必须填本 wave 的测试执行命令）" }
+    : { passed: true, report: `test-command-non-empty: testCommand 已配置` };
+}
+
+/**
  * wave §2.7 / 附录 A `test-cases-have-expected` — 每个 WaveTestCase.expected 非空。
  *
  * TDD 红灯前提：expected 由 agent 自填，cw 只验填了（不验对错，§5.2）。
@@ -211,6 +225,7 @@ export function runWaveDesignReviewGates(
 ): GateResult[] {
   return [
     runGateSafely("test-cases-non-empty", testCasesNonEmpty, unit),
+    runGateSafely("test-command-non-empty", testCommandNonEmpty, unit),
     runGateSafely("test-cases-have-expected", testCasesHaveExpected, unit),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
     runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),

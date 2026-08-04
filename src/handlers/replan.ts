@@ -23,6 +23,7 @@ import type {
   WaveTask,
   WaveTestCase,
 } from "../core/plan.js";
+import { WAVE_STATUS_TO_ACTION } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
 import { buildPrefix } from "../guidance/index.js";
@@ -104,6 +105,11 @@ export function handleReplan(
   const allUnits = allRecords as unknown as ExecutionUnit[];
   const replanImpact = computeImpact(allUnits, input.abandonedIds);
 
+  // per-wave testCommand 旁路：executing 状态在途 wave 补测试命令（design-reviewed 走 plan progressive）。
+  if (input.testCommand !== undefined) {
+    unit.plan.testCommand = input.testCommand;
+  }
+
   // ── replan 旁路：status 不变，但 append statusHistory（from=to=current, action="replan", note）──
   transitionStatus(unit, "replan", deps.clock.now(), input.note);
 
@@ -117,6 +123,27 @@ export function handleReplan(
     `pendingRebuild: ${replanImpact.pendingRebuild.length > 0 ? replanImpact.pendingRebuild.join(", ") : "（无）"}`,
   ].join("\n");
   const base = buildNextAction(unit, "replan");
+  // 纯 testCommand 补充（无 plan 条目变更）→ 重定向到当前 status 映射的 action（executing→test），
+  // 否则 plan 在 executing 状态抛 illegal_transition，恢复路径不可达。
+  const testCommandOnly =
+    input.abandonedIds.length === 0 &&
+    (input.abandonParentItems === undefined || input.abandonParentItems.length === 0) &&
+    input.addedSpecItems === undefined;
+  // 内容 replan 的合法回流：plan.from 仅含 clarifying/planning/design-reviewed（不含 executing 及之后）。
+  // executing 下内容 replan 后 plan/design-review 均 illegal（仅 test/replan/abort 合法），推 cw plan
+  // 必抛 illegal_transition、wave 永久卡死 → 改推状态映射的合法 action + guidance 显式提示回流不可达。
+  const planReachable = unit.status === "design-reviewed";
+  const nextAction =
+    testCommandOnly || !planReachable
+      ? (WAVE_STATUS_TO_ACTION[unit.status] ?? "test")
+      : "plan";
+  // 无回流通道的内容 replan：blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）。
+  const blockedHint =
+    !testCommandOnly && !planReachable
+      ? `当前状态（${STATUS_DISPLAY[unit.status] ?? unit.status}）无法回流 replan 内容变更：plan/design-review 在此状态均 illegal，只能先执行 ${nextAction} 或 abort 终止。`
+      : "";
+  const nextCommand = buildCommand(nextAction, `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, nextAction)}`);
+  const schemaText = getSchemaText(nextAction);
   // #12：prefix 复用 buildPrefix（含 STATUS_DISPLAY 中文映射 + 父单元段），与 buildNextAction 输出一致。
   base.guidance = buildReplanGuidance({
     prefix: buildPrefix({
@@ -128,10 +155,19 @@ export function handleReplan(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
+    nextCommand,
     // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
-    schemaText: getSchemaText("plan"),
+    schemaText,
+    blockedHint,
+    // 状态感知审视引导：无回流通道时省略「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）。
+    planReachable,
   });
+
+  // 机器可读字段同步重定向：buildNextAction(unit, "replan") 的 action 恒为 "plan"
+  // （ACTION_TO_NEXT.replan），但 guidance 已重定向到 nextAction——action 必须一致，
+  // 否则结构化消费者按该字段推命令，executing 状态推 "plan" 即 illegal_transition
+  // （正是本改造要消除的死锁）。
+  base.action = nextAction;
 
   return {
     unitId: unit.id,

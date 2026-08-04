@@ -63,7 +63,14 @@ type AssertBidirectional<S extends TSchema, T> = IsAssignable<Static<S>, T> exte
  
 export const sf8Clarify: AssertBidirectional<typeof ClarifyInputSchema, ClarifyInput> = true;
  
-export const sf8Plan: AssertBidirectional<typeof PlanInputSchema, PlanInput> = true;
+// testCommand 有意漂移：PlanInputSchema.Type.String() 必填（运行时强制新 plan 提交带 testCommand），
+// PlanInput 类型 testCommand?: string 可选（兼容存量 WavePlan/PlanInput 字面量，加载为 undefined）。
+// 双向断言不适用于「schema 严格 / type 宽松」的有意漂移——改单向：schema 实例 ⊆ type。
+// 注意：单向断言不防字段名拼错（泛型可赋值性允许多余属性），拼错拦截靠下方 sf8PlanKeys key 方向断言——
+// 须 tuple 包裹 [keyof X] extends [keyof Y] 强制即时求值（普通 IsAssignable 条件类型延迟求值会静默放行）。
+export const sf8Plan: IsAssignable<Static<typeof PlanInputSchema>, PlanInput> = true;
+// key 方向断言：schema 字段名 ⊆ PlanInput 字段名（如把 testCommand 拼成 testCommandd 时编译报错）。
+export const sf8PlanKeys: [keyof Static<typeof PlanInputSchema>] extends [keyof PlanInput] ? true : false = true;
  
 export const sf8DesignReview: AssertBidirectional<typeof DesignReviewInputSchema, DesignReviewInput> = true;
  
@@ -123,6 +130,7 @@ describe("validateInput（#6 input shape 校验）", () => {
         tasks: [],
         files: [],
         contracts: [],
+        testCommand: "npx vitest run",
         abandonParentItems: ["TC1"],
       }),
     ).not.toThrow();
@@ -137,6 +145,46 @@ describe("validateInput（#6 input shape 校验）", () => {
     }
     expect(caught).toBeInstanceOf(CwError);
     expect((caught as CwError).message.startsWith("input.testCases")).toBe(true);
+  });
+
+  it("plan 缺 testCommand → 拒绝（消息前缀 input.testCommand）", () => {
+    let caught: unknown;
+    try {
+      validateInput("plan", "wave", {
+        testCases: [makeValidTestCase()],
+        tasks: [],
+        files: [],
+        contracts: [],
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CwError);
+    expect((caught as CwError).message.startsWith("input.testCommand")).toBe(true);
+  });
+
+  it("plan 带 testCommand → 放行", () => {
+    expect(() =>
+      validateInput("plan", "wave", {
+        testCases: [makeValidTestCase()],
+        tasks: [],
+        files: [],
+        contracts: [],
+        testCommand: "npx vitest run src/a.test.ts",
+      }),
+    ).not.toThrow();
+  });
+
+  it("replan 纯空白 testCommand → 拒绝（trim 判空对齐 gate，防覆盖清空在途 wave 合法值）", () => {
+    // replan 旁路不改 status 不走 design-review，testCommandNonEmpty gate 不会复验——
+    // schema 是唯一防线：minLength 只拦空串，纯空白串（长度 ≥ 1）必须靠 pattern 拒绝。
+    const base = { abandonedIds: [], note: "x" };
+    expect(() => validateInput("replan", "wave", { ...base, testCommand: "   " })).toThrowError(CwError);
+    expect(() => validateInput("replan", "wave", { ...base, testCommand: "" })).toThrowError(CwError);
+    expect(() => validateInput("replan", "wave", { ...base, testCommand: "\t\n" })).toThrowError(CwError);
+    // 合法值放行；缺字段仍放行（testCommand 可选，纯 testCommandOnly replan 语义）
+    expect(() => validateInput("replan", "wave", { ...base, testCommand: "npx vitest run" })).not.toThrow();
+    expect(() => validateInput("replan", "wave", base)).not.toThrow();
   });
 
   it("execute 缺 commitHash → 拒绝", () => {
@@ -231,6 +279,7 @@ describe("dispatch 层 input 校验集成（T2.4/T2.4b/T2.5）", () => {
           tasks: [],
           files: [],
           contracts: [],
+          testCommand: "npx vitest run",
           abandonParentItems: ["TC1"],
         },
       },

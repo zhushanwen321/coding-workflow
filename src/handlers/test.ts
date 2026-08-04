@@ -74,14 +74,24 @@ export function handleTest(
     // testsAllPass 失败时追加排查提示
     const testsFailed = failed.some((g) => g.report.startsWith("tests-all-pass:"));
     if (testsFailed) {
-      // 失败数超过此阈值提示 monorepo 测试目录问题（失败过多通常是跑错了目录）
-      const MONOREPO_FAIL_HINT_THRESHOLD = 20;
-      const hint = testRunResult.failedCount > MONOREPO_FAIL_HINT_THRESHOLD
-        ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是 monorepo 测试目录问题。排查：
+      // 空 testCommand（含纯空白）是 testsAllPass + testCasesExecuted 双 fail 的共同根因——
+      // 短路优先诊断，盖过 testCasesExecuted 的「0 次执行」误导性报告（那个暗示覆盖不足，会误导 agent 去补测试而非补 testCommand）。
+      const scopeMissing = (unit.plan.testCommand?.trim() ?? "") === "";
+      let hint: string;
+      if (scopeMissing) {
+        hint = `\n\nplan.testCommand 缺失（空或纯空白）：本 wave 的测试执行命令未在 plan 阶段声明。
+回补 testCommand：design-reviewed 状态走 plan progressive（直接重新 plan 带 testCommand），executing 状态走 replan 旁路（replan input 带 testCommand）。
+这是 testsAllPass 与 testCasesExecuted 双 gate fail 的共同根因——补上 testCommand 后两个 gate 都会正常。`;
+      } else {
+        // 失败数超过此阈值提示 monorepo 测试目录问题（失败过多通常是跑错了目录）
+        const MONOREPO_FAIL_HINT_THRESHOLD = 20;
+        hint = testRunResult.failedCount > MONOREPO_FAIL_HINT_THRESHOLD
+          ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是 monorepo 测试目录问题。排查：
 1. 确认测试命令在正确目录跑：在项目根目录创建 cw.config.json 配置 testRunner.cwd
 2. 或使用 --testCwd 临时指定：${buildCommand("test", `--unitId ${unit.id}`, "--testCwd <测试目录>")}
 3. 配置后可在正确目录手动跑测试验证：cd <测试目录> && npx vitest run`
-        : "\n\n如果测试目录不在仓库根，请在项目根目录创建 cw.config.json 配置 testRunner.cwd，或使用 --testCwd 参数";
+          : "\n\n如果测试目录不在仓库根，请在项目根目录创建 cw.config.json 配置 testRunner.cwd，或使用 --testCwd 参数";
+      }
       reason += hint;
     }
     appendFailRecord(deps, unit, "test", reason);

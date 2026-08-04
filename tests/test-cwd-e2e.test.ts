@@ -162,6 +162,9 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
+      // per-wave 设计：testCommand 决定跑什么，--testCwd 决定在哪跑。
+      // marker 脚本写 cwd 落盘，验证 spawnSync 的 cwd = --testCwd 指定目录。
+      testCommand: "node marker.js",
     });
     const planned = runCwCli(
       ["plan", "--unitId", unitId, "--input", planInput],
@@ -225,6 +228,8 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
+      // 无 --testCwd 时 runner 回退 workspacePath；testCommand 是 marker 脚本验证 cwd。
+      testCommand: "node marker.js",
     });
     expect(runCwCli(["plan", "--unitId", unitId, "--input", planInput], e).exitCode).toBe(0);
 

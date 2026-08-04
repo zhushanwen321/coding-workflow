@@ -219,6 +219,8 @@ export interface PlanInput extends AbandonParentItemsInput {
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
+  /** 本 wave 测试执行命令（可选类型；必填由 PlanInputSchema 运行时强制）。双份定义，与 core/plan.ts 同步。 */
+  testCommand?: string;
 }
 
 /** design-review handler 输入。 */
@@ -277,6 +279,12 @@ export interface ReplanInput extends AbandonParentItemsInput {
   };
   /** replan 原因（写 statusHistory.note）。 */
   note: string;
+  /**
+   * 仅 executing 状态在途 wave 补 testCommand 用（design-reviewed 走 plan progressive 主路径）。
+   * 若本次 replan 仅含此字段（abandonedIds/abandonParentItems/addedSpecItems 均空），
+   * replan guidance 重定向到当前 status 映射的 action（executing→test）。
+   */
+  testCommand?: string;
 }
 
 /** abort handler 输入。 */

@@ -347,6 +347,7 @@ export function advanceWaveToClosed(deps: CwDeps, waveId: string): void {
       tasks: [makeValidTask()],
       files: [makeValidFile()],
       contracts: [makeValidContract()],
+      testCommand: "npx vitest run",
     },
     deps,
   );

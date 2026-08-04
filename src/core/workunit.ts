@@ -220,7 +220,7 @@ export function createWave(args: {
     objective: args.objective,
     // 产物初始化为空态（各 handler 逐步填充）
     clarifications: [],
-    plan: { split: [], testCases: [], tasks: [], files: [], contracts: [] },
+    plan: { split: [], testCases: [], tasks: [], files: [], contracts: [], testCommand: "" },
     designReviewJudgment: emptyDesignReviewJudgment(),
     executeResult: { commitHash: "" },
     testJudgment: emptyTestJudgment(),

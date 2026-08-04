@@ -66,6 +66,14 @@ export interface WavePlan extends Plan {
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
+  /**
+   * 本 wave 测试执行命令（per-wave，取代全局 config.testRunner.command）。
+   *
+   * 类型可选：存量在途 wave JSON 无此字段，加载为 undefined，`?? ""` 兜底为空串
+   *（testRunner 守卫 + design-review gate testCommandNonEmpty 联合保障非空）。
+   * 必填由 PlanInputSchema（Type.String()）在运行时 plan 提交时强制。
+   */
+  testCommand?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -224,6 +232,8 @@ export interface PlanInput extends AbandonParentItemsInput {
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
+  /** 本 wave 测试执行命令（可选类型；必填由 PlanInputSchema 运行时强制）。 */
+  testCommand?: string;
 }
 
 // ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
