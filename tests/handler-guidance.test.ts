@@ -908,6 +908,53 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
     // 重定向：executing → test（plan 在 executing 状态抛 illegal_transition，恢复路径不可达）
     expect(r.nextAction!.guidance).toContain("cw test --unitId wave:g-replan-testcmd");
     expect(r.nextAction!.guidance).not.toContain("cw plan");
+    // 机器可读字段与 guidance 同步重定向（action=plan 在 executing 状态是 illegal_transition）
+    expect(r.nextAction!.action).toBe("test");
+  });
+
+  it("design-reviewed 纯 testCommand 补充 replan → nextAction.action=execute（testCommandOnly 重定向）", () => {
+    const unitId = advanceTo("g-replan-testcmd-dr", "design-reviewed");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: {
+          abandonedIds: [],
+          testCommand: "npx vitest run tests/quota/index.test.ts",
+          note: "补 testCommand",
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    // testCommandOnly：design-reviewed 状态映射 action=execute（不推 plan，避免无谓重走 design-review）
+    expect(r.nextAction!.action).toBe("execute");
+    expect(r.nextAction!.guidance).toContain("cw execute --unitId wave:g-replan-testcmd-dr");
+  });
+
+  it("executing 内容 replan（含废弃条目）→ guidance 重定向到 cw test + blockedHint 提示回流不可达（不含 cw plan）", () => {
+    const unitId = advanceTo("g-replan-blocked", "executing");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: { abandonedIds: ["TC1"], note: "TC1 obsolete" },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    // 内容 replan @ executing：plan.from 不含 executing，推 cw plan 必抛 illegal_transition（wave 卡死）
+    // → blockedHint 重定向到状态映射 action（executing→test），并显式提示回流不可达
+    expect(r.nextAction!.guidance).not.toContain("cw plan");
+    expect(r.nextAction!.guidance).toContain("无法回流 replan 内容变更");
+    expect(r.nextAction!.guidance).toContain("plan/design-review 在此状态均 illegal");
+    expect(r.nextAction!.guidance).toContain("只能先执行 test 或 abort 终止");
+    // blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）
+    expect(r.nextAction!.guidance).not.toContain("审视完后重新提交方案");
+    // 机器可读字段与 guidance 同步重定向（action=plan 在 executing 状态是 illegal_transition）
+    expect(r.nextAction!.action).toBe("test");
+    // 状态感知裁剪：审视引导不含「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）
+    expect(r.nextAction!.guidance).not.toContain("重新 plan 并重新 design-review");
   });
 
   it("正常 replan（含废弃条目）→ guidance 仍指向 cw plan（原行为不变）", () => {
@@ -1043,9 +1090,9 @@ describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断
       failEnv.deps,
     );
     // 模拟存量在途 wave（plan 无 testCommand 字段，加载为 undefined）：执行后手工清空再 test。
-    const rec = failEnv.store.load(unitId) as ExecutionUnit;
+    const rec = failEnv.store.load(unitId) as unknown as ExecutionUnit;
     rec.plan.testCommand = "";
-    failEnv.store.save(rec);
+    failEnv.store.save(rec as unknown as Parameters<typeof failEnv.store.save>[0]);
     const r = dispatch(
       { action: "test", unitId, input: { testJudgment: makeValidTestJudgment() } },
       failEnv.deps,

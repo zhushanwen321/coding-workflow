@@ -129,9 +129,19 @@ export function handleReplan(
     input.abandonedIds.length === 0 &&
     (input.abandonParentItems === undefined || input.abandonParentItems.length === 0) &&
     input.addedSpecItems === undefined;
-  const nextAction = testCommandOnly
-    ? (WAVE_STATUS_TO_ACTION[unit.status] ?? "test")
-    : "plan";
+  // 内容 replan 的合法回流：plan.from 仅含 clarifying/planning/design-reviewed（不含 executing 及之后）。
+  // executing 下内容 replan 后 plan/design-review 均 illegal（仅 test/replan/abort 合法），推 cw plan
+  // 必抛 illegal_transition、wave 永久卡死 → 改推状态映射的合法 action + guidance 显式提示回流不可达。
+  const planReachable = unit.status === "design-reviewed";
+  const nextAction =
+    testCommandOnly || !planReachable
+      ? (WAVE_STATUS_TO_ACTION[unit.status] ?? "test")
+      : "plan";
+  // 无回流通道的内容 replan：blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）。
+  const blockedHint =
+    !testCommandOnly && !planReachable
+      ? `当前状态（${STATUS_DISPLAY[unit.status] ?? unit.status}）无法回流 replan 内容变更：plan/design-review 在此状态均 illegal，只能先执行 ${nextAction} 或 abort 终止。`
+      : "";
   const nextCommand = buildCommand(nextAction, `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, nextAction)}`);
   const schemaText = getSchemaText(nextAction);
   // #12：prefix 复用 buildPrefix（含 STATUS_DISPLAY 中文映射 + 父单元段），与 buildNextAction 输出一致。
@@ -148,7 +158,16 @@ export function handleReplan(
     nextCommand,
     // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
     schemaText,
+    blockedHint,
+    // 状态感知审视引导：无回流通道时省略「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）。
+    planReachable,
   });
+
+  // 机器可读字段同步重定向：buildNextAction(unit, "replan") 的 action 恒为 "plan"
+  // （ACTION_TO_NEXT.replan），但 guidance 已重定向到 nextAction——action 必须一致，
+  // 否则结构化消费者按该字段推命令，executing 状态推 "plan" 即 illegal_transition
+  // （正是本改造要消除的死锁）。
+  base.action = nextAction;
 
   return {
     unitId: unit.id,

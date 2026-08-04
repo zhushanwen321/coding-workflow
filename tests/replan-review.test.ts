@@ -172,4 +172,28 @@ describe("buildReplanReviewText", () => {
       expect(text).toContain('"slice-1"、"slice-2"、"slice-3"');
     });
   });
+
+  describe("planReachable=false（无回流通道，如 executing 内容 replan）", () => {
+    it("省略「重新 plan 并重新 design-review」引导句", () => {
+      const text = buildReplanReviewText({
+        abandonedIds: ["slice-1"],
+        replanCount: 1,
+        planReachable: false,
+      });
+      // 该句与 blockedHint 同屏矛盾（该状态推 plan 即 illegal_transition）
+      expect(text).not.toContain("重新 plan 并重新 design-review");
+      // 其余审视引导保留（单点/方向性诊断、审视维度）
+      expect(text).toContain("## 重新审视");
+      expect(text).toContain("【单点问题】");
+      expect(text).toContain("架构合理性");
+    });
+
+    it("planReachable=true（默认）保留该句，行为不变", () => {
+      const text = buildReplanReviewText({
+        abandonedIds: ["slice-1"],
+        replanCount: 1,
+      });
+      expect(text).toContain("重新 plan 并重新 design-review");
+    });
+  });
 });

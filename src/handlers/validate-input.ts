@@ -510,7 +510,11 @@ export const CloseoutInputSchema = strict({
 
 export const ReplanInputSchema = strict({
   abandonedIds: Type.Array(Type.String()),
-  testCommand: Type.Optional(Type.String()),
+  // 非空校验（与 design-review gate testCommandNonEmpty 的 trim 判空对齐）：
+  // 空串/纯空白 replan 会覆盖清空 executing wave 已有的合法 testCommand（写入条件只判 !== undefined），
+  // 且 replan 不改 status 不走 design-review，无 gate 兜底——schema 层直接拒绝。
+  // pattern ^\s*\S 拒绝纯空白串（minLength 只拦空串，"   " 长度 3 ≥ 1 会放行）。
+  testCommand: Type.Optional(Type.String({ minLength: 1, pattern: "^\\s*\\S" })),
   addedSpecItems: Type.Optional(
     strict({
       functionalRequirements: Type.Optional(Type.Array(FunctionalRequirementSchema)),
