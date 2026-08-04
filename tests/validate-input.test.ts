@@ -63,7 +63,10 @@ type AssertBidirectional<S extends TSchema, T> = IsAssignable<Static<S>, T> exte
  
 export const sf8Clarify: AssertBidirectional<typeof ClarifyInputSchema, ClarifyInput> = true;
  
-export const sf8Plan: AssertBidirectional<typeof PlanInputSchema, PlanInput> = true;
+// testCommand 有意漂移：PlanInputSchema.Type.String() 必填（运行时强制新 plan 提交带 testCommand），
+// PlanInput 类型 testCommand?: string 可选（兼容存量 WavePlan/PlanInput 字面量，加载为 undefined）。
+// 双向断言不适用于「schema 严格 / type 宽松」的有意漂移——改单向：schema 实例 ⊆ type（仍防字段名拼错）。
+export const sf8Plan: IsAssignable<Static<typeof PlanInputSchema>, PlanInput> = true;
  
 export const sf8DesignReview: AssertBidirectional<typeof DesignReviewInputSchema, DesignReviewInput> = true;
  
@@ -123,6 +126,7 @@ describe("validateInput（#6 input shape 校验）", () => {
         tasks: [],
         files: [],
         contracts: [],
+        testCommand: "npx vitest run",
         abandonParentItems: ["TC1"],
       }),
     ).not.toThrow();
@@ -137,6 +141,34 @@ describe("validateInput（#6 input shape 校验）", () => {
     }
     expect(caught).toBeInstanceOf(CwError);
     expect((caught as CwError).message.startsWith("input.testCases")).toBe(true);
+  });
+
+  it("plan 缺 testCommand → 拒绝（消息前缀 input.testCommand）", () => {
+    let caught: unknown;
+    try {
+      validateInput("plan", "wave", {
+        testCases: [makeValidTestCase()],
+        tasks: [],
+        files: [],
+        contracts: [],
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CwError);
+    expect((caught as CwError).message.startsWith("input.testCommand")).toBe(true);
+  });
+
+  it("plan 带 testCommand → 放行", () => {
+    expect(() =>
+      validateInput("plan", "wave", {
+        testCases: [makeValidTestCase()],
+        tasks: [],
+        files: [],
+        contracts: [],
+        testCommand: "npx vitest run src/a.test.ts",
+      }),
+    ).not.toThrow();
   });
 
   it("execute 缺 commitHash → 拒绝", () => {
@@ -231,6 +263,7 @@ describe("dispatch 层 input 校验集成（T2.4/T2.4b/T2.5）", () => {
           tasks: [],
           files: [],
           contracts: [],
+          testCommand: "npx vitest run",
           abandonParentItems: ["TC1"],
         },
       },

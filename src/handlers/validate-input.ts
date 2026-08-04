@@ -165,6 +165,9 @@ export const PlanInputSchema = strict({
   tasks: Type.Array(WaveTaskSchema),
   files: Type.Array(WaveFileSchema),
   contracts: Type.Array(WaveContractSchema),
+  // testCommand 必填：运行时强制新 plan 提交带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
+  // 类型 PlanInput.testCommand 声明为可选（兼容存量字面量），schema 严格于此是“有意漂移”——故 sf8Plan 改单向断言。
+  testCommand: Type.String(),
   abandonParentItems: abandonParentItemsField,
 });
 

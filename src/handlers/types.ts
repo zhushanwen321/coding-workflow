@@ -219,6 +219,8 @@ export interface PlanInput extends AbandonParentItemsInput {
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
+  /** 本 wave 测试执行命令（可选类型；必填由 PlanInputSchema 运行时强制）。双份定义，与 core/plan.ts 同步。 */
+  testCommand?: string;
 }
 
 /** design-review handler 输入。 */

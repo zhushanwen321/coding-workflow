@@ -34,6 +34,7 @@ export function handlePlan(
     tasks: input.tasks,
     files: input.files,
     contracts: input.contracts,
+    testCommand: input.testCommand,
   };
 
   // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems

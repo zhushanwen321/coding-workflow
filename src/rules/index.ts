@@ -49,6 +49,7 @@ export {
   designReviewTradeoffsPresent,
   testCasesHaveExpected,
   testCasesNonEmpty,
+  testCommandNonEmpty,
 } from "./gates/design-review.js";
 
 // design-review 阶段 gate（slice 附录 A §11 / slice §5.5）
