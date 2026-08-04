@@ -121,6 +121,7 @@ describe("plan handler 通过 input 写入 abandonedParentItems", () => {
         files: [makeValidFile("F1")],
         contracts: [makeValidContract("C1")],
         abandonParentItems: ["TC-slice-1"],
+        testCommand: "npx vitest run",
       },
       env.deps,
     );

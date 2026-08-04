@@ -92,6 +92,7 @@ function advanceTo(
         tasks: [makeValidTask("TK1")],
         files: [makeValidFile("F1")],
         contracts: [makeValidContract("C1")],
+        testCommand: "npx vitest run",
       },
     },
     env.deps,
@@ -206,6 +207,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
           tasks: [makeValidTask("TK1")],
           files: [makeValidFile("F1")],
           contracts: [makeValidContract("C1")],
+          testCommand: "npx vitest run",
         },
       },
       env.deps,
@@ -350,6 +352,7 @@ describe("W8: schema 段取 nextAction（#1）", () => {
           tasks: [makeValidTask("TK1")],
           files: [makeValidFile("F1")],
           contracts: [makeValidContract("C1")],
+          testCommand: "npx vitest run",
         },
       },
       env.deps,
@@ -386,7 +389,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -420,7 +423,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -457,7 +460,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -483,7 +486,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       {
         action: "plan",
         unitId,
-        input: { testCases: [], tasks: [], files: [], contracts: [] },
+        input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
       env.deps,
     );
@@ -920,7 +923,7 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
     // 推进到 executing
     dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
     dispatch(
-      { action: "plan", unitId, input: { testCases: [makeValidTestCase()], tasks: [makeValidTask()], files: [makeValidFile()], contracts: [makeValidContract()] } },
+      { action: "plan", unitId, input: { testCases: [makeValidTestCase()], tasks: [makeValidTask()], files: [makeValidFile()], contracts: [makeValidContract()], testCommand: "npx vitest run" } },
       failEnv.deps,
     );
     dispatch(

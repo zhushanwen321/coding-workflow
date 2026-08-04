@@ -193,6 +193,7 @@ describe("dispatch wave execute 不返回 children", () => {
           tasks: [{ id: "TK1", status: "active", type: "impl", files: ["src/x.ts"], steps: ["write x"] }],
           files: [{ id: "F1", status: "active", path: "src/x.ts", action: "create", description: "x" }],
           contracts: [{ id: "C1", status: "active", name: "x", type: "function", definition: "function x(): void" }],
+          testCommand: "npx vitest run",
         },
       },
       env.deps,

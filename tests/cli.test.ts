@@ -628,6 +628,7 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
         tasks: [makeValidTask()],
         files: [makeValidFile()],
         contracts: [makeValidContract()],
+        testCommand: "npx vitest run",
       }),
     );
     return planInput;

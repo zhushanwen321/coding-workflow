@@ -162,6 +162,7 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
+      testCommand: "npx vitest run",
     });
     const planned = runCwCli(
       ["plan", "--unitId", unitId, "--input", planInput],
@@ -225,6 +226,7 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
+      testCommand: "npx vitest run",
     });
     expect(runCwCli(["plan", "--unitId", unitId, "--input", planInput], e).exitCode).toBe(0);
 

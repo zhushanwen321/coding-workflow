@@ -505,6 +505,7 @@ describe("abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnit
         files: [makeValidFile()],
         contracts: [makeValidContract()],
         abandonParentItems: ["TC1"],
+        testCommand: "npx vitest run",
       },
       env.deps,
     );
@@ -559,6 +560,7 @@ describe("abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnit
         tasks: [makeValidTask()],
         files: [makeValidFile()],
         contracts: [makeValidContract()],
+        testCommand: "npx vitest run",
       },
       env.deps,
     );
