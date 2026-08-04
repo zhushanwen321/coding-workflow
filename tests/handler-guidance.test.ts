@@ -949,3 +949,81 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
     failEnv.cleanup();
   });
 });
+
+describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断）", () => {
+  it("空 testCommand → guidance 含「plan.testCommand 缺失」根因诊断，而非误导为覆盖不足", () => {
+    // 模拟真实 testRunner 守卫：空 testCommand 短路 → passed:false + 0 计数（不 spawn）
+    const failEnv = createCwEnv();
+    failEnv.deps.testRunner = {
+      run: (unit: ExecutionUnit) => {
+        const cmd = unit.plan.testCommand?.trim() ?? "";
+        return cmd === ""
+          ? { passed: false, passedCount: 0, failedCount: 0 }
+          : { passed: false, passedCount: 0, failedCount: 5 };
+      },
+    };
+    const unitId = "wave:g-test-empty-cmd";
+    dispatch(
+      {
+        action: "create",
+        input: { slug: "g-test-empty-cmd", objective: "o", parentUnitId: "slice:p", basedOnParent: [] },
+      },
+      failEnv.deps,
+    );
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
+    dispatch(
+      {
+        action: "plan",
+        unitId,
+        input: {
+          testCases: [makeValidTestCase()],
+          tasks: [makeValidTask()],
+          files: [makeValidFile()],
+          contracts: [makeValidContract()],
+          // 先填合法 testCommand 过 design-review gate（testCommandNonEmpty）；
+          // 空 testCommand 的 wave 只能以在途迁移形态存在（下面手工清空模拟存量 wave）。
+          testCommand: "npx vitest run",
+        },
+      },
+      failEnv.deps,
+    );
+    dispatch(
+      {
+        action: "design-review",
+        unitId,
+        input: { designReviewJudgment: makeValidDesignReviewJudgment() },
+      },
+      failEnv.deps,
+    );
+    dispatch(
+      {
+        action: "execute",
+        unitId,
+        input: { commitHash: "deadbeef", changedFiles: ["src/x.ts"] },
+      },
+      failEnv.deps,
+    );
+    // 模拟存量在途 wave（plan 无 testCommand 字段，加载为 undefined）：执行后手工清空再 test。
+    const rec = failEnv.store.load(unitId) as ExecutionUnit;
+    rec.plan.testCommand = "";
+    failEnv.store.save(rec);
+    const r = dispatch(
+      { action: "test", unitId, input: { testJudgment: makeValidTestJudgment() } },
+      failEnv.deps,
+    );
+    expect(r.ok).toBe(false);
+    // 根因诊断优先：空 testCommand 提示（design-reviewed 走 plan progressive / executing 走 replan 旁路）
+    expect(r.nextAction!.guidance).toContain("plan.testCommand 缺失");
+    expect(r.nextAction!.guidance).toContain("replan");
+    // 上下文化：双 gate fail 归因到 testCommand 缺失（而非暗示覆盖不足）
+    expect(r.nextAction!.guidance).toContain("共同根因");
+    // 「0 次执行」gate report 仍机械进 reason，但必须被 hint 上下文化——
+    // 根因诊断出现在其后（同一 guidance 内），不误导 agent 去补测试而非补 testCommand。
+    const executedZeroIdx = r.nextAction!.guidance.indexOf("只记录了 0 次执行");
+    expect(executedZeroIdx).toBeGreaterThanOrEqual(0);
+    expect(
+      r.nextAction!.guidance.indexOf("plan.testCommand 缺失"),
+    ).toBeGreaterThan(executedZeroIdx);
+    failEnv.cleanup();
+  });
+});

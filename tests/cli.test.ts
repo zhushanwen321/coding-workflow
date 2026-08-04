@@ -31,9 +31,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildLayerPromptGuidance } from "../src/cli.js";
 import {
   makeValidContract,
+  makeValidDesignReviewJudgment,
   makeValidFile,
   makeValidTask,
   makeValidTestCase,
+  makeValidTestJudgment,
 } from "./helpers/env.js";
 import { setupGitRepo } from "./helpers/git.js";
 import {
@@ -916,5 +918,249 @@ describe("W3: cw status 大字段默认截断 + --full 全量（#10，T3.3）", 
       clarifications: Array<{ question: string }>;
     };
     expect(full.clarifications[0].question.length).toBe(600);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// per-wave testCommand：testRunner 翻转（W2）
+// ═══════════════════════════════════════════════════════════════
+
+describe("W2(testCommand): testRunner 执行 per-wave plan.testCommand（翻转）", () => {
+  /**
+   * 独立 env 全链推进到 test（create → clarify → plan → design-review → execute → test）。
+   *
+   * 用独立 env 而非共享 e：cw.config.json 写入会污染其他测试的 workspace。
+   * gate 全过模式：testCases 默认 manual + testJudgment.note 非空（echo 无 vitest 计数，
+   * testCasesExecuted 走 manual 退化验证分支），testsAllPass 只依赖 exit code。
+   */
+  function runWaveTest(
+    opts: {
+      testCommand: string;
+      configCommand?: string;
+      testCases?: Array<Record<string, unknown>>;
+      testJudgment?: Record<string, unknown>;
+      /** false 时停在 executing（test 由调用方控制时序，守卫场景用）。 */
+      runTest?: boolean;
+    },
+  ): { result: CliResult; env: CwCliEnv; unitId: string; testInputPath: string } {
+    const local = createCwCliEnv();
+    if (opts.configCommand !== undefined) {
+      writeFileSync(
+        join(local.workspaceDir, "cw.config.json"),
+        JSON.stringify({ testRunner: { command: opts.configCommand } }),
+        "utf8",
+      );
+    }
+    const slug = `tc-${Math.random().toString(36).slice(2, 8)}`;
+    const unitId = `wave:${slug}`;
+    // create → clarifying
+    const created = runCwCli(
+      ["create", "wave", "--slug", slug, "--objective", "testCommand e2e"],
+      local,
+    );
+    expect(created.exitCode, created.stderr).toBe(0);
+    const clarifyInput = join(local.workspaceDir, `${slug}-clarify.json`);
+    writeFileSync(clarifyInput, JSON.stringify({ clarifications: [] }));
+    const clarified = runCwCli(
+      ["clarify", "--unitId", unitId, "--input", clarifyInput],
+      local,
+    );
+    expect(clarified.exitCode, clarified.stderr).toBe(0);
+    // plan → planning
+    const planInput = join(local.workspaceDir, `${slug}-plan.json`);
+    writeFileSync(
+      planInput,
+      JSON.stringify({
+        testCases: opts.testCases ?? [
+          { ...makeValidTestCase("TC1"), type: "manual" },
+        ],
+        tasks: [makeValidTask("TK1")],
+        files: [makeValidFile("F1")],
+        contracts: [makeValidContract("C1")],
+        testCommand: opts.testCommand,
+      }),
+    );
+    const planned = runCwCli(
+      ["plan", "--unitId", unitId, "--input", planInput],
+      local,
+    );
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    // design-review → design-reviewed
+    const drInput = join(local.workspaceDir, `${slug}-dr.json`);
+    writeFileSync(
+      drInput,
+      JSON.stringify({ designReviewJudgment: makeValidDesignReviewJudgment() }),
+    );
+    const dr = runCwCli(
+      ["design-review", "--unitId", unitId, "--input", drInput],
+      local,
+    );
+    expect(dr.exitCode, dr.stderr).toBe(0);
+    // execute → executing
+    const executed = runCwCli(
+      ["execute", "--unitId", unitId, "--commitHash", local.commitHash],
+      local,
+    );
+    expect(executed.exitCode, executed.stderr).toBe(0);
+    // test
+    const testInputPath = join(local.workspaceDir, `${slug}-test.json`);
+    const judgment = opts.testJudgment ?? {
+      ...makeValidTestJudgment(),
+      sufficiencyMet: {
+        ...makeValidTestJudgment().sufficiencyMet,
+        note: "manual verified",
+      },
+    };
+    writeFileSync(testInputPath, JSON.stringify({ testJudgment: judgment }));
+    if (opts.runTest === false) {
+      // 停在 executing：守卫场景由调用方改 store 模拟在途 wave 后再跑 test。
+      return { result: executed, env: local, unitId, testInputPath };
+    }
+    const result = runCwCli(
+      ["test", "--unitId", unitId, "--input", testInputPath],
+      local,
+    );
+    return { result, env: local, unitId, testInputPath };
+  }
+
+  /** 从 store 改 plan.testCommand（模拟存量在途 wave 的 testCommand 形态）。 */
+  function mutateStoredTestCommand(
+    env: CwCliEnv,
+    unitId: string,
+    value: string | undefined,
+  ): void {
+    const v1Json = findStoreJson(env.cwHome)!;
+    const data = JSON.parse(readStoreJson(v1Json)) as {
+      workUnits: Array<{ id: string; plan?: Record<string, unknown> }>;
+    };
+    const unit = data.workUnits.find((u) => u.id === unitId);
+    expect(unit).toBeDefined();
+    if (value === undefined) {
+      // 存量在途 wave：plan 无 testCommand 字段，加载为 undefined
+      delete unit!.plan!.testCommand;
+    } else {
+      unit!.plan!.testCommand = value;
+    }
+    writeFileSync(v1Json, JSON.stringify(data, null, 2));
+  }
+
+  it("config.testRunner.command 废弃：CLI stderr 含「已废弃」warning（值不再用于执行）", () => {
+    const local = createCwCliEnv();
+    try {
+      writeFileSync(
+        join(local.workspaceDir, "cw.config.json"),
+        JSON.stringify({ testRunner: { command: "npx vitest run" } }),
+        "utf8",
+      );
+      // create 走 constructCwDeps → loadCwConfig → 发射 warning
+      const created = runCwCli(
+        ["create", "wave", "--slug", "cfg-dep", "--objective", "o"],
+        local,
+      );
+      expect(created.exitCode, created.stderr).toBe(0);
+      expect(created.stderr).toContain("已废弃");
+    } finally {
+      disposeCwCliEnv(local);
+    }
+  });
+
+  it("testRunner 执行 unit.plan.testCommand 而非 config.command（shell 复合命令 + 故意必败 config 命令）", () => {
+    const { result, env: local } = runWaveTest({
+      testCommand: "echo a && echo b",
+      // 若 testRunner 仍执行 config.command → testsAllPass fail；翻转后执行 echo → exit 0
+      configCommand: "node -e \"process.exit(1)\"",
+    });
+    try {
+      expect(result.exitCode, result.stderr).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as {
+        status: string;
+        gateResults?: Array<{ report: string; passed: boolean }>;
+      };
+      expect(parsed.status).toBe("tested");
+      const allPass = parsed.gateResults?.find((g) =>
+        g.report.startsWith("tests-all-pass"),
+      );
+      expect(allPass).toBeDefined();
+      expect(allPass!.passed).toBe(true);
+    } finally {
+      disposeCwCliEnv(local);
+    }
+  });
+
+  /** 解析 test action 的 stdout JSON，断言守卫短路语义（ok:false + testsAllPass 计数 0/0）。 */
+  function expectGuardShortCircuit(result: CliResult): void {
+    // gate fail 不是进程级错误：ok:false 序列化到 stdout，exit 0（crash 才是 exit 2 + 堆栈）
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.trim()) as {
+      ok: boolean;
+      gateResults?: Array<{ report: string; passed: boolean }>;
+    };
+    expect(parsed.ok).toBe(false);
+    const allPass = parsed.gateResults?.find((g) =>
+      g.report.startsWith("tests-all-pass"),
+    );
+    expect(allPass).toBeDefined();
+    expect(allPass!.passed).toBe(false);
+    // 守卫短路返回 {passed:false, 0/0 计数}（而非 spawn 后真实计数）
+    expect(allPass!.report).toContain("passed=0, failed=0");
+    expect(result.stderr).not.toContain("堆栈");
+  }
+
+  it("testRunner 守卫：空串 testCommand → {passed:false, 0/0 计数}（不 spawn）", () => {
+    // plan 阶段空串过不了 design-review 的 testCommandNonEmpty gate——
+    // 空 testCommand 只能以在途 wave 形态存在（plan 时合法，之后被清空/迁移）。
+    const { env: local, unitId, testInputPath } = runWaveTest({
+      testCommand: "npx vitest run",
+      runTest: false,
+    });
+    try {
+      mutateStoredTestCommand(local, unitId, "");
+      const result = runCwCli(
+        ["test", "--unitId", unitId, "--input", testInputPath],
+        local,
+      );
+      expectGuardShortCircuit(result);
+    } finally {
+      disposeCwCliEnv(local);
+    }
+  });
+
+  it("testRunner 守卫：纯空白 testCommand → 同上短路（不跑空命令假通过）", () => {
+    const { env: local, unitId, testInputPath } = runWaveTest({
+      testCommand: "npx vitest run",
+      runTest: false,
+    });
+    try {
+      mutateStoredTestCommand(local, unitId, "   ");
+      const result = runCwCli(
+        ["test", "--unitId", unitId, "--input", testInputPath],
+        local,
+      );
+      expectGuardShortCircuit(result);
+    } finally {
+      disposeCwCliEnv(local);
+    }
+  });
+
+  it("testRunner 守卫：undefined testCommand（存量在途 wave 迁移场景）→ 同上短路", () => {
+    const { env: local, unitId, testInputPath } = runWaveTest({
+      testCommand: "npx vitest run",
+      runTest: false,
+    });
+    try {
+      // 存量在途 wave：plan 已过 design-review 但持久化 JSON 无 testCommand 字段（加载为 undefined）
+      mutateStoredTestCommand(local, unitId, undefined);
+      // 重跑 test → 守卫短路，不 crash（spawnSync(undefined, {shell:true}) 会抛 TypeError）
+      const retry = runCwCli(
+        ["test", "--unitId", unitId, "--input", testInputPath],
+        local,
+      );
+      expectGuardShortCircuit(retry);
+      // fail hint 同步给根因诊断（非误导性覆盖不足报告）
+      const parsed = JSON.parse(retry.stdout.trim()) as { error?: string };
+      expect(parsed.error).toContain("plan.testCommand 缺失");
+    } finally {
+      disposeCwCliEnv(local);
+    }
   });
 });
