@@ -447,6 +447,51 @@ describe("E: dispatch replan 旁路（不改 status）", () => {
     expect(result.replanImpact).toBeDefined();
     expect(result.replanImpact!.aborted).toEqual([]);
   });
+
+  it("executing 状态 replan 带 testCommand → plan.testCommand 更新 + status 不变 + statusHistory 追加（§4.6）", () => {
+    const unitId = "wave:e2e-replan-testcmd";
+    dispatch({ action: "create", input: {
+      slug: "e2e-replan-testcmd", objective: "o", parentUnitId: "slice:s", basedOnParent: [],
+    } }, env.deps);
+    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
+    dispatch({ action: "plan", unitId, input: {
+      testCases: [makeValidTestCase("TC1")],
+      tasks: [makeValidTask("TK1")],
+      files: [makeValidFile("F1")],
+      contracts: [makeValidContract("C1")],
+      testCommand: "npx vitest run",
+    } }, env.deps);
+    dispatch({ action: "design-review", unitId, input: {
+      designReviewJudgment: makeValidDesignReviewJudgment(),
+    } }, env.deps);
+    dispatch({ action: "execute", unitId, input: {
+      commitHash: "deadbeef", changedFiles: ["src/x.ts"],
+    } }, env.deps);
+    expect(loadUnit(unitId).status).toBe("executing");
+    expect(loadUnit(unitId).plan.testCommand).toBe("npx vitest run");
+
+    const result = dispatch({ action: "replan", unitId, input: {
+      abandonedIds: [],
+      testCommand: "npx vitest run tests/quota/index.test.ts",
+      note: "补 testCommand",
+    } }, env.deps);
+
+    expect(result.ok).toBe(true);
+    // testCommand 写入 plan
+    expect(loadUnit(unitId).plan.testCommand).toBe("npx vitest run tests/quota/index.test.ts");
+    // 旁路：status 不变
+    expect(result.status).toBe("executing");
+    expect(loadUnit(unitId).status).toBe("executing");
+    // statusHistory append 了 replan（from=to=executing）
+    const last = loadUnit(unitId).statusHistory.at(-1)!;
+    expect(last.action).toBe("replan");
+    expect(last.from).toBe("executing");
+    expect(last.to).toBe("executing");
+    expect(last.note).toBe("补 testCommand");
+    // 无废弃条目 → TC1 保持 active
+    const tc1 = loadUnit(unitId).plan.testCases.find((t) => t.id === "TC1")!;
+    expect(tc1.status).toBe("active");
+  });
 });
 
 describe("E3: execute commitHash 前置校验（#8，W3）", () => {

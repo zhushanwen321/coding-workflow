@@ -713,4 +713,15 @@ describe("templates/wave: 关键约束", () => {
     // replan constraint 也不应含 subagent 文案
     expect(WAVE_REPLAN_TEMPLATE.constraint).not.toContain("subagent");
   });
+
+  it("plan 模板含 testCommand 必填约束（per-wave testCommand 改造 §4.4）", () => {
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("testCommand 必须填");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("严禁跑全量");
+    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("npx vitest run");
+  });
+
+  it("replan 模板含纯 testCommand 补充旁路提示（§4.6）", () => {
+    expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("纯 testCommand 补充");
+    expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("跳过「重做 design-review」");
+  });
 });

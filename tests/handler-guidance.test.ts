@@ -155,7 +155,7 @@ function advanceTo(
 // ═══════════════════════════════════════════════════════════════
 
 describe("W7: ok=true handler guidance（三段式非空）", () => {
-  it("create → nextAction.guidance 非空 + action=clarify + 含位置段 + 含 testRunner 配置提示", () => {
+  it("create → nextAction.guidance 非空 + action=clarify + 含位置段 + 含 testCommand 提示", () => {
     const r = dispatch(
       {
         action: "create",
@@ -176,10 +176,12 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("[wave:g-create]");
     expect(r.nextAction!.guidance).toContain("## 下一步");
     expect(r.nextAction!.guidance).toContain("cw clarify --unitId wave:g-create");
-    // create 时追加 testRunner 配置提示
-    expect(r.nextAction!.guidance).toContain("## testRunner 配置（可选）");
-    expect(r.nextAction!.guidance).toContain("cw.config.json");
-    expect(r.nextAction!.guidance).toContain("--testCwd");
+    // create 时追加 testCommand 提示（per-wave testCommand 改造：plan 阶段填测试命令）
+    expect(r.nextAction!.guidance).toContain("## plan 阶段必须填 testCommand");
+    expect(r.nextAction!.guidance).toContain("不要跑全量回归");
+    // 旧 testRunner config 配置示例已从 hint 移除（cwd 语义由 --testCwd/config.testRunner.cwd 保留，hint 聚焦 testCommand）
+    expect(r.nextAction!.guidance).not.toContain("cw.config.json");
+    expect(r.nextAction!.guidance).not.toContain("--testCwd");
   });
 
   it("clarify → nextAction.guidance 非空 + action=plan + 含 schema 段", () => {
@@ -217,6 +219,9 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("testCases 不能为空");
     expect(r.nextAction!.guidance).toContain("冻结");
     expect(r.nextAction!.guidance).toContain("cw design-review --unitId wave:g-plan");
+    // per-wave testCommand 必填约束（WAVE_PLAN_TEMPLATE 经 buildNextAction 输出）
+    expect(r.nextAction!.guidance).toContain("testCommand 必须填");
+    expect(r.nextAction!.guidance).toContain("严禁跑全量");
   });
 
   it("execute → nextAction.guidance 非空 + action=test", () => {
@@ -883,6 +888,40 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
     );
     const tc1 = loadUnit(unitId).plan.testCases.find((t) => t.id === "TC1")!;
     expect(tc1.status).toBe("abandoned");
+  });
+
+  it("executing 纯 testCommand 补充 replan → guidance 重定向到 cw test（不含 cw plan，§4.6）", () => {
+    const unitId = advanceTo("g-replan-testcmd", "executing");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: {
+          abandonedIds: [],
+          testCommand: "npx vitest run tests/quota/index.test.ts",
+          note: "补 testCommand",
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    // 重定向：executing → test（plan 在 executing 状态抛 illegal_transition，恢复路径不可达）
+    expect(r.nextAction!.guidance).toContain("cw test --unitId wave:g-replan-testcmd");
+    expect(r.nextAction!.guidance).not.toContain("cw plan");
+  });
+
+  it("正常 replan（含废弃条目）→ guidance 仍指向 cw plan（原行为不变）", () => {
+    const unitId = advanceTo("g-replan-normal", "design-reviewed");
+    const r = dispatch(
+      {
+        action: "replan",
+        unitId,
+        input: { abandonedIds: ["TC1"], note: "TC1 obsolete" },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.guidance).toContain("cw plan --unitId wave:g-replan-normal");
   });
 });
 

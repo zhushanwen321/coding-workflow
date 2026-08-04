@@ -510,6 +510,7 @@ export const CloseoutInputSchema = strict({
 
 export const ReplanInputSchema = strict({
   abandonedIds: Type.Array(Type.String()),
+  testCommand: Type.Optional(Type.String()),
   addedSpecItems: Type.Optional(
     strict({
       functionalRequirements: Type.Optional(Type.Array(FunctionalRequirementSchema)),

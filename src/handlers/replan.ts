@@ -23,6 +23,7 @@ import type {
   WaveTask,
   WaveTestCase,
 } from "../core/plan.js";
+import { WAVE_STATUS_TO_ACTION } from "../core/status.js";
 import type { ExecutionUnit } from "../core/workunit.js";
 import { buildReplanGuidance } from "../guidance/build-guidance.js";
 import { buildPrefix } from "../guidance/index.js";
@@ -104,6 +105,11 @@ export function handleReplan(
   const allUnits = allRecords as unknown as ExecutionUnit[];
   const replanImpact = computeImpact(allUnits, input.abandonedIds);
 
+  // per-wave testCommand 旁路：executing 状态在途 wave 补测试命令（design-reviewed 走 plan progressive）。
+  if (input.testCommand !== undefined) {
+    unit.plan.testCommand = input.testCommand;
+  }
+
   // ── replan 旁路：status 不变，但 append statusHistory（from=to=current, action="replan", note）──
   transitionStatus(unit, "replan", deps.clock.now(), input.note);
 
@@ -117,6 +123,17 @@ export function handleReplan(
     `pendingRebuild: ${replanImpact.pendingRebuild.length > 0 ? replanImpact.pendingRebuild.join(", ") : "（无）"}`,
   ].join("\n");
   const base = buildNextAction(unit, "replan");
+  // 纯 testCommand 补充（无 plan 条目变更）→ 重定向到当前 status 映射的 action（executing→test），
+  // 否则 plan 在 executing 状态抛 illegal_transition，恢复路径不可达。
+  const testCommandOnly =
+    input.abandonedIds.length === 0 &&
+    (input.abandonParentItems === undefined || input.abandonParentItems.length === 0) &&
+    input.addedSpecItems === undefined;
+  const nextAction = testCommandOnly
+    ? (WAVE_STATUS_TO_ACTION[unit.status] ?? "test")
+    : "plan";
+  const nextCommand = buildCommand(nextAction, `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, nextAction)}`);
+  const schemaText = getSchemaText(nextAction);
   // #12：prefix 复用 buildPrefix（含 STATUS_DISPLAY 中文映射 + 父单元段），与 buildNextAction 输出一致。
   base.guidance = buildReplanGuidance({
     prefix: buildPrefix({
@@ -128,9 +145,9 @@ export function handleReplan(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
+    nextCommand,
     // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
-    schemaText: getSchemaText("plan"),
+    schemaText,
   });
 
   return {
