@@ -96,3 +96,16 @@
 ### Miscellaneous
 - docs(closeout): distill cw-guidance-hardening conclusions (ADR-0012 + NFR O-2/O-3 + ARCHITECTURE + TEST-STRATEGY RB-5) (c0027eb)
 - docs(skill): fix wave plan structure, failure hint threshold, schema block note (gap 2/3) (48329a8)
+
+## [v1.3.0] - 2026-08-04
+
+### Features
+- feat(test-command): w3 guidance + replan testCommand bypass + tests (060af56)
+- feat(test-command): w2 testRunner flip to per-wave testCommand + config deprecation + fail hint split (7a127f4)
+- feat(test-command): w1 schema layer + testCommandNonEmpty gate (28ec77a)
+
+### Bug Fixes
+- fix(replan): executing content-replan no-return guidance + schema non-empty guard (efa2ec3)
+
+### Miscellaneous
+
