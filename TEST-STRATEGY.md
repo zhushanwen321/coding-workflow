@@ -47,7 +47,7 @@
 
 | 文件 | 用例数 | 职责 |
 |---|---|---|
-| `dispatch-e2e.test.ts` | 8 | wave 完整生命周期（dispatch 串联 7 步）+ 非法跳步 → CwEngineError |
+| `dispatch-e2e.test.ts` | 8 | wave 完整生命周期（dispatch 串联 8 步）+ 非法跳步 → CwEngineError |
 | `handler-guidance.test.ts` | 18 | wave 10 个 handler 的 guidance 接入（正常三段式 / 异常四段式 / closeout crossLayer） |
 | `evidence-lifecycle.test.ts` | 7 | evidence 跨阶段填充：execute→commitHash、test→testRunResult、closeout→frozenAt |
 | `store.test.ts` | 20 | CwStore DAO：save/load 往返、原子写、findChildren、事务回滚、损坏文件抛错 |
@@ -259,7 +259,7 @@ describe("create wave happy path", () => {
 
 | 分支类型 | 示例 | 涉及文件 |
 |---|---|---|
-| happy path（一次过） | wave 7 步全链、各层 dispatch-e2e 全链 | dispatch-e2e / *-dispatch-e2e |
+| happy path（一次过） | wave 8 步全链、各层 dispatch-e2e 全链 | dispatch-e2e / *-dispatch-e2e |
 | progressive（多次调用追加） | design 多次 append clarifications + 写条目 | dispatch-e2e / *-dispatch-e2e |
 | gate fail → 不改 status（可 retry） | design-review gate fail / test gate fail | gates / *-gates / handler-guidance |
 | circuit breaker（连续 5 次 fail 换文案） | failureCount 派生 + 熔断文案 | guidance（failure-hint） |
@@ -307,7 +307,7 @@ describe("create wave happy path", () => {
 - **用例来源**：`tests/store.test.ts`（事务回滚 + 原子写 + 损坏文件抛错）+ `tests/dispatch-e2e.test.ts` / `tests/feature-dispatch-e2e.test.ts` / `tests/slice-dispatch-e2e.test.ts` / `tests/epic-dispatch-e2e.test.ts`（四层各自经 dispatch 跑通 create→…→closeout 全链）+ `tests/cli.test.ts` / `tests/e2e-handoff.test.ts`（子进程 CLI 端到端）
 - **断言**：
   - CwStore 内存事务：`fn` 在深拷贝副本上操作，正常→原子落盘，异常→丢弃副本 ROLLBACK 不污染磁盘（实现见 `src/store/cw-store.ts` 的 `transaction` 方法）。store.json 损坏 → load 抛错（不静默吞）
-  - 四层各自经 dispatch 跑通 `create → design → design-review → execute → [test → exec-review →] retrospect → closeout` 全链（PlanningUnit 6 步 / wave 7 步），最终 `status=closed`，evidence.frozenAt 写入；epic→feature→slice→wave 跨层下沉（execute 按 split 创建子 unit）+ closeout 跨层回溯（crossLayer ascend）端到端验证
+  - 四层各自经 dispatch 跑通 `create → design → design-review → execute → [test → exec-review →] retrospect → closeout` 全链（PlanningUnit 6 步 / wave 8 步），最终 `status=closed`，evidence.frozenAt 写入；epic→feature→slice→wave 跨层下沉（execute 按 split 创建子 unit）+ closeout 跨层回溯（crossLayer ascend）端到端验证
   - 子进程层：`dist/cli.js` create/design（`--input @file.json` 管道）/handoff 端到端可用，缺参数 → exit 1，unit not found → exit 1 + CwEngineError 语义
 - **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂（事务不回滚导致脏数据，或某层跨链下沉/回溯断裂），agent 无法完成或无法正确推进编码任务
 - **关联约束**：NFR V-1
