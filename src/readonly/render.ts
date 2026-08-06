@@ -1068,7 +1068,7 @@ function buildGuidanceForScope(
   if (!action) return undefined;
   try {
     // G5：recursive 模式下 planning executing 是被唤醒的续 turn 场景——父不自己 descend，
-    // guidance 按子状态给：子全完 → 派 chain-agent 合并 + retrospect；子未完 → 继续等。
+    // guidance 按子状态给：子全完 → 派 merge-agent 合并 + retrospect；子未完 → 继续等。
     // serial 模式无此场景（execute 后直接 descend），保持现状。
     if (orchestration === "recursive" && scope !== "wave" && status === "executing") {
       const children = store.findChildren(unit.id);
@@ -1080,10 +1080,10 @@ function buildGuidanceForScope(
         pendingChild !== undefined
           ? [
               "【续 turn】子单元仍在建：空闲等 steer 唤醒（recursive 模式不要自己 descend）。",
-              "唤醒后重跑 cw handoff --unitId <本单元> 复查：子全完则派 chain-agent 合并子交付 + 推进本层 retrospect；未完继续等。",
+              "唤醒后重跑 cw handoff --unitId <本单元> 复查：子全完则派 merge-agent 合并子交付 + 推进本层 retrospect；未完继续等。",
             ].join("\n")
           : [
-              "【续 turn】子单元已全完（closed）：派 chain-agent 合并子交付，然后推进本层 retrospect。",
+              "【续 turn】子单元已全完（closed）：派 merge-agent 合并子交付，然后推进本层 retrospect。",
             ].join("\n");
       return { action, guidance: `${base}\n\n${continuation}` };
     }
