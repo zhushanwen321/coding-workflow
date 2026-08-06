@@ -66,11 +66,25 @@ export function handleDesignReviewEpic(
   epicTransition(unit, "design-review", deps.clock.now());
 
   saveEpic(deps, unit);
+
+  const nextAction = buildEpicNextAction(unit, "design-review");
+  // E6 warn gate surfacing：severity==="warn" 的 gate（如 inheritedItemIdsDeclared）passed=true，
+  // 被上面 filter(!g.passed) 天然排除，其 report 默认被静默丢弃。成功路径在此把 warn report
+  // 以独立「## 需注意」段追加进 guidance（不阻断流转），让 agent 看到软提醒。用 `## 需注意`
+  // markdown 段（与 buildNormalGuidance 的 `## 段落` 结构一致），追加新段不破坏既有段落
+  //（位置/下一步/schema+约束），下游消费者按段解析。
+  const warnReports = gateResults
+    .filter((g) => g.passed && g.severity === "warn")
+    .map((g) => g.report);
+  if (warnReports.length > 0) {
+    nextAction.guidance += `\n\n## 需注意\n${warnReports.map((r) => `- ${r}`).join("\n")}`;
+  }
+
   return {
     unitId: unit.id,
     status: unit.status,
     gateResults,
     ok: true,
-    nextAction: buildEpicNextAction(unit, "design-review"),
+    nextAction,
   };
 }

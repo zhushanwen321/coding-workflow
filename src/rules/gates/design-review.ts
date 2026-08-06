@@ -197,12 +197,12 @@ export function noSiblingWaveFileConflict(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 wave design-review 全部 8 个 gate（wave §11 WAVE_DESIGN_REVIEW_GATES 清单）。
+ * 跑 wave design-review 全部 10 个 gate（wave §11 WAVE_DESIGN_REVIEW_GATES 清单）。
  *
  * 与 slice/feature/epic 聚合函数对称（runSliceDesignReviewGates 等），用 runGateSafely 逐个包裹。
  * 顺序对应原 wave handler 的 inline 数组（design-review.ts:48-57）：
- *   2 个 testCases 结构 gate + 5 个 judgment 非空 gate + 1 个 wave layerSpecific 非空 gate
- *   + 1 个跨 wave 文件冲突 gate（本次新增，design §3.4）。
+ *   3 个 testCases 结构 gate + 5 个 judgment 非空 gate + 1 个 wave layerSpecific 非空 gate
+ *   + 1 个跨 wave 文件冲突 gate（design §3.4 新增）。
  *
  * siblingFiles 由 handler 注入（rules 层零 IO）：handler 从 store.findChildren(parentUnitId)
  * load 兄弟 wave 的 plan.files 后传入。parentUnitId 为空（独子/孤立 wave）时传空数组，

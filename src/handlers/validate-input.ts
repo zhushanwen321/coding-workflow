@@ -468,6 +468,9 @@ export const RetrospectSliceInputSchema = strict({
 // ═══════════════════════════════════════════════════════════════
 
 const ArtifactRefSchema = strict({
+  // 注意：kind 是「产物类型分类」（spec/plan/review-report/...），与 E1 action 改名无关。
+  // "plan" 指代「设计文档」产物（E1 把领域 action clarify+plan→design 迁移后保留），
+  // 是稳定的产物分类标签，向后兼容历史 closeout evidence，不随 action 名迁移。
   kind: Type.Union([
     Type.Literal("spec"),
     Type.Literal("plan"),

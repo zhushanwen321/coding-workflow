@@ -477,7 +477,7 @@ export function getUnitScope(store: CwStore, unitId: string): string | null {
  * 判别层类型并转为 ExecutionUnit（scope='wave'）/ Slice（scope='slice'）/ Feature（scope='feature'）/ Epic（scope='epic'）。
  * 其他 scope 抛 unsupported_scope。
  *
- * @returns ExecutionUnit | Slice | Feature | null（unitId 不存在时 null）
+ * @returns ExecutionUnit | Slice | Feature | Epic | null（unitId 不存在时 null）
  */
 function loadWorkUnit(
   store: CwStore,

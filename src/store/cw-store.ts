@@ -116,6 +116,16 @@ export class CwStore {
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
     // schema 版本：旧 store 无 schemaVersion 视为已迁移到当前版本（全新部署无存量数据）
     if (typeof data.schemaVersion !== "number") data.schemaVersion = SCHEMA_VERSION;
+    // schema 版本不匹配告警（S-4）：旧 store（如 schemaVersion=1）可能含已删除的 status/action
+    //（v2 删了 clarifying/planning status、clarify/plan action），新状态机无法识别 →
+    // guardWave/guardPlanning 失败、unit 卡死。不阻断加载（CW 0.x 期 greenfield 可接受），
+    // 仅 console.warn 提示用户重建 .cw 目录。
+    if (data.schemaVersion !== SCHEMA_VERSION) {
+      console.warn(
+        `CwStore: store schemaVersion ${data.schemaVersion} !== 当前版本 ${SCHEMA_VERSION}（${this.dbPath}）` +
+          `——旧 store 可能含已删除的 status/action，建议删除 .cw 目录重建。`,
+      );
+    }
     // repoMeta 缺失留 undefined，首次推进类 save 时回填（不在只读 loadFileData 调 git）
     return data;
   }
