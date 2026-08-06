@@ -104,6 +104,9 @@ export function handleCloseoutFeature(
   // ── crossLayer：回溯父单元（无 parent 则孤立终点；serial 模式）──
   // G5：recursive 模式（多 agent 并行 + steer 唤醒）不填 ascend——closeout 后该结束，
   // 让 steer 唤醒父 agent（不自己回溯）。serial 模式保持现状。
+  // 注：该层 ascend 是 handler 内独立计算（最小回溯，不查 sibling），不走 cross-layer.ts 的
+  // sibling/ascend 复合路由——故 recursive 抑制分支保留在此，不下沉到 cross-layer.ts。
+  // （wave 层 sibling/ascend 复合路由的 recursive 抑制已下沉到 cross-layer.ts，v5 §五 line241。）
   const crossLayer: CwNextAction["crossLayer"] | undefined =
     deps.orchestration === "recursive"
       ? undefined

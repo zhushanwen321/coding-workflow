@@ -121,16 +121,15 @@ export function handleCloseout(
   }
 
   // closeout 后回溯父单元（wave 是叶子，closeout 后按 §7.3 算 crossLayer）。
-  // G5：recursive 模式（多 agent 并行 + steer 唤醒）不填 sibling/ascend——closeout 后
-  // 该结束，让 steer 唤醒父 agent（不自己横向/回溯）。serial 模式保持现状。
+  // G5 orchestration 感知已下沉到 cross-layer.ts（v5 §五 line241）：传 deps.orchestration 给
+  // computeCrossLayerAfterCloseout，由该函数内部决定 recursive 时抑制（返回 undefined）。
   const crossLayer: CwNextAction["crossLayer"] | undefined =
-    deps.orchestration === "recursive"
-      ? undefined
-      : computeCrossLayerAfterCloseout({
-          store: deps.store,
-          unitId: unit.id,
-          parentUnitId: unit.parentUnitId,
-        });
+    computeCrossLayerAfterCloseout({
+      store: deps.store,
+      unitId: unit.id,
+      parentUnitId: unit.parentUnitId,
+      orchestration: deps.orchestration,
+    });
 
   return {
     unitId: unit.id,
