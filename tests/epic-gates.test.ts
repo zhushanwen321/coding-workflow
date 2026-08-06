@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DesignReviewJudgment } from "../src/core/judgments.js";
+import type { Split } from "../src/core/plan.js";
 import type { Epic } from "../src/core/workunit.js";
 import {
   designReviewAlternativesNonEmpty,
@@ -27,9 +28,11 @@ import {
   designReviewTradeoffsPresent,
   epicLayerSpecificNonEmpty,
   epicSplitDagValid,
+  epicSplitFanOutLimit,
   epicSplitNonEmpty,
   runEpicDesignReviewGates,
 } from "../src/rules/gates/design-review.js";
+import { MAX_EPIC_TO_FEATURE } from "../src/rules/gates/fan-out.js";
 import {
   makeEpicUnit,
   makeValidClarification,
@@ -55,6 +58,37 @@ function validEpic(): Epic {
 // ═══════════════════════════════════════════════════════════════
 // split 结构完整性（2 个）
 // ═══════════════════════════════════════════════════════════════
+
+/** 构造 n 个 split，全部继承同一个条目 id（模拟该 id 的 fan-out = n）。 */
+function fanOutSplits(n: number, sharedId: string): Split[] {
+  return Array.from({ length: n }, (_, i) => ({
+    slug: `f${i + 1}`,
+    description: `feature ${i + 1}`,
+    dependsOn: [],
+    inheritedItemIds: [sharedId],
+  }));
+}
+
+// fan-out 上限（epicSplitFanOutLimit, MAX_EPIC_TO_FEATURE）
+describe("epic design-review gates: fan-out 上限（epicSplitFanOutLimit）", () => {
+  it(`fan-out 等于上限（${MAX_EPIC_TO_FEATURE} 个 split 继承同一 id）→ pass（count 不 > 上限）`, () => {
+    const unit = validEpic();
+    unit.plan.split = fanOutSplits(MAX_EPIC_TO_FEATURE, "Q1");
+    const r = epicSplitFanOutLimit(unit);
+    expect(r.passed).toBe(true);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+  });
+
+  it(`fan-out 超上限（${MAX_EPIC_TO_FEATURE + 1} 个 split 继承同一 id）→ fail + report 含超限 id 与计数`, () => {
+    const unit = validEpic();
+    unit.plan.split = fanOutSplits(MAX_EPIC_TO_FEATURE + 1, "Q1");
+    const r = epicSplitFanOutLimit(unit);
+    expect(r.passed).toBe(false);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+    expect(r.report).toMatch(/Q1/);
+    expect(r.report).toMatch(String(MAX_EPIC_TO_FEATURE + 1));
+  });
+});
 
 describe("epic design-review gates: split 结构完整性", () => {
   // epicSplitNonEmpty

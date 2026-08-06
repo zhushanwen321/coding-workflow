@@ -1,12 +1,12 @@
 /**
  * v1 epic handler — design-review action（跑 epic gate + 写 designReviewJudgment）。
  *
- * 设计来源：rules gates/design-review.runEpicDesignReviewGates（8 个 gate 清单）、
+ * 设计来源：rules gates/design-review.runEpicDesignReviewGates（13 个 gate 清单）、
  * PLANNING_TRANSITIONS["design-review"]（progressive，planning/design-reviewed → design-reviewed）。
  *
  * 职责：
  * 1. 写 unit.designReviewJudgment = input.designReviewJudgment（先写，gate 里 layerSpecific 校验依赖它）
- * 2. 跑 runEpicDesignReviewGates(unit)（8 个 gate：split 结构 2 + judgment 5 + layerSpecific 1）
+ * 2. 跑 runEpicDesignReviewGates(unit)（13 个 gate：split 结构 4 + 决策/inherited 3 + judgment 5 + layerSpecific 1）
  * 3. 任一 gate fail → 短路返回 ok=false（不流转 status、但 append fail 记录供 failureCount 派生）
  * 4. 全 pass → status 流转（→ design-reviewed）→ save
  *
@@ -14,7 +14,7 @@
  *
  * 与 feature design-review 的差异：
  * - 用 runEpicDesignReviewGates（不是 runFeatureDesignReviewGates）
- * - 8 个 gate（feature 是 10 个），epic 无 FR-AC 强引用校验（epic 不产 spec，无 FR/AC/UC），
+ * - 13 个 gate（feature 是 16 个），epic 无 FR-AC 强引用校验（epic 不产 spec，无 FR/AC/UC），
  *   只有 split 结构（epicSplitNonEmpty/epicSplitDagValid）+ judgment 5 + layerSpecific 1
  */
 import type { Epic } from "../../core/workunit.js";

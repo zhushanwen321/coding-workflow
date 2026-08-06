@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import type {
   DesignReviewJudgment,
 } from "../src/core/judgments.js";
+import type { Split } from "../src/core/plan.js";
 import type { Feature } from "../src/core/workunit.js";
 import {
   acNonEmpty,
@@ -28,10 +29,12 @@ import {
   designReviewTradeoffsPresent,
   featureLayerSpecificNonEmpty,
   featureSplitDagValid,
+  featureSplitFanOutLimit,
   featureSplitNonEmpty,
   frAcCoverage,
   runFeatureDesignReviewGates,
 } from "../src/rules/gates/design-review.js";
+import { MAX_FEATURE_TO_SLICE } from "../src/rules/gates/fan-out.js";
 import {
   makeFeatureUnit,
   makeValidFeatureDesignReviewJudgment,
@@ -166,6 +169,37 @@ describe("feature design-review gates: FR-AC 强引用（3 个）", () => {
 // ═══════════════════════════════════════════════════════════════
 // split 结构完整性（2 个）
 // ═══════════════════════════════════════════════════════════════
+
+/** 构造 n 个 split，全部继承同一个条目 id（模拟该 id 的 fan-out = n）。 */
+function fanOutSplits(n: number, sharedId: string): Split[] {
+  return Array.from({ length: n }, (_, i) => ({
+    slug: `s${i + 1}`,
+    description: `slice ${i + 1}`,
+    dependsOn: [],
+    inheritedItemIds: [sharedId],
+  }));
+}
+
+// fan-out 上限（featureSplitFanOutLimit, MAX_FEATURE_TO_SLICE）
+describe("feature design-review gates: fan-out 上限（featureSplitFanOutLimit）", () => {
+  it(`fan-out 等于上限（${MAX_FEATURE_TO_SLICE} 个 split 继承同一 id）→ pass（count 不 > 上限）`, () => {
+    const unit = validFeature();
+    unit.plan.split = fanOutSplits(MAX_FEATURE_TO_SLICE, "FR1");
+    const r = featureSplitFanOutLimit(unit);
+    expect(r.passed).toBe(true);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+  });
+
+  it(`fan-out 超上限（${MAX_FEATURE_TO_SLICE + 1} 个 split 继承同一 id）→ fail + report 含超限 id 与计数`, () => {
+    const unit = validFeature();
+    unit.plan.split = fanOutSplits(MAX_FEATURE_TO_SLICE + 1, "FR1");
+    const r = featureSplitFanOutLimit(unit);
+    expect(r.passed).toBe(false);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+    expect(r.report).toMatch(/FR1/);
+    expect(r.report).toMatch(String(MAX_FEATURE_TO_SLICE + 1));
+  });
+});
 
 describe("feature design-review gates: split 结构完整性", () => {
   // featureSplitNonEmpty

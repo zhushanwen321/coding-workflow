@@ -773,9 +773,9 @@ export function layerSpecificNonEmpty(unit: Slice): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 slice design-review 全部 11 个 gate（slice §5.5 SLICE_DESIGN_REVIEW_GATES）。
+ * 跑 slice design-review 全部 14 个 gate（slice §5.5 SLICE_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：结构完整性（3）→ 决策已解决 + inheritedItemIds 有效（2）
+ * 顺序对应附录清单：结构完整性（5）→ 决策已解决 + inheritedItemIds 有效/已声明（3）
  * → 业务判断非空（5，复用 wave 的 judgment gate）→ layerSpecific 非空（1）。
  * 返回全部 GateResult，调用方按 passed 过滤 mustFix。
  *
@@ -1017,9 +1017,9 @@ export function featureLayerSpecificNonEmpty(unit: Feature): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 feature design-review 全部 13 个 gate（feature §4.3 FEATURE_DESIGN_REVIEW_GATES）。
+ * 跑 feature design-review 全部 16 个 gate（feature §4.3 FEATURE_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：FR-AC 强引用（3）→ split 结构完整性（2）→ 决策已解决 + inheritedItemIds 有效（2）
+ * 顺序对应附录清单：FR-AC 强引用（3）→ split 结构完整性（4）→ 决策已解决 + inheritedItemIds 有效/已声明（3）
  * → 业务判断非空（5，复用 wave/slice 共用的 judgment gate）→ layerSpecific 非空（1）。
  * 不包含 slice 专属 gate（techChoices/interfaces/dataModels/errorSpecs——feature plan 无这些）。
  * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。
@@ -1173,9 +1173,9 @@ export function epicLayerSpecificNonEmpty(unit: Epic): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 epic design-review 全部 10 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
+ * 跑 epic design-review 全部 13 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：split 结构完整性（2）→ 决策已解决 + inheritedItemIds 有效（2）
+ * 顺序对应附录清单：split 结构完整性（4）→ 决策已解决 + inheritedItemIds 有效/已声明（3）
  * → 业务判断非空（5，复用 wave/slice/feature 共用的 judgment gate）→ layerSpecific 非空（1）。
  * 不包含 feature 专属的 FR-AC 强引用 gate（frAcCoverage/acReachableFromFr/acNonEmpty——epic 无 spec）。
  * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。

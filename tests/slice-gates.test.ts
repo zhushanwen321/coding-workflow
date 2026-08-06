@@ -15,6 +15,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DesignReviewJudgment, PlanningRetrospectData } from "../src/core/judgments.js";
+import type { Split } from "../src/core/plan.js";
 import type { Slice } from "../src/core/workunit.js";
 import {
   designReviewAlternativesNonEmpty,
@@ -22,12 +23,15 @@ import {
   designReviewRisksPresent,
   designReviewSufficiencyComplete,
   designReviewTradeoffsPresent,
+  inheritedItemIdsDeclared,
   layerSpecificNonEmpty,
   runSliceDesignReviewGates,
   splitDagValid,
+  splitFanOutLimit,
   splitNonEmpty,
   techChoiceNonEmpty,
 } from "../src/rules/gates/design-review.js";
+import { MAX_SLICE_TO_WAVE } from "../src/rules/gates/fan-out.js";
 import {
   allWavesClosed,
   reviewedItemsCoverDesignReview,
@@ -137,6 +141,60 @@ describe("slice design-review gates: 结构完整性", () => {
       ];
       expect(splitDagValid(unit).passed).toBe(true);
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// fan-out 上限 + inheritedItemIdsDeclared 软 gate（S-1 回归锁）
+// ═══════════════════════════════════════════════════════════════
+
+/** 构造 n 个 split，全部继承同一个条目 id（模拟该 id 的 fan-out = n）。 */
+function fanOutSplits(n: number, sharedId: string): Split[] {
+  return Array.from({ length: n }, (_, i) => ({
+    slug: `w${i + 1}`,
+    description: `wave ${i + 1}`,
+    dependsOn: [],
+    inheritedItemIds: [sharedId],
+  }));
+}
+
+describe("slice design-review gates: fan-out 上限（splitFanOutLimit, MAX_SLICE_TO_WAVE）", () => {
+  it(`fan-out 等于上限（${MAX_SLICE_TO_WAVE} 个 split 继承同一 id）→ pass（count 不 > 上限）`, () => {
+    const unit = validSlice();
+    unit.plan.split = fanOutSplits(MAX_SLICE_TO_WAVE, "IF1");
+    const r = splitFanOutLimit(unit);
+    expect(r.passed).toBe(true);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+  });
+
+  it(`fan-out 超上限（${MAX_SLICE_TO_WAVE + 1} 个 split 继承同一 id）→ fail + report 含超限 id 与计数`, () => {
+    const unit = validSlice();
+    unit.plan.split = fanOutSplits(MAX_SLICE_TO_WAVE + 1, "IF1");
+    const r = splitFanOutLimit(unit);
+    expect(r.passed).toBe(false);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+    expect(r.report).toMatch(/IF1/);
+    expect(r.report).toMatch(String(MAX_SLICE_TO_WAVE + 1));
+  });
+});
+
+describe("slice design-review gates: inheritedItemIdsDeclared 软 gate（warn 不阻断）", () => {
+  it("全部 split 声明 inheritedItemIds → passed:true（无 severity）", () => {
+    const splits = fanOutSplits(2, "IF1"); // 每条都声明 ["IF1"]
+    const r = inheritedItemIdsDeclared(splits);
+    expect(r.passed).toBe(true);
+    expect(r.severity).toBeUndefined();
+  });
+
+  it("有 split 未声明 inheritedItemIds → passed:true + severity:'warn'（软提醒不阻断）", () => {
+    const r = inheritedItemIdsDeclared([
+      { slug: "declared", description: "x", dependsOn: [], inheritedItemIds: ["IF1"] },
+      { slug: "undeclared", description: "y", dependsOn: [], inheritedItemIds: [] },
+    ]);
+    expect(r.passed).toBe(true);
+    expect(r.severity).toBe("warn");
+    expect(r.report).toMatch(/inherited-item-ids-declared/);
+    expect(r.report).toMatch(/undeclared/);
   });
 });
 

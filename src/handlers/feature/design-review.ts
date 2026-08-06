@@ -1,12 +1,12 @@
 /**
  * v1 feature handler — design-review action（跑 feature gate + 写 designReviewJudgment）。
  *
- * 设计来源：rules gates/design-review.runFeatureDesignReviewGates（10 个 gate 清单）、
+ * 设计来源：rules gates/design-review.runFeatureDesignReviewGates（16 个 gate 清单）、
  * PLANNING_TRANSITIONS["design-review"]（progressive，planning/design-reviewed → design-reviewed）。
  *
  * 职责：
  * 1. 写 unit.designReviewJudgment = input.designReviewJudgment（先写，gate 里 layerSpecific 校验依赖它）
- * 2. 跑 runFeatureDesignReviewGates(unit)（10 个 gate：FR-AC 强引用 3 + split 结构 2 + judgment 5 + layerSpecific 1）
+ * 2. 跑 runFeatureDesignReviewGates(unit)（16 个 gate：FR-AC 强引用 3 + split 结构 4 + 决策/inherited 3 + judgment 5 + layerSpecific 1）
  * 3. 任一 gate fail → 短路返回 ok=false（不流转 status、但 append fail 记录供 failureCount 派生）
  * 4. 全 pass → status 流转（→ design-reviewed）→ save
  *
@@ -14,7 +14,7 @@
  *
  * 与 slice design-review 的差异：
  * - 用 runFeatureDesignReviewGates（不是 runSliceDesignReviewGates）
- * - 10 个 gate（slice 是 9 个），FR-AC 强引用（frAcCoverage/acReachableFromFr/acNonEmpty）是 feature 专属，
+ * - 16 个 gate（slice 是 14 个），FR-AC 强引用（frAcCoverage/acReachableFromFr/acNonEmpty）是 feature 专属，
  *   slice 的 techChoices/interfaces/dataModels/errorSpecs 结构校验 feature 无（plan 无这些字段）
  */
 import type { Feature } from "../../core/workunit.js";
