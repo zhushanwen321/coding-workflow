@@ -1,7 +1,7 @@
 # coding-workflow (CW-CLI)
 
 > Agent-agnostic 编码流程编排 CLI。状态机 + 机器检查 gate，强制 AI 编码任务走
-> create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout。
+> create → design → design-review → execute → test → exec-review → retrospect → closeout。
 > agent 只需通过 bash 调 `cw` 命令，按返回的 `nextAction.guidance` 推进全流程。
 
 ## 常用命令
@@ -44,7 +44,7 @@ npm run build       # tsc 编译到 dist/
 
 | 文档 | 内容 |
 |------|------|
-| [CONTEXT.md](./CONTEXT.md) | 统一语言（16 action / 两层 status / 核心架构概念） |
+| [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
 | [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |

@@ -47,8 +47,8 @@
 
 | 文件 | 用例数 | 职责 |
 |---|---|---|
-| `dispatch-e2e.test.ts` | 8 | wave 完整生命周期（dispatch 串联 9 步）+ 非法跳步 → CwEngineError |
-| `handler-guidance.test.ts` | 18 | wave 11 个 handler 的 guidance 接入（正常三段式 / 异常四段式 / closeout crossLayer） |
+| `dispatch-e2e.test.ts` | 8 | wave 完整生命周期（dispatch 串联 7 步）+ 非法跳步 → CwEngineError |
+| `handler-guidance.test.ts` | 18 | wave 10 个 handler 的 guidance 接入（正常三段式 / 异常四段式 / closeout crossLayer） |
 | `evidence-lifecycle.test.ts` | 7 | evidence 跨阶段填充：execute→commitHash、test→testRunResult、closeout→frozenAt |
 | `store.test.ts` | 20 | CwStore DAO：save/load 往返、原子写、findChildren、事务回滚、损坏文件抛错 |
 | `repo-meta.test.ts` | 8 | collectRepoMeta + CwJsonFile schemaVersion/repoMeta 迁移（真 git 子进程） |
@@ -60,7 +60,7 @@
 | `slice-replan-cascade.test.ts` | 19 | slice replan 级联影响面：computeImpactCascade + cascadeAbortUnit/cascadeAbortChildren |
 | `evidence-rollup.test.ts` | 8 | slice evidence rollup（wave closeout/abort → childDelivery） |
 | `rollup-planning.test.ts` | 9 | PlanningUnit 三层 closeout/abort + 级联函数内部 rollup |
-| `feature-clarify-validate.test.ts` | 5 | feature clarify 结构校验：畸形 spec 被 validateFeatureSpec 拦截 → ok=false |
+| `feature-design-validate.test.ts` | 6 | feature design 的 spec 结构校验：畸形 spec 被 validateFeatureSpec 拦截 → ok=false |
 | `epic-retrospect.test.ts` | 22 | epic retrospect 验收 7 gate（allWavesClosed / childUnitEvidenceComplete / deliveryVerdict 等） |
 | `feature-retrospect.test.ts` | 18 | feature retrospect 验收 7 gate |
 | `handoff-scope.test.ts` | 10 | renderHandoff scope=upstream/full（父链+子树）+ size warning |
@@ -69,7 +69,7 @@
 
 | 文件 | 用例数 | 职责 |
 |---|---|---|
-| `cli.test.ts` | 26 | cw CLI 子进程接入：create wave / 缺参数 exit 1 / clarify `--input @file.json` 管道 / unit not found |
+| `cli.test.ts` | 26 | cw CLI 子进程接入：create wave / 缺参数 exit 1 / design `--input @file.json` 管道 / unit not found |
 | `e2e-handoff.test.ts` | 3 | handoff 端到端：五段式纯文本 + 缺 `--unitId` exit 1 + 不存在 unitId exit 1 |
 | `feature-dispatch-e2e.test.ts` | 17 | feature 完整链路（dispatch 串联：create→…→closeout + child slice 推进） |
 | `slice-dispatch-e2e.test.ts` | 8 | slice 完整链路（dispatch 串联 + child wave 推进） |
@@ -94,7 +94,7 @@
 | 层 | 测什么 | 不测什么 | 对应文件 |
 |---|---|---|---|
 | 单元（纯函数） | 无副作用的判定与计算：状态机（`guardWave`/`guardPlanning`/`nextWaveStatus`/`nextPlanningStatus`）、gate 纯函数（`src/rules/gates/*`）、append-only 校验（`src/rules/freeze.ts` 的 `checkFreeze*`）、影响面计算（`src/rules/replan.ts` 的 `computeImpact`）、guidance 子系统、vitest 输出解析 | 不碰文件系统、不碰 git、不碰 store | state-machine / *-state-machine / gates / *-gates / freeze / replan / spec-schema / parse-* / guidance* / readonly-handoff / list-enhance / replan-review |
-| 集成（dispatch / handler / store） | 走完整 dispatch 路径：`loadWorkUnit → guard → handler（按 scope 路由）→ store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 + guidance 接入 + evidence/rollup；CwStore 用真实 tmp 文件系统；git 走真实子进程 | 不 spawn 子进程跑真实 `cw` CLI（dispatch-e2e 经 dispatch 跑，进程内） | dispatch-e2e / *-dispatch-e2e / handler-guidance / evidence-* / rollup-* / store / repo-meta / migrate-v1 / git-extract / parse-abandon-markers / abandon-parent-items-input / feature-replan-spec / slice-replan-cascade / *-retrospect / feature-clarify-validate / handoff-scope |
+| 集成（dispatch / handler / store） | 走完整 dispatch 路径：`loadWorkUnit → guard → handler（按 scope 路由）→ store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 + guidance 接入 + evidence/rollup；CwStore 用真实 tmp 文件系统；git 走真实子进程 | 不 spawn 子进程跑真实 `cw` CLI（dispatch-e2e 经 dispatch 跑，进程内） | dispatch-e2e / *-dispatch-e2e / handler-guidance / evidence-* / rollup-* / store / repo-meta / migrate-v1 / git-extract / parse-abandon-markers / abandon-parent-items-input / feature-replan-spec / slice-replan-cascade / *-retrospect / feature-design-validate / handoff-scope |
 | e2e（子进程 CLI） | 真实 `spawnSync` node 子进程跑 `dist/cli.js`，`CW_HOME` 指向 tmp 子目录（per-cwd 隔离），cwd 绑 workspaceDir。覆盖 CLI 入口到归档的关键链路 + 只读命令（handoff）的端到端可用性 | 不 mock 任何东西——入口/状态机/store/git 全部真实 | cli / e2e-handoff |
 
 **三层职责切分原则**：单元层保证判定逻辑正确（机器重算/gate 校验的核心防线）；集成层保证 handler 编排与 store 读写正确（覆盖每个 handler 的正常 + 异常路径 + 跨层 rollup/级联）；e2e 层保证 CLI 入口到归档的整条链路在子进程层不断裂。集成层不重复单元层的纯逻辑断言，e2e 层不重复集成层的 handler 细节——只验证「端到端跑得通」。
@@ -238,16 +238,15 @@ describe("create wave happy path", () => {
 | action | flag（必填/常用） | input payload（`--input` / stdin） | 出处 |
 |---|---|---|---|
 | `create` | `--layer <wave\|slice\|feature\|epic>` + `--slug` + `--objective`（可选 `--parent` / `--basedOnParent`） | 无（参数走 flag） | cli.ts buildParams create 分支 |
-| `clarify` | `--unitId` | `{ clarifications: [...] }`（feature 是 `{ clarifications, spec }` 容器形态） | ClarifyInput (handlers/types.ts:200) |
-| `plan` | `--unitId`（可选 `--abandonParentItems`） | wave: `{ testCases, tasks, files, contracts }`；slice: `{ techChoices, interfaces, dataModels, errorSpecs, split }`；feature/epic: `{ split }` | PlanInput (handlers/types.ts:205) / PlanSliceInput (:293) / PlanFeatureInput (:339) |
-| `design-review` | `--unitId` | `{ designReviewJudgment }`（layerSpecific 按层 6/6/6/5 字段） | DesignReviewInput (handlers/types.ts:213) |
-| `execute` | `--unitId`；wave 需 `--commitHash` | wave: `{ commitHash }`（changedFiles 由 cw 从 commit 提取，agent 无需传）；slice/feature/epic: 无 input（按 plan.split 自动下沉子 unit） | ExecuteInput (handlers/types.ts:218) |
-| `test` | `--unitId` | `{ testJudgment }`（wave 专属） | TestInput (handlers/types.ts:228) |
-| `exec-review` | `--unitId` | `{ execReviewJudgment }`（wave 专属） | ExecReviewInput (handlers/types.ts:233) |
-| `retrospect` | `--unitId` | `{ retrospectData }`（PlanningUnit 含 deliveryVerdict + childUnitIdsEvidence + splitFulfillment） | RetrospectInput (handlers/types.ts:238) |
-| `closeout` | `--unitId` | `{ summary?, artifacts? }` | CloseoutInput (handlers/types.ts:243) |
-| `replan` | `--unitId` + `--abandonedIds` + `--note`（或走 `--input`/stdin；可选 `--abandonParentItems`） | `{ abandonedIds, note }`（feature 可加 `addedSpecItems`） | ReplanInput (handlers/types.ts:251) |
-| `abort` | `--unitId`（可选 `--reason`） | `{ reason? }`（可空） | AbortInput (handlers/types.ts:271) |
+| `design` | `--unitId`（可选 `--abandonParentItems`） | wave: `{ testCases, tasks, files, contracts, clarifications? }`；slice: `{ techChoices, interfaces, dataModels, errorSpecs, split, clarifications? }`；feature/epic: `{ split, clarifications? }`（feature 可选 `spec` 容器形态） | DesignInput (handlers/types.ts:230) / DesignSliceInput (:329) / DesignFeatureInput (:368) |
+| `design-review` | `--unitId` | `{ designReviewJudgment }`（layerSpecific 按层 6/6/6/5 字段） | DesignReviewInput (handlers/types.ts:242) |
+| `execute` | `--unitId`；wave 需 `--commitHash` | wave: `{ commitHash }`（changedFiles 由 cw 从 commit 提取，agent 无需传）；slice/feature/epic: 无 input（按 plan.split 自动下沉子 unit） | ExecuteInput (handlers/types.ts:247) |
+| `test` | `--unitId` | `{ testJudgment }`（wave 专属） | TestInput (handlers/types.ts:257) |
+| `exec-review` | `--unitId` | `{ execReviewJudgment }`（wave 专属） | ExecReviewInput (handlers/types.ts:262) |
+| `retrospect` | `--unitId` | `{ retrospectData }`（PlanningUnit 含 deliveryVerdict + childUnitIdsEvidence + splitFulfillment） | RetrospectInput (handlers/types.ts:267) |
+| `closeout` | `--unitId` | `{ summary?, artifacts? }` | CloseoutInput (handlers/types.ts:272) |
+| `replan` | `--unitId` + `--abandonedIds` + `--note`（或走 `--input`/stdin；可选 `--abandonParentItems`） | `{ abandonedIds, note }`（feature 可加 `addedSpecItems`） | ReplanInput (handlers/types.ts:280) |
+| `abort` | `--unitId`（可选 `--reason`） | `{ reason? }`（可空） | AbortInput (handlers/types.ts:306) |
 | `tree` / `status` / `list` / `handoff` / `frontier` | `--unitId`（list 可用 `--all`/`--layer`/`--grep`/`--limit`/`--offset`/`--long`；handoff 可用 `--scope`；frontier 用 `--root`） | 无（只读，不经 dispatch、不写 store） | cli.ts READONLY_QUERIES |
 
 **ID 格式约定**：
@@ -260,8 +259,8 @@ describe("create wave happy path", () => {
 
 | 分支类型 | 示例 | 涉及文件 |
 |---|---|---|
-| happy path（一次过） | wave 9 步全链、各层 dispatch-e2e 全链 | dispatch-e2e / *-dispatch-e2e |
-| progressive（多次调用追加） | clarify 多次 append、plan 多次写条目 | dispatch-e2e / *-dispatch-e2e |
+| happy path（一次过） | wave 7 步全链、各层 dispatch-e2e 全链 | dispatch-e2e / *-dispatch-e2e |
+| progressive（多次调用追加） | design 多次 append clarifications + 写条目 | dispatch-e2e / *-dispatch-e2e |
 | gate fail → 不改 status（可 retry） | design-review gate fail / test gate fail | gates / *-gates / handler-guidance |
 | circuit breaker（连续 5 次 fail 换文案） | failureCount 派生 + 熔断文案 | guidance（failure-hint） |
 | 非法状态（guard 拒绝） | created 直接 execute → CwEngineError(illegal_transition) | state-machine / *-state-machine / dispatch-e2e |
@@ -308,16 +307,16 @@ describe("create wave happy path", () => {
 - **用例来源**：`tests/store.test.ts`（事务回滚 + 原子写 + 损坏文件抛错）+ `tests/dispatch-e2e.test.ts` / `tests/feature-dispatch-e2e.test.ts` / `tests/slice-dispatch-e2e.test.ts` / `tests/epic-dispatch-e2e.test.ts`（四层各自经 dispatch 跑通 create→…→closeout 全链）+ `tests/cli.test.ts` / `tests/e2e-handoff.test.ts`（子进程 CLI 端到端）
 - **断言**：
   - CwStore 内存事务：`fn` 在深拷贝副本上操作，正常→原子落盘，异常→丢弃副本 ROLLBACK 不污染磁盘（实现见 `src/store/cw-store.ts` 的 `transaction` 方法）。store.json 损坏 → load 抛错（不静默吞）
-  - 四层各自经 dispatch 跑通 `create → clarify → plan → design-review → execute → [test → exec-review →] retrospect → closeout` 全链（PlanningUnit 7 步 / wave 9 步），最终 `status=closed`，evidence.frozenAt 写入；epic→feature→slice→wave 跨层下沉（execute 按 split 创建子 unit）+ closeout 跨层回溯（crossLayer ascend）端到端验证
-  - 子进程层：`dist/cli.js` create/clarify（`--input @file.json` 管道）/handoff 端到端可用，缺参数 → exit 1，unit not found → exit 1 + CwEngineError 语义
+  - 四层各自经 dispatch 跑通 `create → design → design-review → execute → [test → exec-review →] retrospect → closeout` 全链（PlanningUnit 6 步 / wave 7 步），最终 `status=closed`，evidence.frozenAt 写入；epic→feature→slice→wave 跨层下沉（execute 按 split 创建子 unit）+ closeout 跨层回溯（crossLayer ascend）端到端验证
+  - 子进程层：`dist/cli.js` create/design（`--input @file.json` 管道）/handoff 端到端可用，缺参数 → exit 1，unit not found → exit 1 + CwEngineError 语义
 - **破坏即**：CLI 入口 / 状态机 / store 任一环节断裂（事务不回滚导致脏数据，或某层跨链下沉/回溯断裂），agent 无法完成或无法正确推进编码任务
 - **关联约束**：NFR V-1
 
 ### RB-5 契约级加固防线  [guidance 正确性 + 输入防线 + 幂等]  [from: cw-guidance-hardening §execution-plan]
 
-- **用例来源**：`tests/handler-guidance.test.ts`（schema 取 nextAction + replan 透传 + 终态无 schema）+ `tests/cli.test.ts`（unknown flag / per-command help / input 校验）+ `tests/validate-input.test.ts`（13 schema × 34 入口）+ `tests/cli-params.test.ts`（白名单表）+ `tests/test-cwd-e2e.test.ts`（--testCwd 实际生效）+ `tests/gates.test.ts`（retrospect key 防御 + 报告两段）+ `tests/e2e-handoff.test.ts`（handoff schema 例外）
+- **用例来源**：`tests/handler-guidance.test.ts`（schema 取 nextAction + replan 透传 + 终态无 schema）+ `tests/cli.test.ts`（unknown flag / per-command help / input 校验）+ `tests/validate-input.test.ts`（12 schema × 27 入口）+ `tests/cli-params.test.ts`（白名单表）+ `tests/test-cwd-e2e.test.ts`（--testCwd 实际生效）+ `tests/gates.test.ts`（retrospect key 防御 + 报告两段）+ `tests/e2e-handoff.test.ts`（handoff schema 例外）
 - **断言**：
-  - guidance 的 schema 段与命令段同指 nextAction（create 后显示 clarify 的 clarifications 字段）；handoff 路径保持当前 action 取值；终态无 schema 段；replan 后 guidance 含 plan 的 schema 段
+  - guidance 的 schema 段与命令段同指 nextAction（create 后显示 design 的 clarifications 字段）；handoff 路径保持当前 action 取值；终态无 schema 段；replan 后 guidance 含 design 的 schema 段
   - 重复 create 同 slug（非空态）→ no-op 返回 existing + `idempotent: true`，store 不被覆盖；aborted/closed 终态 → guidance 含「重建请用新 slug」；created 空态允许覆盖
   - `cw test --testCwd <dir>` 的 runner 实际 cwd = 指定目录（fixture 写 process.cwd() 断言）
   - unknown flag → CwError exit 1 + 合法 flag 列表；`{}` input → CwError 非 crash exit 2；retrospect gate 失败报告含期望全集 + 缺失子集两段且无垃圾 key
