@@ -36,6 +36,8 @@ import { getCwJsonPath } from "./schema.js";
 // ── 常量 ─────────────────────────────────────────────────────
 
 const JSON_INDENT = 2;
+/** 当前 store 文件 schema 版本。v4 全新部署无存量数据，词汇迁移退化为版本标记。 */
+const SCHEMA_VERSION = 2;
 /** 文件锁最大重试次数。 */
 const LOCK_MAX_RETRIES = 50;
 /** 文件锁重试间隔（ms）。 */
@@ -112,15 +114,15 @@ export class CwStore {
       );
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
-    // schema 迁移：旧 store 无 schemaVersion 视为已迁移到 v1（向前兼容）
-    if (typeof data.schemaVersion !== "number") data.schemaVersion = 1;
+    // schema 版本：旧 store 无 schemaVersion 视为已迁移到当前版本（全新部署无存量数据）
+    if (typeof data.schemaVersion !== "number") data.schemaVersion = SCHEMA_VERSION;
     // repoMeta 缺失留 undefined，首次推进类 save 时回填（不在只读 loadFileData 调 git）
     return data;
   }
 
   private emptyFile(): CwJsonFile {
     // 显式 repoMeta: undefined 表明该键存在但尚未回填（首次 save 时由 save() 填充）。
-    return { schemaVersion: 1, repoMeta: undefined, workUnits: [] };
+    return { schemaVersion: SCHEMA_VERSION, repoMeta: undefined, workUnits: [] };
   }
 
   /**
