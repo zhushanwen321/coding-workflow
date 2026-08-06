@@ -40,14 +40,13 @@ import type { ExecutionUnit } from "./core/workunit.js";
 import type {
   AbortInput,
   ActionResult as CwActionResult,
-  ClarifyInput,
   CloseoutInput,
   CreateInput,
   CwDeps,
+  DesignInput,
   DesignReviewInput,
   ExecReviewInput,
   ExecuteInput,
-  PlanInput,
   ReplanInput,
   RetrospectInput,
   TestInput,
@@ -121,8 +120,8 @@ cw create 需要指定 layer。按「规模 × 性质」判断（先看规模）
 
 | 规模 | layer | 理由 |
 |------|-------|------|
-| 1 个 wave 能搞定（单文件/几个函数/明确 bug） | wave | 无需 plan 设计，直接施工 |
-| 多个 wave，但共享一套技术方案 | slice | plan 设计接口/数据模型，execute 自动拆 wave |
+| 1 个 wave 能搞定（单文件/几个函数/明确 bug） | wave | 无需 design 设计，直接施工 |
+| 多个 wave，但共享一套技术方案 | slice | design 设计接口/数据模型，execute 自动拆 wave |
 | 需求模糊，需规格化后才能拆技术方案 | feature | 先出 FR/AC/UC，execute 拆多个 slice |
 | 多个独立功能方向、需战略级拆解 | epic | execute 拆多个 feature |
 
@@ -150,8 +149,7 @@ export function buildLayerPromptGuidance(): string {
  * 这些 action 靠 --unitId 路由，input 通过 --input / stdin 传 JSON。
  */
 const ADVANCE_ACTIONS = new Set([
-  "clarify",
-  "plan",
+  "design",
   "design-review",
   "execute",
   "test",
@@ -329,7 +327,7 @@ function readInput(
  *   - replan/abort 的 input 也可用专门的 flag 构造（--abandonedIds/--note/--reason），
  *     作为 --input/stdin 的便捷替代。
  *
- * @param action  action 名（create/clarify/.../abort）
+ * @param action  action 名（create/design/.../abort）
  * @param layer     仅 create 用（argv[3]）
  * @param parsed    minimist 解析结果
  * @param stdinData 已读 stdin
@@ -387,20 +385,10 @@ function buildParams(
   if (!unitId) throw new CwError(`${action} 需要 --unitId`);
 
   switch (action) {
-    case "clarify":
-      return {
-        action: "clarify",
-        unitId,
-        input: readInput(
-          flag(parsed, "input"),
-          stdinData,
-          isStdinTTY,
-        ) as ClarifyInput,
-      };
-    case "plan": {
-      // plan input 类型因 scope 而异（PlanInput / PlanSliceInput / PlanFeatureInput），
+    case "design": {
+      // design input 类型因 scope 而异（DesignInput / DesignSliceInput / DesignFeatureInput），
       // 但都 extends AbandonParentItemsInput（ADR-0010），故 --abandonParentItems flag 统一注入。
-      const input = readInput(flag(parsed, "input"), stdinData, isStdinTTY) as PlanInput;
+      const input = readInput(flag(parsed, "input"), stdinData, isStdinTTY) as DesignInput;
       const abandonParentItemsRaw = flag(parsed, "abandonParentItems");
       if (abandonParentItemsRaw !== undefined) {
         input.abandonParentItems = parseJsonArg(
@@ -408,7 +396,7 @@ function buildParams(
           abandonParentItemsRaw,
         ) as string[];
       }
-      return { action: "plan", unitId, input };
+      return { action: "design", unitId, input };
     }
     case "design-review":
       return {
@@ -545,13 +533,22 @@ function buildParams(
   }
 }
 
-/** cw.config.json 的结构（仅支持 testRunner 配置）。 */
+/** cw.config.json 的结构（支持 testRunner + orchestration 配置）。 */
 interface CwConfig {
   testRunner?: {
     /** @deprecated 已废弃：改用 per-wave plan.testCommand。值不用于执行，仅兼容读取。 */
     command?: string;
     cwd?: string;
   };
+  /**
+   * 编排模式（G5，缺省 serial）。
+   *
+   * - "serial"（默认）：单 agent 串行——planning execute 后 crossLayer.descend 下沉第一个 child，
+   *   closeout 后 crossLayer.sibling/ascend 回溯。现状行为。
+   * - "recursive"：多 agent 并行 + steer 唤醒——execute 后不 descend（父派 subagent 空闲等唤醒），
+   *   closeout 后不 ascend（结束让 steer 唤醒父）；guidance 给派发指导 + 续 turn 指导。
+   */
+  orchestration?: "serial" | "recursive";
 }
 
 /**
@@ -559,6 +556,7 @@ interface CwConfig {
  *
  * 文件不存在返回 undefined（静默 fallback）。
  * JSON 解析失败打印警告返回 undefined（不阻塞 CLI）。
+ * orchestration 非法值（非 "serial"/"recursive"）打印警告忽略（缺省 serial，不阻塞 CLI）。
  */
 function loadCwConfig(workspacePath: string): CwConfig | undefined {
   const configPath = resolve(workspacePath, "cw.config.json");
@@ -569,6 +567,13 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const config: CwConfig = {};
     const obj = parsed as Record<string, unknown>;
+    if (obj.orchestration === "serial" || obj.orchestration === "recursive") {
+      config.orchestration = obj.orchestration;
+    } else if (obj.orchestration !== undefined) {
+      console.error(
+        `[cw] cw.config.json orchestration 必须是 "serial" 或 "recursive"，当前值: ${String(obj.orchestration)}，已忽略（默认 serial）`,
+      );
+    }
     if (typeof obj.testRunner === "object" && obj.testRunner !== null) {
       const tr = obj.testRunner as Record<string, unknown>;
       config.testRunner = {};
@@ -576,7 +581,7 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
         config.testRunner.command = tr.command;
         // 读取兼容保留：值不用于执行，仅提示迁移。
         console.error(
-          "[cw] cw.config.json testRunner.command 已废弃,改用 per-wave plan.testCommand(wave plan 阶段填写)。此值不再用于执行测试。",
+          "[cw] cw.config.json testRunner.command 已废弃,改用 per-wave plan.testCommand(wave design 阶段填写)。此值不再用于执行测试。",
         );
       }
       if (typeof tr.cwd === "string") config.testRunner.cwd = tr.cwd;
@@ -601,10 +606,12 @@ function readCliVersion(): string {
       dirname(fileURLToPath(import.meta.url)),
       "../package.json",
     );
-    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-      version?: unknown;
-    };
-    return typeof pkg.version === "string" ? pkg.version : "unknown";
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as unknown;
+    const version =
+      typeof pkg === "object" && pkg !== null
+        ? (pkg as Record<string, unknown>).version
+        : undefined;
+    return typeof version === "string" ? version : "unknown";
   } catch {
     return "unknown";
   }
@@ -626,8 +633,7 @@ function renderHelp(): string {
 
 工作流 action（推进编码流程，经 dispatch + store）：
   create <layer>          建 topic（layer: wave | slice | feature | epic）
-  clarify                 澄清需求
-  plan                    编写执行计划
+  design                  编写执行计划
   design-review           设计审查
   execute                 执行（wave 写代码 / planning 按 split 下沉）
   test                    测试验收
@@ -687,6 +693,7 @@ ${lines}
  *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
  *   - clock：new Date().toISOString()
+ *   - orchestration：编排模式（cw.config.json orchestration，缺省 serial）
  *
  * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
  * 执行命令：per-wave unit.plan.testCommand（shell 串），cw.config.json 的 testRunner.command 已废弃。
@@ -755,7 +762,10 @@ function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
     },
   };
   const clock = { now: (): string => new Date().toISOString() };
-  return { store, gitValidator, testRunner, fileExists, workspacePath, clock };
+  // orchestration：cw.config.json 配置，缺省 serial（向后兼容）。
+  // recursive 模式由各 handler 分支 descend/ascend + guidance 派发指导（G5）。
+  const orchestration = config?.orchestration ?? "serial";
+  return { store, gitValidator, testRunner, fileExists, workspacePath, clock, orchestration };
 }
 
 /** spawn 抛 ENOENT（git/npx 未安装）判定——基础设施异常，应抛出而非静默吞。 */
@@ -934,7 +944,10 @@ async function runReadonly(
     if (scope !== "self" && scope !== "upstream" && scope !== "full") {
       throw new CwError(`--scope 必须是 self/upstream/full，当前值: ${scope}`);
     }
-    process.stdout.write(renderHandoff(unit, store, scope));
+    // G5：recursive 模式下 handoff 对 planning executing 返回续 turn guidance（查子状态），
+    // 故 renderHandoff 需要知道编排模式（缺省 serial = 现状行为）。
+    const orchestration = loadCwConfig(workspacePath)?.orchestration;
+    process.stdout.write(renderHandoff(unit, store, scope, orchestration));
     return;
   }
 

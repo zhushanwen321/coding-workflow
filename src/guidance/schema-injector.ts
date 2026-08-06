@@ -131,8 +131,8 @@ export interface SchemaGenEntry {
  * 运行时优先读该 JSON 产物，命中则直接返回 schema 文本；未命中再降级回
  * injectSchema（开发时无 build 产物仍可工作）。
  *
- * key 格式：`${scope}:${action}`（如 `wave:clarify` / `slice:plan`）。四层可能有同名 action
- * 但不同 input interface（如 plan：wave=PlanInput、slice=PlanSliceInput），用 scope 前缀避免同名 key 冲突。
+ * key 格式：`${scope}:${action}`（如 `wave:design` / `slice:design`）。四层可能有同名 action
+ * 但不同 input interface（如 design：wave=DesignInput、slice=DesignSliceInput），用 scope 前缀避免同名 key 冲突。
  * 读取侧（readSchemaText / 四层 get*SchemaText）必须用同样的 `${scope}:${action}` key 查缓存。
  *
  * @returns `${scope}:${action}` → SchemaGenEntry 的映射对象。
@@ -186,7 +186,7 @@ interface SchemaGenFile {
 interface ReadSchemaTextArgs {
   /** scope 前缀（wave/slice/feature/epic），用于拼缓存 key `${scope}:${action}`。 */
   scope: string;
-  /** action 名（如 clarify/plan）。 */
+  /** action 名（如 design/design-review）。 */
   action: string;
   /** 该 action 的 schema 来源（结构化 input）；undefined 表示无结构化 schema。 */
   source: SchemaSource | undefined;

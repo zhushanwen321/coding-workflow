@@ -58,12 +58,12 @@ function sliceExecute(unitId: string): Parameters<typeof dispatch>[0] {
 }
 
 /**
- * 建 slice 带 split，走完 plan → design-review → execute（拆出 child wave，slice=executing）。
+ * 建 slice 带 split，走完 design → design-review → execute（拆出 child wave，slice=executing）。
  *
  * 返回 { sliceId, waveIds }（waveIds 按 split 顺序，id 形如 wave:<sliceSlug>::<waveSlug>）。
  *
  * @param sliceSlug  slice slug（决定 slice.id 和 child wave id 前缀）
- * @param split      plan.split（每项 { slug, description, dependsOn, inheritedItemIds }）
+ * @param split      design input 的 split（每项 { slug, description, dependsOn, inheritedItemIds }）
  */
 function setupSliceExecuting(
   sliceSlug: string,
@@ -74,10 +74,10 @@ function setupSliceExecuting(
     { action: "create", input: { slug: sliceSlug, objective: "o", layer: "slice" } },
     env.deps,
   );
-  dispatch({ action: "clarify", unitId: sliceId, input: { clarifications: [] } }, env.deps);
+  // design 合并原 clarify + plan
   dispatch(
     {
-      action: "plan",
+      action: "design",
       unitId: sliceId,
       input: { ...makeValidSlicePlan(), split },
     },
@@ -116,7 +116,7 @@ function findNode(nodes: FrontierNode[], unitId: string): FrontierNode {
 // ═══════════════════════════════════════════════════════════════
 
 describe("FTC1：类型 A blocked（planning executing + 子层未终态）", () => {
-  it("slice executing + 2 wave created → slice blocked，2 wave 不 blocked（nextAction=clarify，dependsOn=[]）", () => {
+  it("slice executing + 2 wave created → slice blocked，2 wave 不 blocked（nextAction=design，dependsOn=[]）", () => {
     const { sliceId, waveIds } = setupSliceExecuting("ftc1", [
       { slug: "w1", description: "wave 1", dependsOn: [], inheritedItemIds: ["IF1"] },
       { slug: "w2", description: "wave 2", dependsOn: [], inheritedItemIds: ["DM1"] },
@@ -135,11 +135,11 @@ describe("FTC1：类型 A blocked（planning executing + 子层未终态）", ()
     // childUnitIds 含 2 个 wave id
     expect(sliceNode.childUnitIds).toEqual([w1Id, w2Id]);
 
-    // w1 / w2 在 nodes：blocked=false, nextAction=clarify, dependsOn=[]（无依赖）
+    // w1 / w2 在 nodes：blocked=false, nextAction=design, dependsOn=[]（无依赖）
     const w1Node = findNode(result.nodes, w1Id);
     expect(w1Node.scope).toBe("wave");
     expect(w1Node.status).toBe("created");
-    expect(w1Node.nextAction).toBe("clarify");
+    expect(w1Node.nextAction).toBe("design");
     expect(w1Node.blocked).toBe(false);
     expect(w1Node.blockedReason).toBeUndefined();
     expect(w1Node.dependsOn).toEqual([]);
@@ -173,7 +173,7 @@ describe("FTC2a：类型 B blocked（w2 dependsOn w1，w1 未终态）", () => {
     expect(w1Node.blocked).toBe(false);
     expect(w1Node.dependsOn).toEqual([]);
     expect(w1Node.status).toBe("created");
-    expect(w1Node.nextAction).toBe("clarify");
+    expect(w1Node.nextAction).toBe("design");
 
     // w2：dependsOn w1，w1 未终态 → blocked
     const w2Node = findNode(result.nodes, w2Id);
@@ -196,7 +196,7 @@ describe("FTC2b：类型 B 解除（w1 closed → w2 不 blocked，但 dependsOn
     ]);
     const [w1Id, w2Id] = waveIds;
 
-    // 把 w1 走到 closed（走完 wave 9 步：clarify→plan→design-review→execute→test→exec-review→retrospect→closeout）
+    // 把 w1 走到 closed（走完 wave 8 步：design→design-review→execute→test→exec-review→retrospect→closeout）
     advanceWaveToClosed(env.deps, w1Id);
     expect(env.store.load(w1Id)?.status).toBe("closed");
 
@@ -303,7 +303,7 @@ describe("FTC4：root 是 wave（叶子）→ 单节点视图", () => {
     expect(node.unitId).toBe(w1Id);
     expect(node.scope).toBe("wave");
     expect(node.status).toBe("created");
-    expect(node.nextAction).toBe("clarify");
+    expect(node.nextAction).toBe("design");
     expect(node.blocked).toBe(false);
     expect(node.dependsOn).toEqual([]);
   });

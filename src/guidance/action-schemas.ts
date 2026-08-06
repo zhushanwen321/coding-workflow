@@ -29,8 +29,7 @@ export interface SchemaSource {
  */
 export const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "ClarifyInput" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanInput" },
+  design: { sourceFilePath: "src/core/plan.ts", interfaceName: "DesignInput" },
   "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined,
   test: { sourceFilePath: "src/handlers/types.ts", interfaceName: "TestInput" },
@@ -44,13 +43,12 @@ export const ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> =
 /**
  * slice action → 该 action 的 input schema 来源。
  *
- * IF5 映射（slice 层）：clarify→Clarification@clarifications.ts、plan→PlanSliceInput@plan.ts。
+ * IF5 映射（slice 层）：design→DesignSliceInput@plan.ts。
  * create/execute/replan/abort 无结构化 input（execute 按 split 下沉，不接收 input）。
  */
 export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "ClarifyInput" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanSliceInput" },
+  design: { sourceFilePath: "src/core/plan.ts", interfaceName: "DesignSliceInput" },
   "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined, // 下沉创建 child wave，不接收 input
   retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectSliceInput" },
@@ -62,14 +60,13 @@ export const SLICE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefin
 /**
  * feature action → 该 action 的 input schema 来源。
  *
- * IF5 映射（feature 层）：clarify→FeatureClarification@clarifications.ts、plan→PlanFeatureInput@plan.ts。
- * feature clarify 产物是 FeatureClarification 容器（{ clarifications, spec }），
- * plan 只写 split（Plan 基类，不产技术方案）。
+ * IF5 映射（feature 层）：design→DesignFeatureInput@plan.ts（含 clarifications + spec）。
+ * feature design 产物是 DesignFeatureInput 容器（{ clarifications, split, spec }），
+ * split 只拆下层（Plan 基类，不产技术方案）。
  */
 export const FEATURE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "FeatureClarifyInput" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanFeatureInput" },
+  design: { sourceFilePath: "src/core/plan.ts", interfaceName: "DesignFeatureInput" },
   "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined, // 下沉创建 child slice，不接收 input
   retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectFeatureInput" },
@@ -81,13 +78,11 @@ export const FEATURE_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undef
 /**
  * epic action → 该 action 的 input schema 来源。
  *
- * IF5 映射（epic 层）：clarify→Clarification@clarifications.ts（裸数组，与 slice 同）、
- * plan→PlanEpicInput@plan.ts（与 feature 同，Plan 基类只拆下层）。
+ * IF5 映射（epic 层）：design→DesignEpicInput@plan.ts（与 feature 同，Plan 基类只拆下层）。
  */
 export const EPIC_ACTION_SCHEMA: Readonly<Record<string, SchemaSource | undefined>> = {
   create: undefined,
-  clarify: { sourceFilePath: "src/handlers/types.ts", interfaceName: "ClarifyInput" },
-  plan: { sourceFilePath: "src/core/plan.ts", interfaceName: "PlanEpicInput" },
+  design: { sourceFilePath: "src/core/plan.ts", interfaceName: "DesignEpicInput" },
   "design-review": { sourceFilePath: "src/handlers/types.ts", interfaceName: "DesignReviewInput" },
   execute: undefined, // 下沉创建 child feature，不接收 input
   retrospect: { sourceFilePath: "src/handlers/types.ts", interfaceName: "RetrospectEpicInput" },

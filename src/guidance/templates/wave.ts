@@ -1,5 +1,5 @@
 /**
- * v1 guidance — wave（ExecutionUnit）9 阶段 + replan 的静态方法论模板。
+ * v1 guidance — wave（ExecutionUnit）7 阶段 + replan 的静态方法论模板。
  *
  * 来源：v5 cli-and-guidance §4.x（正常 guidance 示例）+ §6.1（replan 第 3 层）+
  *      design-v5-wave §1-§8（各阶段方法论）。
@@ -9,7 +9,7 @@
  *      build-guidance 负责把 templateText 和 schema/prefix/command 组装成最终 guidance。
  *
  * 设计原则（§3.2）：模板只放「agent 主动决策需要的」信息——agent 不看就会漏掉某个动作的信息
- *      （如 plan 阶段必须告知「条目 execute 后冻结 + replan 是改 plan 的唯一途径」）。
+ *      （如 design 阶段必须告知「条目 execute 后冻结 + replan 是改 plan 的唯一途径」）。
  *      cw 主动返回的信息（gate 结果等）由异常 guidance 在 fail 时给，不放这里。
  *
  * subagent 调度提示已抽离到 subagent-guidance.ts（按 action 性质分强制/建议/禁止三档，
@@ -28,31 +28,33 @@ export interface WaveStageTemplate {
   goal: string;
   /** 关键约束段（填正常 guidance 的「关键约束」部分；无约束时为空字符串）。 */
   constraint: string;
+  /**
+   * 续 turn 指导（recursive 模式渲染为 subagent 调度段的「【续 turn】」行；serial 不渲染）。
+   * 内容：被 steer 唤醒后做什么（G1 §9）。无续 turn 语义的阶段省略。
+   */
+  dispatchGuidance?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 各阶段模板（9 阶段主链 + replan 旁路）
+// 各阶段模板（7 阶段主链 + replan 旁路）
 // ═══════════════════════════════════════════════════════════════
 
-/** clarify 阶段（progressive append clarifications）。 */
-export const WAVE_CLARIFY_TEMPLATE: WaveStageTemplate = {
-  goal: "澄清需求边界，补充 clarifications（progressive，可多次追加）。",
-  constraint: "clarifications 是 append-only——只能追加，不能改历史条目。",
-};
-
 /**
- * plan 阶段（写 WavePlan 4 类条目）。
+ * design 阶段（写 WavePlan 4 类条目 + progressive clarifications）。
  *
+ * design 合并了原 clarify 与 plan 两阶段：同时接收 clarifications（append-only 澄清）
+ * 与 WavePlan 4 类条目，故吸收原 clarify 模板的 clarifications 约束。
  * 关键约束（§4.1）：testCases 不能为空 + 冻结契约 + replan 选项存在。
- * 这是 §6 replan 三层渐进的「第 1 层：告知选项」——plan 阶段必须告知 replan 存在，
+ * 这是 §6 replan 三层渐进的「第 1 层：告知选项」——design 阶段必须告知 replan 存在，
  * 否则 agent 遇到 plan 问题时不知道能改。
  */
-export const WAVE_PLAN_TEMPLATE: WaveStageTemplate = {
-  goal: "编写执行计划，定义 testCases / tasks / files / contracts。",
+export const WAVE_DESIGN_TEMPLATE: WaveStageTemplate = {
+  goal: "澄清需求边界（补充 clarifications，progressive 可多次追加），编写执行计划，定义 testCases / tasks / files / contracts。",
   constraint:
-    "关键约束：testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan。" +
+    "关键约束：clarifications 是 append-only——只能追加，不能改历史条目；" +
+    "testCases 不能为空；条目一旦 execute 就被冻结，修改只能走 replan。" +
     "如果你设计 plan 时发现 parent 的某个条目实际不适用（如 slice 的某个 interface 定义错了），" +
-    "可在 plan input 里带 abandonParentItems: [\"<条目id>\"] 声明脱离" +
+    "可在 design input 里带 abandonParentItems: [\"<条目id>\"] 声明脱离" +
     "（CLI 用 --abandonParentItems '[\"TC1\"]'）。" +
     "这是 append-only 的——一旦声明不可撤回。不确定是否需要脱离时不要声明。" +
     "testCommand 必须填：一个能启动本 wave 测试的完整 shell 命令（如 `npx vitest run src/quota/__tests__/index.test.ts`）。" +
@@ -111,6 +113,9 @@ export const WAVE_CLOSEOUT_TEMPLATE: WaveStageTemplate = {
   goal: "冻结交付，补充 evidence 主观部分（summary + artifacts）。",
   constraint:
     "关键约束：closeout 后 evidence.frozenAt 填入，整个 evidence 不可再改；cw 会校验每个 artifacts[].ref 是否存在。",
+  // G5：recursive 模式 wave 是叶子，closeout 后该结束——不自己 ascend/sibling（steer 负责唤醒父）。
+  dispatchGuidance:
+    "closeout 已完成，你的任务结束：steer 已通知父 agent（recursive 模式不需要你自己 ascend/回溯父单元）。",
 };
 
 /**
@@ -123,7 +128,7 @@ export const WAVE_REPLAN_TEMPLATE: WaveStageTemplate = {
   goal:
     "replan 已废弃指定条目并计算影响面。重新编写 plan，把废弃条目的意图承接进新条目。",
   constraint:
-    "关键约束：replan 改完 plan 后必须重新 design-review（plan → design-review → execute 完整重走），designReviewJudgment 要刷新匹配新 plan；废弃条目标 status=\"abandoned\" 保留（append-only，不可删不可复活）。" +
+    "关键约束：replan 改完 plan 后必须重新 design-review（design → design-review → execute 完整重走），designReviewJudgment 要刷新匹配新 plan；废弃条目标 status=\"abandoned\" 保留（append-only，不可删不可复活）。" +
     "纯 testCommand 补充（无 plan 条目变更，如 executing 状态补本 wave 测试命令）跳过「重做 design-review」——直接重跑 test 即可。",
 };
 
@@ -131,10 +136,9 @@ export const WAVE_REPLAN_TEMPLATE: WaveStageTemplate = {
 // 阶段名 → 模板 查找表（build-guidance 用）
 // ═══════════════════════════════════════════════════════════════
 
-/** wave 各 action 名 → 对应阶段模板。create 无 guidance（入口 action，下一步即 clarify）。 */
+/** wave 各 action 名 → 对应阶段模板。create 无 guidance（入口 action，下一步即 design）。 */
 export const WAVE_STAGE_TEMPLATES: Readonly<Record<string, WaveStageTemplate>> = {
-  clarify: WAVE_CLARIFY_TEMPLATE,
-  plan: WAVE_PLAN_TEMPLATE,
+  design: WAVE_DESIGN_TEMPLATE,
   "design-review": WAVE_DESIGN_REVIEW_TEMPLATE,
   execute: WAVE_EXECUTE_TEMPLATE,
   test: WAVE_TEST_TEMPLATE,

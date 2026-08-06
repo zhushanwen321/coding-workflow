@@ -1,7 +1,7 @@
 /**
  * v1 slice dispatch e2e 测试。
  *
- * 通过 dispatch 统一入口跑完整 slice 生命周期（create→clarify→plan→design-review→
+ * 通过 dispatch 统一入口跑完整 slice 生命周期（create→design→design-review→
  * execute→[推进 child wave]→retrospect→closeout），验证编排层正确串联 slice handler。
  *
  * 另测 dispatch 拒绝 slice 的 test/exec-review（slice 是 PlanningUnit，无此 action）→
@@ -51,7 +51,7 @@ function sliceExecute(unitId: string): Parameters<typeof dispatch>[0] {
 }
 
 describe("dispatch 完整 slice 生命周期", () => {
-  it("create→clarify→plan→design-review→execute→[child closed]→retrospect→closeout → closed", () => {
+  it("create→design→design-review→execute→[child closed]→retrospect→closeout → closed", () => {
     const unitId = "slice:e2e-happy";
 
     // 1. create（layer='slice'）
@@ -65,12 +65,13 @@ describe("dispatch 完整 slice 生命周期", () => {
     expect(created.ok).toBe(true);
     expect(created.status).toBe("created");
 
-    // 2. clarify
-    const clarify = dispatch(
+    // 2. design（合并原 clarify+plan：clarifications append + SlicePlan 5 字段 + split）
+    const design = dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
         input: {
+          ...makeValidSlicePlan(),
           clarifications: [
             { id: "Q1", status: "active", question: "token 存哪", resolution: "httpOnly cookie", type: "grilling" },
           ],
@@ -78,17 +79,9 @@ describe("dispatch 完整 slice 生命周期", () => {
       },
       env.deps,
     );
-    expect(clarify.ok).toBe(true);
-    expect(clarify.status).toBe("clarifying");
+    expect(design.ok).toBe(true);
+    expect(design.status).toBe("designing");
     expect(loadSlice(unitId).clarifications).toHaveLength(1);
-
-    // 3. plan（SlicePlan 5 字段 + split）
-    const plan = dispatch(
-      { action: "plan", unitId, input: makeValidSlicePlan() },
-      env.deps,
-    );
-    expect(plan.ok).toBe(true);
-    expect(plan.status).toBe("planning");
     expect(loadSlice(unitId).plan.techChoices).toHaveLength(1);
 
     // 4. design-review
@@ -155,7 +148,7 @@ describe("dispatch 完整 slice 生命周期", () => {
     // 实际：无 parentUnitId 时 closeout handler 不填 crossLayer（孤立终点）。验 statusHistory 完整。
     const actions = finalSlice.statusHistory.map((h) => h.action);
     expect(actions).toEqual([
-      "create", "clarify", "plan", "design-review", "execute", "retrospect", "closeout",
+      "create", "design", "design-review", "execute", "retrospect", "closeout",
     ]);
   });
 
@@ -170,13 +163,13 @@ describe("dispatch 完整 slice 生命周期", () => {
       { action: "create", input: { slug: "e2e-dep-chain", objective: "o", layer: "slice" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           ...makeValidSlicePlan(),
+          clarifications: [],
           split: [
             { slug: "a", description: "wave A（依赖 B）", dependsOn: ["b"], inheritedItemIds: ["IF1"] },
             { slug: "b", description: "wave B（无依赖）", dependsOn: [], inheritedItemIds: ["DM1"] },
@@ -219,8 +212,7 @@ describe("dispatch 完整 slice 生命周期", () => {
       },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    dispatch({ action: "plan", unitId, input: makeValidSlicePlan() }, env.deps);
+    dispatch({ action: "design", unitId, input: makeValidSlicePlan() }, env.deps);
     dispatch(
       { action: "design-review", unitId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } },
       env.deps,
@@ -308,13 +300,11 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
       { action: "create", input: { slug: "e2e-gate", objective: "o", layer: "slice" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    // plan 空 techChoices（design-review 会 fail tech-choice-non-empty）
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
-        input: { techChoices: [], interfaces: [], dataModels: [], errorSpecs: [], split: [] },
+        input: { clarifications: [], techChoices: [], interfaces: [], dataModels: [], errorSpecs: [], split: [] },
       },
       env.deps,
     );
@@ -331,21 +321,21 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
     expect(result.ok).toBe(false);
     expect(result.gateResults).toBeDefined();
     expect(result.gateResults!.some((g) => !g.passed)).toBe(true);
-    // status 未推进（仍 planning）
-    expect(loadSlice(unitId).status).toBe("planning");
+    // status 未推进（仍 designing）
+    expect(loadSlice(unitId).status).toBe("designing");
   });
 
   it("slice unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "slice:ghost", input: { clarifications: [] } },
+        { action: "design", unitId: "slice:ghost", input: makeValidSlicePlan() },
         env.deps,
       ),
     ).toThrow(CwEngineError);
 
     try {
       dispatch(
-        { action: "clarify", unitId: "slice:ghost", input: { clarifications: [] } },
+        { action: "design", unitId: "slice:ghost", input: makeValidSlicePlan() },
         env.deps,
       );
       throw new Error("should have thrown");
@@ -360,8 +350,7 @@ describe("dispatch slice 非法跳步 + gate fail", () => {
       { action: "create", input: { slug: "e2e-terminal", objective: "o", layer: "slice" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    dispatch({ action: "plan", unitId, input: makeValidSlicePlan() }, env.deps);
+    dispatch({ action: "design", unitId, input: makeValidSlicePlan() }, env.deps);
     dispatch(
       { action: "design-review", unitId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } },
       env.deps,

@@ -40,16 +40,10 @@ describe("buildSubagentGuidance: wave 层", () => {
     });
   });
 
-  // 建议委派（按需）：clarify/plan/test/replan（探索/测试执行方向）+ closeout（综合）
+  // 建议委派（按需）：design/test/replan（探索/测试执行方向）+ closeout（综合）
   describe("按需委派档（optional）", () => {
-    it("clarify → 按需委派 + 探索方向", () => {
-      const g = buildSubagentGuidance("wave", "clarify");
-      expect(g).toContain("【按需委派】");
-      expect(g).toContain("代码探索");
-    });
-
-    it("plan → 按需委派 + 探索方向", () => {
-      const g = buildSubagentGuidance("wave", "plan");
+    it("design → 按需委派 + 探索方向", () => {
+      const g = buildSubagentGuidance("wave", "design");
       expect(g).toContain("【按需委派】");
       expect(g).toContain("代码探索");
     });
@@ -100,13 +94,8 @@ describe("buildSubagentGuidance: planning 层", () => {
   });
 
   describe("按需委派档（optional）", () => {
-    it("clarify → 按需委派", () => {
-      const g = buildSubagentGuidance("planning", "clarify");
-      expect(g).toContain("【按需委派】");
-    });
-
-    it("plan → 按需委派", () => {
-      const g = buildSubagentGuidance("planning", "plan");
+    it("design → 按需委派", () => {
+      const g = buildSubagentGuidance("planning", "design");
       expect(g).toContain("【按需委派】");
     });
 
@@ -168,10 +157,10 @@ describe("buildSubagentGuidance: 查表未命中返回空串", () => {
 
 describe("buildNormalGuidance: commonGuidance 第 4 段渲染", () => {
   const baseArgs = {
-    prefix: "[wave:1] status=plan",
-    nextAction: "plan",
+    prefix: "[wave:1] status=designing",
+    nextAction: "design",
     goal: "编写执行计划",
-    command: "cw plan --unitId wave:1 --input .cw/1/plan.json",
+    command: "cw design --unitId wave:1 --input .cw/1/design.json",
     schemaText: "{ schema }",
     templateText: "关键约束：testCases 不能为空",
   };

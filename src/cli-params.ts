@@ -42,7 +42,7 @@ export const GLOBAL_FLAGS: ReadonlySet<string> = new Set([
 /**
  * per-action 专属 flag 白名单（不含全局基础集，校验时并集）。
  *
- * 键 = action 名（create/clarify/.../abort + tree/status/list/handoff/frontier），
+ * 键 = action 名（create/design/.../abort + tree/status/list/handoff/frontier），
  * 值 = 该 action 专属的抽象 flag 名集合。来源：
  *   - 推进 action：buildParams 的 flag()/parsed 消费键（slug/objective/parent/basedOnParent/
  *     abandonParentItems/commitHash/testCwd/abandonedIds/note/reason）
@@ -51,8 +51,7 @@ export const GLOBAL_FLAGS: ReadonlySet<string> = new Set([
  */
 export const FLAG_WHITELIST: Readonly<Record<string, ReadonlySet<string>>> = {
   create: new Set(["slug", "objective", "parent", "basedOnParent"]),
-  clarify: new Set(),
-  plan: new Set(["abandonParentItems"]),
+  design: new Set(["abandonParentItems"]),
   "design-review": new Set(),
   execute: new Set(["commitHash"]),
   test: new Set(["testCwd"]),

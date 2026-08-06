@@ -3,7 +3,7 @@
  *
  * epic 复用 slice/feature 的 PLANNING_TRANSITIONS（同型状态机，7 步流程），但通过 dispatch
  * 实际推进来验 epic 专属路径：
- * - clarify 数组 push 累积（非 feature 的容器覆盖）—— epic vs feature 核心差异
+ * - design 的 clarifications 数组 push 累积（非 feature 的容器覆盖）—— epic vs feature 核心差异
  * - plan 写入 Plan 基类（只 split，无技术方案）
  * - design-review 跑 epic 10 个 gate（split 结构 2 + 决策/inherited 2 + judgment 5 + layerSpecific 1）
  * - execute 创建 child feature（scope=feature，targetLayer='feature'）
@@ -27,10 +27,9 @@ import {
   makeValidEpicPlan,
   makeValidEpicRetrospectData,
   setupEpicWithClosedFeatures,
-  setupToEpicClarified,
+  setupToEpicDesigning,
   setupToEpicDesignReviewed,
   setupToEpicExecuting,
-  setupToEpicPlanning,
   STUB_NOW,
 } from "./helpers/epic-env.js";
 
@@ -59,15 +58,15 @@ function epicExecute(unitId: string): Parameters<typeof dispatch>[0] {
 // 主链 7 步流转（dispatch 实际推进）
 // ═══════════════════════════════════════════════════════════════
 
-describe("epic 主链 7 步状态流转（create→closeout）", () => {
-  it("create → created，nextAction=clarify（epic 空态：scope=epic，无 parentUnitId，basedOnParent=[]）", () => {
+describe("epic 主链 6 步状态流转（create→closeout）", () => {
+  it("create → created，nextAction=design（epic 空态：scope=epic，无 parentUnitId，basedOnParent=[]）", () => {
     const result = dispatch(
       { action: "create", input: { slug: "sm-create", objective: "o", layer: "epic" } },
       env.deps,
     );
     expect(result.ok).toBe(true);
     expect(result.status).toBe("created");
-    expect(result.nextAction?.action).toBe("clarify");
+    expect(result.nextAction?.action).toBe("design");
     expect(result.nextAction?.unitPath.layer).toBe("epic");
 
     const unit = loadEpic("epic:sm-create");
@@ -104,50 +103,38 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect(unit.abandonedRefs).toEqual([]);
   });
 
-  it("clarify → clarifying，clarifications 数组 push 累积（非 feature 容器覆盖）", () => {
-    const unitId = "epic:sm-clarify";
+  it("design → designing，clarifications 数组 push 累积 + plan.split 写入", () => {
+    const unitId = "epic:sm-design";
     dispatch(
-      { action: "create", input: { slug: "sm-clarify", objective: "o", layer: "epic" } },
+      { action: "create", input: { slug: "sm-design", objective: "o", layer: "epic" } },
       env.deps,
     );
 
     const result = dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
-        input: { clarifications: [makeValidClarification("Q1")] },
+        input: { ...makeValidEpicPlan(), clarifications: [makeValidClarification("Q1")] },
       },
       env.deps,
     );
     expect(result.ok).toBe(true);
-    expect(result.status).toBe("clarifying");
-    expect(result.nextAction?.action).toBe("plan");
+    expect(result.status).toBe("designing");
+    expect(result.nextAction?.action).toBe("design-review");
 
     const unit = loadEpic(unitId);
     // 数组 push（累积，length=1）
     expect(unit.clarifications).toHaveLength(1);
     expect(unit.clarifications[0]?.id).toBe("Q1");
-  });
-
-  it("plan → planning，Plan 基类（只 split）写入", () => {
-    const unitId = setupToEpicClarified(env.deps, "sm-plan");
-    const result = dispatch(
-      { action: "plan", unitId, input: makeValidEpicPlan() },
-      env.deps,
-    );
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("planning");
-    expect(result.nextAction?.action).toBe("design-review");
-
-    const unit = loadEpic(unitId);
+    // design 同时写 plan.split（Plan 基类）
     expect(unit.plan.split).toHaveLength(1);
     expect(unit.plan.split[0]?.slug).toBe("f1");
     // epic plan 无技术方案字段（Plan 基类）
     expect("techChoices" in unit.plan).toBe(false);
   });
 
-  it("design-review → design-reviewed（11 个 gate 全过）", () => {
-    const unitId = setupToEpicPlanning(env.deps, "sm-dr");
+  it("design-review → design-reviewed（13 个 gate 全过）", () => {
+    const unitId = setupToEpicDesigning(env.deps, "sm-dr");
     const result = dispatch(
       {
         action: "design-review",
@@ -159,7 +146,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect(result.ok).toBe(true);
     expect(result.status).toBe("design-reviewed");
     expect(result.nextAction?.action).toBe("execute");
-    expect(result.gateResults).toHaveLength(11);
+    expect(result.gateResults).toHaveLength(13);
 
     const unit = loadEpic(unitId);
     expect(unit.designReviewJudgment.necessity).toBeTruthy();
@@ -221,7 +208,7 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
     expect(unit.evidence.frozenAt).toBe(STUB_NOW);
     // 完整 statusHistory 序列
     expect(unit.statusHistory.map((h) => h.action)).toEqual([
-      "create", "clarify", "plan", "design-review", "execute", "retrospect", "closeout",
+      "create", "design", "design-review", "execute", "retrospect", "closeout",
     ]);
     // epic 顶层无父：closeout 后 crossLayer 天然 undefined（孤立终点）
     expect(result.nextAction?.crossLayer).toBeUndefined();
@@ -229,29 +216,37 @@ describe("epic 主链 7 步状态流转（create→closeout）", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// clarify 数组 push 累积（epic vs feature 核心差异）
+// clarifications 数组 push 累积（epic vs feature 核心差异）
 // ═══════════════════════════════════════════════════════════════
 
-describe("epic clarify 数组 push 累积（非 feature 容器覆盖）", () => {
-  it("第一次 clarify 传 [Q1] → clarifications.length===1；第二次 clarify 传 [Q2] → length===2（累积）", () => {
+describe("epic design clarifications 数组 push 累积（非 feature 容器覆盖）", () => {
+  it("第一次 design 传 [Q1] → clarifications.length===1；第二次 design 传 [Q2] → length===2（累积）", () => {
     const unitId = "epic:sm-accum";
     dispatch(
       { action: "create", input: { slug: "sm-accum", objective: "o", layer: "epic" } },
       env.deps,
     );
 
-    // 第一次 clarify：传 [Q1]
+    // 第一次 design：传 [Q1]
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification("Q1")] } },
+      {
+        action: "design",
+        unitId,
+        input: { ...makeValidEpicPlan(), clarifications: [makeValidClarification("Q1")] },
+      },
       env.deps,
     );
     let unit = loadEpic(unitId);
     expect(unit.clarifications).toHaveLength(1);
     expect(unit.clarifications.map((c) => c.id)).toEqual(["Q1"]);
 
-    // 第二次 clarify：传 [Q2]，累积（length=2，非覆盖）
+    // 第二次 design：传 [Q2]，累积（length=2，非覆盖）
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification("Q2")] } },
+      {
+        action: "design",
+        unitId,
+        input: { ...makeValidEpicPlan(), clarifications: [makeValidClarification("Q2")] },
+      },
       env.deps,
     );
     unit = loadEpic(unitId);
@@ -259,7 +254,7 @@ describe("epic clarify 数组 push 累积（非 feature 容器覆盖）", () => 
     expect(unit.clarifications.map((c) => c.id)).toEqual(["Q1", "Q2"]);
   });
 
-  it("单次 clarify 传多个 → 全部 push（[Q1,Q2] → length===2）", () => {
+  it("单次 design 传多个 clarifications → 全部 push（[Q1,Q2] → length===2）", () => {
     const unitId = "epic:sm-multi";
     dispatch(
       { action: "create", input: { slug: "sm-multi", objective: "o", layer: "epic" } },
@@ -267,9 +262,12 @@ describe("epic clarify 数组 push 累积（非 feature 容器覆盖）", () => 
     );
     dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
-        input: { clarifications: [makeValidClarification("Q1"), makeValidClarification("Q2")] },
+        input: {
+          ...makeValidEpicPlan(),
+          clarifications: [makeValidClarification("Q1"), makeValidClarification("Q2")],
+        },
       },
       env.deps,
     );
@@ -283,27 +281,21 @@ describe("epic clarify 数组 push 累积（非 feature 容器覆盖）", () => 
 // ═══════════════════════════════════════════════════════════════
 
 describe("epic progressive 语义", () => {
-  it("clarifying 再次 clarify → 仍 clarifying", () => {
-    const unitId = setupToEpicClarified(env.deps, "sm-prog-clarify");
+  it("designing 再次 design → 仍 designing", () => {
+    const unitId = setupToEpicDesigning(env.deps, "sm-prog-design");
     const before = loadEpic(unitId);
-    expect(before.status).toBe("clarifying");
+    expect(before.status).toBe("designing");
 
     const result = dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification("Q9")] } },
+      {
+        action: "design",
+        unitId,
+        input: { ...makeValidEpicPlan(), clarifications: [makeValidClarification("Q9")] },
+      },
       env.deps,
     );
     expect(result.ok).toBe(true);
-    expect(result.status).toBe("clarifying");
-  });
-
-  it("planning 再次 plan → 仍 planning", () => {
-    const unitId = setupToEpicPlanning(env.deps, "sm-prog-plan");
-    const result = dispatch(
-      { action: "plan", unitId, input: makeValidEpicPlan() },
-      env.deps,
-    );
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("planning");
+    expect(result.status).toBe("designing");
   });
 
   it("design-reviewed 再次 design-review → 仍 design-reviewed", () => {
@@ -341,8 +333,8 @@ describe("epic 非法转换抛 illegal_transition", () => {
     }
   });
 
-  it("planning 直接 closeout → throw CwEngineError(illegal_transition)", () => {
-    const unitId = setupToEpicPlanning(env.deps, "sm-illegal-close");
+  it("designing 直接 closeout → throw CwEngineError(illegal_transition)", () => {
+    const unitId = setupToEpicDesigning(env.deps, "sm-illegal-close");
     expect(() =>
       dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps),
     ).toThrow(CwEngineError);
@@ -373,13 +365,13 @@ describe("epic 非法转换抛 illegal_transition", () => {
   it("epic unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
+        { action: "design", unitId: "epic:ghost", input: { ...makeValidEpicPlan(), clarifications: [] } },
         env.deps,
       ),
     ).toThrow(CwEngineError);
     try {
       dispatch(
-        { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
+        { action: "design", unitId: "epic:ghost", input: { ...makeValidEpicPlan(), clarifications: [] } },
         env.deps,
       );
       throw new Error("should have thrown");
@@ -394,7 +386,7 @@ describe("epic 非法转换抛 illegal_transition", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("epic replan 旁路（status 不变）", () => {
-  it("design-reviewed replan → status 仍 design-reviewed，nextAction.action=plan", () => {
+  it("design-reviewed replan → status 仍 design-reviewed，nextAction.action=design", () => {
     const unitId = setupToEpicDesignReviewed(env.deps, "sm-replan");
     const before = loadEpic(unitId);
     expect(before.status).toBe("design-reviewed");
@@ -410,7 +402,7 @@ describe("epic replan 旁路（status 不变）", () => {
     expect(result.ok).toBe(true);
     // replan 是旁路，status 不变
     expect(result.status).toBe("design-reviewed");
-    expect(result.nextAction?.action).toBe("plan");
+    expect(result.nextAction?.action).toBe("design");
     // replanImpact 有返回
     expect(result.replanImpact).toBeDefined();
 
@@ -510,8 +502,8 @@ describe("T9c: epic replan→feature 级联 abort", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("epic abort 终态", () => {
-  it("planning abort → status=aborted（终态不可逆）", () => {
-    const unitId = setupToEpicPlanning(env.deps, "sm-abort");
+  it("designing abort → status=aborted（终态不可逆）", () => {
+    const unitId = setupToEpicDesigning(env.deps, "sm-abort");
     const result = dispatch(
       { action: "abort", unitId, input: { reason: "需求取消" } },
       env.deps,
@@ -522,7 +514,7 @@ describe("epic abort 终态", () => {
 
     // 终态不可逆：再次任何 action 抛 illegal_transition
     expect(() =>
-      dispatch({ action: "plan", unitId, input: makeValidEpicPlan() }, env.deps),
+      dispatch({ action: "design", unitId, input: makeValidEpicPlan() }, env.deps),
     ).toThrow(CwEngineError);
   });
 

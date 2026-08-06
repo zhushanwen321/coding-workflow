@@ -15,7 +15,7 @@ import { handleCloseout } from "../src/handlers/closeout.js";
 import { handleDesignReview } from "../src/handlers/design-review.js";
 import { handleExecReview } from "../src/handlers/exec-review.js";
 import { handleExecute } from "../src/handlers/execute.js";
-import { handlePlan } from "../src/handlers/plan.js";
+import { handleDesign } from "../src/handlers/design.js";
 import { handleRetrospect } from "../src/handlers/retrospect.js";
 import { handleTest } from "../src/handlers/test.js";
 import type { WorkUnitRecord } from "../src/store/schema.js";
@@ -53,8 +53,8 @@ function advanceToDesignReviewed(slug: string): ExecutionUnit {
   let unit = makeWaveUnit(slug);
   env.store.save(unit as unknown as WorkUnitRecord);
 
-  // plan：写合法 testCases（过 design-review 的 testCases gate）
-  handlePlan(unit, {
+  // design：写合法 testCases（过 design-review 的 testCases gate）
+  handleDesign(unit, {
     testCases: [makeValidTestCase("TC1")],
     tasks: [makeValidTask("TK1")],
     files: [makeValidFile("F1")],

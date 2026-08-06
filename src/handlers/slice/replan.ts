@@ -147,9 +147,9 @@ export function handleReplanSlice(
     abandonedIds: input.abandonedIds,
     replanCount,
     impactSummary,
-    nextCommand: buildCommand("plan", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "plan")}`),
-    // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
-    schemaText: getSliceSchemaText("plan"),
+    nextCommand: buildCommand("design", `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, "design")}`),
+    // #1 D-017：replan 后下一步是 design，透传 design 的 input schema 段。
+    schemaText: getSliceSchemaText("design"),
   });
 
   return {

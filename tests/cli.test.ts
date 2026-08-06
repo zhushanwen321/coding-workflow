@@ -5,7 +5,7 @@
  *   - cw create wave → JSON 含 nextAction.guidance 非空
  *   - 缺少必填参数 → exit 1 + 错误信息
  *   - v1 与 0.x 命令并存互不干扰（cw create 走 0.x，cw create 走 v1）
- *   - 推进 action（clarify）的 --input @file.json 管道
+ *   - 推进 action（design）的 --input @file.json 管道
  *   - unit not found → exit 1 + CwEngineError 语义
  *
  * 复用 tests/helpers/git.ts 的 setupGitRepo（git 仓库初始化，v1/0.x 无关的通用基建）。
@@ -112,7 +112,7 @@ function parseStdout(result: CliResult): Record<string, unknown> {
 /**
  * 创建独立隔离的 v1 测试环境（独立 tmp workspace + CW_HOME + git repo）。
  *
- * git repo 仅 execute/test 的真实 git 校验需要；create/clarify 等不依赖 git。
+ * git repo 仅 execute/test 的真实 git 校验需要；create/design 等不依赖 git。
  */
 function createCwCliEnv(): CwCliEnv {
   if (!existsSync(CLI_PATH)) {
@@ -171,8 +171,8 @@ describe("W8: cw create wave（happy path）", () => {
     expect(nextAction).toBeDefined();
     expect(typeof nextAction!.guidance).toBe("string");
     expect((nextAction!.guidance as string).length).toBeGreaterThan(0);
-    // create 后推荐 clarify
-    expect(nextAction!.action).toBe("clarify");
+    // create 后推荐 design
+    expect(nextAction!.action).toBe("design");
 
     // unitPath 结构化字段
     const unitPath = nextAction!.unitPath as Record<string, unknown>;
@@ -291,9 +291,9 @@ describe("W8: cw <action> 未知/缺 unitId → exit 1", () => {
 
   it("推进 action 缺 --unitId → exit 1", () => {
     const result = runCwCli(
-      ["clarify", "--input", "-"],
+      ["design", "--input", "-"],
       e,
-      { input: JSON.stringify({ clarifications: [] }) },
+      { input: JSON.stringify({ testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" }) },
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unitId");
@@ -359,20 +359,20 @@ describe("W8: cw help / version（标准命令）", () => {
   });
 });
 
-describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
-  it("create → clarify（--input @file.json）→ status=clarifying + clarifications 落盘", () => {
+describe("W8: cw design（推进 action，--input @file 管道）", () => {
+  it("create → design（--input @file.json）→ status=designing + WavePlan 落盘", () => {
     // 1. 先 create 一个 wave
     const created = parseStdout(
       runCwCli(
-        ["create", "wave", "--slug", "w8-clarify", "--objective", "o"],
+        ["create", "wave", "--slug", "w8-design", "--objective", "o"],
         e,
       ),
     );
     expect(created.ok).toBe(true);
     const unitId = created.unitId as string;
 
-    // 2. clarify：input 写文件，用 --input @file.json 传
-    const inputFile = join(e.workspaceDir, "clarify-input.json");
+    // 2. design：input 写文件，用 --input @file.json 传（含 clarifications + WavePlan 4 类条目）
+    const inputFile = join(e.workspaceDir, "design-input.json");
     writeFileSync(
       inputFile,
       JSON.stringify({
@@ -385,20 +385,25 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
             type: "grilling",
           },
         ],
+        testCases: [makeValidTestCase()],
+        tasks: [makeValidTask()],
+        files: [makeValidFile()],
+        contracts: [makeValidContract()],
+        testCommand: "npx vitest run",
       }),
     );
-    const clarified = parseStdout(
+    const designed = parseStdout(
       runCwCli(
-        ["clarify", "--unitId", unitId, "--input", `${inputFile}`],
+        ["design", "--unitId", unitId, "--input", `${inputFile}`],
         e,
       ),
     );
-    expect(clarified.ok).toBe(true);
-    expect(clarified.status).toBe("clarifying");
-    expect(clarified.unitId).toBe(unitId);
-    // clarify handler 不回吐整个 unit（只 create 才带 unit）；
-    // 验证状态推进（status=clarifying）+ nextAction 指向下一步。
-    const nextAction = clarified.nextAction as Record<string, unknown>;
+    expect(designed.ok).toBe(true);
+    expect(designed.status).toBe("designing");
+    expect(designed.unitId).toBe(unitId);
+    // design handler 不回吐整个 unit（只 create 才带 unit）；
+    // 验证状态推进（status=designing）+ nextAction 指向下一步。
+    const nextAction = designed.nextAction as Record<string, unknown>;
     expect(typeof nextAction.guidance).toBe("string");
     expect((nextAction.guidance as string).length).toBeGreaterThan(0);
     // 落盘验证：store 里该 unit 的 clarifications 应有 1 条
@@ -413,7 +418,7 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
     expect(persisted!.clarifications!.length).toBe(1);
   });
 
-  it("clarify 用 stdin 传 input 也能跑通", () => {
+  it("design 用 stdin 传 input 也能跑通", () => {
     const created = parseStdout(
       runCwCli(
         ["create", "wave", "--slug", "w8-stdin", "--objective", "o"],
@@ -421,15 +426,24 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
       ),
     );
     const unitId = created.unitId as string;
-    const clarified = parseStdout(
+    const designed = parseStdout(
       runCwCli(
-        ["clarify", "--unitId", unitId, "--input", "-"],
+        ["design", "--unitId", unitId, "--input", "-"],
         e,
-        { input: JSON.stringify({ clarifications: [] }) },
+        {
+          input: JSON.stringify({
+            testCases: [makeValidTestCase()],
+            tasks: [makeValidTask()],
+            files: [makeValidFile()],
+            contracts: [makeValidContract()],
+            testCommand: "npx vitest run",
+            clarifications: [],
+          }),
+        },
       ),
     );
-    expect(clarified.ok).toBe(true);
-    expect(clarified.status).toBe("clarifying");
+    expect(designed.ok).toBe(true);
+    expect(designed.status).toBe("designing");
   });
 
   it("推进 action 无 input（stdin 空 + 无 --input）→ exit 1", () => {
@@ -441,19 +455,19 @@ describe("W8: cw clarify（推进 action，--input @file 管道）", () => {
     );
     const unitId = created.unitId as string;
     // stdin 为空（runCwCli 不传 input 且子进程 stdin 无 pipe）→ 报缺 input
-    const result = runCwCli(["plan", "--unitId", unitId], e);
+    const result = runCwCli(["design", "--unitId", unitId], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("input");
   });
 });
 
 describe("W8: cw unit not found → exit 1（CwEngineError 语义）", () => {
-  it("clarify 一个不存在的 unitId → exit 1 + unit_not_found", () => {
+  it("design 一个不存在的 unitId → exit 1 + unit_not_found", () => {
     const inputFile = join(e.workspaceDir, "ghost-input.json");
-    writeFileSync(inputFile, JSON.stringify({ clarifications: [] }));
+    writeFileSync(inputFile, JSON.stringify({ testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" }));
     const result = runCwCli(
       [
-        "clarify",
+        "design",
         "--unitId",
         "wave:ghost",
         "--input",
@@ -518,7 +532,7 @@ describe("W8: v1 前缀已切断（Wave 3 起 cw 直接跟 action）", () => {
 });
 
 describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child wave）", () => {
-  it("slice create→clarify→plan→design-review→execute（无 commitHash）→ status=executing + childUnitIds", () => {
+  it("slice create→design→design-review→execute（无 commitHash）→ status=executing + childUnitIds", () => {
     // slice execute 不需 --commitHash（wave 才需），CLI 需按 scope 区分。
     // 1. create slice
     const created = parseStdout(
@@ -531,30 +545,23 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
     const unitId = created.unitId as string;
     expect(unitId).toMatch(/^slice:/);
 
-    // 2. clarify
-    const clarifyInput = join(e.workspaceDir, "slice-clarify.json");
+    // 2. design（含 clarifications + 合法 SlicePlan）
+    const designInput = join(e.workspaceDir, "slice-design.json");
     writeFileSync(
-      clarifyInput,
+      designInput,
       JSON.stringify({
+        ...makeValidSlicePlan(),
         clarifications: [
           { id: "Q1", status: "active", question: "token 存哪", resolution: "httpOnly cookie", type: "grilling" },
         ],
       }),
     );
-    const clarified = parseStdout(
-      runCwCli(["clarify", "--unitId", unitId, "--input", `${clarifyInput}`], e),
+    const designed = parseStdout(
+      runCwCli(["design", "--unitId", unitId, "--input", `${designInput}`], e),
     );
-    expect(clarified.status).toBe("clarifying");
+    expect(designed.status).toBe("designing");
 
-    // 3. plan（合法 SlicePlan）
-    const planInput = join(e.workspaceDir, "slice-plan.json");
-    writeFileSync(planInput, JSON.stringify(makeValidSlicePlan()));
-    const planned = parseStdout(
-      runCwCli(["plan", "--unitId", unitId, "--input", `${planInput}`], e),
-    );
-    expect(planned.status).toBe("planning");
-
-    // 4. design-review（过 gate → design-reviewed）
+    // 3. design-review（过 gate → design-reviewed）
     const drInput = join(e.workspaceDir, "slice-dr.json");
     writeFileSync(
       drInput,
@@ -601,19 +608,25 @@ describe("W8: cw execute slice（无 --commitHash，按 plan.split 创建 child 
   });
 });
 
-describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道）", () => {
-  // 共享辅助：create wave → clarify → 返回 unitId（plan.from 需 clarifying，必须先 clarify）。
-  function createWaveToClarifying(slug: string): string {
+describe("W8: cw design --abandonParentItems flag 解析（ADR-0010 声明通道）", () => {
+  // 共享辅助：create wave → design（带 clarifications + 合法 WavePlan）→ 返回 unitId（design.from 需 created，先 design 一次）。
+  function createWaveToDesigning(slug: string): string {
     const created = parseStdout(
       runCwCli(["create", "wave", "--slug", slug, "--objective", "o"], e),
     );
     expect(created.ok).toBe(true);
     const unitId = created.unitId as string;
-    const clarifyInput = join(e.workspaceDir, `${slug}-clarify.json`);
-    writeFileSync(clarifyInput, JSON.stringify({ clarifications: [] }));
+    const designInput = join(e.workspaceDir, `${slug}-design.json`);
+    writeFileSync(
+      designInput,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(writeWavePlan(`${slug}-design-plan.json`), "utf-8")),
+        clarifications: [],
+      }),
+    );
     parseStdout(
       runCwCli(
-        ["clarify", "--unitId", unitId, "--input", `${clarifyInput}`],
+        ["design", "--unitId", unitId, "--input", `${designInput}`],
         e,
       ),
     );
@@ -648,14 +661,14 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
     return persisted!.abandonedParentItems ?? [];
   }
 
-  it("wave plan 带 --abandonParentItems '[\"TC1\"]' → input.abandonParentItems 被解析并落盘到 wave.abandonedParentItems", () => {
-    const unitId = createWaveToClarifying("w8-abandon-flag");
+  it("wave design 带 --abandonParentItems '[\"TC1\"]' → input.abandonParentItems 被解析并落盘到 wave.abandonedParentItems", () => {
+    const unitId = createWaveToDesigning("w8-abandon-flag");
     const planInput = writeWavePlan("wave-plan-abandon.json");
 
-    const planned = parseStdout(
+    const designed = parseStdout(
       runCwCli(
         [
-          "plan",
+          "design",
           "--unitId",
           unitId,
           "--input",
@@ -666,22 +679,22 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
         e,
       ),
     );
-    expect(planned.ok).toBe(true);
-    expect(planned.status).toBe("planning");
+    expect(designed.ok).toBe(true);
+    expect(designed.status).toBe("designing");
 
     // flag 经 parseJsonArg 解析 → handler 写入 store
     expect(readAbandonedParentItems(unitId)).toEqual(["TC1"]);
   });
 
-  it("wave plan 带 --abandon-parent-items（kebab-case）→ 与 camelCase 等价（flag 兼容两种写法）", () => {
+  it("wave design 带 --abandon-parent-items（kebab-case）→ 与 camelCase 等价（flag 兼容两种写法）", () => {
     // flag() 同时查 camelCase 和 kebab-case，验证 kebab-case 也能解析。
-    const unitId = createWaveToClarifying("w8-abandon-kebab");
+    const unitId = createWaveToDesigning("w8-abandon-kebab");
     const planInput = writeWavePlan("wave-plan-kebab.json");
 
-    const planned = parseStdout(
+    const designed = parseStdout(
       runCwCli(
         [
-          "plan",
+          "design",
           "--unitId",
           unitId,
           "--input",
@@ -692,34 +705,34 @@ describe("W8: cw plan --abandonParentItems flag 解析（ADR-0010 声明通道�
         e,
       ),
     );
-    expect(planned.ok).toBe(true);
+    expect(designed.ok).toBe(true);
 
     expect(readAbandonedParentItems(unitId)).toEqual(["TC2", "TC3"]);
   });
 
-  it("wave plan 不带 --abandonParentItems → wave.abandonedParentItems 保持 [] （工厂初始化值）", () => {
-    const unitId = createWaveToClarifying("w8-abandon-none");
+  it("wave design 不带 --abandonParentItems → wave.abandonedParentItems 保持 [] （工厂初始化值）", () => {
+    const unitId = createWaveToDesigning("w8-abandon-none");
     const planInput = writeWavePlan("wave-plan-none.json");
 
-    const planned = parseStdout(
+    const designed = parseStdout(
       runCwCli(
-        ["plan", "--unitId", unitId, "--input", `${planInput}`],
+        ["design", "--unitId", unitId, "--input", `${planInput}`],
         e,
       ),
     );
-    expect(planned.ok).toBe(true);
+    expect(designed.ok).toBe(true);
 
     expect(readAbandonedParentItems(unitId)).toEqual([]);
   });
 
   it("--abandonParentItems 非 JSON 字符串 → exit 1 + JSON 解析失败提示", () => {
-    // parseJsonArg 对非 JSON 字符串抛 CwError → exit 1（在 plan 落到 handler 之前）
-    const unitId = createWaveToClarifying("w8-abandon-bad");
+    // parseJsonArg 对非 JSON 字符串抛 CwError → exit 1（在 design 落到 handler 之前）
+    const unitId = createWaveToDesigning("w8-abandon-bad");
     const planInput = writeWavePlan("wave-plan-bad.json");
 
     const result = runCwCli(
       [
-        "plan",
+        "design",
         "--unitId",
         unitId,
         "--input",
@@ -754,7 +767,7 @@ describe("W8: cw list --all 与 --cwd 互斥（TC-B6，cli 层 e2e）", () => {
 describe("W2: unknown flag 白名单校验（#5）", () => {
   it("T2.1: 拼错 flag（--unid）→ exit 1 + unknown flag + 合法 flag 列表", () => {
     // validateFlags 在 buildParams 之前拦截：不报「需要 --unitId」而是报 unknown flag
-    const result = runCwCli(["clarify", "--unid", "wave:x"], e);
+    const result = runCwCli(["design", "--unid", "wave:x"], e);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown flag --unid");
     expect(result.stderr).toContain("unitId");
@@ -825,7 +838,7 @@ describe("W2: per-command help 双入口（#11 并入 #5）", () => {
 });
 
 describe("W2: handler input shape 校验（#6，e2e）", () => {
-  it("T2.4: clarify {} → CwError「input.clarifications …」exit 1（非 crash exit 2）", () => {
+  it("T2.4: design {} → CwError「input.testCases …」exit 1（非 crash exit 2）", () => {
     const created = parseStdout(
       runCwCli(
         ["create", "wave", "--slug", "w2-shape", "--objective", "shape e2e"],
@@ -833,11 +846,11 @@ describe("W2: handler input shape 校验（#6，e2e）", () => {
       ),
     );
     const unitId = created.unitId as string;
-    const result = runCwCli(["clarify", "--unitId", unitId, "--input", "-"], e, {
+    const result = runCwCli(["design", "--unitId", unitId, "--input", "-"], e, {
       input: "{}",
     });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("input.clarifications");
+    expect(result.stderr).toContain("input.testCases");
     // 非内部异常：不输出堆栈（exit 2 才有堆栈）
     expect(result.stderr).not.toContain("堆栈");
   });
@@ -887,19 +900,24 @@ describe("W3: cw status 大字段默认截断 + --full 全量（#10，T3.3）", 
   it("status 默认截断大字段 + 提示 --full；--full 输出全量（AC-4.3）", () => {
     const unitId = "wave:w3-status";
     runCwCli(["create", "wave", "--slug", "w3-status", "--objective", "W3 状态截断测试"], e);
-    // clarify 填超长 clarifications（触发大字段截断）
-    const clarify = runCwCli(
-      ["clarify", "--unitId", unitId],
+    // design 填超长 clarifications（触发大字段截断）
+    const design = runCwCli(
+      ["design", "--unitId", unitId],
       e,
       {
         input: JSON.stringify({
           clarifications: [
             { id: "Q1", status: "active", question: "x".repeat(600), resolution: "y".repeat(600), type: "grilling" },
           ],
+          testCases: [makeValidTestCase()],
+          tasks: [makeValidTask()],
+          files: [makeValidFile()],
+          contracts: [makeValidContract()],
+          testCommand: "npx vitest run",
         }),
       },
     );
-    expect(clarify.exitCode).toBe(0);
+    expect(design.exitCode).toBe(0);
 
     // 默认：首行截断提示（设计 #10：输出首行提示），其余行仍是合法 JSON
     const s1 = runCwCli(["status", "--unitId", unitId], e);
@@ -927,7 +945,7 @@ describe("W3: cw status 大字段默认截断 + --full 全量（#10，T3.3）", 
 
 describe("W2(testCommand): testRunner 执行 per-wave plan.testCommand（翻转）", () => {
   /**
-   * 独立 env 全链推进到 test（create → clarify → plan → design-review → execute → test）。
+   * 独立 env 全链推进到 test（create → design → design-review → execute → test）。
    *
    * 用独立 env 而非共享 e：cw.config.json 写入会污染其他测试的 workspace。
    * gate 全过模式：testCases 默认 manual + testJudgment.note 非空（echo 无 vitest 计数，
@@ -953,24 +971,18 @@ describe("W2(testCommand): testRunner 执行 per-wave plan.testCommand（翻转�
     }
     const slug = `tc-${Math.random().toString(36).slice(2, 8)}`;
     const unitId = `wave:${slug}`;
-    // create → clarifying
+    // create → design
     const created = runCwCli(
       ["create", "wave", "--slug", slug, "--objective", "testCommand e2e"],
       local,
     );
     expect(created.exitCode, created.stderr).toBe(0);
-    const clarifyInput = join(local.workspaceDir, `${slug}-clarify.json`);
-    writeFileSync(clarifyInput, JSON.stringify({ clarifications: [] }));
-    const clarified = runCwCli(
-      ["clarify", "--unitId", unitId, "--input", clarifyInput],
-      local,
-    );
-    expect(clarified.exitCode, clarified.stderr).toBe(0);
-    // plan → planning
-    const planInput = join(local.workspaceDir, `${slug}-plan.json`);
+    // design → designing（含 clarifications + WavePlan）
+    const designInput = join(local.workspaceDir, `${slug}-design.json`);
     writeFileSync(
-      planInput,
+      designInput,
       JSON.stringify({
+        clarifications: [],
         testCases: opts.testCases ?? [
           { ...makeValidTestCase("TC1"), type: "manual" },
         ],
@@ -980,11 +992,11 @@ describe("W2(testCommand): testRunner 执行 per-wave plan.testCommand（翻转�
         testCommand: opts.testCommand,
       }),
     );
-    const planned = runCwCli(
-      ["plan", "--unitId", unitId, "--input", planInput],
+    const designed = runCwCli(
+      ["design", "--unitId", unitId, "--input", designInput],
       local,
     );
-    expect(planned.exitCode, planned.stderr).toBe(0);
+    expect(designed.exitCode, designed.stderr).toBe(0);
     // design-review → design-reviewed
     const drInput = join(local.workspaceDir, `${slug}-dr.json`);
     writeFileSync(

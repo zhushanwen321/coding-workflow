@@ -27,7 +27,7 @@ export function safeSlugForPath(slug: string): string {
 /**
  * 算出 --input 文件的约定路径（相对项目根）。
  *
- * 路径形态：`.cw/<safeSlug>/<action>.json`（如 `.cw/auth-w1/clarify.json`）。
+ * 路径形态：`.cw/<safeSlug>/<action>.json`（如 `.cw/auth-w1/design.json`）。
  * slug 经 safeSlugForPath 规范化，保证路径安全。slug 为空串时（create 失败重试等
  * 单元尚未建成的边缘场景）退化为 `.cw/<action>.json`（根目录下平铺）。
  *

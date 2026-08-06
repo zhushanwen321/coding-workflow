@@ -101,21 +101,28 @@ export function handleCloseoutFeature(
     rollupChildDelivery(deps, unit.id);
   }
 
-  // ── crossLayer：回溯父单元（无 parent 则孤立终点）──
+  // ── crossLayer：回溯父单元（无 parent 则孤立终点；serial 模式）──
+  // G5：recursive 模式（多 agent 并行 + steer 唤醒）不填 ascend——closeout 后该结束，
+  // 让 steer 唤醒父 agent（不自己回溯）。serial 模式保持现状。
   const crossLayer: CwNextAction["crossLayer"] | undefined =
-    unit.parentUnitId !== undefined && unit.parentUnitId !== ""
-      ? {
-          kind: "ascend",
-          targetUnitId: unit.parentUnitId,
-          reason: `feature 已 closeout，回溯父单元 ${unit.parentUnitId}`,
-        }
-      : undefined;
+    deps.orchestration === "recursive"
+      ? undefined
+      : unit.parentUnitId !== undefined && unit.parentUnitId !== ""
+        ? {
+            kind: "ascend",
+            targetUnitId: unit.parentUnitId,
+            reason: `feature 已 closeout，回溯父单元 ${unit.parentUnitId}`,
+          }
+        : undefined;
 
   return {
     unitId: unit.id,
     status: unit.status,
     gateResults,
     ok: true,
-    nextAction: buildFeatureNextAction(unit, "closeout", { crossLayer }),
+    nextAction: buildFeatureNextAction(unit, "closeout", {
+      crossLayer,
+      orchestration: deps.orchestration,
+    }),
   };
 }

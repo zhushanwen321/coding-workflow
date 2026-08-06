@@ -23,7 +23,7 @@ import { buildFailureHint, deriveFailureCount } from "../src/guidance/failure-hi
 import { buildPrefix } from "../src/guidance/prefix-builder.js";
 import { buildSchemaGenFile,injectSchema } from "../src/guidance/schema-injector.js";
 import {
-  WAVE_PLAN_TEMPLATE,
+  WAVE_DESIGN_TEMPLATE,
   WAVE_REPLAN_TEMPLATE,
 } from "../src/guidance/templates/wave.js";
 import type { WorkUnitRecord } from "../src/store/schema.js";
@@ -137,9 +137,9 @@ describe("schema-injector: 跨文件 resolve（外层 Input 接口）", () => {
     expect(schema).toContain('"meceNote"');
   });
 
-  it("ClarifyInput 含外层 clarifications 包裹 + 内联展开 Clarification 字段", () => {
-    const schema = injectSchema("src/handlers/types.ts", "ClarifyInput");
-    expect(schema).toContain('"clarifications"');
+  it("DesignInput 含外层 clarifications 包裹 + 内联展开 Clarification 字段", () => {
+    const schema = injectSchema("src/core/plan.ts", "DesignInput");
+    expect(schema).toContain("clarifications（可选）");
     // Clarification 在 core/clarifications.ts，跨文件展开
     expect(schema).toContain('"question"');
     expect(schema).toContain('"type": "research" | "grilling"');
@@ -180,11 +180,11 @@ describe("prefix-builder", () => {
     const prefix = buildPrefix({
       layer: "wave",
       unitId: "auth-w1",
-      status: "clarified",
+      status: "designing",
       parentUnitId: "slice:auth-login",
     });
     expect(prefix).toBe(
-      "[wave:auth-w1] 状态：clarified｜父单元：slice:auth-login",
+      "[wave:auth-w1] 状态：designing｜父单元：slice:auth-login",
     );
   });
 
@@ -226,9 +226,9 @@ describe("prefix-builder", () => {
     const prefix = buildPrefix({
       layer: "wave",
       unitId: "wave:auth",
-      status: "clarified",
+      status: "designing",
     });
-    expect(prefix).toBe("[wave:auth] 状态：clarified");
+    expect(prefix).toBe("[wave:auth] 状态：designing");
     expect(prefix).not.toContain("[wave:wave:auth]");
   });
 
@@ -254,10 +254,10 @@ describe("prefix-builder", () => {
     const prefix = buildPrefix({
       layer: "wave",
       unitId: "wave:auth",
-      status: "clarified",
+      status: "designing",
       parentUnitId: "slice:auth-login",
     });
-    expect(prefix).toBe("[wave:auth] 状态：clarified｜父单元：slice:auth-login");
+    expect(prefix).toBe("[wave:auth] 状态：designing｜父单元：slice:auth-login");
   });
 });
 
@@ -267,13 +267,13 @@ describe("prefix-builder", () => {
 
 describe("failure-hint: buildFailureHint", () => {
   it("failureCount <= 1 → 空字符串（第 1 次只说问题）", () => {
-    expect(buildFailureHint(0, "wave:x", "plan", "x")).toBe("");
-    expect(buildFailureHint(1, "wave:x", "plan", "x")).toBe("");
+    expect(buildFailureHint(0, "wave:x", "design", "x")).toBe("");
+    expect(buildFailureHint(1, "wave:x", "design", "x")).toBe("");
   });
 
-  it("failureCount == 3，plan 类 → 含三出口（clarify / replan / abort 重选）", () => {
-    const hint = buildFailureHint(3, "wave:x", "plan", "x");
-    expect(hint).toContain("cw clarify");
+  it("failureCount == 3，design 类 → 含三出口（design / replan / abort 重选）", () => {
+    const hint = buildFailureHint(3, "wave:x", "design", "x");
+    expect(hint).toContain("cw design");
     expect(hint).toContain("cw replan");
     expect(hint).toContain("cw abort");
     // 第 3 次不含「强烈建议先 abort」。
@@ -282,31 +282,31 @@ describe("failure-hint: buildFailureHint", () => {
 
   it("failureCount == 2 / 4 → 同三出口档位（容差，非死边界）", () => {
     for (const count of [2, 4]) {
-      const hint = buildFailureHint(count, "wave:x", "plan", "x");
-      expect(hint).toContain("cw clarify");
+      const hint = buildFailureHint(count, "wave:x", "design", "x");
+      expect(hint).toContain("cw design");
       expect(hint).toContain("cw replan");
       expect(hint).not.toContain("强烈建议");
     }
   });
 
   it("failureCount >= 5 → 加「强烈建议先 cw abort」一句", () => {
-    const hint = buildFailureHint(5, "wave:x", "plan", "x");
+    const hint = buildFailureHint(5, "wave:x", "design", "x");
     expect(hint).toContain("强烈建议先 cw abort");
     expect(hint).toContain("5");
     // 第 7 次同样含强烈建议。
-    expect(buildFailureHint(7, "wave:x", "plan", "x")).toContain("强烈建议");
+    expect(buildFailureHint(7, "wave:x", "design", "x")).toContain("强烈建议");
   });
 
   it("负数 → 空字符串（防御性）", () => {
-    expect(buildFailureHint(-1, "wave:x", "plan", "x")).toBe("");
+    expect(buildFailureHint(-1, "wave:x", "design", "x")).toBe("");
   });
 
   it("命令嵌入真实 unitId，无占位（agent 可直接复制）", () => {
-    const hint = buildFailureHint(3, "wave:auth-w1", "plan", "auth-w1");
+    const hint = buildFailureHint(3, "wave:auth-w1", "design", "auth-w1");
     expect(hint).toContain("--unitId wave:auth-w1");
     expect(hint).not.toContain("<unitId>");
     // 命令不带 v1 前缀（Wave 3 起切断）。
-    expect(hint).toContain("cw clarify");
+    expect(hint).toContain("cw design");
     expect(hint).toContain("cw replan");
     expect(hint).toContain("cw abort");
   });
@@ -317,27 +317,17 @@ describe("failure-hint: buildFailureHint", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("failure-hint: action-aware 出口 (M10)", () => {
-  it("clarify 类失败 → 不建议 replan（无 plan 可改），建议继续 clarify/abort 重选/重新拆 layer", () => {
-    const hint = buildFailureHint(3, "feature:f1", "clarify", "f1");
-    expect(hint).toContain("cw clarify");
-    expect(hint).toContain("cw abort");
-    // clarify 阶段还没有 plan，不该建议 replan。
-    expect(hint).not.toContain("cw replan");
-    // 不该用「plan 有根本问题」类误导文案。
-    expect(hint).not.toContain("plan 有根本问题");
-  });
-
-  it("plan 类失败 → 标准三出口（clarify / replan / abort 重选）", () => {
-    const hint = buildFailureHint(3, "wave:p1", "plan", "p1");
-    expect(hint).toContain("cw clarify");
+  it("design 类失败 → 标准三出口（design / replan / abort 重选）", () => {
+    const hint = buildFailureHint(3, "wave:p1", "design", "p1");
+    expect(hint).toContain("cw design");
     expect(hint).toContain("cw replan");
     expect(hint).toContain("cw abort");
   });
 
-  it("design-review / execute / test / exec-review / retrospect / closeout 类失败 → 同 plan 三出口", () => {
+  it("design-review / execute / test / exec-review / retrospect / closeout 类失败 → 同 design 三出口", () => {
     for (const action of ["design-review", "execute", "test", "exec-review", "retrospect", "closeout"] as const) {
       const hint = buildFailureHint(3, "wave:x", action, "x");
-      expect(hint).toContain("cw clarify");
+      expect(hint).toContain("cw design");
       expect(hint).toContain("cw replan");
       expect(hint).toContain("cw abort");
     }
@@ -364,41 +354,41 @@ describe("failure-hint: action-aware 出口 (M10)", () => {
 describe("failure-hint: deriveFailureCount", () => {
   it("尾部连续 gate fail 记录 → 计数", () => {
     const history = [
-      { action: "plan", note: "ok" },
-      { action: "plan", note: "gate fail: testCases empty" },
-      { action: "plan", note: "gate fail: testCases empty" },
-      { action: "plan", note: "gate fail: still empty" },
+      { action: "design", note: "ok" },
+      { action: "design", note: "gate fail: testCases empty" },
+      { action: "design", note: "gate fail: testCases empty" },
+      { action: "design", note: "gate fail: still empty" },
     ];
-    expect(deriveFailureCount(history, "plan")).toBe(3);
+    expect(deriveFailureCount(history, "design")).toBe(3);
   });
 
   it("遇到非 gate fail 记录即停止（不跨成功记录累计）", () => {
     const history = [
-      { action: "plan", note: "gate fail" },
-      { action: "plan", note: "ok passed" },
-      { action: "plan", note: "gate fail again" },
+      { action: "design", note: "gate fail" },
+      { action: "design", note: "ok passed" },
+      { action: "design", note: "gate fail again" },
     ];
-    expect(deriveFailureCount(history, "plan")).toBe(1);
+    expect(deriveFailureCount(history, "design")).toBe(1);
   });
 
   it("空 history → 0", () => {
-    expect(deriveFailureCount([], "plan")).toBe(0);
+    expect(deriveFailureCount([], "design")).toBe(0);
   });
 
   it("全部 gate fail → 全部计数", () => {
     const history = [
-      { action: "plan", note: "gate fail" },
-      { action: "plan", note: "gate fail" },
+      { action: "design", note: "gate fail" },
+      { action: "design", note: "gate fail" },
     ];
-    expect(deriveFailureCount(history, "plan")).toBe(2);
+    expect(deriveFailureCount(history, "design")).toBe(2);
   });
 
   it("无 note 的记录视为非 fail（停止）", () => {
     const history = [
-      { action: "plan" },
-      { action: "plan", note: "gate fail" },
+      { action: "design" },
+      { action: "design", note: "gate fail" },
     ];
-    expect(deriveFailureCount(history, "plan")).toBe(1);
+    expect(deriveFailureCount(history, "design")).toBe(1);
   });
 });
 
@@ -534,30 +524,30 @@ describe("cross-layer: computeCrossLayerAfterCloseout", () => {
 
 describe("build-guidance: buildNormalGuidance（三段式）", () => {
   const guidance = buildNormalGuidance({
-    prefix: "[wave:auth-w1] 状态：clarified｜父单元：slice:auth-login",
-    nextAction: "plan",
-    goal: WAVE_PLAN_TEMPLATE.goal,
-    command: "cw plan --unitId wave:auth-w1 --input .cw/auth-w1/plan.json",
+    prefix: "[wave:auth-w1] 状态：designing｜父单元：slice:auth-login",
+    nextAction: "design",
+    goal: WAVE_DESIGN_TEMPLATE.goal,
+    command: "cw design --unitId wave:auth-w1 --input .cw/auth-w1/design.json",
     schemaText: '{ "testCases": [...] }',
-    templateText: WAVE_PLAN_TEMPLATE.constraint,
+    templateText: WAVE_DESIGN_TEMPLATE.constraint,
   });
 
   it("含「位置」段 + prefix", () => {
     expect(guidance).toContain("## 位置");
-    expect(guidance).toContain("[wave:auth-w1] 状态：clarified");
+    expect(guidance).toContain("[wave:auth-w1] 状态：designing");
   });
 
   it("含「下一步」段 + 命令", () => {
     expect(guidance).toContain("## 下一步");
-    expect(guidance).toContain("命令：cw plan --unitId wave:auth-w1 --input .cw/auth-w1/plan.json");
-    expect(guidance).toContain("plan");
+    expect(guidance).toContain("命令：cw design --unitId wave:auth-w1 --input .cw/auth-w1/design.json");
+    expect(guidance).toContain("design");
   });
 
   it("含「input schema + 关键约束」段 + schema + 约束", () => {
     expect(guidance).toContain("## input schema + 关键约束");
     expect(guidance).toContain('{ "testCases": [...] }');
-    // plan 阶段的关键约束（§4.1）
-    expect(guidance).toContain("关键约束：testCases 不能为空");
+    // design 阶段的关键约束（§4.1）
+    expect(guidance).toContain("testCases 不能为空");
     expect(guidance).toContain("冻结");
   });
 
@@ -572,9 +562,9 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
   it("templateText 为空时不输出空约束段", () => {
     const g = buildNormalGuidance({
       prefix: "[wave:x] 状态：s",
-      nextAction: "clarify",
-      goal: "澄清需求",
-      command: "cw clarify --unitId wave:x",
+      nextAction: "design",
+      goal: "澄清需求边界 + 编写执行计划",
+      command: "cw design --unitId wave:x",
       schemaText: "{}",
       templateText: "",
     });
@@ -600,12 +590,12 @@ describe("build-guidance: buildNormalGuidance（三段式）", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("build-guidance: buildSchemaGenFile（#1，T1.5）", () => {
-  it("返回 22 个 ${scope}:${action} keys，每 key 的 schemaText 含外层包裹", () => {
+  it("返回 18 个 ${scope}:${action} keys，每 key 的 schemaText 含外层包裹", () => {
     const gen = buildSchemaGenFile();
     const keys = Object.keys(gen);
-    // wave 7（clarify/plan/design-review/test/exec-review/retrospect/closeout）
-    // + slice/feature/epic 各 5（clarify/plan/design-review/retrospect/closeout）= 22
-    expect(keys.length).toBe(22);
+    // wave 6（design/design-review/test/exec-review/retrospect/closeout）
+    // + slice/feature/epic 各 4（design/design-review/retrospect/closeout）= 18
+    expect(keys.length).toBe(18);
     for (const key of keys) {
       expect(key).toMatch(/^(wave|slice|feature|epic):[a-z-]+$/);
       const text = gen[key].schemaText;
@@ -613,9 +603,9 @@ describe("build-guidance: buildSchemaGenFile（#1，T1.5）", () => {
       expect(text.trim().startsWith("{"), `${key} 缺外层 {`).toBe(true);
       expect(text.trim().endsWith("}"), `${key} 缺外层 }`).toBe(true);
     }
-    // 四层覆盖抽查：wave:clarify / slice:plan / feature:retrospect / epic:closeout
-    expect(gen["wave:clarify"]).toBeDefined();
-    expect(gen["slice:plan"]).toBeDefined();
+    // 四层覆盖抽查：wave:design / slice:design / feature:retrospect / epic:closeout
+    expect(gen["wave:design"]).toBeDefined();
+    expect(gen["slice:design"]).toBeDefined();
     expect(gen["feature:retrospect"]).toBeDefined();
     expect(gen["epic:closeout"]).toBeDefined();
   });
@@ -624,30 +614,30 @@ describe("build-guidance: buildSchemaGenFile（#1，T1.5）", () => {
 describe("build-guidance: buildFailureGuidance（四段式）", () => {
   it("含「位置 / 问题 / 怎么修」段 + failureHint 非空时含「递进提示」", () => {
     const guidance = buildFailureGuidance({
-      prefix: "[wave:auth-w1] 状态：planning（未变）",
+      prefix: "[wave:auth-w1] 状态：designing（未变）",
       problem: "testCases 为空。design-review gate 要求 testCases 至少 1 条。",
-      fixCommand: "cw plan --unitId wave:auth-w1 --input .cw/auth-w1/plan.json",
-      failureHint: buildFailureHint(3, "wave:auth-w1", "plan", "auth-w1"),
+      fixCommand: "cw design --unitId wave:auth-w1 --input .cw/auth-w1/design.json",
+      failureHint: buildFailureHint(3, "wave:auth-w1", "design", "auth-w1"),
     });
 
     expect(guidance).toContain("## 位置");
     expect(guidance).toContain("## 问题");
     expect(guidance).toContain("testCases 为空");
     expect(guidance).toContain("## 怎么修");
-    expect(guidance).toContain("cw plan --unitId wave:auth-w1 --input .cw/auth-w1/plan.json");
+    expect(guidance).toContain("cw design --unitId wave:auth-w1 --input .cw/auth-w1/design.json");
     // failureCount=3 → 含递进提示段。
     expect(guidance).toContain("## 递进提示");
-    expect(guidance).toContain("cw clarify");
+    expect(guidance).toContain("cw design");
     expect(guidance).toContain("cw replan");
     expect(guidance).toContain("cw abort");
   });
 
   it("failureHint 为空（第 1 次）→ 省略「递进提示」段", () => {
     const guidance = buildFailureGuidance({
-      prefix: "[wave:auth-w1] 状态：planning（未变）",
+      prefix: "[wave:auth-w1] 状态：designing（未变）",
       problem: "testCases 为空。",
-      fixCommand: "cw plan --unitId wave:auth-w1 --input .cw/auth-w1/plan.json",
-      failureHint: buildFailureHint(1, "wave:auth-w1", "plan", "auth-w1"),
+      fixCommand: "cw design --unitId wave:auth-w1 --input .cw/auth-w1/design.json",
+      failureHint: buildFailureHint(1, "wave:auth-w1", "design", "auth-w1"),
     });
 
     expect(guidance).toContain("## 位置");
@@ -661,7 +651,7 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
       prefix: "[wave:x] 状态：s",
       problem: "p",
       fixCommand: "cmd",
-      failureHint: buildFailureHint(5, "wave:x", "plan", "x"),
+      failureHint: buildFailureHint(5, "wave:x", "design", "x"),
     });
     const posIdx = guidance.indexOf("## 位置");
     const problemIdx = guidance.indexOf("## 问题");
@@ -677,7 +667,7 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
       prefix: "[wave:x] 状态：s",
       problem: "p",
       fixCommand: "cmd",
-      failureHint: buildFailureHint(5, "wave:x", "plan", "x"),
+      failureHint: buildFailureHint(5, "wave:x", "design", "x"),
     });
     expect(guidance).toContain("强烈建议先 cw abort");
   });
@@ -688,36 +678,36 @@ describe("build-guidance: buildFailureGuidance（四段式）", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("templates/wave: 关键约束", () => {
-  it("plan 模板含冻结契约关键约束（§4.1）", () => {
+  it("design 模板含冻结契约关键约束（§4.1）", () => {
     // constraint 只保留纯阶段约束——subagent 调度提示已抽离到 subagent-guidance.ts
     // （由 buildNextAction 经 buildSubagentGuidance 生成，渲染为 guidance 第 4 段）。
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("testCases 不能为空");
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("冻结");
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("replan");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("testCases 不能为空");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("冻结");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("replan");
     // 验证 subagent 文案已从 constraint 剥离干净
-    expect(WAVE_PLAN_TEMPLATE.constraint).not.toContain("subagent");
-    expect(WAVE_PLAN_TEMPLATE.goal).toContain("执行计划");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).not.toContain("subagent");
+    expect(WAVE_DESIGN_TEMPLATE.goal).toContain("执行计划");
   });
 
-  it("plan 模板含 abandonParentItems 提示（ADR-0010 补充，schema 缺口修复）", () => {
-    // plan 阶段也告知 abandonParentItems 选项——设计阶段发现 parent 条目不适用就该声明，
+  it("design 模板含 abandonParentItems 提示（ADR-0010 补充，schema 缺口修复）", () => {
+    // design 阶段也告知 abandonParentItems 选项——设计阶段发现 parent 条目不适用就该声明，
     // 不必等到 execute。CLI 用法 + append-only 性质必须在 constraint 里点明。
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("abandonParentItems");
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("--abandonParentItems");
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("append-only");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("abandonParentItems");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("--abandonParentItems");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("append-only");
   });
 
   it("replan 模板含「重走 design-review」提示（§6.1 / wave §8.3）", () => {
     expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("重新 design-review");
-    expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("plan → design-review → execute");
+    expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("design → design-review → execute");
     // replan constraint 也不应含 subagent 文案
     expect(WAVE_REPLAN_TEMPLATE.constraint).not.toContain("subagent");
   });
 
-  it("plan 模板含 testCommand 必填约束（per-wave testCommand 改造 §4.4）", () => {
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("testCommand 必须填");
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("严禁跑全量");
-    expect(WAVE_PLAN_TEMPLATE.constraint).toContain("npx vitest run");
+  it("design 模板含 testCommand 必填约束（per-wave testCommand 改造 §4.4）", () => {
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("testCommand 必须填");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("严禁跑全量");
+    expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("npx vitest run");
   });
 
   it("replan 模板含纯 testCommand 补充旁路提示（§4.6）", () => {

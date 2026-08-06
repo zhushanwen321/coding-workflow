@@ -22,7 +22,7 @@ import {
   createCwEnv,
 } from "./helpers/env.js";
 import {
-  makeFeatureClarifyInput,
+  makeFeatureDesignInput,
   makeValidFeatureDesignReviewJudgment,
 } from "./helpers/feature-env.js";
 import {
@@ -68,12 +68,10 @@ describe("dispatch slice execute 返回 children", () => {
       { action: "create", input: { slug: "ch-slice", objective: "o", layer: "slice" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-
-    // 2. plan：split 两项 w1←(无依赖)、w2←w1
+    // design 合并原 clarify + plan：split 两项 w1←(无依赖)、w2←w1
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           ...makeValidSlicePlan(),
@@ -127,14 +125,13 @@ describe("dispatch feature execute 返回 children", () => {
       { action: "create", input: { slug: "ch-feature", objective: "o", layer: "feature" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: makeFeatureClarifyInput() }, env.deps);
-
-    // plan：split 两项 s1←(无依赖)、s2←s1
+    // design 合并原 clarify + plan：spec+clarifications（makeFeatureDesignInput）+ split 两项 s1←(无依赖)、s2←s1
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
+          ...makeFeatureDesignInput(),
           split: [
             { slug: "s1", description: "slice 1", dependsOn: [], inheritedItemIds: ["FR1"] },
             { slug: "s2", description: "slice 2", dependsOn: ["s1"], inheritedItemIds: ["AC1"] },
@@ -183,10 +180,9 @@ describe("dispatch wave execute 不返回 children", () => {
       { action: "create", input: { slug: "ch-wave", objective: "o" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           testCases: [{ id: "TC1", status: "active", name: "tc", scenario: "s", input: "i", expected: "e", type: "unit" }],
@@ -246,10 +242,10 @@ describe("dispatch slice execute 无依赖 split", () => {
       { action: "create", input: { slug: "ch-no-deps", objective: "o", layer: "slice" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
+    // design 合并原 clarify + plan：split 两项互不依赖
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           ...makeValidSlicePlan(),

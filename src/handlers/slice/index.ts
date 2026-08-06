@@ -1,13 +1,12 @@
 /**
  * v1 slice handlers 统一导出（7 主流程 handler + abort + replan + rollup 辅助）。
  *
- * slice 是 PlanningUnit 的具体实现（7 步流程：create/clarify/plan/design-review/execute/
+ * slice 是 PlanningUnit 的具体实现（6 步流程：create/design/design-review/execute/
  * retrospect/closeout + abort + replan）。每个 action 一个 handler，串 rules（纯函数）+ store（IO）。
  *
  * 模块索引：
  * - create：入口，createSlice 工厂初始化空态
- * - clarify：progressive append clarifications
- * - plan：写 SlicePlan 5 字段 + decisions 投影
+ * - design：写 SlicePlan 5 字段 + decisions 投影 + append clarifications
  * - design-review：9 个 gate + 写 designReviewJudgment
  * - execute：【核心】按 split 创建 child wave，递归下沉点
  * - retrospect：查 child wave 状态 + 4 个 gate + 写 PlanningRetrospectData
@@ -22,14 +21,13 @@
  * 不对外导出。W5 参数化 internal.ts 后本文件可收敛。
  */
 
-// 9 个 slice handler
+// 8 个 slice handler
 export { handleAbortSlice } from "./abort.js";
-export { handleClarifySlice } from "./clarify.js";
 export { handleCloseoutSlice } from "./closeout.js";
 export { handleCreateSlice } from "./create.js";
+export { handleDesignSlice } from "./design.js";
 export { handleDesignReviewSlice } from "./design-review.js";
 export { handleExecuteSlice } from "./execute.js";
-export { handlePlanSlice } from "./plan.js";
 export { handleReplanSlice } from "./replan.js";
 export { handleRetrospectSlice } from "./retrospect.js";
 

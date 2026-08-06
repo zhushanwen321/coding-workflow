@@ -36,17 +36,17 @@ export function buildReplanReviewText(args: {
   sections.push("");
   sections.push("【方向性问题】底层假设错了");
   sections.push("→ 检查其他条目是否也依赖这个错误假设");
-  sections.push("→ 考虑废弃更多条目，甚至回到 clarify 重新澄清约束");
+  sections.push("→ 考虑废弃更多条目，甚至重新 design 补充澄清约束");
   sections.push("");
   sections.push("审视维度（新方案必须回答）：");
   sections.push("- 架构合理性：归位到正确的层了吗？");
   sections.push("- 鲁棒性：边界条件成立吗？");
   sections.push("- 兼容性：破坏已有 interface 契约了吗？");
   sections.push("");
-  // 有回流通道（plan/design-review 可达）才引导重新 plan + design-review；
+  // 有回流通道（design/design-review 可达）才引导重新 design + design-review；
   // 无回流状态省略该句（见 args.planReachable 注释）。
   if (planReachable) {
-    sections.push("审视完后，重新 plan 并重新 design-review（plan → design-review → execute 完整重走）。");
+    sections.push("审视完后，重新 design 并重新 design-review（design → design-review → execute 完整重走）。");
     sections.push("");
   }
   sections.push(
@@ -61,7 +61,7 @@ export function buildReplanReviewText(args: {
   if (replanCount >= REPLAN_WARN_THRESHOLD) {
     sections.push("");
     sections.push("⚠️ 你已经 replan 过一次了。如果又要 replan，说明方案层面有系统性问题。");
-    sections.push("考虑回到 clarify 重新澄清需求/技术约束，或 abort 整个 unit 重新设计。");
+    sections.push("考虑重新 design 补充澄清需求/技术约束，或 abort 整个 unit 重新设计。");
   }
   if (replanCount >= REPLAN_ABORT_THRESHOLD) {
     sections.push("");

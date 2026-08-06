@@ -92,7 +92,7 @@ describe("buildReplanReviewText", () => {
       expect(text).toContain("【单点问题】");
       // 追加警告
       expect(text).toContain("系统性问题");
-      expect(text).toMatch(/回到 clarify/);
+      expect(text).toMatch(/重新 design 补充澄清/);
     });
 
     it("不含强烈 abort 建议（仅 >= 3 才有）", () => {

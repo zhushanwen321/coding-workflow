@@ -2,9 +2,9 @@
  * v1 handler input shape 校验测试（#6，W2）。
  *
  * 覆盖：
- *   - T2.4：clarify `{}` → CwError「input.clarifications …」exit 1 语义（非 crash exit 2）
- *   - T2.4b：plan 带 abandonParentItems（buildParams 注入字段）→ 校验放行（F-4）
- *   - T2.5：clarify `{"clarifications":"hello"}` → 拒绝（不静默拆字）
+ *   - T2.4：design `{}` → CwError「input.testCases …」exit 1 语义（非 crash exit 2）
+ *   - T2.4b：design 带 abandonParentItems（buildParams 注入字段）→ 校验放行（F-4）
+ *   - T2.5：design `{"clarifications":"hello"}` → 拒绝（不静默拆字）
  *   - T2.6：INPUT_SCHEMAS 映射表全覆盖断言（全部带 input 的 handler 入口）
  *           + 编译期双向 assignability 断言（SF-8）
  *
@@ -14,17 +14,16 @@ import type { Static, TSchema } from "@sinclair/typebox";
 import { afterEach,beforeEach, describe, expect, it } from "vitest";
 
 import { CwError } from "../src/core/errors.js";
-import type { PlanFeatureInput } from "../src/core/plan.js";
+import type { DesignFeatureInput } from "../src/core/plan.js";
 import { dispatch } from "../src/dispatch.js";
 import type {
   AbortInput,
-  ClarifyInput,
   CloseoutInput,
+  DesignInput,
   DesignReviewInput,
+  DesignSliceInput,
   ExecReviewInput,
   ExecuteInput,
-  PlanInput,
-  PlanSliceInput,
   ReplanInput,
   RetrospectInput,
   RetrospectSliceInput,
@@ -32,15 +31,14 @@ import type {
 } from "../src/handlers/types.js";
 import {
   AbortInputSchema,
-  ClarifyInputSchema,
   CloseoutInputSchema,
+  DesignFeatureInputSchema,
+  DesignInputSchema,
   DesignReviewInputSchema,
+  DesignSliceInputSchema,
   ExecReviewInputSchema,
   ExecuteInputSchema,
   INPUT_SCHEMAS,
-  PlanFeatureInputSchema,
-  PlanInputSchema,
-  PlanSliceInputSchema,
   ReplanInputSchema,
   RetrospectInputSchema,
   RetrospectSliceInputSchema,
@@ -59,73 +57,90 @@ type AssertBidirectional<S extends TSchema, T> = IsAssignable<Static<S>, T> exte
     : false
   : false;
 
-// wave 10 个 Input schema 全双向断言
- 
-export const sf8Clarify: AssertBidirectional<typeof ClarifyInputSchema, ClarifyInput> = true;
- 
-// testCommand 有意漂移：PlanInputSchema.Type.String() 必填（运行时强制新 plan 提交带 testCommand），
-// PlanInput 类型 testCommand?: string 可选（兼容存量 WavePlan/PlanInput 字面量，加载为 undefined）。
+// wave 9 个 Input schema 全双向断言
+
+// testCommand 有意漂移：DesignInputSchema.Type.String() 必填（运行时强制新 design 提交带 testCommand），
+// DesignInput 类型 testCommand?: string 可选（兼容存量 WavePlan/DesignInput 字面量，加载为 undefined）。
 // 双向断言不适用于「schema 严格 / type 宽松」的有意漂移——改单向：schema 实例 ⊆ type。
-// 注意：单向断言不防字段名拼错（泛型可赋值性允许多余属性），拼错拦截靠下方 sf8PlanKeys key 方向断言——
+// 注意：单向断言不防字段名拼错（泛型可赋值性允许多余属性），拼错拦截靠下方 sf8DesignKeys key 方向断言——
 // 须 tuple 包裹 [keyof X] extends [keyof Y] 强制即时求值（普通 IsAssignable 条件类型延迟求值会静默放行）。
-export const sf8Plan: IsAssignable<Static<typeof PlanInputSchema>, PlanInput> = true;
-// key 方向断言：schema 字段名 ⊆ PlanInput 字段名（如把 testCommand 拼成 testCommandd 时编译报错）。
-export const sf8PlanKeys: [keyof Static<typeof PlanInputSchema>] extends [keyof PlanInput] ? true : false = true;
- 
+export const sf8Design: IsAssignable<Static<typeof DesignInputSchema>, DesignInput> = true;
+// key 方向断言：schema 字段名 ⊆ DesignInput 字段名（如把 testCommand 拼成 testCommandd 时编译报错）。
+export const sf8DesignKeys: [keyof Static<typeof DesignInputSchema>] extends [keyof DesignInput] ? true : false = true;
+
 export const sf8DesignReview: AssertBidirectional<typeof DesignReviewInputSchema, DesignReviewInput> = true;
- 
+
 export const sf8Execute: AssertBidirectional<typeof ExecuteInputSchema, ExecuteInput> = true;
- 
+
 export const sf8Test: AssertBidirectional<typeof TestInputSchema, TestInput> = true;
- 
+
 export const sf8ExecReview: AssertBidirectional<typeof ExecReviewInputSchema, ExecReviewInput> = true;
- 
+
 export const sf8Retrospect: AssertBidirectional<typeof RetrospectInputSchema, RetrospectInput> = true;
- 
+
 export const sf8Closeout: AssertBidirectional<typeof CloseoutInputSchema, CloseoutInput> = true;
- 
+
 export const sf8Replan: AssertBidirectional<typeof ReplanInputSchema, ReplanInput> = true;
- 
+
 export const sf8Abort: AssertBidirectional<typeof AbortInputSchema, AbortInput> = true;
-// slice / feature plan（feature 与 epic 共用 PlanFeatureInput schema）
- 
-export const sf8PlanSlice: AssertBidirectional<typeof PlanSliceInputSchema, PlanSliceInput> = true;
- 
-export const sf8PlanFeature: AssertBidirectional<typeof PlanFeatureInputSchema, PlanFeatureInput> = true;
+// slice / feature design（feature 与 epic 共用 DesignFeatureInput schema）
+
+export const sf8DesignSlice: AssertBidirectional<typeof DesignSliceInputSchema, DesignSliceInput> = true;
+
+// DesignFeatureInput 例外（同旧 FeatureClarifyInput）：spec 字段有意漂移——schema 只验容器形态
+// （Record<string, unknown>，内容由 validateFeatureSpec 软校验），DesignFeatureInput.spec 是
+// FeatureSpec 具名 interface（无索引签名，双向都不与 Record<string, unknown> 可赋值）。
+// 故整体双向断言不适用，改用 Omit<spec> 双向断言：除 spec 外其余字段（split/clarifications/abandonParentItems）
+// 仍锁结构同构，防 schema 与类型漂移。直接展开 IsAssignable（Omit 产物不是 TSchema，不能用 AssertBidirectional）。
+export const sf8DesignFeature: IsAssignable<
+  Omit<Static<typeof DesignFeatureInputSchema>, "spec">,
+  Omit<DesignFeatureInput, "spec">
+> extends true
+  ? IsAssignable<Omit<DesignFeatureInput, "spec">, Omit<Static<typeof DesignFeatureInputSchema>, "spec">> extends true
+    ? true
+    : false
+  : false = true;
 // RetrospectSliceInput / RetrospectFeatureInput / RetrospectEpicInput 共用 RetrospectSliceInputSchema
- 
+
 export const sf8RetrospectSlice: AssertBidirectional<typeof RetrospectSliceInputSchema, RetrospectSliceInput> = true;
-// FeatureClarifyInput 例外：spec 字段只验容器形态（spec 内容由 validateFeatureSpec 软校验，
-// 保证畸形 spec 走 ok=false 可重试路径而非硬 throw），故不做双向断言。
 
 // ── validateInput 纯函数 ──
 
 describe("validateInput（#6 input shape 校验）", () => {
-  it("T2.4: wave clarify {} → CwError，消息以 input.clarifications 前缀开头", () => {
+  it("T2.4: wave design {} → CwError，消息以 input.testCases 前缀开头", () => {
     let caught: unknown;
     try {
-      validateInput("clarify", "wave", {});
+      validateInput("design", "wave", {});
     } catch (e) {
       caught = e;
     }
     expect(caught).toBeInstanceOf(CwError);
     const message = (caught as CwError).message;
-    expect(message.startsWith("input.clarifications")).toBe(true);
+    expect(message.startsWith("input.testCases")).toBe(true);
   });
 
   it("T2.5: clarifications 为字符串 → 拒绝（不静默拆字）", () => {
     expect(() =>
-      validateInput("clarify", "wave", { clarifications: "hello" }),
+      validateInput("design", "wave", { clarifications: "hello" }),
     ).toThrowError(CwError);
   });
 
-  it("合法 clarify input（空数组）→ 放行", () => {
-    expect(() => validateInput("clarify", "wave", { clarifications: [] })).not.toThrow();
+  it("合法 design input（全必填 + 空数组）→ 放行", () => {
+    expect(() =>
+      validateInput("design", "wave", {
+        testCases: [],
+        tasks: [],
+        files: [],
+        contracts: [],
+        testCommand: "npx vitest run",
+        clarifications: [],
+      }),
+    ).not.toThrow();
   });
 
-  it("T2.4b: plan 带 abandonParentItems（buildParams 注入字段）→ 放行（F-4）", () => {
+  it("T2.4b: design 带 abandonParentItems（buildParams 注入字段）→ 放行（F-4）", () => {
     expect(() =>
-      validateInput("plan", "wave", {
+      validateInput("design", "wave", {
         testCases: [makeValidTestCase()],
         tasks: [],
         files: [],
@@ -136,10 +151,10 @@ describe("validateInput（#6 input shape 校验）", () => {
     ).not.toThrow();
   });
 
-  it("plan 缺 testCases → 拒绝（消息前缀 input.testCases）", () => {
+  it("design 缺 testCases → 拒绝（消息前缀 input.testCases）", () => {
     let caught: unknown;
     try {
-      validateInput("plan", "wave", { tasks: [] });
+      validateInput("design", "wave", { tasks: [] });
     } catch (e) {
       caught = e;
     }
@@ -147,10 +162,10 @@ describe("validateInput（#6 input shape 校验）", () => {
     expect((caught as CwError).message.startsWith("input.testCases")).toBe(true);
   });
 
-  it("plan 缺 testCommand → 拒绝（消息前缀 input.testCommand）", () => {
+  it("design 缺 testCommand → 拒绝（消息前缀 input.testCommand）", () => {
     let caught: unknown;
     try {
-      validateInput("plan", "wave", {
+      validateInput("design", "wave", {
         testCases: [makeValidTestCase()],
         tasks: [],
         files: [],
@@ -163,9 +178,9 @@ describe("validateInput（#6 input shape 校验）", () => {
     expect((caught as CwError).message.startsWith("input.testCommand")).toBe(true);
   });
 
-  it("plan 带 testCommand → 放行", () => {
+  it("design 带 testCommand → 放行", () => {
     expect(() =>
-      validateInput("plan", "wave", {
+      validateInput("design", "wave", {
         testCases: [makeValidTestCase()],
         tasks: [],
         files: [],
@@ -196,20 +211,21 @@ describe("validateInput（#6 input shape 校验）", () => {
     expect(() => validateInput("abort", "wave", {})).not.toThrow();
   });
 
-  it("feature clarify 容器形态：spec 必须是对象，但内容不深校验（validateFeatureSpec 软校验）", () => {
+  it("feature design 容器形态：spec 必须是对象，但内容不深校验（validateFeatureSpec 软校验）", () => {
     expect(() =>
-      validateInput("clarify", "feature", { clarifications: [], spec: {} }),
+      validateInput("design", "feature", { clarifications: [], spec: {}, split: [] }),
     ).not.toThrow();
     // 畸形 spec 内容（FR 缺 ac）不在此层拒绝——由 handler 的 validateFeatureSpec 软校验返回 ok=false
     expect(() =>
-      validateInput("clarify", "feature", {
+      validateInput("design", "feature", {
         clarifications: [],
+        split: [],
         spec: { functionalRequirements: [{ id: "FR1" }] },
       }),
     ).not.toThrow();
     // 非对象 spec → 拒绝
     expect(() =>
-      validateInput("clarify", "feature", { clarifications: [], spec: "nope" }),
+      validateInput("design", "feature", { clarifications: [], spec: "nope", split: [] }),
     ).toThrowError(CwError);
   });
 
@@ -243,36 +259,33 @@ describe("dispatch 层 input 校验集成（T2.4/T2.4b/T2.5）", () => {
     return created.unitId;
   }
 
-  it("T2.4: clarify {} → CwError input.clarifications（非 crash）", () => {
+  it("T2.4: design {} → CwError input.testCases（非 crash）", () => {
     const unitId = createWaveUnit();
     let caught: unknown;
     try {
-       
-      dispatch({ action: "clarify", unitId, input: {} as unknown as ClarifyInput }, env.deps);
+      dispatch({ action: "design", unitId, input: {} as unknown as DesignInput }, env.deps);
     } catch (e) {
       caught = e;
     }
     expect(caught).toBeInstanceOf(CwError);
-    expect((caught as CwError).message.startsWith("input.clarifications")).toBe(true);
+    expect((caught as CwError).message.startsWith("input.testCases")).toBe(true);
   });
 
-  it("T2.5: clarify {\"clarifications\":\"hello\"} → 拒绝（不静默拆字）", () => {
+  it("T2.5: design {\"clarifications\":\"hello\"} → 拒绝（不静默拆字）", () => {
     const unitId = createWaveUnit();
     expect(() =>
-       
       dispatch(
-        { action: "clarify", unitId, input: { clarifications: "hello" } as unknown as ClarifyInput },
+        { action: "design", unitId, input: { clarifications: "hello" } as unknown as DesignInput },
         env.deps,
       ),
     ).toThrowError(CwError);
   });
 
-  it("T2.4b: plan 带 abandonParentItems → 校验放行，ok=true", () => {
+  it("T2.4b: design 带 abandonParentItems → 校验放行，ok=true", () => {
     const unitId = createWaveUnit();
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
     const result = dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           testCases: [makeValidTestCase()],
@@ -293,16 +306,16 @@ describe("dispatch 层 input 校验集成（T2.4/T2.4b/T2.5）", () => {
 
 describe("INPUT_SCHEMAS 映射表全覆盖（T2.6）", () => {
   it("全部带 input 的 handler 入口都有 schema，且无多余 entry", () => {
-    // 31 个带 input 的 handler 入口（wave 10 + slice/feature/epic 各 7；
+    // 27 个带 input 的 handler 入口（wave 9 + slice/feature/epic 各 6；
     // planning 层 execute 无 input 参数不校验；create 无 input 不校验）
     const expected: Record<string, string[]> = {
       wave: [
-        "clarify", "plan", "design-review", "execute", "test",
+        "design", "design-review", "execute", "test",
         "exec-review", "retrospect", "closeout", "replan", "abort",
       ],
-      slice: ["clarify", "plan", "design-review", "retrospect", "closeout", "replan", "abort"],
-      feature: ["clarify", "plan", "design-review", "retrospect", "closeout", "replan", "abort"],
-      epic: ["clarify", "plan", "design-review", "retrospect", "closeout", "replan", "abort"],
+      slice: ["design", "design-review", "retrospect", "closeout", "replan", "abort"],
+      feature: ["design", "design-review", "retrospect", "closeout", "replan", "abort"],
+      epic: ["design", "design-review", "retrospect", "closeout", "replan", "abort"],
     };
     for (const [layer, actions] of Object.entries(expected)) {
       const table = INPUT_SCHEMAS[layer as keyof typeof INPUT_SCHEMAS];
@@ -313,12 +326,12 @@ describe("INPUT_SCHEMAS 映射表全覆盖（T2.6）", () => {
     }
   });
 
-  it("schema 复用：feature/epic 共用 PlanFeatureInput schema、三层 planning 共用 RetrospectSliceInput schema", () => {
-    expect(INPUT_SCHEMAS.feature.plan).toBe(INPUT_SCHEMAS.epic.plan);
+  it("schema 复用：feature/epic 共用 DesignFeatureInput schema、三层 planning 共用 RetrospectSliceInput schema", () => {
+    expect(INPUT_SCHEMAS.feature.design).toBe(INPUT_SCHEMAS.epic.design);
     expect(INPUT_SCHEMAS.feature.retrospect).toBe(INPUT_SCHEMAS.slice.retrospect);
     expect(INPUT_SCHEMAS.epic.retrospect).toBe(INPUT_SCHEMAS.slice.retrospect);
-    // 各层 plan schema 互不相同（wave/slice/feature 产物形态不同）
-    expect(INPUT_SCHEMAS.wave.plan).not.toBe(INPUT_SCHEMAS.slice.plan);
-    expect(INPUT_SCHEMAS.slice.plan).not.toBe(INPUT_SCHEMAS.feature.plan);
+    // 各层 design schema 互不相同（wave/slice/feature 产物形态不同）
+    expect(INPUT_SCHEMAS.wave.design).not.toBe(INPUT_SCHEMAS.slice.design);
+    expect(INPUT_SCHEMAS.slice.design).not.toBe(INPUT_SCHEMAS.feature.design);
   });
 });

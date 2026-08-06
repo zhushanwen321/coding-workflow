@@ -91,22 +91,28 @@ export function handleExecuteSlice(
 
   saveSlice(deps, unit);
 
-  // ── crossLayer：下沉到第一个 child wave ──
+  // ── crossLayer：下沉到第一个 child wave（serial 模式）──
+  // G5：recursive 模式（多 agent 并行 + steer 唤醒）不填 descend——父派 N 个 wave-agent
+  // 并行推进子层后空闲等唤醒，不自己 descend。serial 模式保持现状（下沉第一个 child）。
   const firstChildId = unit.executeResult.childUnitIds[0];
-  const crossLayer: CwNextAction["crossLayer"] | undefined = firstChildId !== undefined
-    ? {
-        kind: "descend",
-        targetLayer: "wave",
-        targetUnitId: firstChildId,
-        reason: `slice 已拆 ${unit.plan.split.length} 个 wave，去推进第一个 child wave`,
-      }
-    : undefined;
+  const crossLayer: CwNextAction["crossLayer"] | undefined =
+    deps.orchestration === "recursive" || firstChildId === undefined
+      ? undefined
+      : {
+          kind: "descend",
+          targetLayer: "wave",
+          targetUnitId: firstChildId,
+          reason: `slice 已拆 ${unit.plan.split.length} 个 wave，去推进第一个 child wave`,
+        };
 
   return {
     unitId: unit.id,
     status: unit.status,
     ok: true,
     children,
-    nextAction: buildSliceNextAction(unit, "execute", { crossLayer }),
+    nextAction: buildSliceNextAction(unit, "execute", {
+      crossLayer,
+      orchestration: deps.orchestration,
+    }),
   };
 }

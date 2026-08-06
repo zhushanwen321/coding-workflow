@@ -1,14 +1,14 @@
 /**
  * v1 feature gate 测试。
  *
- * 测 feature design-review 的 14 个 gate（纯函数，零 IO）：
+ * 测 feature design-review 的 16 个 gate（纯函数，零 IO）：
  * - FR-AC 强引用 3：frAcCoverage / acReachableFromFr / acNonEmpty（feature 专属）
  * - split 结构完整性 3：featureSplitNonEmpty / featureSplitDagValid / featureDuplicateSplitSlug（slug 唯一）
  * - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  * - judgment 非空 5（复用 wave/slice 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  * - feature layerSpecific 非空 1（feature 专属 6 字段）
  *
- * 另测 runFeatureDesignReviewGates 聚合：合法 → 14 个全 pass；构造各种 fail 场景验正确 gate fail。
+ * 另测 runFeatureDesignReviewGates 聚合：合法 → 16 个全 pass；构造各种 fail 场景验正确 gate fail。
  *
  * 用 makeFeatureUnit + 合法工厂构造基线，手动设坏字段触发 fail（每个 gate 覆盖 pass + fail）。
  */
@@ -42,7 +42,7 @@ import { makeFeatureSpec } from "./helpers/feature-env.js";
 
 // ── 辅助：构造一个已填好合法 spec + plan + judgment 的 feature（design-review 全 pass 基线）──
 
-/** 构造合法 feature（spec + plan + judgment 都填好，14 个 design-review gate 全过）。 */
+/** 构造合法 feature（spec + plan + judgment 都填好，16 个 design-review gate 全过）。 */
 function validFeature(): Feature {
   const unit = makeFeatureUnit();
   // 写入合法 spec（FR1→AC1 强引用）
@@ -94,7 +94,7 @@ describe("feature design-review gates: FR-AC 强引用（3 个）", () => {
       expect(frAcCoverage(unit).passed).toBe(true);
     });
 
-    it("[BUG-HUNT 修复] FR.ac 字段 undefined（畸形数据绕过 clarify 校验时）→ 可读 fail 而非崩溃", () => {
+    it("[BUG-HUNT 修复] FR.ac 字段 undefined（畸形数据绕过 design 校验时）→ 可读 fail 而非崩溃", () => {
       // 原崩溃 bug：replan 等路径绕过 clarify 校验，fr.ac 为 undefined，
       // fr.ac.length 访问抛 Cannot read properties of undefined。
       // guard 后应返回可读 fail，不抛异常。
@@ -349,14 +349,14 @@ describe("feature design-review gates: feature layerSpecific 非空（6 字段�
 });
 
 // ═══════════════════════════════════════════════════════════════
-// runFeatureDesignReviewGates 聚合（14 个 gate）
+// runFeatureDesignReviewGates 聚合（16 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
-describe("runFeatureDesignReviewGates 聚合（14 个 gate）", () => {
-  it("合法 feature → 14 个 gate 全 pass", () => {
+describe("runFeatureDesignReviewGates 聚合（16 个 gate）", () => {
+  it("合法 feature → 16 个 gate 全 pass", () => {
     const unit = validFeature();
     const results = runFeatureDesignReviewGates(unit);
-    expect(results).toHaveLength(14);
+    expect(results).toHaveLength(16);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 

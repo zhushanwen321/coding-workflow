@@ -3,7 +3,7 @@
  *
  * 复用 env.ts 的 createCwEnv / makeStubDeps（隔离环境 + stub CwDeps）。
  * 本文件只加 slice 专属：makeSliceUnit / 合法 SlicePlan 条目 / 合法 PlanningRetrospectData /
- * 阶段推进 helper（setupToSlicePlanning / setupToSliceDesignReviewed / setupSliceWithClosedWaves）。
+ * 阶段推进 helper（setupToSliceDesigning / setupToSliceDesignReviewed / setupSliceWithClosedWaves）。
  *
  * 零 mock 框架：真实 CwStore + tmp 目录（同 env.ts 约定）。
  */
@@ -21,19 +21,17 @@ import type {
 import type { ExecutionUnit, Slice } from "../../src/core/workunit.js";
 import { createSlice } from "../../src/core/workunit.js";
 import {
-  handleClarify,
   handleCloseout,
+  handleDesign,
   handleDesignReview,
   handleExecReview,
   handleExecute,
-  handlePlan,
   handleRetrospect,
   handleTest,
 } from "../../src/handlers/index.js";
-import { handleClarifySlice } from "../../src/handlers/slice/clarify.js";
+import { handleDesignSlice } from "../../src/handlers/slice/design.js";
 import { handleDesignReviewSlice } from "../../src/handlers/slice/design-review.js";
 import { handleExecuteSlice } from "../../src/handlers/slice/execute.js";
-import { handlePlanSlice } from "../../src/handlers/slice/plan.js";
 import type { CwDeps } from "../../src/handlers/types.js";
 import type { CwStore } from "../../src/store/cw-store.js";
 import type { WorkUnitRecord } from "../../src/store/schema.js";
@@ -253,28 +251,27 @@ export function makeRetrospectDataFromStore(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 推进 slice 到 planning 状态（create → clarify → plan）。
- * 返回的 slice 已写入合法 SlicePlan，status=planning。
+ * 推进 slice 到 designing 状态（create → design）。
+ * 返回的 slice 已写入合法 SlicePlan，status=designing。
  *
  * @param deps stub CwDeps（store 注入）
  * @param slug slice slug（默认 test-slice）
  */
-export function setupToSlicePlanning(deps: CwDeps, slug = "test-slice"): Slice {
+export function setupToSliceDesigning(deps: CwDeps, slug = "test-slice"): Slice {
   // create（直接调 handler，不经 dispatch——单元测试聚焦 handler 逻辑）
   const created = createSlice({ slug, objective: `obj ${slug}`, createdAt: STUB_NOW });
    
   deps.store.save(created as unknown as WorkUnitRecord);
 
-  // clarify（append 一条 Clarification）
-  handleClarifySlice(
+  // design（合并原 clarify + plan：append clarifications + 写合法 SlicePlan）
+  handleDesignSlice(
     created,
-    { clarifications: [{ id: "Q1", status: "active", question: "token 存哪", resolution: "httpOnly cookie", type: "grilling" }] },
+    {
+      ...makeValidSlicePlan(),
+      clarifications: [{ id: "Q1", status: "active", question: "token 存哪", resolution: "httpOnly cookie", type: "grilling" }],
+    },
     deps,
   );
-
-  // plan（写合法 SlicePlan）
-  const planInput = makeValidSlicePlan();
-  handlePlanSlice(created, planInput, deps);
 
   return created;
 }
@@ -284,7 +281,7 @@ export function setupToSlicePlanning(deps: CwDeps, slug = "test-slice"): Slice {
  * 返回的 slice status=design-reviewed，可直接 execute。
  */
 export function setupToSliceDesignReviewed(deps: CwDeps, slug = "test-slice"): Slice {
-  const slice = setupToSlicePlanning(deps, slug);
+  const slice = setupToSliceDesigning(deps, slug);
   handleDesignReviewSlice(slice, { designReviewJudgment: makeValidSliceDesignReviewJudgment() }, deps);
   return slice;
 }
@@ -326,7 +323,7 @@ export function setupSliceWithClosedWaves(
 }
 
 /**
- * 把一个 wave 推进到 closed（走完 wave 9 步：plan → design-review → execute → test → exec-review → retrospect → closeout）。
+ * 把一个 wave 推进到 closed（走完 wave 8 步：design → design-review → execute → test → exec-review → retrospect → closeout）。
  *
  * wave 在 slice execute 时由 createWave 创建（空 WavePlan），这里先写合法 WavePlan 再逐阶段推进。
  * 用 wave handler（不经 dispatch，聚焦 wave 推进逻辑）。
@@ -338,9 +335,8 @@ export function advanceWaveToClosed(deps: CwDeps, waveId: string): void {
   const wave = deps.store.load(waveId) as unknown as ExecutionUnit;
   if (!wave) throw new Error(`wave not found: ${waveId}`);
 
-  // plan（wave createWave 时 status=created，先 clarify 再 plan；这里合并 clarify+plan）
-  handleClarify(wave, { clarifications: [] }, deps);
-  handlePlan(
+  // design（wave createWave 时 status=created，design 合并原 clarify+plan）
+  handleDesign(
     wave,
     {
       testCases: [makeValidTestCase()],
@@ -348,6 +344,7 @@ export function advanceWaveToClosed(deps: CwDeps, waveId: string): void {
       files: [makeValidFile()],
       contracts: [makeValidContract()],
       testCommand: "npx vitest run",
+      clarifications: [],
     },
     deps,
   );

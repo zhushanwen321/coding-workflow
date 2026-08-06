@@ -1,7 +1,7 @@
 /**
  * v1 epic dispatch e2e 测试。
  *
- * 通过 dispatch 统一入口跑完整 epic 生命周期（create→clarify→plan→design-review→
+ * 通过 dispatch 统一入口跑完整 epic 生命周期（create→design→design-review→
  * execute→[推进 child feature closed]→retrospect→closeout），验证编排层正确串联 epic handler。
  *
  * 另测：
@@ -28,7 +28,7 @@ import {
   makeValidEpicLayerSpecific,
   makeValidEpicPlan,
   setupEpicWithClosedFeatures,
-  setupToEpicPlanning,
+  setupToEpicDesigning,
   STUB_NOW,
 } from "./helpers/epic-env.js";
 
@@ -58,7 +58,7 @@ function epicExecute(unitId: string): Parameters<typeof dispatch>[0] {
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch 完整 epic 生命周期", () => {
-  it("create→clarify→plan→design-review→execute→[child feature closed]→retrospect→closeout → closed", () => {
+  it("create→design→design-review→execute→[child feature closed]→retrospect→closeout → closed", () => {
     const unitId = "epic:e2e-happy";
 
     // 1. create（layer='epic'）
@@ -74,29 +74,21 @@ describe("dispatch 完整 epic 生命周期", () => {
     // create 返回的 unit 是 epic
     expect((created as { unit?: { scope: string } }).unit?.scope).toBe("epic");
 
-    // 2. clarify（Clarification 数组 push）
-    const clarify = dispatch(
+    // 2. design（合并原 clarify+plan：Clarification append + Plan 基类 split）
+    const design = dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
-        input: { clarifications: [makeValidClarification()] },
+        input: { ...makeValidEpicPlan(), clarifications: [makeValidClarification()] },
       },
       env.deps,
     );
-    expect(clarify.ok).toBe(true);
-    expect(clarify.status).toBe("clarifying");
+    expect(design.ok).toBe(true);
+    expect(design.status).toBe("designing");
     expect(loadEpic(unitId).clarifications).toHaveLength(1);
-
-    // 3. plan（Plan 基类，只 split）
-    const plan = dispatch(
-      { action: "plan", unitId, input: makeValidEpicPlan() },
-      env.deps,
-    );
-    expect(plan.ok).toBe(true);
-    expect(plan.status).toBe("planning");
     expect(loadEpic(unitId).plan.split).toHaveLength(1);
 
-    // 4. design-review（11 个 gate 全过）
+    // 4. design-review（13 个 gate 全过）
     const dr = dispatch(
       {
         action: "design-review",
@@ -107,7 +99,7 @@ describe("dispatch 完整 epic 生命周期", () => {
     );
     expect(dr.ok).toBe(true);
     expect(dr.status).toBe("design-reviewed");
-    expect(dr.gateResults).toHaveLength(11);
+    expect(dr.gateResults).toHaveLength(13);
 
     // 5. execute（创建 child feature）
     const execute = dispatch(epicExecute(unitId), env.deps);
@@ -163,7 +155,7 @@ describe("dispatch 完整 epic 生命周期", () => {
     expect(finalEpic.status).toBe("closed");
     expect(finalEpic.evidence.frozenAt).toBe(STUB_NOW);
     expect(finalEpic.statusHistory.map((h) => h.action)).toEqual([
-      "create", "clarify", "plan", "design-review", "execute", "retrospect", "closeout",
+      "create", "design", "design-review", "execute", "retrospect", "closeout",
     ]);
     // epic 顶层无父：closeout 后 crossLayer undefined（孤立终点，与 feature 的 ascend 对比）
     expect(closeout.nextAction?.crossLayer).toBeUndefined();
@@ -289,19 +281,15 @@ describe("dispatch 拒绝 epic 的 test/exec-review", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流转）", () => {
-  it("split 空 → design-review ok=false，status 不变（仍 planning）", () => {
+  it("split 空 → design-review ok=false，status 不变（仍 designing）", () => {
     const unitId = "epic:e2e-gate-split";
     dispatch(
       { action: "create", input: { slug: "e2e-gate-split", objective: "o", layer: "epic" } },
       env.deps,
     );
+    // design 写空 split，触发 epicSplitNonEmpty fail
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification()] } },
-      env.deps,
-    );
-    // plan 写空 split，触发 epicSplitNonEmpty fail
-    dispatch(
-      { action: "plan", unitId, input: { split: [] } },
+      { action: "design", unitId, input: { clarifications: [makeValidClarification()], split: [] } },
       env.deps,
     );
 
@@ -317,12 +305,12 @@ describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流�
     expect(result.ok).toBe(false);
     expect(result.gateResults).toBeDefined();
     expect(result.gateResults!.some((g) => !g.passed)).toBe(true);
-    // status 未推进（仍 planning）
-    expect(loadEpic(unitId).status).toBe("planning");
+    // status 未推进（仍 designing）
+    expect(loadEpic(unitId).status).toBe("designing");
   });
 
   it("judgment layerSpecific undefined → design-review ok=false，含 layer-specific-non-empty fail", () => {
-    const unitId = setupToEpicPlanning(env.deps, "e2e-gate-ls");
+    const unitId = setupToEpicDesigning(env.deps, "e2e-gate-ls");
     const judgment = makeValidEpicDesignReviewJudgment();
     judgment.layerSpecific = undefined;
 
@@ -333,7 +321,7 @@ describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流�
 
     expect(result.ok).toBe(false);
     expect(result.gateResults!.some((g) => /layer-specific-non-empty/.test(g.report))).toBe(true);
-    expect(loadEpic(unitId).status).toBe("planning");
+    expect(loadEpic(unitId).status).toBe("designing");
   });
 
   it("split 有环 → design-review ok=false，含 split-dag-valid fail", () => {
@@ -342,16 +330,13 @@ describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流�
       { action: "create", input: { slug: "e2e-gate-cycle", objective: "o", layer: "epic" } },
       env.deps,
     );
-    dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification()] } },
-      env.deps,
-    );
-    // plan split 有环
+    // design split 有环
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
+          clarifications: [makeValidClarification()],
           split: [
             { slug: "a", description: "a", dependsOn: ["b"], inheritedItemIds: [] },
             { slug: "b", description: "b", dependsOn: ["a"], inheritedItemIds: [] },
@@ -371,7 +356,7 @@ describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流�
   });
 
   it("layerSpecific 缺一字段（strategicAlignment 空）→ design-review ok=false", () => {
-    const unitId = setupToEpicPlanning(env.deps, "e2e-gate-ls-field");
+    const unitId = setupToEpicDesigning(env.deps, "e2e-gate-ls-field");
     const judgment = makeValidEpicDesignReviewJudgment();
     const ls = { ...makeValidEpicLayerSpecific(), strategicAlignment: "" };
     judgment.layerSpecific = ls as unknown as typeof judgment.layerSpecific;
@@ -391,13 +376,9 @@ describe("dispatch epic gate fail 短路（design-review 返回 ok=false 不流�
       { action: "create", input: { slug: "e2e-gate-count", objective: "o", layer: "epic" } },
       env.deps,
     );
+    // design 写空 split，触发 fail
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification()] } },
-      env.deps,
-    );
-    // plan 写空 split，触发 fail
-    dispatch(
-      { action: "plan", unitId, input: { split: [] } },
+      { action: "design", unitId, input: { clarifications: [makeValidClarification()], split: [] } },
       env.deps,
     );
 
@@ -435,14 +416,14 @@ describe("dispatch epic 非法跳步", () => {
   it("epic unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
+        { action: "design", unitId: "epic:ghost", input: makeValidEpicPlan() },
         env.deps,
       ),
     ).toThrow(CwEngineError);
 
     try {
       dispatch(
-        { action: "clarify", unitId: "epic:ghost", input: { clarifications: [] } },
+        { action: "design", unitId: "epic:ghost", input: makeValidEpicPlan() },
         env.deps,
       );
       throw new Error("should have thrown");
@@ -475,15 +456,13 @@ describe("dispatch epic execute multi-split", () => {
       { action: "create", input: { slug: "e2e-multi", objective: "o", layer: "epic" } },
       env.deps,
     );
-    dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification()] } },
-      env.deps,
-    );
+    // design 合并原 clarify+plan：Clarification append + 2-split
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
+          clarifications: [makeValidClarification()],
           split: [
             { slug: "f1", description: "feature 1", dependsOn: [], inheritedItemIds: ["Q1"] },
             { slug: "f2", description: "feature 2", dependsOn: ["f1"], inheritedItemIds: ["Q1"] },
@@ -553,11 +532,11 @@ describe("dispatch epic closeout 顶层无父 crossLayer=undefined", () => {
     expect(loadEpic(unitId).parentUnitId).toBeUndefined();
 
     // 后续阶段直接调 dispatch（不再 create），推进到 closeout
+    // design 合并原 clarify+plan：带 clarifications（inherited-item-ids-valid gate 验 Q1 存在）
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [makeValidClarification()] } },
+      { action: "design", unitId, input: { ...makeValidEpicPlan(), clarifications: [makeValidClarification()] } },
       env.deps,
     );
-    dispatch({ action: "plan", unitId, input: makeValidEpicPlan() }, env.deps);
     dispatch(
       { action: "design-review", unitId, input: { designReviewJudgment: makeValidEpicDesignReviewJudgment() } },
       env.deps,

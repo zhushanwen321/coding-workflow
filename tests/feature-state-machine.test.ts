@@ -3,7 +3,7 @@
  *
  * feature 复用 slice 的 PLANNING_TRANSITIONS（同型状态机，7 步流程），但通过 dispatch
  * 实际推进来验 feature 专属路径：
- * - clarify 写入 FeatureClarification 容器对象（非数组追加，整体覆盖）
+ * - design 的 clarifications append + spec 覆盖写（FeatureClarification 容器对象）
  * - plan 写入 Plan 基类（只 split，无技术方案）
  * - design-review 跑 feature 11 个 gate（FR-AC 强引用 3 + split 结构 2 + judgment 5 + layerSpecific 1）
  * - execute 创建 child slice（scope=slice，targetLayer='slice'）
@@ -21,16 +21,14 @@ import { CwEngineError,dispatch } from "../src/dispatch.js";
 import type { CwEnv } from "./helpers/env.js";
 import {
   createCwEnv,
-  makeFeatureClarifyInput,
+  makeFeatureDesignInput,
   makeFeatureRetrospectDataFromStore,
   makeValidFeatureDesignReviewJudgment,
-  makeValidFeaturePlan,
   makeValidFeatureRetrospectData,
   setupFeatureWithClosedSlices,
-  setupToFeatureClarified,
+  setupToFeatureDesigning,
   setupToFeatureDesignReviewed,
   setupToFeatureExecuting,
-  setupToFeaturePlanning,
   STUB_NOW,
 } from "./helpers/feature-env.js";
 
@@ -59,15 +57,15 @@ function featureExecute(unitId: string): Parameters<typeof dispatch>[0] {
 // 主链 7 步流转（dispatch 实际推进）
 // ═══════════════════════════════════════════════════════════════
 
-describe("feature 主链 7 步状态流转（create→closeout）", () => {
-  it("create → created，nextAction=clarify", () => {
+describe("feature 主链 6 步状态流转（create→closeout）", () => {
+  it("create → created，nextAction=design", () => {
     const result = dispatch(
       { action: "create", input: { slug: "sm-create", objective: "o", layer: "feature" } },
       env.deps,
     );
     expect(result.ok).toBe(true);
     expect(result.status).toBe("created");
-    expect(result.nextAction?.action).toBe("clarify");
+    expect(result.nextAction?.action).toBe("design");
     expect(result.nextAction?.unitPath.layer).toBe("feature");
 
     const unit = loadFeature("feature:sm-create");
@@ -79,39 +77,27 @@ describe("feature 主链 7 步状态流转（create→closeout）", () => {
     expect(unit.plan.split).toEqual([]);
   });
 
-  it("clarify → clarifying，FeatureClarification 容器对象整体覆盖写入", () => {
-    const unitId = "feature:sm-clarify";
+  it("design → designing，FeatureDesignInput（clarifications+spec+split）一次写入", () => {
+    const unitId = "feature:sm-design";
     dispatch(
-      { action: "create", input: { slug: "sm-clarify", objective: "o", layer: "feature" } },
+      { action: "create", input: { slug: "sm-design", objective: "o", layer: "feature" } },
       env.deps,
     );
 
     const result = dispatch(
-      { action: "clarify", unitId, input: makeFeatureClarifyInput() },
+      { action: "design", unitId, input: makeFeatureDesignInput() },
       env.deps,
     );
     expect(result.ok).toBe(true);
-    expect(result.status).toBe("clarifying");
-    expect(result.nextAction?.action).toBe("plan");
+    expect(result.status).toBe("designing");
+    expect(result.nextAction?.action).toBe("design-review");
 
     const unit = loadFeature(unitId);
     // 容器对象写入（非数组追加）
     expect(unit.clarifications.clarifications).toHaveLength(1);
     expect(unit.clarifications.spec.functionalRequirements).toHaveLength(1);
     expect(unit.clarifications.spec.acceptanceCriteria).toHaveLength(1);
-  });
-
-  it("plan → planning，Plan 基类（只 split）写入", () => {
-    const unitId = setupToFeatureClarified(env.deps, "sm-plan");
-    const result = dispatch(
-      { action: "plan", unitId, input: makeValidFeaturePlan() },
-      env.deps,
-    );
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("planning");
-    expect(result.nextAction?.action).toBe("design-review");
-
-    const unit = loadFeature(unitId);
+    // design 同时写 plan.split（Plan 基类）
     expect(unit.plan.split).toHaveLength(1);
     expect(unit.plan.split[0]?.slug).toBe("s1");
     // feature plan 无技术方案字段（Plan 基类）
@@ -119,7 +105,7 @@ describe("feature 主链 7 步状态流转（create→closeout）", () => {
   });
 
   it("design-review → design-reviewed（gate 全过）", () => {
-    const unitId = setupToFeaturePlanning(env.deps, "sm-dr");
+    const unitId = setupToFeatureDesigning(env.deps, "sm-dr");
     const result = dispatch(
       {
         action: "design-review",
@@ -192,7 +178,7 @@ describe("feature 主链 7 步状态流转（create→closeout）", () => {
     expect(unit.evidence.frozenAt).toBe(STUB_NOW);
     // 完整 statusHistory 序列
     expect(unit.statusHistory.map((h) => h.action)).toEqual([
-      "create", "clarify", "plan", "design-review", "execute", "retrospect", "closeout",
+      "create", "design", "design-review", "execute", "retrospect", "closeout",
     ]);
   });
 });
@@ -202,27 +188,17 @@ describe("feature 主链 7 步状态流转（create→closeout）", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("feature progressive 语义", () => {
-  it("clarifying 再次 clarify → 仍 clarifying（容器对象覆盖）", () => {
-    const unitId = setupToFeatureClarified(env.deps, "sm-prog-clarify");
+  it("designing 再次 design → 仍 designing（容器对象覆盖 + split 重写）", () => {
+    const unitId = setupToFeatureDesigning(env.deps, "sm-prog-design");
     const before = loadFeature(unitId);
-    expect(before.status).toBe("clarifying");
+    expect(before.status).toBe("designing");
 
     const result = dispatch(
-      { action: "clarify", unitId, input: makeFeatureClarifyInput() },
+      { action: "design", unitId, input: makeFeatureDesignInput() },
       env.deps,
     );
     expect(result.ok).toBe(true);
-    expect(result.status).toBe("clarifying");
-  });
-
-  it("planning 再次 plan → 仍 planning", () => {
-    const unitId = setupToFeaturePlanning(env.deps, "sm-prog-plan");
-    const result = dispatch(
-      { action: "plan", unitId, input: makeValidFeaturePlan() },
-      env.deps,
-    );
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("planning");
+    expect(result.status).toBe("designing");
   });
 
   it("design-reviewed 再次 design-review → 仍 design-reviewed", () => {
@@ -260,8 +236,8 @@ describe("feature 非法转换抛 illegal_transition", () => {
     }
   });
 
-  it("planning 直接 closeout → throw CwEngineError(illegal_transition)", () => {
-    const unitId = setupToFeaturePlanning(env.deps, "sm-illegal-close");
+  it("designing 直接 closeout → throw CwEngineError(illegal_transition)", () => {
+    const unitId = setupToFeatureDesigning(env.deps, "sm-illegal-close");
     expect(() =>
       dispatch({ action: "closeout", unitId, input: { artifacts: [] } }, env.deps),
     ).toThrow(CwEngineError);
@@ -292,13 +268,13 @@ describe("feature 非法转换抛 illegal_transition", () => {
   it("feature unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
+        { action: "design", unitId: "feature:ghost", input: makeFeatureDesignInput() },
         env.deps,
       ),
     ).toThrow(CwEngineError);
     try {
       dispatch(
-        { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
+        { action: "design", unitId: "feature:ghost", input: makeFeatureDesignInput() },
         env.deps,
       );
       throw new Error("should have thrown");

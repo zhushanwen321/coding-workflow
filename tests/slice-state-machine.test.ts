@@ -28,14 +28,12 @@ function errorCode(verdict: GuardVerdict): string {
 }
 
 describe("slice 状态机: PLANNING_TRANSITIONS", () => {
-  // ── 主链 7 步流转 ──────────────────────────────────────────
-  describe("主链 7 步状态流转（无 test/exec-review）", () => {
-    it("created→clarifying→planning→design-reviewed→executing→retrospected→closed", () => {
+  // ── 主链 6 步流转 ──────────────────────────────────────────
+  describe("主链 6 步状态流转（无 test/exec-review）", () => {
+    it("created→designing→design-reviewed→executing→retrospected→closed", () => {
       let status: PlanningStatus = "created";
-      status = nextPlanningStatus("clarify", status);
-      expect(status).toBe("clarifying");
-      status = nextPlanningStatus("plan", status);
-      expect(status).toBe("planning");
+      status = nextPlanningStatus("design", status);
+      expect(status).toBe("designing");
       status = nextPlanningStatus("design-review", status);
       expect(status).toBe("design-reviewed");
       status = nextPlanningStatus("execute", status);
@@ -60,8 +58,8 @@ describe("slice 状态机: PLANNING_TRANSITIONS", () => {
       expect(verdict.ok).toBe(false);
     });
 
-    it("planning 状态直接 closeout → illegal_transition（跳过 execute/retrospect）", () => {
-      const verdict = guardPlanning("closeout", "planning");
+    it("designing 状态直接 closeout → illegal_transition（跳过 execute/retrospect）", () => {
+      const verdict = guardPlanning("closeout", "designing");
       expect(verdict.ok).toBe(false);
     });
 
@@ -73,20 +71,16 @@ describe("slice 状态机: PLANNING_TRANSITIONS", () => {
 
   // ── progressive 语义 ───────────────────────────────────────
   describe("progressive 语义", () => {
-    it("clarifying 再次 clarify → 仍为 clarifying", () => {
-      expect(nextPlanningStatus("clarify", "clarifying")).toBe("clarifying");
-    });
-
-    it("planning 再次 plan → 仍为 planning", () => {
-      expect(nextPlanningStatus("plan", "planning")).toBe("planning");
+    it("designing 再次 design → 仍为 designing", () => {
+      expect(nextPlanningStatus("design", "designing")).toBe("designing");
     });
 
     it("design-reviewed 再次 design-review → 仍为 design-reviewed", () => {
       expect(nextPlanningStatus("design-review", "design-reviewed")).toBe("design-reviewed");
     });
 
-    it("plan 从 design-reviewed 进入 → 仍 planning（replan 后重规划路径，progressive）", () => {
-      expect(nextPlanningStatus("plan", "design-reviewed")).toBe("planning");
+    it("design 从 design-reviewed 进入 → 仍 designing（replan 后重规划路径）", () => {
+      expect(nextPlanningStatus("design", "design-reviewed")).toBe("designing");
     });
   });
 

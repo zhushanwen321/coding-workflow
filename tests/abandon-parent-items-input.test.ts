@@ -1,12 +1,12 @@
 /**
  * ADR-0010 跨层跨时机 abandon parent items 声明通道测试。
  *
- * 覆盖核心契约：plan/replan input 的 abandonParentItems 字段被正确 append-only 合并到
+ * 覆盖核心契约：design/replan input 的 abandonParentItems 字段被正确 append-only 合并到
  * unit.abandonedParentItems（model §5.6.6）。
  *
  * 四部分：
  * 1. mergeAbandonParentItems 纯函数（单元）：空 input / 单 id / 多 id / 去重 / undefined 安全
- * 2. plan handler 集成：slice plan（PlanningUnit 代表）+ wave plan 通过 input 写入
+ * 2. design handler 集成：slice design（PlanningUnit 代表）+ wave design 通过 input 写入
  * 3. replan handler 集成：slice replan + wave replan 通过 input 写入
  * 4. execute handler trailer 集成：wave execute 解析 commit message 的 Cw-Abandon trailer →
  *    mergeAbandonParentItems 写入 unit.abandonedParentItems（顺便通道，ADR-0010）
@@ -21,11 +21,11 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildPrefix } from "../src/guidance/index.js";
+import { handleDesign } from "../src/handlers/design.js";
 import { handleExecute } from "../src/handlers/execute.js";
 import { mergeAbandonParentItems, STATUS_DISPLAY } from "../src/handlers/internal.js";
-import { handlePlan } from "../src/handlers/plan.js";
 import { handleReplan } from "../src/handlers/replan.js";
-import { handlePlanSlice } from "../src/handlers/slice/plan.js";
+import { handleDesignSlice } from "../src/handlers/slice/design.js";
 import { handleReplanSlice } from "../src/handlers/slice/replan.js";
 import type { WorkUnitRecord } from "../src/store/schema.js";
 import { createCwEnv, type CwEnv,makeValidContract, makeValidFile, makeValidTask, makeValidTestCase, makeWaveUnit } from "./helpers/env.js";
@@ -89,31 +89,31 @@ describe("mergeAbandonParentItems 纯函数", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// Part 2: plan handler 集成
+// Part 2: design handler 集成
 // ═══════════════════════════════════════════════════════════════
 
-describe("plan handler 通过 input 写入 abandonedParentItems", () => {
-  it("slice plan input 带 abandonParentItems → unit.abandonedParentItems 被写入", () => {
+describe("design handler 通过 input 写入 abandonedParentItems", () => {
+  it("slice design input 带 abandonParentItems → unit.abandonedParentItems 被写入", () => {
     const slice = setupToSliceDesignReviewed(env.deps);
-    // 先 design-review 通过后回 planning 才能 plan progressive（slice plan from 含 design-reviewed）
-    const planInput = {
+    // 先 design-review 通过后回 designing 才能 design progressive（slice design from 含 design-reviewed）
+    const designInput = {
       ...makeValidSlicePlan(),
       abandonParentItems: ["FR1", "AC2"],
     };
 
-    handlePlanSlice(slice, planInput, env.deps);
+    handleDesignSlice(slice, designInput, env.deps);
 
     const reloaded = env.deps.store.load(slice.id);
     expect(reloaded?.abandonedParentItems).toEqual(["FR1", "AC2"]);
   });
 
-  it("wave plan input 带 abandonParentItems → unit.abandonedParentItems 被写入", () => {
-    // wave plan 需要一个 ExecutionUnit，直接用 helper 构造后 save
+  it("wave design input 带 abandonParentItems → unit.abandonedParentItems 被写入", () => {
+    // wave design 需要一个 ExecutionUnit，直接用 helper 构造后 save
     const w = makeWaveUnit("test-wave");
-    w.status = "planning";
+    w.status = "designing";
     env.deps.store.save(w as unknown as WorkUnitRecord);
 
-    handlePlan(
+    handleDesign(
       w,
       {
         testCases: [makeValidTestCase("TC1")],
@@ -130,21 +130,21 @@ describe("plan handler 通过 input 写入 abandonedParentItems", () => {
     expect(reloaded?.abandonedParentItems).toEqual(["TC-slice-1"]);
   });
 
-  it("slice plan 不带 abandonParentItems → unit.abandonedParentItems 保持 [] （工厂初始化值）", () => {
+  it("slice design 不带 abandonParentItems → unit.abandonedParentItems 保持 [] （工厂初始化值）", () => {
     const slice = setupToSliceDesignReviewed(env.deps);
-    const planInput = makeValidSlicePlan();
+    const designInput = makeValidSlicePlan();
 
-    handlePlanSlice(slice, planInput, env.deps);
+    handleDesignSlice(slice, designInput, env.deps);
 
     const reloaded = env.deps.store.load(slice.id);
     expect(reloaded?.abandonedParentItems).toEqual([]);
   });
 
-  it("多次 plan progressive → abandonParentItems append-only 累积", () => {
+  it("多次 design progressive → abandonParentItems append-only 累积", () => {
     const slice = setupToSliceDesignReviewed(env.deps);
 
-    // 第一次 plan 声明脱离 FR1
-    handlePlanSlice(
+    // 第一次 design 声明脱离 FR1
+    handleDesignSlice(
       slice,
       { ...makeValidSlicePlan(), abandonParentItems: ["FR1"] },
       env.deps,
@@ -152,9 +152,9 @@ describe("plan handler 通过 input 写入 abandonedParentItems", () => {
     let reloaded = env.deps.store.load(slice.id);
     expect(reloaded?.abandonedParentItems).toEqual(["FR1"]);
 
-    // 第二次 plan progressive 再声明脱离 AC2 + FR1（去重）
-    const reloadedSlice = env.deps.store.load(slice.id) as unknown as Parameters<typeof handlePlanSlice>[0];
-    handlePlanSlice(
+    // 第二次 design progressive 再声明脱离 AC2 + FR1（去重）
+    const reloadedSlice = env.deps.store.load(slice.id) as unknown as Parameters<typeof handleDesignSlice>[0];
+    handleDesignSlice(
       reloadedSlice,
       { ...makeValidSlicePlan(), abandonParentItems: ["AC2", "FR1"] },
       env.deps,
@@ -215,7 +215,7 @@ describe("replan handler 通过 input 写入 abandonedParentItems", () => {
 
   it("slice replan 不带 abandonParentItems → unit.abandonedParentItems 保持原值（不被清空）", () => {
     const slice = setupToSliceDesignReviewed(env.deps);
-    // 预先有值（模拟之前 plan 阶段已声明）
+    // 预先有值（模拟之前 design 阶段已声明）
     slice.abandonedParentItems = ["FR1"];
     env.deps.store.save(slice as unknown as WorkUnitRecord);
 
