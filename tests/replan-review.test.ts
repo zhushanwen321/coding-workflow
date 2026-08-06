@@ -48,12 +48,12 @@ describe("buildReplanReviewText", () => {
       expect(text).toContain("兼容性");
     });
 
-    it("提示重走 plan → design-review → execute", () => {
+    it("提示重走 design → design-review → execute", () => {
       const text = buildReplanReviewText({
         abandonedIds: ["slice-1"],
         replanCount: 1,
       });
-      expect(text).toMatch(/重新 plan/);
+      expect(text).toMatch(/重新 design/);
       expect(text).toMatch(/design-review/);
     });
 
@@ -174,14 +174,14 @@ describe("buildReplanReviewText", () => {
   });
 
   describe("planReachable=false（无回流通道，如 executing 内容 replan）", () => {
-    it("省略「重新 plan 并重新 design-review」引导句", () => {
+    it("省略「重新 design 并重新 design-review」引导句", () => {
       const text = buildReplanReviewText({
         abandonedIds: ["slice-1"],
         replanCount: 1,
         planReachable: false,
       });
       // 该句与 blockedHint 同屏矛盾（该状态推 plan 即 illegal_transition）
-      expect(text).not.toContain("重新 plan 并重新 design-review");
+      expect(text).not.toContain("重新 design 并重新 design-review");
       // 其余审视引导保留（单点/方向性诊断、审视维度）
       expect(text).toContain("## 重新审视");
       expect(text).toContain("【单点问题】");
@@ -193,7 +193,7 @@ describe("buildReplanReviewText", () => {
         abandonedIds: ["slice-1"],
         replanCount: 1,
       });
-      expect(text).toContain("重新 plan 并重新 design-review");
+      expect(text).toContain("重新 design 并重新 design-review");
     });
   });
 });
