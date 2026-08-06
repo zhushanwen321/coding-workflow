@@ -17,8 +17,15 @@
  *
  * - `passed`：gate 是否通过（true=通过，false=失败）
  * - `report`：人类可读的说明（通过/失败原因，用于 mustFix 提示 / report 输出）
+ * - `severity`：严重级别，省略默认 `"error"`（阻断）；`"warn"` 用于软 gate——
+ *   必须配合 `passed: true`（不阻断，现有 `filter(!g.passed)` 聚合点天然排除，零回归），
+ *   调用方如需展示按 `g.severity === "warn"` 收集 report。
  */
-export type GateResult = { passed: boolean; report: string };
+export type GateResult = {
+  passed: boolean;
+  report: string;
+  severity?: "error" | "warn";
+};
 
 /**
  * 安全执行单个 gate：捕获异常并转换为可读的失败 GateResult。
