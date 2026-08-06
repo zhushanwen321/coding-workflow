@@ -109,3 +109,20 @@
 
 ### Miscellaneous
 
+
+## [v1.4.0] - 2026-08-07
+
+### Features
+- Merge pull request #9 from zhushanwen321/feat-rethink-cw-architecture (7d3ffa5)
+- feat(engine): orchestration modes (G5) + dispatch guidance (G1) (696fdb3)
+- feat(gates): E3 split fan-out limit gates + E6 inheritedItemIdsDeclared warn gate (1ebc075)
+- feat(store): bump schemaVersion to 2 with SCHEMA_VERSION constant (d67585c)
+
+### Bug Fixes
+- fix(guidance): rename chain-agent → merge-agent to align with xyz-agent (c0b1e57)
+- fix: address review suggestions (S-3/S-4/I-1/I-2/S-5) (7a1778d)
+- fix: review batch 1 round 1 — 1 must-fix (99a6bec)
+
+### Refactoring
+- refactor: align cross-layer.ts with v5 (G5-crossLayer) — orchestration-aware routing (f8ce3ea)
+
