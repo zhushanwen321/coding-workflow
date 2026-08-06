@@ -20,11 +20,11 @@
 export interface BuildNormalGuidanceArgs {
   /** 位置前缀（来自 prefix-builder）。 */
   prefix: string;
-  /** 下一步 action 名（如 "plan"）。用于「下一步」段的语义。 */
+  /** 下一步 action 名（如 "design"）。用于「下一步」段的语义。 */
   nextAction: string;
   /** 一句话目标（来自 template.goal，描述当前阶段要做什么）。 */
   goal: string;
-  /** 完整命令（如 "cw plan --unitId wave:x --input .cw/<slug>/plan.json"）。 */
+  /** 完整命令（如 "cw design --unitId wave:x --input .cw/<slug>/design.json"）。 */
   command: string;
   /** input schema 文本（来自 schema-injector）。 */
   schemaText: string;
@@ -68,7 +68,7 @@ export interface BuildNormalGuidanceArgs {
  */
 const ARTIFACT_HINT = [
   "## 中间产物管理",
-  "- `.cw/` 目录是机器消费的中间产物（clarify/plan/design-review 等 input JSON），**不要 git 提交**（已在 .gitignore）。",
+  "- `.cw/` 目录是机器消费的中间产物（design/design-review 等 input JSON），**不要 git 提交**（已在 .gitignore）。",
   "- 如已误提交历史产物，用 `git rm --cached -r .cw/` 清理追踪（不删本地文件）。",
   "- 报告类产物（handoff 交接文档、retrospect 经验总结）是人读的，由你视情况存到 docs/ 目录。",
 ].join("\n");
@@ -184,11 +184,11 @@ export interface BuildReplanGuidanceArgs {
   replanCount: number;
   /** replan 影响面描述（aborted/preserved/pendingRebuild）。 */
   impactSummary: string;
-  /** 下一步命令（如 "cw plan --unitId slice:auth --input .cw/<slug>/plan.json"）。 */
+  /** 下一步命令（如 "cw design --unitId slice:auth --input .cw/<slug>/design.json"）。 */
   nextCommand: string;
   /**
-   * 下一步的 input schema 文本（#1 D-017：replan 后下一步是 plan，agent 需要 plan 的 input schema）。
-   * 由调用方按层取 getSchemaText("plan") 传入；不传/为空则不渲染 schema 段。
+   * 下一步的 input schema 文本（#1 D-017：replan 后下一步是 design，agent 需要 design 的 input schema）。
+   * 由调用方按层取 getSchemaText("design") 传入；不传/为空则不渲染 schema 段。
    */
   schemaText?: string;
   /**

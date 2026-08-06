@@ -1,6 +1,6 @@
 # coding-workflow
 
-Agent-agnostic CLI that keeps AI coding agents on track through a state-machine pipeline: `create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout`.
+Agent-agnostic CLI that keeps AI coding agents on track through a state-machine pipeline: `create → design → design-review → execute → test → exec-review → retrospect → closeout`.
 
 CW 不假设调用方有任何特定 agent harness 的能力（无 skill 加载、无 workflow 引擎）。agent 只需通过 bash 调用 `cw`，按返回的 `nextAction.guidance` 推进。guidance 内嵌完整阶段提示词（spec / plan / execute / review / retrospect 方法论），agent 不需要记忆命令列表。
 
@@ -22,9 +22,9 @@ npm install -g @zhushanwen/coding-workflow
 ## 它怎么工作
 
 ```
-created → clarifying → planning → design-reviewed → executing → tested → exec-reviewed → retrospected → closed
-                                  ↑       |
-                                  └── replan ──┘
+created → designing → design-reviewed → executing → tested → exec-reviewed → retrospected → closed
+                      ↑       |
+                      └── replan ──┘
 ```
 
 agent 调 `cw create` 建一个 WorkUnit（4 层：epic/feature/slice/wave），之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
@@ -59,7 +59,7 @@ npm run build        # tsc 编译到 dist/
 | 文档 | 内容 |
 |------|------|
 | [SKILL.md](./skill/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、失败模式） |
-| [CONTEXT.md](./CONTEXT.md) | 统一语言（16 action / 两层 status / 核心架构概念） |
+| [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
 | [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |

@@ -6,7 +6,7 @@
  * 但既有 482 测试不断言三层 guidance 的段落结构（RK1 只算 mitigated）。w3 补此缺口。
  *
  * 覆盖：
- * - 正常路径三段式（slice/feature/epic × clarify/plan/design-review/retrospect/closeout）
+ * - 正常路径三段式（slice/feature/epic × design/design-review/retrospect/closeout）
  * - 失败路径四段式（三层 × failureCount 1/2/5 三档递进提示）
  * - schema 层区分（ERR2 降级路径：slice/epic Clarification vs feature FeatureClarification）
  * - ERR4 旧一句话文案残留检查（grep tests/）
@@ -96,8 +96,7 @@ function makeDeps() {
 // ═══════════════════════════════════════════════════════════════
 
 const PLANNING_ACTIONS_WITH_INPUT: PlanningAction[] = [
-  "clarify",
-  "plan",
+  "design",
   "design-review",
   "retrospect",
   "closeout",
@@ -185,30 +184,31 @@ describe("TC3: epic 正常路径三段式 guidance", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("TC8: 三层 create 后 schema 段取 nextAction（#1）", () => {
-  it("slice create → schema 段显示 clarify 的 clarifications，非 create 的 slug/objective", () => {
+  it("slice create → schema 段显示 design 的 split/techChoices，非 create 的 slug/objective", () => {
     const unit = freshSlice();
     const nextAction = buildSliceNextAction(unit, "create");
-    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.action).toBe("design");
     expect(nextAction.guidance).toContain("## input schema + 关键约束");
-    expect(nextAction.guidance).toContain("clarifications");
+    expect(nextAction.guidance).toContain("split");
+    expect(nextAction.guidance).toContain("techChoices");
     expect(nextAction.guidance).not.toContain("slug: string");
   });
 
-  it("feature create → schema 段同取 nextAction（feature clarify 容器含 spec）", () => {
+  it("feature create → schema 段同取 nextAction（feature design 容器含 spec）", () => {
     const unit = freshFeature();
     const nextAction = buildFeatureNextAction(unit, "create");
-    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.action).toBe("design");
     expect(nextAction.guidance).toContain("## input schema + 关键约束");
     expect(nextAction.guidance).toContain("spec");
     expect(nextAction.guidance).not.toContain("slug: string");
   });
 
-  it("epic create → schema 段同取 nextAction（epic clarify 裸数组）", () => {
+  it("epic create → schema 段同取 nextAction（epic design 裸 split）", () => {
     const unit = freshEpic();
     const nextAction = buildEpicNextAction(unit, "create");
-    expect(nextAction.action).toBe("clarify");
+    expect(nextAction.action).toBe("design");
     expect(nextAction.guidance).toContain("## input schema + 关键约束");
-    expect(nextAction.guidance).toContain("clarifications");
+    expect(nextAction.guidance).toContain("split");
     expect(nextAction.guidance).not.toContain("slug: string");
   });
 });
@@ -260,9 +260,9 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
     expectSectionsInOrder(guidance, FAILURE_SECTIONS);
     expect(guidance).toContain(problem);
     expect(failureCount).toBe(2);
-    // >=2 出现递进提示段 + 三出口（clarify/replan/abort）
+    // >=2 出现递进提示段 + 三出口（design/replan/abort）
     expect(guidance).toContain("## 递进提示");
-    expect(guidance).toContain("cw clarify");
+    expect(guidance).toContain("cw design");
     expect(guidance).toContain("replan");
     expect(guidance).toContain("abort");
   });
@@ -322,30 +322,30 @@ describe("TC4: 三层失败路径四段式 guidance", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("TC5: schema 注入按层区分（ERR2 降级路径）", () => {
-  it("slice.clarify schema 是裸 Clarification 字段（question/type，无 spec 容器）", () => {
-    const text = getSliceSchemaText("clarify");
-    expect(text).toContain("question");
-    expect(text).toContain("type");
-    // slice 是裸 Clarification 数组，不应出现 feature 的 spec 容器
-    expect(text).not.toContain("spec");
+  it("slice.design schema 是裸 Split 技术方案（techChoices/errorSpecs，无 spec 容器）", () => {
+    const text = getSliceSchemaText("design");
+    expect(text).toContain("split");
+    expect(text).toContain("techChoices");
+    expect(text).toContain("errorSpecs");
+    // slice 是裸 SlicePlan，不应出现 feature 的 spec 容器
     expect(text).not.toContain("functionalRequirements");
   });
 
-  it("feature.clarify schema 含 spec 容器（functionalRequirements/acceptanceCriteria 等）", () => {
-    const text = getFeatureSchemaText("clarify");
+  it("feature.design schema 含 spec 容器（functionalRequirements/acceptanceCriteria 等）", () => {
+    const text = getFeatureSchemaText("design");
     expect(text).toContain("spec");
     expect(text).toContain("functionalRequirements");
     expect(text).toContain("acceptanceCriteria");
-    // feature clarify 产物含嵌套 clarifications 数组
+    // feature design 产物含嵌套 clarifications 数组
     expect(text).toContain("clarifications");
   });
 
-  it("epic.clarify schema 是裸 Clarification 字段（与 slice 同，无 spec 容器）", () => {
-    const text = getEpicSchemaText("clarify");
-    expect(text).toContain("question");
-    expect(text).toContain("type");
-    expect(text).not.toContain("spec");
-    expect(text).not.toContain("functionalRequirements");
+  it("epic.design schema 是裸 split（无 slice 技术方案，无 spec 深字段展开）", () => {
+    const text = getEpicSchemaText("design");
+    expect(text).toContain("split");
+    // epic 是 Plan 基类（只拆下层），不应出现 slice 的技术方案字段
+    expect(text).not.toContain("techChoices");
+    expect(text).not.toContain("errorSpecs");
   });
 
   it("三层 getSchemaText 对无 schema action 不 throw（降级路径）", () => {
@@ -378,7 +378,7 @@ describe("TC6: ERR4 三层 guidance 产出无旧 W4 一句话占位文案", () =
   for (const phrase of LEGACY_PHRASES) {
     it(`slice 正常 + 失败 guidance 不含旧占位："${phrase}"`, () => {
       const unit = freshSlice();
-      const normal = buildSliceNextAction(unit, "clarify").guidance;
+      const normal = buildSliceNextAction(unit, "design").guidance;
       const deps = makeDeps();
       appendSliceFailRecord(deps, unit, "design-review", "reason");
       const failure = buildSliceFailureNextAction(unit, "design-review", "problem").nextAction.guidance;
@@ -388,7 +388,7 @@ describe("TC6: ERR4 三层 guidance 产出无旧 W4 一句话占位文案", () =
 
     it(`feature 正常 + 失败 guidance 不含旧占位："${phrase}"`, () => {
       const unit = freshFeature();
-      const normal = buildFeatureNextAction(unit, "clarify").guidance;
+      const normal = buildFeatureNextAction(unit, "design").guidance;
       const deps = makeDeps();
       appendFeatureFailRecord(deps, unit, "design-review", "reason");
       const failure = buildFeatureFailureNextAction(unit, "design-review", "problem").nextAction.guidance;
@@ -398,7 +398,7 @@ describe("TC6: ERR4 三层 guidance 产出无旧 W4 一句话占位文案", () =
 
     it(`epic 正常 + 失败 guidance 不含旧占位："${phrase}"`, () => {
       const unit = freshEpic();
-      const normal = buildEpicNextAction(unit, "clarify").guidance;
+      const normal = buildEpicNextAction(unit, "design").guidance;
       const deps = makeDeps();
       appendEpicFailRecord(deps, unit, "design-review", "reason");
       const failure = buildEpicFailureNextAction(unit, "design-review", "problem").nextAction.guidance;

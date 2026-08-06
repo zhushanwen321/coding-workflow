@@ -5,7 +5,7 @@
  * 不走真实 store / 不走子进程——store 层和 cli 层有独立测试。
  *
  * 覆盖：
- *   TC1: wave 空态（刚 create）—— 目标段 + 下一步 clarify guidance + 提示尚未实现
+ *   TC1: wave 空态（刚 create）—— 目标段 + 下一步 design guidance + 提示尚未实现
  *   TC2: wave 中间态（design-reviewed）—— design-review 决策 + buildNextAction(execute) guidance + plan.files
  *   TC3: wave 终态（closed/aborted）—— 无下一步段 + 历史完整
  *   TC4: planning 三层空态（slice/feature/epic）—— 不 crash + 按 scope 收窄渲染
@@ -38,12 +38,12 @@ describe("TC1: renderHandoff 空态 wave（刚 create）", () => {
     expect(out).toContain("实现登录");
   });
 
-  it("下一步段指向 clarify（明确命令 + buildNextAction 阶段 guidance）", () => {
+  it("下一步段指向 design（明确命令 + buildNextAction 阶段 guidance）", () => {
     expect(out).toContain("## 当前位置与下一步");
     expect(out).toContain("状态：created");
     // 明确的执行命令
-    expect(out).toContain("下一步执行：cw clarify --unitId wave:auth-w1");
-    // buildNextAction(unit, "clarify") 生成的阶段 guidance（含 schema + 约束）
+    expect(out).toContain("下一步执行：cw design --unitId wave:auth-w1");
+    // buildNextAction(unit, "design") 生成的阶段 guidance（含 schema + 约束）
     expect(out).toContain("阶段提示");
     expect(out).toContain("input schema");
   });
@@ -72,8 +72,8 @@ describe("TC2: renderHandoff 走到 design-reviewed 的 wave", () => {
     status: "design-reviewed",
     statusHistory: [
       ...base.statusHistory,
-      { at: "2026-07-24T10:00:00.000Z", action: "clarify", to: "clarifying" },
-      { at: "2026-07-24T11:00:00.000Z", action: "plan", to: "planning" },
+      { at: "2026-07-24T10:00:00.000Z", action: "design", to: "designing" },
+      { at: "2026-07-24T11:00:00.000Z", action: "design", to: "designing" },
       { at: "2026-07-24T12:00:00.000Z", action: "design-review", to: "design-reviewed" },
     ],
     clarifications: [
@@ -105,9 +105,9 @@ describe("TC2: renderHandoff 走到 design-reviewed 的 wave", () => {
   });
   const out = renderHandoff(unit);
 
-  it("已定决策段含 clarify 问答", () => {
+  it("已定决策段含 design 问答", () => {
     expect(out).toContain("## 已定决策");
-    expect(out).toContain("[clarify C1]");
+    expect(out).toContain("[design C1]");
     expect(out).toContain("导出格式?");
     expect(out).toContain("CSV 优先");
   });
@@ -202,9 +202,9 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     expect(out).toContain("create → created");
     // planning 层现在输出真实 guidance，不再是降级提示
     expect(out).not.toContain("handler 暂未实现");
-    expect(out).toContain("下一步执行：cw clarify --unitId slice:tech-s1");
+    expect(out).toContain("下一步执行：cw design --unitId slice:tech-s1");
     expect(out).toContain("阶段提示（含 input schema + 关键约束）");
-    // slice guidance 应含 planning 特有内容（clarify 阶段的 spec 约束提示）
+    // slice guidance 应含 planning 特有内容（design 阶段的 clarifications/split 约束提示）
     expect(out).toContain("clarifications");
   });
 
@@ -226,7 +226,7 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     expect(out).toContain("需求规格");
     // feature 的 clarifications 是 {clarifications:[], spec:{...}} 容器，不应 crash
     expect(out).toContain("## 当前位置与下一步");
-    expect(out).toContain("下一步执行：cw clarify --unitId feature:req-f1");
+    expect(out).toContain("下一步执行：cw design --unitId feature:req-f1");
   });
 
   it("epic 空态：不 crash + 有目标 + 输出 guidance", () => {
@@ -234,6 +234,6 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
     const out = renderHandoff(unit);
     expect(out).toContain("# Handoff: epic:big-e1 [created]");
     expect(out).toContain("战略目标");
-    expect(out).toContain("下一步执行：cw clarify --unitId epic:big-e1");
+    expect(out).toContain("下一步执行：cw design --unitId epic:big-e1");
   });
 });

@@ -32,7 +32,7 @@ import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import { buildCommand, inputFilePath } from "../../utils/command.js";
-import type { CwDeps, CwNextAction } from "../types.js";
+import type { CwDeps, CwNextAction, OrchestrationMode } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
 // guidance 填充静态基建（w1 新增，w2 接入 buildSliceNextAction 主体）
@@ -154,6 +154,11 @@ export interface BuildSliceNextActionOpts {
   nextActionOverride?: string;
   /** 跨层建议（execute 下沉 / closeout 回溯）。 */
   crossLayer?: CwNextAction["crossLayer"];
+  /**
+   * 编排模式（G5）：recursive 时 subagent 调度段追加派发指导 + 续 turn 指导。
+   * 缺省 serial（与现状一致）。仅 execute/closeout 等需要派发/续 turn 语义的调用方传入。
+   */
+  orchestration?: OrchestrationMode;
 }
 
 /**
@@ -207,7 +212,7 @@ export function buildSliceNextAction(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration: opts?.orchestration, childLayer: "wave" }),
   });
 
   return {
@@ -282,8 +287,13 @@ function buildSliceCurrentCommand(
  *
  * @param unit 待交接的 Slice
  * @param action 接手 agent 现在该跑的 PlanningAction（handoff 视角的当前步）
+ * @param orchestration 编排模式（G5，recursive 时 subagent 调度段含派发/续 turn 指导；缺省 serial）
  */
-export function buildSliceCurrentActionGuidance(unit: Slice, action: PlanningAction): string {
+export function buildSliceCurrentActionGuidance(
+  unit: Slice,
+  action: PlanningAction,
+  orchestration?: OrchestrationMode,
+): string {
   const statusDisplay = SLICE_STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "slice",
@@ -311,7 +321,7 @@ export function buildSliceCurrentActionGuidance(unit: Slice, action: PlanningAct
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration, childLayer: "wave" }),
   });
 }
 

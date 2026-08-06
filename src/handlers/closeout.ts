@@ -29,7 +29,7 @@ import {
   transitionStatus,
 } from "./internal.js";
 import { rollupChildDelivery } from "./rollup.js";
-import type { ActionResult, CloseoutInput, CwDeps } from "./types.js";
+import type { ActionResult, CloseoutInput, CwDeps, CwNextAction } from "./types.js";
 import { validateInput } from "./validate-input.js";
 
 /**
@@ -121,17 +121,24 @@ export function handleCloseout(
   }
 
   // closeout 后回溯父单元（wave 是叶子，closeout 后按 §7.3 算 crossLayer）。
-  const crossLayer = computeCrossLayerAfterCloseout({
-    store: deps.store,
-    unitId: unit.id,
-    parentUnitId: unit.parentUnitId,
-  });
+  // G5 orchestration 感知已下沉到 cross-layer.ts（v5 §五 line241）：传 deps.orchestration 给
+  // computeCrossLayerAfterCloseout，由该函数内部决定 recursive 时抑制（返回 undefined）。
+  const crossLayer: CwNextAction["crossLayer"] | undefined =
+    computeCrossLayerAfterCloseout({
+      store: deps.store,
+      unitId: unit.id,
+      parentUnitId: unit.parentUnitId,
+      orchestration: deps.orchestration,
+    });
 
   return {
     unitId: unit.id,
     status: unit.status,
     gateResults,
     ok: true,
-    nextAction: buildNextAction(unit, "closeout", { crossLayer }),
+    nextAction: buildNextAction(unit, "closeout", {
+      crossLayer,
+      orchestration: deps.orchestration,
+    }),
   };
 }

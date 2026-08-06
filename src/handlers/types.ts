@@ -46,6 +46,21 @@ import type { ReplanImpact } from "../rules/replan.js";
 import type { CwStore } from "../store/cw-store.js";
 
 // ═══════════════════════════════════════════════════════════════
+// 编排模式（G5：nextAction/crossLayer 适配多 agent）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 编排模式（cw.config.json orchestration 字段，缺省 serial）。
+ *
+ * - serial（默认，向后兼容）：单 agent 串行假设。planning execute 后 nextAction 带
+ *   crossLayer.descend（下沉第一个 child），wave closeout 后带 crossLayer.sibling/ascend。
+ * - recursive（v4 多 agent 并行 + steer 唤醒）：planning execute 后不填 descend
+ *   （父派 subagent 空闲等唤醒，不自己 descend）；closeout 后不填 sibling/ascend
+ *   （该结束让 steer 唤醒父，不自己 ascend）。guidance 相应给派发指导 + 续 turn 指导。
+ */
+export type OrchestrationMode = "serial" | "recursive";
+
+// ═══════════════════════════════════════════════════════════════
 // CwDeps（handler 依赖注入接口）
 // ═══════════════════════════════════════════════════════════════
 
@@ -58,6 +73,7 @@ import type { CwStore } from "../store/cw-store.js";
  * - fileExists：验 artifacts[].ref 指向的文件是否存在（closeout drift 检查用）
  * - clock：提供 ISO 8601 时间戳（statusHistory.at / evidence.generatedAt / frozenAt / abandonedAt）
  * - workspacePath：仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）
+ * - orchestration：编排模式（G5），缺省 serial。可选——存量测试的 stub deps 不填，串行行为不变。
  */
 export interface CwDeps {
   store: CwStore;
@@ -69,6 +85,8 @@ export interface CwDeps {
   /** 仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）。 */
   workspacePath: string;
   clock: { now: () => string };
+  /** 编排模式（cw.config.json orchestration，缺省 serial）。handler 经此分支 descend/ascend 与派发指导。 */
+  orchestration?: OrchestrationMode;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -199,28 +217,25 @@ export interface CreateInput {
 /**
  * 声明脱离 parent 条目的通用能力（跨层跨时机）。
  *
- * 定义已搬入 core/plan.ts（与 Plan*Input 同文件，让 schema-injector 能解析 extends 链）。
- * 此处 re-export 保持现有引用不破坏——PlanInput / ReplanInput / PlanSliceInput /
- * PlanFeatureInput 的 extends 语句无需改动，TS 经此 re-export 能 resolve 到 core。
+ * 定义已搬入 core/plan.ts（与 Design*Input 同文件，让 schema-injector 能解析 extends 链）。
+ * 此处 re-export 保持现有引用不破坏——DesignInput / ReplanInput / DesignSliceInput /
+ * DesignFeatureInput 的 extends 语句无需改动，TS 经此 re-export 能 resolve 到 core。
  *
  * 语义见 core/plan.ts 的 AbandonParentItemsInput 注释，此处不重复。
  */
 export type { AbandonParentItemsInput };
 
-/** clarify handler 输入（progressive append clarifications）。 */
-export interface ClarifyInput {
-  clarifications: Clarification[];
-}
-
 // ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
-/** plan handler 输入（写 WavePlan 4 类条目）。 */
-export interface PlanInput extends AbandonParentItemsInput {
+/** design handler 输入（写 WavePlan 4 类条目）。 */
+export interface DesignInput extends AbandonParentItemsInput {
   testCases: WaveTestCase[];
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
-  /** 本 wave 测试执行命令（可选类型；必填由 PlanInputSchema 运行时强制）。双份定义，与 core/plan.ts 同步。 */
+  /** 本 wave 测试执行命令（可选类型；必填由 DesignInputSchema 运行时强制）。双份定义，与 core/plan.ts 同步。 */
   testCommand?: string;
+  /** 补充澄清（progressive append，design 阶段可继续追加）。 */
+  clarifications?: Clarification[];
 }
 
 /** design-review handler 输入。 */
@@ -297,21 +312,21 @@ export interface AbortInput {
 // slice 层 handler 的 Input 类型
 // ═══════════════════════════════════════════════════════════════
 //
-// 复用原则：slice 与 wave 产物形态相同的阶段直接复用 wave Input（ClarifyInput /
-// DesignReviewInput / CloseoutInput / ReplanInput / AbortInput），只声明 slice 真正
-// 不同的（PlanSliceInput / RetrospectSliceInput）。slice execute 不接收 input（按
+// 复用原则：slice 与 wave 产物形态相同的阶段直接复用 wave Input（DesignReviewInput /
+// CloseoutInput / ReplanInput / AbortInput），只声明 slice 真正
+// 不同的（DesignSliceInput / RetrospectSliceInput）。slice execute 不接收 input（按
 // split 自动创建 child wave），故无 ExecuteSliceInput。
 
 // ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
- * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
+ * slice design handler 输入（写 SlicePlan 5 字段 + split）。
  *
- * 与 wave 的 PlanInput 完全不同：wave 写 testCases/tasks/files/contracts，
+ * 与 wave 的 DesignInput 完全不同：wave 写 testCases/tasks/files/contracts，
  * slice 写技术方案（techChoices/interfaces/dataModels/errorSpecs）+ split（拆 wave 清单）。
  *
  * decisions 可选——不传时由 handler 从本层 Clarification 投影（model §5.10）。
  */
-export interface PlanSliceInput extends AbandonParentItemsInput {
+export interface DesignSliceInput extends AbandonParentItemsInput {
   techChoices: SliceTechChoice[];
   interfaces: SliceInterface[];
   dataModels: SliceDataModel[];
@@ -319,6 +334,8 @@ export interface PlanSliceInput extends AbandonParentItemsInput {
   split: Split[];
   /** 技术决策（投影自本层 Clarification）。可选——不传由 handler 投影。 */
   decisions?: Decision[];
+  /** 补充澄清（progressive append）。 */
+  clarifications?: Clarification[];
 }
 
 /**
@@ -337,39 +354,33 @@ export interface RetrospectSliceInput {
 //
 // 复用原则（同 slice）：feature 与其他层产物形态相同的阶段直接复用通用 Input
 //（DesignReviewInput / CloseoutInput / ReplanInput / AbortInput），只声明 feature 真正
-// 不同的（FeatureClarifyInput / PlanFeatureInput）。feature execute 不接收 input（按
+// 不同的（DesignFeatureInput）。feature execute 不接收 input（按
 // split 自动创建 child slice），故无 ExecuteFeatureInput。retrospect 直接复用
 // RetrospectSliceInput（都是 PlanningRetrospectData），导出类型别名保持命名对称。
 
-/**
- * feature clarify handler 输入（容器对象，形态不对称）。
- *
- * 与通用 ClarifyInput 完全不同：feature 的 clarify 产物是 FeatureClarification 容器
- *（{ clarifications, spec }），不是裸数组。
- */
-export interface FeatureClarifyInput {
-  clarifications: Clarification[];
-  spec: FeatureSpec;
-}
-
 // ⚠️ 双份定义：与 src/core/plan.ts 同名 interface 必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
- * feature plan handler 输入（Plan 基类，只 split）。
+ * feature design handler 输入（Plan 基类，只 split）。
  *
- * 与 slice 的 PlanSliceInput 完全不同：feature 不产技术方案，plan 只拆 slice 清单。
+ * 与 slice 的 DesignSliceInput 完全不同：feature 不产技术方案，design 只拆 slice 清单。
+ * spec 可选——传入时覆盖本层 spec（合并 clarify 语义，E1-20）。
  */
-export interface PlanFeatureInput extends AbandonParentItemsInput {
+export interface DesignFeatureInput extends AbandonParentItemsInput {
   split: Split[];
+  /** 补充澄清（progressive append）。 */
+  clarifications?: Clarification[];
+  /** 覆盖 spec（可选——feature design 阶段可更新需求规格）。 */
+  spec?: FeatureSpec;
 }
 
 // ⚠️ 双份定义：与 src/core/plan.ts 同名定义必须保持字段同步——schema-injector 读 core/plan.ts 生成 guidance 段，handler 签名用本文件。加字段时两处同改。长期方案：re-export 单源（另开任务）
 /**
- * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
+ * epic design handler 输入——与 DesignFeatureInput 同型（Plan 基类，只 split）。
  *
- * epic 与 feature 的 plan 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
+ * epic 与 feature 的 design 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
  * 导出类型别名保持命名对称，不额外定义结构（运行时 dispatch 按 unit.scope 路由到对应 handler）。
  */
-export type PlanEpicInput = PlanFeatureInput;
+export type DesignEpicInput = DesignFeatureInput;
 
 /**
  * feature retrospect handler 输入——与 RetrospectSliceInput 同型（PlanningRetrospectData）。

@@ -43,7 +43,7 @@ function loadUnit(id: string): ExecutionUnit {
 }
 
 describe("E1: dispatch 完整 wave 生命周期", () => {
-  it("create→clarify→plan→design-review→execute→test→exec-review→retrospect→closeout → closed", () => {
+  it("create→design→design-review→execute→test→exec-review→retrospect→closeout → closed", () => {
     // 1. create
     const created = dispatch(
       { action: "create", input: {
@@ -58,22 +58,12 @@ describe("E1: dispatch 完整 wave 生命周期", () => {
     expect(created.status).toBe("created");
     const unitId = "wave:e2e-happy";
 
-    // 2. clarify
-    const clarify = dispatch(
-      { action: "clarify", unitId, input: {
+    // 2. design（合并原 clarify+plan：clarifications append + 写合法 testCases，过 design-review gate）
+    const design = dispatch(
+      { action: "design", unitId, input: {
         clarifications: [
           { id: "Q1", status: "active", question: "use JWT?", resolution: "yes", type: "grilling" },
         ],
-      } },
-      env.deps,
-    );
-    expect(clarify.ok).toBe(true);
-    expect(clarify.status).toBe("clarifying");
-    expect(loadUnit(unitId).clarifications).toHaveLength(1);
-
-    // 3. plan（写合法 testCases，过 design-review gate）
-    const plan = dispatch(
-      { action: "plan", unitId, input: {
         testCases: [makeValidTestCase("TC1")],
         tasks: [makeValidTask("TK1")],
         files: [makeValidFile("F1")],
@@ -82,8 +72,9 @@ describe("E1: dispatch 完整 wave 生命周期", () => {
       } },
       env.deps,
     );
-    expect(plan.ok).toBe(true);
-    expect(plan.status).toBe("planning");
+    expect(design.ok).toBe(true);
+    expect(design.status).toBe("designing");
+    expect(loadUnit(unitId).clarifications).toHaveLength(1);
 
     // 4. design-review（合法 judgment）
     const dr = dispatch(
@@ -157,10 +148,10 @@ describe("E1: dispatch 完整 wave 生命周期", () => {
     expect(finalUnit.evidence.summary).toBe("auth flow delivered");
     expect(finalUnit.evidence.commitHash).toBe("deadbeef");
 
-    // statusHistory 应包含全 9 步（create → closeout）
+    // statusHistory 应包含全 8 步（create → closeout）
     const actions = finalUnit.statusHistory.map((h) => h.action);
     expect(actions).toEqual([
-      "create", "clarify", "plan", "design-review",
+      "create", "design", "design-review",
       "execute", "test", "exec-review", "retrospect", "closeout",
     ]);
   });
@@ -223,9 +214,9 @@ describe("E2: dispatch 非法跳步 → CwEngineError(illegal_transition)", () =
   it("closed 后任何 action → CwEngineError（终态不可逆）", () => {
     // 先跑到 closed（复用 E1 链路的最小版本）
     const unitId = "wave:e2e-terminal";
-    const steps: Array<["clarify" | "plan" | "design-review" | "execute" | "test" | "exec-review" | "retrospect" | "closeout", unknown]> = [
-      ["clarify", { clarifications: [] }],
-      ["plan", {
+    const steps: Array<["design" | "design-review" | "execute" | "test" | "exec-review" | "retrospect" | "closeout", unknown]> = [
+      ["design", {
+        clarifications: [],
         testCases: [makeValidTestCase("TC1")],
         tasks: [makeValidTask("TK1")],
         files: [makeValidFile("F1")],
@@ -255,17 +246,13 @@ describe("E2: dispatch 非法跳步 → CwEngineError(illegal_transition)", () =
   });
 
   it("unit not found → CwEngineError(unit_not_found)", () => {
-    expect(() =>
-      dispatch(
-        { action: "clarify", unitId: "wave:ghost", input: { clarifications: [] } },
-        env.deps,
-      ),
-    ).toThrow(CwEngineError);
+    // loadWorkUnit 先于 handler 执行，unit 不存在时 input 形态无关（不触达 validateInput）
+    const ghostDesign = {
+      action: "design", unitId: "wave:ghost", input: { clarifications: [] },
+    } as never;
+    expect(() => dispatch(ghostDesign, env.deps)).toThrow(CwEngineError);
     try {
-      dispatch(
-        { action: "clarify", unitId: "wave:ghost", input: { clarifications: [] } },
-        env.deps,
-      );
+      dispatch(ghostDesign, env.deps);
       throw new Error("should have thrown");
     } catch (e) {
       expect((e as CwEngineError).code).toBe("unit_not_found");
@@ -279,10 +266,9 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     dispatch({ action: "create", input: {
       slug: "e2e-gate", objective: "o", parentUnitId: "slice:s", basedOnParent: [],
     } }, env.deps);
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    // plan 空的 testCases（design-review 会 fail test-cases-non-empty）
-    dispatch({ action: "plan", unitId, input: {
-      testCases: [], tasks: [], files: [], contracts: [],
+    // design 写空 testCases（design-review 会 fail test-cases-non-empty）
+    dispatch({ action: "design", unitId, input: {
+      clarifications: [], testCases: [], tasks: [], files: [], contracts: [],
       testCommand: "npx vitest run",
     } }, env.deps);
 
@@ -293,8 +279,8 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     expect(result.ok).toBe(false);
     expect(result.gateResults).toBeDefined();
     expect(result.gateResults!.some((g) => !g.passed)).toBe(true);
-    // status 未推进（仍是 planning）
-    expect(loadUnit(unitId).status).toBe("planning");
+    // status 未推进（仍是 designing）
+    expect(loadUnit(unitId).status).toBe("designing");
     // judgment 未写入
     expect(loadUnit(unitId).designReviewJudgment.necessity).toBe("");
   });
@@ -314,9 +300,8 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     dispatch({ action: "create", input: {
       slug: "m12-failcount", objective: "o", parentUnitId: "slice:s", basedOnParent: [],
     } }, env.deps);
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    dispatch({ action: "plan", unitId, input: {
-      testCases: [], tasks: [], files: [], contracts: [],
+    dispatch({ action: "design", unitId, input: {
+      clarifications: [], testCases: [], tasks: [], files: [], contracts: [],
       testCommand: "npx vitest run",
     } }, env.deps);
 
@@ -348,10 +333,10 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
   /**
    * design §3.4 验证：跨 wave 文件冲突 gate（dispatch 层）。
    *
-   * 场景：同一 parent slice 下的两个兄弟 wave（W1 W2），plan.files 都含 path "src/shared.ts"。
+   * 场景：同一 parent slice 下的两个兄弟 wave（W1 W2），design.files 都含 path "src/shared.ts"。
    * - W1 先 design-review → 通过（此时无已 design-review 的兄弟，文件冲突 gate pass）
-   * - W2 后 design-review → 文件冲突 gate fail（W1 已 design-reviewed，plan.files 含 "src/shared.ts"）
-   *   → ok=false，status 不变（仍是 planning），judgment 未写入
+   * - W2 后 design-review → 文件冲突 gate fail（W1 已 design-reviewed，design.files 含 "src/shared.ts"）
+   *   → ok=false，status 不变（仍是 designing），judgment 未写入
    */
   it("wave design-review 跨兄弟文件冲突 → ok=false（W1 先过，W2 fail）", () => {
     const parent = "slice:conflict-parent";
@@ -359,14 +344,14 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     const w2 = "wave:conflict-w2";
     const conflictPath = "src/shared.ts";
 
-    /** 把一个 wave 从 create 推到 planning（plan.files 含冲突 path，未 design-review）。 */
+    /** 把一个 wave 从 create 推到 designing（design.files 含冲突 path，未 design-review）。 */
     const setupWave = (id: string, slug: string): void => {
       dispatch({ action: "create", input: {
         slug, objective: `obj-${slug}`, parentUnitId: parent, basedOnParent: [],
       } }, env.deps);
-      dispatch({ action: "clarify", unitId: id, input: { clarifications: [] } }, env.deps);
-      // plan 含冲突 path（action="modify"，参与冲突判定）
-      dispatch({ action: "plan", unitId: id, input: {
+      // design 含冲突 path（action="modify"，参与冲突判定）
+      dispatch({ action: "design", unitId: id, input: {
+        clarifications: [],
         testCases: [makeValidTestCase("TC1")],
         tasks: [makeValidTask("TK1")],
         files: [{ id: "F1", status: "active", path: conflictPath, action: "modify", description: "shared file" }],
@@ -399,8 +384,8 @@ describe("E: dispatch gate 失败返回 ok=false（不抛错）", () => {
     expect(conflictReport).toMatch(/跨 wave 文件冲突/);
     expect(conflictReport).toContain(conflictPath);
     expect(conflictReport).toContain(w1);
-    // status 未推进（仍是 planning）
-    expect(loadUnit(w2).status).toBe("planning");
+    // status 未推进（仍是 designing）
+    expect(loadUnit(w2).status).toBe("designing");
     // judgment 未写入
     expect(loadUnit(w2).designReviewJudgment.necessity).toBe("");
   });
@@ -412,8 +397,8 @@ describe("E: dispatch replan 旁路（不改 status）", () => {
     dispatch({ action: "create", input: {
       slug: "e2e-replan", objective: "o", parentUnitId: "slice:s", basedOnParent: [],
     } }, env.deps);
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    dispatch({ action: "plan", unitId, input: {
+    dispatch({ action: "design", unitId, input: {
+      clarifications: [],
       testCases: [makeValidTestCase("TC1")],
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
@@ -453,8 +438,8 @@ describe("E: dispatch replan 旁路（不改 status）", () => {
     dispatch({ action: "create", input: {
       slug: "e2e-replan-testcmd", objective: "o", parentUnitId: "slice:s", basedOnParent: [],
     } }, env.deps);
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
-    dispatch({ action: "plan", unitId, input: {
+    dispatch({ action: "design", unitId, input: {
+      clarifications: [],
       testCases: [makeValidTestCase("TC1")],
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
@@ -495,16 +480,16 @@ describe("E: dispatch replan 旁路（不改 status）", () => {
 });
 
 describe("E3: execute commitHash 前置校验（#8，W3）", () => {
-  /** 推进 wave 到 design-reviewed（合法 plan + 合法 judgment）。 */
+  /** 推进 wave 到 design-reviewed（合法 design input + 合法 judgment）。 */
   function advanceToDesignReviewed(slug: string): string {
     const unitId = `wave:${slug}`;
     dispatch(
       { action: "create", input: { slug, objective: "o", parentUnitId: "slice:s", basedOnParent: [] } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, env.deps);
     dispatch(
-      { action: "plan", unitId, input: {
+      { action: "design", unitId, input: {
+        clarifications: [],
         testCases: [makeValidTestCase("TC1")],
         tasks: [makeValidTask("TK1")],
         files: [makeValidFile("F1")],

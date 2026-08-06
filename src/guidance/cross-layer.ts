@@ -9,16 +9,22 @@
  *
  * 路由逻辑（§7.3）：
  *   子单元 closeout 成功
+ *     → recursive（args.orchestration === "recursive"）→ 返回 undefined（G5 抑制，见下）
  *     → 无 parent → 返回 undefined（孤立终点，流程结束，§1.3）
  *     → 有 parent → 查 store.findChildren(parentUnitId)
  *       → 有非终态兄弟（过滤 aborted）→ crossLayer = sibling（横向，第一个非终态兄弟）
  *       → 全部终态（closed/aborted）→ crossLayer = ascend（回父单元 retrospect）
  *
+ * G5 orchestration 感知（recursive 抑制，v5 §五 line241）：本函数是 crossLayer 路由的编排模式
+ *   感知点——args.orchestration === "recursive" 时直接返回 undefined。多 agent 并行场景下，子单元
+ *   closeout 后该结束，由 steer 唤醒父 agent，不自行 sibling/ascend。serial（含缺省 undefined）保持
+ *   §7.3 路由不变（向后兼容红线）。
+ *
  * 注：本函数返回 CwNextAction["crossLayer"]（结构化字段），不渲染文本。
  *      caller（build-guidance）不依赖此返回做渲染——agent 读结构化字段决定下一步（§7.2 路由）。
  */
 import type { ExecutionStatus } from "../core/status.js";
-import type { CwNextAction } from "../handlers/types.js";
+import type { CwNextAction, OrchestrationMode } from "../handlers/types.js";
 import type { CwStore } from "../store/cw-store.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -50,17 +56,30 @@ export interface ComputeCrossLayerArgs {
   unitId: string;
   /** 父单元 id（无则孤立终点，返回 undefined）。 */
   parentUnitId?: string;
+  /**
+   * 编排模式（G5）：recursive 时抑制 sibling/ascend（返回 undefined）。缺省 serial，保持 §7.3 路由。
+   * 与 CwDeps.orchestration 同为 optional——存量调用不传即 serial 行为。
+   */
+  orchestration?: OrchestrationMode;
 }
 
 /**
  * 子单元 closeout 后计算 crossLayer（§7.3）。
  *
- * @returns crossLayer 结构化字段（sibling/ascend/undefined）。undefined 表示流程结束或孤立终点。
+ * @returns crossLayer 结构化字段（sibling/ascend/undefined）。undefined 表示流程结束、孤立终点，或 recursive 抑制。
+ *
+ * G5 orchestration 感知：args.orchestration === "recursive" 时返回 undefined（抑制 sibling/ascend）。
  */
 export function computeCrossLayerAfterCloseout(
   args: ComputeCrossLayerArgs,
 ): CwNextAction["crossLayer"] {
-  const { store, unitId, parentUnitId } = args;
+  const { store, unitId, parentUnitId, orchestration } = args;
+
+  // G5：recursive 模式（多 agent 并行 + steer 唤醒）抑制 crossLayer——closeout 后该结束，
+  // 让 steer 唤醒父 agent，不自行 sibling/ascend。serial（含缺省 undefined）保持 §7.3 路由不变。
+  if (orchestration === "recursive") {
+    return undefined;
+  }
 
   // 无 parent → 孤立终点，流程结束（§1.3，任何层都能无 parent 独立起步）。
   if (parentUnitId === undefined || parentUnitId === "") {

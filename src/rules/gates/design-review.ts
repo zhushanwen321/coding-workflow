@@ -20,6 +20,7 @@ import type {
 } from "../../core/judgments.js";
 import type { Split,WaveFile } from "../../core/plan.js";
 import type { Epic, ExecutionUnit, Feature, Slice } from "../../core/workunit.js";
+import { MAX_EPIC_TO_FEATURE, MAX_FEATURE_TO_SLICE, MAX_SLICE_TO_WAVE } from "./fan-out.js";
 import { type GateResult,runGateSafely } from "./types.js";
 
 // 重新导出 GateResult，便于 `import { GateResult } from "./gates/design-review.js"`
@@ -196,12 +197,12 @@ export function noSiblingWaveFileConflict(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 wave design-review 全部 8 个 gate（wave §11 WAVE_DESIGN_REVIEW_GATES 清单）。
+ * 跑 wave design-review 全部 10 个 gate（wave §11 WAVE_DESIGN_REVIEW_GATES 清单）。
  *
  * 与 slice/feature/epic 聚合函数对称（runSliceDesignReviewGates 等），用 runGateSafely 逐个包裹。
  * 顺序对应原 wave handler 的 inline 数组（design-review.ts:48-57）：
- *   2 个 testCases 结构 gate + 5 个 judgment 非空 gate + 1 个 wave layerSpecific 非空 gate
- *   + 1 个跨 wave 文件冲突 gate（本次新增，design §3.4）。
+ *   3 个 testCases 结构 gate + 5 个 judgment 非空 gate + 1 个 wave layerSpecific 非空 gate
+ *   + 1 个跨 wave 文件冲突 gate（design §3.4 新增）。
  *
  * siblingFiles 由 handler 注入（rules 层零 IO）：handler 从 store.findChildren(parentUnitId)
  * load 兄弟 wave 的 plan.files 后传入。parentUnitId 为空（独子/孤立 wave）时传空数组，
@@ -450,6 +451,34 @@ export function inheritedItemIdsValid(
   };
 }
 
+/**
+ * `inherited-item-ids-declared` — 软 gate：每个 split 都应声明 inheritedItemIds（未声明 → warn）。
+ *
+ * 与 inheritedItemIdsValid（hard fail，验已声明 id 的有效性）互补：本 gate 只查"有没有声明"。
+ * 未声明不构成结构错误（子层 execute 后 basedOnParent 为空，只是 replan 影响面查询会失准），
+ * 因此返回 `passed: true` + `severity: "warn"`——现有 `filter(!g.passed)` 聚合点天然排除，零回归；
+ * 调用方如需展示 warn，按 `g.severity === "warn"` 收集 report 即可。
+ *
+ * 照 splitDagValidBySplits 模式：接收 Split[]，不绑定具体层，三个 runner 直接转调。
+ */
+export function inheritedItemIdsDeclared(splits: ReadonlyArray<Split>): GateResult {
+  // 未声明（undefined 或空数组）都算缺声明；slug 缺失的 split 无法定位，一并列出
+  const missing = splits.filter(
+    (s) => !s.inheritedItemIds || s.inheritedItemIds.length === 0,
+  );
+  if (missing.length > 0) {
+    return {
+      passed: true,
+      severity: "warn",
+      report: `inherited-item-ids-declared: ${missing.length} 个 split 未声明 inheritedItemIds（slugs: ${missing.map((s) => s.slug || "<缺 slug>").join(", ")}）——不阻断，但 replan 影响面查询会失准，建议声明`,
+    };
+  }
+  return {
+    passed: true,
+    report: `inherited-item-ids-declared: 全部 ${splits.length} 个 split 都声明了 inheritedItemIds`,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // slice design-review gate（slice 附录 A §11 / slice §5.5）
 // ═══════════════════════════════════════════════════════════════
@@ -603,6 +632,64 @@ export function splitDagValid(unit: Slice): GateResult {
 }
 
 /**
+ * split fan-out 上限的通用实现（接收 Split[] + 层上限，不绑定具体层）。
+ *
+ * fan-out 定义：某个被继承的 parent 条目 id 被多少个子 split 引用（inheritedItemIds 命中）。
+ * 同一条目被过多子层继承时，replan 影响面查询会扇出到大量分支（影响面爆炸），
+ * execute 并行度也无法收敛，机器必须限。maxChildren / layerLabel 由各层 wrapper 注入。
+ * 照 splitDagValidBySplits 模式：先验 slug 完整性，再统计计数，超限列出明细。
+ * 对外不导出——各层 exported gate（splitFanOutLimit / featureSplitFanOutLimit /
+ * epicSplitFanOutLimit）转调它。
+ */
+function splitFanOutLimitBySplits(
+  splits: Split[],
+  maxChildren: number,
+  layerLabel: string,
+): GateResult {
+  // 过滤无效 slug（agent 可能漏填），报告验证错误
+  const invalidSplits = splits.filter((s) => !s.slug || typeof s.slug !== "string" || s.slug.trim() === "");
+  if (invalidSplits.length > 0) {
+    return {
+      passed: false,
+      report: `split-fan-out-limit: ${invalidSplits.length} 条 split 缺少 slug 字段（slug 是 fan-out 计数和后续引用的基础，必须填）`,
+    };
+  }
+
+  // 统计每个 parent 条目 id 被多少 split 继承（fan-out 计数）
+  const fanOutByItemId = new Map<string, number>();
+  for (const s of splits) {
+    for (const id of s.inheritedItemIds ?? []) {
+      fanOutByItemId.set(id, (fanOutByItemId.get(id) ?? 0) + 1);
+    }
+  }
+  const overLimit: Array<{ id: string; count: number }> = [];
+  for (const [id, count] of fanOutByItemId) {
+    if (count > maxChildren) overLimit.push({ id, count });
+  }
+
+  if (overLimit.length > 0) {
+    const lines = overLimit.map((o) => `"${o.id}" 被 ${o.count} 个 split 继承`).join("; ");
+    return {
+      passed: false,
+      report: `split-fan-out-limit: ${layerLabel} 拆分 fan-out 超上限（每个 parent 条目最多 ${maxChildren} 个子 split）——${lines}。过大的 fan-out 会让 replan 影响面扇出到过多子层，请合并子层或调整 inheritedItemIds 声明`,
+    };
+  }
+  return {
+    passed: true,
+    report: `split-fan-out-limit: ${layerLabel} 拆分 fan-out 全部在限内（${fanOutByItemId.size} 个被继承条目，上限 ${maxChildren}）`,
+  };
+}
+
+/**
+ * E3 `split-fan-out-limit`（slice 版）— SlicePlan.split 的 fan-out 不超 MAX_SLICE_TO_WAVE。
+ *
+ * slice 拆 wave：每个被继承的 slice 条目最多被 6 个 wave split 引用。
+ */
+export function splitFanOutLimit(unit: Slice): GateResult {
+  return splitFanOutLimitBySplits(unit.plan.split, MAX_SLICE_TO_WAVE, "slice→wave");
+}
+
+/**
  * spec-c §2 — split 内 slug 唯一性校验的通用实现（接收 Split[]，不绑定具体层）。
  *
  * cw store 按 id save 子层 unit，id 由 split.slug 派生；slug 重复会让后建的子层覆盖先建的
@@ -686,9 +773,9 @@ export function layerSpecificNonEmpty(unit: Slice): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 slice design-review 全部 11 个 gate（slice §5.5 SLICE_DESIGN_REVIEW_GATES）。
+ * 跑 slice design-review 全部 14 个 gate（slice §5.5 SLICE_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：结构完整性（3）→ 决策已解决 + inheritedItemIds 有效（2）
+ * 顺序对应附录清单：结构完整性（5）→ 决策已解决 + inheritedItemIds 有效/已声明（3）
  * → 业务判断非空（5，复用 wave 的 judgment gate）→ layerSpecific 非空（1）。
  * 返回全部 GateResult，调用方按 passed 过滤 mustFix。
  *
@@ -711,9 +798,11 @@ export function runSliceDesignReviewGates(unit: Slice): GateResult[] {
     runGateSafely("tech-choice-non-empty", techChoiceNonEmpty, unit),
     runGateSafely("split-non-empty", splitNonEmpty, unit),
     runGateSafely("split-dag-valid", splitDagValid, unit),
+    runGateSafely("split-fan-out-limit", splitFanOutLimit, unit),
     runGateSafely("duplicate-split-slug", duplicateSplitSlug, unit),
     runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications),
     runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, plan.split, validIds),
+    runGateSafely("inherited-item-ids-declared", inheritedItemIdsDeclared, plan.split),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
     runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
     runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),
@@ -861,6 +950,16 @@ export function featureSplitDagValid(unit: Feature): GateResult {
 }
 
 /**
+ * E3 `slice-split-fan-out-limit`（feature 版）— Plan.split 的 fan-out 不超 MAX_FEATURE_TO_SLICE。
+ *
+ * feature 拆 slice：每个被继承的 spec 条目（FR/AC/UC/Decision）最多被 5 个 slice split 引用。
+ * 与 slice 的 splitFanOutLimit 同源逻辑（Split 结构同型），feature 版仅文案/命名区分层。
+ */
+export function featureSplitFanOutLimit(unit: Feature): GateResult {
+  return splitFanOutLimitBySplits(unit.plan.split, MAX_FEATURE_TO_SLICE, "feature→slice");
+}
+
+/**
  * spec-c §2 / 附录 A `duplicate-split-slug`（feature 版）— Plan.split 内 slug 唯一。
  *
  * 与 slice 的 duplicateSplitSlug 同源逻辑（Split 结构同型），feature 版仅文案/命名区分层。
@@ -918,9 +1017,9 @@ export function featureLayerSpecificNonEmpty(unit: Feature): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 feature design-review 全部 13 个 gate（feature §4.3 FEATURE_DESIGN_REVIEW_GATES）。
+ * 跑 feature design-review 全部 16 个 gate（feature §4.3 FEATURE_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：FR-AC 强引用（3）→ split 结构完整性（2）→ 决策已解决 + inheritedItemIds 有效（2）
+ * 顺序对应附录清单：FR-AC 强引用（3）→ split 结构完整性（4）→ 决策已解决 + inheritedItemIds 有效/已声明（3）
  * → 业务判断非空（5，复用 wave/slice 共用的 judgment gate）→ layerSpecific 非空（1）。
  * 不包含 slice 专属 gate（techChoices/interfaces/dataModels/errorSpecs——feature plan 无这些）。
  * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。
@@ -945,9 +1044,11 @@ export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
     runGateSafely("ac-non-empty", acNonEmpty, unit),
     runGateSafely("slice-split-non-empty", featureSplitNonEmpty, unit),
     runGateSafely("slice-split-dag-valid", featureSplitDagValid, unit),
+    runGateSafely("slice-split-fan-out-limit", featureSplitFanOutLimit, unit),
     runGateSafely("duplicate-split-slug", featureDuplicateSplitSlug, unit),
     runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications.clarifications),
     runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, unit.plan.split, validIds),
+    runGateSafely("inherited-item-ids-declared", inheritedItemIdsDeclared, unit.plan.split),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
     runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
     runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),
@@ -1003,6 +1104,16 @@ export function epicSplitNonEmpty(unit: Epic): GateResult {
  */
 export function epicSplitDagValid(unit: Epic): GateResult {
   return splitDagValidBySplits(unit.plan.split);
+}
+
+/**
+ * E3 `feature-split-fan-out-limit`（epic 版）— Plan.split 的 fan-out 不超 MAX_EPIC_TO_FEATURE。
+ *
+ * epic 拆 feature：每个被继承的 epic 条目（clarification）最多被 7 个 feature split 引用。
+ * 与 slice/feature 的 fan-out gate 同源逻辑（Split 结构同型），epic 版仅文案/命名区分层。
+ */
+export function epicSplitFanOutLimit(unit: Epic): GateResult {
+  return splitFanOutLimitBySplits(unit.plan.split, MAX_EPIC_TO_FEATURE, "epic→feature");
 }
 
 /**
@@ -1062,9 +1173,9 @@ export function epicLayerSpecificNonEmpty(unit: Epic): GateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 跑 epic design-review 全部 10 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
+ * 跑 epic design-review 全部 13 个 gate（epic §2.4 EPIC_DESIGN_REVIEW_GATES）。
  *
- * 顺序对应附录清单：split 结构完整性（2）→ 决策已解决 + inheritedItemIds 有效（2）
+ * 顺序对应附录清单：split 结构完整性（4）→ 决策已解决 + inheritedItemIds 有效/已声明（3）
  * → 业务判断非空（5，复用 wave/slice/feature 共用的 judgment gate）→ layerSpecific 非空（1）。
  * 不包含 feature 专属的 FR-AC 强引用 gate（frAcCoverage/acReachableFromFr/acNonEmpty——epic 无 spec）。
  * DesignReviewJudgment 所有层同型，judgment gate 直接复用（传 unit.designReviewJudgment）。
@@ -1081,9 +1192,11 @@ export function runEpicDesignReviewGates(unit: Epic): GateResult[] {
   return [
     runGateSafely("feature-split-non-empty", epicSplitNonEmpty, unit),
     runGateSafely("feature-split-dag-valid", epicSplitDagValid, unit),
+    runGateSafely("feature-split-fan-out-limit", epicSplitFanOutLimit, unit),
     runGateSafely("duplicate-split-slug", epicDuplicateSplitSlug, unit),
     runGateSafely("all-decisions-resolved", allDecisionsResolved, unit.clarifications),
     runGateSafely("inherited-item-ids-valid", inheritedItemIdsValid, unit.plan.split, validIds),
+    runGateSafely("inherited-item-ids-declared", inheritedItemIdsDeclared, unit.plan.split),
     runGateSafely("design-review-necessity-non-empty", designReviewNecessityNonEmpty, judgment),
     runGateSafely("design-review-sufficiency-complete", designReviewSufficiencyComplete, judgment),
     runGateSafely("design-review-alternatives-non-empty", designReviewAlternativesNonEmpty, judgment),

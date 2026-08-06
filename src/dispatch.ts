@@ -21,68 +21,62 @@
 import type { Epic, ExecutionUnit, Feature, Slice } from "./core/workunit.js";
 import {
   handleAbortEpic,
-  handleClarifyEpic,
   handleCloseoutEpic,
   handleCreateEpic,
+  handleDesignEpic,
   handleDesignReviewEpic,
   handleExecuteEpic,
-  handlePlanEpic,
   handleReplanEpic,
   handleRetrospectEpic,
 } from "./handlers/epic/index.js";
 import {
   handleAbortFeature,
-  handleClarifyFeature,
   handleCloseoutFeature,
   handleCreateFeature,
+  handleDesignFeature,
   handleDesignReviewFeature,
   handleExecuteFeature,
-  handlePlanFeature,
   handleReplanFeature,
   handleRetrospectFeature,
 } from "./handlers/feature/index.js";
 import {
   type AbortInput,
   type ActionResult,
-  type ClarifyInput,
   type CloseoutInput,
   type CreateInput,
   type CwDeps,
+  type DesignInput,
   type DesignReviewInput,
   type ExecReviewInput,
   type ExecuteInput,
   handleAbort,
-  handleClarify,
   handleCloseout,
   handleCreate,
+  handleDesign,
   handleDesignReview,
   handleExecReview,
   handleExecute,
-  handlePlan,
   handleReplan,
   handleRetrospect,
   handleTest,
-  type PlanInput,
   type ReplanInput,
   type RetrospectInput,
   type TestInput,
 } from "./handlers/index.js";
 import {
   handleAbortSlice,
-  handleClarifySlice,
   handleCloseoutSlice,
   handleCreateSlice,
   handleDesignReviewSlice,
+  handleDesignSlice,
   handleExecuteSlice,
-  handlePlanSlice,
   handleReplanSlice,
   handleRetrospectSlice,
 } from "./handlers/slice/index.js";
 import type {
-  FeatureClarifyInput,
-  PlanEpicInput,
-  PlanFeatureInput,
-  PlanSliceInput,
+  DesignEpicInput,
+  DesignFeatureInput,
+  DesignSliceInput,
   RetrospectEpicInput,
   RetrospectFeatureInput,
   RetrospectSliceInput,
@@ -126,11 +120,10 @@ function assertUnreachable(_: never): never {
 /**
  * dispatch 入参的联合类型。每个 action 对应一个 { action, unitId?, input }。
  *
- * action 名 wave/slice/feature 共用（create/clarify/plan/.../abort），input 按层不同：
- * - plan：wave 用 PlanInput、slice 用 PlanSliceInput、feature 用 PlanFeatureInput（三者产物形态完全不同）。
+ * action 名 wave/slice/feature 共用（create/design/.../abort），input 按层不同：
+ * - design：wave 用 DesignInput、slice 用 DesignSliceInput、feature 用 DesignFeatureInput（三者产物形态完全不同）。
  * - retrospect：wave 用 RetrospectInput、slice/feature 共用 RetrospectSliceInput
  *   （PlanningRetrospectData 比 RetrospectData 宽；feature 与 slice retrospectData 同型）。
- * - clarify：wave/slice 共用 ClarifyInput（裸数组），feature 用 FeatureClarifyInput（容器对象，含 spec）。
  * - 其余 action（design-review/execute/test/exec-review/closeout/replan/abort）
  *   各层共用同一 Input（见 handlers/types.ts 复用说明）。
  *   其中 test/exec-review 是 wave 专属，slice/feature dispatch 收到时抛 illegal_transition。
@@ -138,8 +131,7 @@ function assertUnreachable(_: never): never {
  */
 export type CwParams =
   | { action: "create"; input: CreateInput }
-  | { action: "clarify"; unitId: string; input: ClarifyInput | FeatureClarifyInput }
-  | { action: "plan"; unitId: string; input: PlanInput | PlanSliceInput | PlanFeatureInput | PlanEpicInput }
+  | { action: "design"; unitId: string; input: DesignInput | DesignSliceInput | DesignFeatureInput | DesignEpicInput }
   | { action: "design-review"; unitId: string; input: DesignReviewInput }
   | { action: "execute"; unitId: string; input: ExecuteInput }
   | { action: "test"; unitId: string; input: TestInput }
@@ -251,12 +243,10 @@ function dispatchWave(
   deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
-    case "clarify":
-      return handleClarify(unit, params.input, deps);
-    case "plan":
-      // 进 dispatchWave 必是 wave（dispatch 已按 scope 分流），其 plan input 必是 PlanInput。
-      // TS 无法从 CwParams 的 plan 分支（PlanInput | PlanSliceInput）推出这点，显式断言。
-      return handlePlan(unit, params.input as PlanInput, deps);
+    case "design":
+      // 进 dispatchWave 必是 wave（dispatch 已按 scope 分流），其 design input 必是 DesignInput。
+      // TS 无法从 CwParams 的 design 分支（DesignInput | DesignSliceInput）推出这点，显式断言。
+      return handleDesign(unit, params.input as DesignInput, deps);
     case "design-review":
       return handleDesignReview(unit, params.input, deps);
     case "execute":
@@ -266,7 +256,7 @@ function dispatchWave(
     case "exec-review":
       return handleExecReview(unit, params.input, deps);
     case "retrospect":
-      // 同 plan：进 dispatchWave 必是 wave，retrospect input 必是 RetrospectInput。
+      // 同 design：进 dispatchWave 必是 wave，retrospect input 必是 RetrospectInput。
       return handleRetrospect(unit, params.input as RetrospectInput, deps);
     case "closeout":
       return handleCloseout(unit, params.input, deps);
@@ -305,11 +295,9 @@ function dispatchSlice(
   deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
-    case "clarify":
-      return handleClarifySlice(unit, params.input, deps);
-    case "plan":
-      // 进 dispatchSlice 必是 slice，其 plan input 必是 PlanSliceInput（显式断言，同 dispatchWave）。
-      return handlePlanSlice(unit, params.input as PlanSliceInput, deps);
+    case "design":
+      // 进 dispatchSlice 必是 slice，其 design input 必是 DesignSliceInput（显式断言，同 dispatchWave）。
+      return handleDesignSlice(unit, params.input as DesignSliceInput, deps);
     case "design-review":
       return handleDesignReviewSlice(unit, params.input, deps);
     case "execute":
@@ -347,7 +335,7 @@ function dispatchSlice(
  * 调用前调用方须已通过 guardPlanning。本函数只做 handler 路由。
  *
  * feature 与 slice 同属 PlanningUnit，流程结构一致（9 步无 test/exec-review），但 handler 实现不同
- *（feature clarify 产物是容器对象、plan 只拆 slice、execute 下沉到 slice 而非 wave）。故照抄
+ *（feature design 写 spec 覆盖 + 只拆 slice、execute 下沉到 slice 而非 wave）。故照抄
  * dispatchSlice 结构，路由到 feature 版 handler。
  *
  * feature 无 test / exec-review（同 slice）——收到这两个 action 抛 illegal_transition（双重防御，
@@ -366,12 +354,9 @@ function dispatchFeature(
   deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
-    case "clarify":
-      // feature clarify 用 FeatureClarifyInput（容器对象，含 spec）。
-      return handleClarifyFeature(unit, params.input as FeatureClarifyInput, deps);
-    case "plan":
-      // 进 dispatchFeature 必是 feature，其 plan input 必是 PlanFeatureInput（显式断言，同 dispatchSlice）。
-      return handlePlanFeature(unit, params.input as PlanFeatureInput, deps);
+    case "design":
+      // 进 dispatchFeature 必是 feature，其 design input 必是 DesignFeatureInput（显式断言，同 dispatchSlice）。
+      return handleDesignFeature(unit, params.input as DesignFeatureInput, deps);
     case "design-review":
       return handleDesignReviewFeature(unit, params.input, deps);
     case "execute":
@@ -414,12 +399,11 @@ function dispatchFeature(
  * 调用前调用方须已通过 guardPlanning。本函数只做 handler 路由。
  *
  * epic 与 slice/feature 同属 PlanningUnit，流程结构一致（9 步无 test/exec-review），但 handler 实现不同
- *（epic clarify 产物是数组 push、plan 只拆 feature、execute 下沉到 feature 而非 slice/wave）。
+ *（epic 只拆 feature、execute 下沉到 feature 而非 slice/wave）。
  * 故照抄 dispatchFeature 结构，路由到 epic 版 handler。
  *
- * 关键差异：epic clarify 用通用 ClarifyInput（数组形态，同 slice/wave），不需断言为
- * FeatureClarifyInput（feature 的 clarify 是容器对象）。epic plan 用 PlanEpicInput
- *（= PlanFeatureInput 别名）。epic retrospect 用 RetrospectEpicInput（= RetrospectSliceInput 别名）。
+ * 关键差异：epic design 用 DesignEpicInput（= DesignFeatureInput 别名）。
+ * epic retrospect 用 RetrospectEpicInput（= RetrospectSliceInput 别名）。
  *
  * epic 无 test / exec-review（同 slice/feature）——收到这两个 action 抛 illegal_transition（双重防御）。
  *
@@ -433,12 +417,9 @@ function dispatchEpic(
   deps: CwDeps,
 ): ActionResult {
   switch (params.action) {
-    case "clarify":
-      // epic clarify 用通用 ClarifyInput（数组形态，同 slice/wave，非 feature 容器）。
-      return handleClarifyEpic(unit, params.input as ClarifyInput, deps);
-    case "plan":
-      // 进 dispatchEpic 必是 epic，其 plan input 必是 PlanEpicInput（显式断言，同 dispatchSlice/dispatchFeature）。
-      return handlePlanEpic(unit, params.input as PlanEpicInput, deps);
+    case "design":
+      // 进 dispatchEpic 必是 epic，其 design input 必是 DesignEpicInput（显式断言，同 dispatchSlice/dispatchFeature）。
+      return handleDesignEpic(unit, params.input as DesignEpicInput, deps);
     case "design-review":
       return handleDesignReviewEpic(unit, params.input, deps);
     case "execute":
@@ -496,7 +477,7 @@ export function getUnitScope(store: CwStore, unitId: string): string | null {
  * 判别层类型并转为 ExecutionUnit（scope='wave'）/ Slice（scope='slice'）/ Feature（scope='feature'）/ Epic（scope='epic'）。
  * 其他 scope 抛 unsupported_scope。
  *
- * @returns ExecutionUnit | Slice | Feature | null（unitId 不存在时 null）
+ * @returns ExecutionUnit | Slice | Feature | Epic | null（unitId 不存在时 null）
  */
 function loadWorkUnit(
   store: CwStore,

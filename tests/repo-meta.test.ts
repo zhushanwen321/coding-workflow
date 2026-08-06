@@ -3,7 +3,7 @@
  *
  * 测试目标：
  *   - collectRepoMeta 在真实 git repo / 非 git 目录 / bare+worktree 三种环境的行为
- *   - CwStore 新建 store 写入 schemaVersion=1 + repoMeta
+ *   - CwStore 新建 store 写入 schemaVersion=2 + repoMeta
  *   - 旧 store（无 schemaVersion/repoMeta）加载降级不 crash
  *   - 推进类 save 刷新 repoMeta，readonly query 不刷新
  *
@@ -179,13 +179,13 @@ describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  it("新建 store + 首次 save → store.json 含 schemaVersion=1 + repoMeta 全字段", () => {
+  it("新建 store + 首次 save → store.json 含 schemaVersion=2 + repoMeta 全字段", () => {
     const store = new CwStore(cwd);
     const unit = makeUnit("wave:test-a");
     store.save(unit);
 
     const raw = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));
-    expect(raw.schemaVersion).toBe(1);
+    expect(raw.schemaVersion).toBe(2);
     expect(raw.repoMeta).toBeDefined();
     expect(raw.repoMeta.remoteUrl).toBe("git@github.com:foo/bar.git");
     expect(raw.repoMeta.branch).toBeTruthy();
@@ -194,7 +194,7 @@ describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
     expect(raw.repoMeta.recordedAt).toBeTruthy();
   });
 
-  it("旧 store（无 schemaVersion/repoMeta）加载不 crash + schemaVersion 内存补 1 + 磁盘未写", () => {
+  it("旧 store（无 schemaVersion/repoMeta）加载不 crash + schemaVersion 内存补 2 + 磁盘未写", () => {
     // 手动构造旧格式 store.json
     const storePath = getCwJsonPath(cwd);
     mkdirSync(join(storePath, ".."), { recursive: true });
@@ -226,7 +226,7 @@ describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
     spawnSync("git", ["checkout", "-b", "changed-branch"], { cwd, encoding: "utf-8" });
 
     // 再次 save（推进类写入）——repoMeta 不应刷新，保持首次记录的快照
-    unit.status = "clarifying";
+    unit.status = "designing";
     store.save(unit);
 
     const raw2 = JSON.parse(readFileSync(getCwJsonPath(cwd), "utf-8"));

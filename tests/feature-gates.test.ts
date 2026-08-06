@@ -1,14 +1,14 @@
 /**
  * v1 feature gate 测试。
  *
- * 测 feature design-review 的 14 个 gate（纯函数，零 IO）：
+ * 测 feature design-review 的 16 个 gate（纯函数，零 IO）：
  * - FR-AC 强引用 3：frAcCoverage / acReachableFromFr / acNonEmpty（feature 专属）
  * - split 结构完整性 3：featureSplitNonEmpty / featureSplitDagValid / featureDuplicateSplitSlug（slug 唯一）
  * - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  * - judgment 非空 5（复用 wave/slice 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  * - feature layerSpecific 非空 1（feature 专属 6 字段）
  *
- * 另测 runFeatureDesignReviewGates 聚合：合法 → 14 个全 pass；构造各种 fail 场景验正确 gate fail。
+ * 另测 runFeatureDesignReviewGates 聚合：合法 → 16 个全 pass；构造各种 fail 场景验正确 gate fail。
  *
  * 用 makeFeatureUnit + 合法工厂构造基线，手动设坏字段触发 fail（每个 gate 覆盖 pass + fail）。
  */
@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import type {
   DesignReviewJudgment,
 } from "../src/core/judgments.js";
+import type { Split } from "../src/core/plan.js";
 import type { Feature } from "../src/core/workunit.js";
 import {
   acNonEmpty,
@@ -28,10 +29,12 @@ import {
   designReviewTradeoffsPresent,
   featureLayerSpecificNonEmpty,
   featureSplitDagValid,
+  featureSplitFanOutLimit,
   featureSplitNonEmpty,
   frAcCoverage,
   runFeatureDesignReviewGates,
 } from "../src/rules/gates/design-review.js";
+import { MAX_FEATURE_TO_SLICE } from "../src/rules/gates/fan-out.js";
 import {
   makeFeatureUnit,
   makeValidFeatureDesignReviewJudgment,
@@ -42,7 +45,7 @@ import { makeFeatureSpec } from "./helpers/feature-env.js";
 
 // ── 辅助：构造一个已填好合法 spec + plan + judgment 的 feature（design-review 全 pass 基线）──
 
-/** 构造合法 feature（spec + plan + judgment 都填好，14 个 design-review gate 全过）。 */
+/** 构造合法 feature（spec + plan + judgment 都填好，16 个 design-review gate 全过）。 */
 function validFeature(): Feature {
   const unit = makeFeatureUnit();
   // 写入合法 spec（FR1→AC1 强引用）
@@ -94,7 +97,7 @@ describe("feature design-review gates: FR-AC 强引用（3 个）", () => {
       expect(frAcCoverage(unit).passed).toBe(true);
     });
 
-    it("[BUG-HUNT 修复] FR.ac 字段 undefined（畸形数据绕过 clarify 校验时）→ 可读 fail 而非崩溃", () => {
+    it("[BUG-HUNT 修复] FR.ac 字段 undefined（畸形数据绕过 design 校验时）→ 可读 fail 而非崩溃", () => {
       // 原崩溃 bug：replan 等路径绕过 clarify 校验，fr.ac 为 undefined，
       // fr.ac.length 访问抛 Cannot read properties of undefined。
       // guard 后应返回可读 fail，不抛异常。
@@ -166,6 +169,37 @@ describe("feature design-review gates: FR-AC 强引用（3 个）", () => {
 // ═══════════════════════════════════════════════════════════════
 // split 结构完整性（2 个）
 // ═══════════════════════════════════════════════════════════════
+
+/** 构造 n 个 split，全部继承同一个条目 id（模拟该 id 的 fan-out = n）。 */
+function fanOutSplits(n: number, sharedId: string): Split[] {
+  return Array.from({ length: n }, (_, i) => ({
+    slug: `s${i + 1}`,
+    description: `slice ${i + 1}`,
+    dependsOn: [],
+    inheritedItemIds: [sharedId],
+  }));
+}
+
+// fan-out 上限（featureSplitFanOutLimit, MAX_FEATURE_TO_SLICE）
+describe("feature design-review gates: fan-out 上限（featureSplitFanOutLimit）", () => {
+  it(`fan-out 等于上限（${MAX_FEATURE_TO_SLICE} 个 split 继承同一 id）→ pass（count 不 > 上限）`, () => {
+    const unit = validFeature();
+    unit.plan.split = fanOutSplits(MAX_FEATURE_TO_SLICE, "FR1");
+    const r = featureSplitFanOutLimit(unit);
+    expect(r.passed).toBe(true);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+  });
+
+  it(`fan-out 超上限（${MAX_FEATURE_TO_SLICE + 1} 个 split 继承同一 id）→ fail + report 含超限 id 与计数`, () => {
+    const unit = validFeature();
+    unit.plan.split = fanOutSplits(MAX_FEATURE_TO_SLICE + 1, "FR1");
+    const r = featureSplitFanOutLimit(unit);
+    expect(r.passed).toBe(false);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+    expect(r.report).toMatch(/FR1/);
+    expect(r.report).toMatch(String(MAX_FEATURE_TO_SLICE + 1));
+  });
+});
 
 describe("feature design-review gates: split 结构完整性", () => {
   // featureSplitNonEmpty
@@ -349,14 +383,14 @@ describe("feature design-review gates: feature layerSpecific 非空（6 字段�
 });
 
 // ═══════════════════════════════════════════════════════════════
-// runFeatureDesignReviewGates 聚合（14 个 gate）
+// runFeatureDesignReviewGates 聚合（16 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
-describe("runFeatureDesignReviewGates 聚合（14 个 gate）", () => {
-  it("合法 feature → 14 个 gate 全 pass", () => {
+describe("runFeatureDesignReviewGates 聚合（16 个 gate）", () => {
+  it("合法 feature → 16 个 gate 全 pass", () => {
     const unit = validFeature();
     const results = runFeatureDesignReviewGates(unit);
-    expect(results).toHaveLength(14);
+    expect(results).toHaveLength(16);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 

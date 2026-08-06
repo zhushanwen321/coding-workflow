@@ -129,14 +129,14 @@ export function handleReplan(
     input.abandonedIds.length === 0 &&
     (input.abandonParentItems === undefined || input.abandonParentItems.length === 0) &&
     input.addedSpecItems === undefined;
-  // 内容 replan 的合法回流：plan.from 仅含 clarifying/planning/design-reviewed（不含 executing 及之后）。
-  // executing 下内容 replan 后 plan/design-review 均 illegal（仅 test/replan/abort 合法），推 cw plan
+  // 内容 replan 的合法回流：design.from 仅含 created/designing/design-reviewed（不含 executing 及之后）。
+  // executing 下内容 replan 后 design/design-review 均 illegal（仅 test/replan/abort 合法），推 cw design
   // 必抛 illegal_transition、wave 永久卡死 → 改推状态映射的合法 action + guidance 显式提示回流不可达。
   const planReachable = unit.status === "design-reviewed";
   const nextAction =
     testCommandOnly || !planReachable
       ? (WAVE_STATUS_TO_ACTION[unit.status] ?? "test")
-      : "plan";
+      : "design";
   // 无回流通道的内容 replan：blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）。
   const blockedHint =
     !testCommandOnly && !planReachable
@@ -163,9 +163,9 @@ export function handleReplan(
     planReachable,
   });
 
-  // 机器可读字段同步重定向：buildNextAction(unit, "replan") 的 action 恒为 "plan"
+  // 机器可读字段同步重定向：buildNextAction(unit, "replan") 的 action 恒为 "design"
   // （ACTION_TO_NEXT.replan），但 guidance 已重定向到 nextAction——action 必须一致，
-  // 否则结构化消费者按该字段推命令，executing 状态推 "plan" 即 illegal_transition
+  // 否则结构化消费者按该字段推命令，executing 状态推 "design" 即 illegal_transition
   // （正是本改造要消除的死锁）。
   base.action = nextAction;
 

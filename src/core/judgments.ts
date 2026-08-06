@@ -218,13 +218,13 @@ export interface BadTradeoff {
 
 /** model §5.8 — 漏掉的 MECE gap。 */
 export interface MissedGap {
-  where: "clarify" | "plan" | "design-review" | "execute" | "test";
+  where: "design" | "design-review" | "execute" | "test";
   gap: string;
 }
 
 /** model §5.8 — 流程问题。 */
 export interface ProcessIssue {
-  type: "clarify" | "plan" | "split" | "replan" | "execute" | "test" | "review" | "other";
+  type: "design" | "split" | "replan" | "execute" | "test" | "review" | "other";
   issue: string;
 }
 

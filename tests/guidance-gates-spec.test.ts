@@ -113,16 +113,16 @@ describe("GTC1（C3）: feature handoff 输出含 FeatureSpec 的 FR/AC", () => 
 // ═══════════════════════════════════════════════════════════════
 
 describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名", () => {
-  it("wave design-review 提示（plan 后，特判跟随 nextAction）→ guidance 含 wave 4 字段名（建议包含措辞）", () => {
-    // #1 后特判跟随 nextAction：plan 完成后下一步是 design-review，schema 段才注入 layerSpecific 提示。
+  it("wave design-review 提示（design 后，特判跟随 nextAction）→ guidance 含 wave 4 字段名（建议包含措辞）", () => {
+    // #1 后特判跟随 nextAction：design 完成后下一步是 design-review，schema 段才注入 layerSpecific 提示。
     const unit = {
       id: "wave:design-review",
       scope: "wave",
       slug: "design-review",
-      status: "planning",
+      status: "designing",
       parentUnitId: "slice:parent",
     } as unknown as Parameters<typeof buildNextAction>[0];
-    const { guidance } = buildNextAction(unit, "plan");
+    const { guidance } = buildNextAction(unit, "design");
 
     expect(guidance).toContain("layerSpecific 建议包含以下 key");
     expect(guidance).toContain("testCaseCoverageNote");
@@ -131,9 +131,9 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("tddRedReadinessNote");
   });
 
-  it("slice design-review 提示（plan 后）→ guidance 含 slice 6 字段名（必须包含措辞）", () => {
+  it("slice design-review 提示（design 后）→ guidance 含 slice 6 字段名（必须包含措辞）", () => {
     const unit = makeSliceUnit();
-    const { guidance } = buildSliceNextAction(unit, "plan");
+    const { guidance } = buildSliceNextAction(unit, "design");
 
     expect(guidance).toContain("layerSpecific 必须包含以下 key");
     expect(guidance).toContain("techChoiceRationale");
@@ -144,9 +144,9 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("crossWaveContractNote");
   });
 
-  it("feature design-review 提示（plan 后）→ guidance 含 feature 6 字段名", () => {
+  it("feature design-review 提示（design 后）→ guidance 含 feature 6 字段名", () => {
     const unit = makeFeatureUnit();
-    const { guidance } = buildFeatureNextAction(unit, "plan");
+    const { guidance } = buildFeatureNextAction(unit, "design");
 
     expect(guidance).toContain("layerSpecific 必须包含以下 key");
     expect(guidance).toContain("specMeceNote");
@@ -157,9 +157,9 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
     expect(guidance).toContain("sliceSpecCoverageNote");
   });
 
-  it("epic design-review 提示（plan 后）→ guidance 含 epic 5 字段名", () => {
+  it("epic design-review 提示（design 后）→ guidance 含 epic 5 字段名", () => {
     const unit = makeEpicUnit();
-    const { guidance } = buildEpicNextAction(unit, "plan");
+    const { guidance } = buildEpicNextAction(unit, "design");
 
     expect(guidance).toContain("layerSpecific 必须包含以下 key");
     expect(guidance).toContain("strategicAlignment");
@@ -171,8 +171,8 @@ describe("GTC2（C4）: 4 层 design-review guidance 含 layerSpecific 字段名
 
   it("非 design-review next 的 action 不注入 layerSpecific 字段名（确认注入点条件性）", () => {
     const unit = makeSliceUnit();
-    // clarify 后 nextAction=plan，不是 design-review → 不注入
-    const { guidance } = buildSliceNextAction(unit, "clarify");
+    // create 后 nextAction=design，不是 design-review → 不注入
+    const { guidance } = buildSliceNextAction(unit, "create");
     expect(guidance).not.toContain("layerSpecific 必须包含以下 key");
   });
 });

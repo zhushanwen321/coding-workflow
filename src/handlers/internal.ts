@@ -3,7 +3,7 @@
  *
  * 来源：v5 wave 附录 A §10（统一编排流程）。
  *
- * 职责：封装三个重复模式，避免 11 个 handler 各写一遍：
+ * 职责：封装三个重复模式，避免 10 个 handler 各写一遍：
  *   1. transitionStatus / saveUnit：算 next status + append statusHistory + 更新 unit.status + 持久化
  *   2. buildNextAction：正常路径的 guidance 填充（prefix + 模板 + schema + 组装 CwNextAction）
  *   3. buildFailureNextAction / appendFailRecord：gate fail 路径的异常 guidance + failureCount 派生
@@ -32,7 +32,7 @@ import { nextWaveStatus } from "../rules/state-machine.js";
 import type { CwStore } from "../store/cw-store.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import { buildCommand, inputFilePath } from "../utils/command.js";
-import type { ActionResult, CwDeps,CwNextAction } from "./types.js";
+import type { ActionResult, CwDeps, CwNextAction, OrchestrationMode } from "./types.js";
 
 /**
  * 流转 unit status：算 next → append StatusChange → 更新 unit.status。
@@ -83,7 +83,7 @@ export function saveUnit(deps: { store: { save: (u: WorkUnitRecord) => void } },
  * append-only 合并 input.abandonParentItems 到 unit.abandonedParentItems（Set 去重）。
  *
  * 跨层跨时机的 abandon parent 条目声明通道（ADR-0010）：
- *   - 任何层的 plan/replan handler 调一次（显式 input 通道）
+ *   - 任何层的 design/replan handler 调一次（显式 input 通道）
  *   - wave execute handler 用 commit trailer 解析结果调（顺便通道）
  *
  * input 无 abandonParentItems 或为空数组时是 no-op（null/undefined 安全）。
@@ -190,8 +190,7 @@ export function buildCreateIdempotentResult(args: CreateIdempotentArgs): ActionR
  */
 export const STATUS_DISPLAY: Readonly<Record<ExecutionStatus, string>> = {
   created: "已创建",
-  clarifying: "需求澄清中",
-  planning: "计划编写中",
+  designing: "设计编写中",
   "design-reviewed": "已过设计审查",
   executing: "执行编码中",
   tested: "已测试",
@@ -208,16 +207,15 @@ export const STATUS_DISPLAY: Readonly<Record<ExecutionStatus, string>> = {
  * （closeout）或留 undefined（abort，流程结束）。
  */
 const ACTION_TO_NEXT: Readonly<Record<string, string | undefined>> = {
-  create: "clarify",
-  clarify: "plan",
-  plan: "design-review",
+  create: "design",
+  design: "design-review",
   "design-review": "execute",
   execute: "test",
   test: "exec-review",
   "exec-review": "retrospect",
   retrospect: "closeout",
   closeout: undefined,
-  replan: "plan",
+  replan: "design",
   abort: undefined,
 };
 
@@ -232,7 +230,7 @@ const schemaCache = new Map<string, string>();
  * 取某 action 的 input schema 文本（缓存优先：dist/guidance/schemas.gen.json → injectSchema → 兜底）。
  *
  * 优先读预计算产物 `wave:${action}` 条目；未命中降级到 injectSchema 实时解析。同一 action 第二次调用命中缓存。
- * 导出供 replan handler 透传 plan schema 段（#1 D-017：replan 后下一步是 plan）。
+ * 导出供 replan handler 透传 design schema 段（#1 D-017：replan 后下一步是 design）。
  */
 export function getSchemaText(action: string): string {
   return readSchemaText({
@@ -265,6 +263,11 @@ export interface BuildNextActionOpts {
   schemaTextOverride?: string;
   /** 填 crossLayer（closeout 后回溯，由调用方调 computeCrossLayerAfterCloseout 算好传入）。 */
   crossLayer?: CwNextAction["crossLayer"];
+  /**
+   * 编排模式（G5）：recursive 时 subagent 调度段追加派发指导 + 续 turn 指导。
+   * 缺省 serial（与现状一致）。仅 closeout 等需要续 turn 语义的调用方传入。
+   */
+  orchestration?: OrchestrationMode;
 }
 
 /**
@@ -316,7 +319,7 @@ export function buildNextAction(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("wave", action),
+    commonGuidance: buildSubagentGuidance("wave", action, { orchestration: opts?.orchestration }),
   });
 
   return {
@@ -481,8 +484,13 @@ function buildWaveCurrentCommand(
  *
  * @param unit 待交接的 ExecutionUnit
  * @param action 接手 agent 现在该跑的 WaveAction（handoff 视角的当前步）
+ * @param orchestration 编排模式（G5，recursive 时 subagent 调度段含续 turn 指导；缺省 serial）
  */
-export function buildWaveCurrentActionGuidance(unit: ExecutionUnit, action: WaveAction): string {
+export function buildWaveCurrentActionGuidance(
+  unit: ExecutionUnit,
+  action: WaveAction,
+  orchestration?: OrchestrationMode,
+): string {
   const statusDisplay = STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "wave",
@@ -510,7 +518,7 @@ export function buildWaveCurrentActionGuidance(unit: ExecutionUnit, action: Wave
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("wave", action),
+    commonGuidance: buildSubagentGuidance("wave", action, { orchestration }),
   });
 }
 

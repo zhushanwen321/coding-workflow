@@ -6,7 +6,7 @@
  * - abandonedIds 命中的 FR/AC/UC 条目 status 改 abandoned，未命中仍 active
  * - spec.decisions 不被触碰（投影自 Clarification，不逐项废弃）
  * - 正常 replan 不触发 freeze violation（ok=true，before/after 的 abandoned 条目一致）
- * - replanImpact 正常返回（status 转 planning，nextAction.action=plan）
+ * - replanImpact 正常返回（status 转 designing，nextAction.action=design）
  * - addedSpecItems：拆分重建（FR1→FR1a+FR1b）+ id 冲突检测
  * - feature→slice 级联 abort：feature replan 废弃 FR → child slice 被级联 aborted
  *
@@ -18,10 +18,9 @@ import { CwEngineError,dispatch } from "../src/dispatch.js";
 import type { CwEnv } from "./helpers/env.js";
 import {
   createCwEnv,
-  makeFeatureClarifyInput,
+  makeFeatureDesignInput,
   makeFeatureSpec,
   makeValidFeatureDesignReviewJudgment,
-  makeValidFeaturePlan,
   makeValidFunctionalRequirement,
 } from "./helpers/feature-env.js";
 
@@ -57,12 +56,9 @@ function setupFeatureWithTwoFRs(slug = "replan-feature"): string {
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "feature" } },
     deps,
   );
+  // design 合并原 clarify + plan（spec 覆盖写 + clarifications + split）
   dispatch(
-    { action: "clarify", unitId, input: makeFeatureClarifyInput({ spec }) },
-    deps,
-  );
-  dispatch(
-    { action: "plan", unitId, input: makeValidFeaturePlan() },
+    { action: "design", unitId, input: makeFeatureDesignInput({ spec }) },
     deps,
   );
   dispatch(
@@ -94,12 +90,9 @@ function setupFeatureToExecuting(slug = "exec-feature"): string {
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "feature" } },
     deps,
   );
+  // design 合并原 clarify + plan（spec 覆盖写 + clarifications + split）
   dispatch(
-    { action: "clarify", unitId, input: makeFeatureClarifyInput({ spec }) },
-    deps,
-  );
-  dispatch(
-    { action: "plan", unitId, input: makeValidFeaturePlan() },
+    { action: "design", unitId, input: makeFeatureDesignInput({ spec }) },
     deps,
   );
   dispatch(
@@ -199,14 +192,14 @@ describe("C2: feature replan 标 spec 条目 abandoned + checkFreezeFeatureSpec 
     expect(result.freezeViolations === undefined || (result.freezeViolations as unknown[]).length === 0).toBe(true);
   });
 
-  it("replan 后 nextAction.action=plan", () => {
+  it("replan 后 nextAction.action=design", () => {
     const { deps } = env;
     const unitId = setupFeatureWithTwoFRs();
     const result = dispatch(
       { action: "replan", unitId, input: { abandonedIds: ["FR1"], note: "回 planning 重走" } },
       deps,
     ) as { nextAction: { action: string } };
-    expect(result.nextAction.action).toBe("plan");
+    expect(result.nextAction.action).toBe("design");
   });
 });
 

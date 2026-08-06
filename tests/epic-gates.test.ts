@@ -1,14 +1,14 @@
 /**
  * v1 epic gate 测试。
  *
- * 测 epic design-review 的 11 个 gate（纯函数，零 IO）：
+ * 测 epic design-review 的 13 个 gate（纯函数，零 IO）：
  * - split 结构完整性 3：epicSplitNonEmpty / epicSplitDagValid / epicDuplicateSplitSlug（slug 唯一）
  * - 决策已解决 + inheritedItemIds 有效 2：allDecisionsResolved / inheritedItemIdsValid
  * - judgment 非空 5（复用 wave/slice/feature 的 necessity/sufficiency/alternatives/tradeoffs/risks）
  * - epic layerSpecific 非空 1（epic 专属 5 字段：strategicAlignment/featureSplitRationale/
  *   scopeBoundary/priorityRationale/resourceEstimate）
  *
- * 另测 runEpicDesignReviewGates 聚合：合法 → 11 个全 pass；构造各种 fail 场景验正确 gate fail。
+ * 另测 runEpicDesignReviewGates 聚合：合法 → 13 个全 pass；构造各种 fail 场景验正确 gate fail。
  *
  * 关键差异（epic vs feature）：epic 无 FR-AC 强引用 3 gate（epic 不产 spec），
  * layerSpecific 是 5 字段（feature 是 6 字段）。
@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DesignReviewJudgment } from "../src/core/judgments.js";
+import type { Split } from "../src/core/plan.js";
 import type { Epic } from "../src/core/workunit.js";
 import {
   designReviewAlternativesNonEmpty,
@@ -27,9 +28,11 @@ import {
   designReviewTradeoffsPresent,
   epicLayerSpecificNonEmpty,
   epicSplitDagValid,
+  epicSplitFanOutLimit,
   epicSplitNonEmpty,
   runEpicDesignReviewGates,
 } from "../src/rules/gates/design-review.js";
+import { MAX_EPIC_TO_FEATURE } from "../src/rules/gates/fan-out.js";
 import {
   makeEpicUnit,
   makeValidClarification,
@@ -40,7 +43,7 @@ import {
 
 // ── 辅助：构造一个已填好合法 plan + judgment 的 epic（design-review 全 pass 基线）──
 
-/** 构造合法 epic（plan + judgment 都填好，11 个 design-review gate 全过）。 */
+/** 构造合法 epic（plan + judgment 都填好，13 个 design-review gate 全过）。 */
 function validEpic(): Epic {
   const unit = makeEpicUnit();
   // clarifications 补 Q1（makeValidEpicPlan 的 split.inheritedItemIds 引用 Q1，需存在）
@@ -55,6 +58,37 @@ function validEpic(): Epic {
 // ═══════════════════════════════════════════════════════════════
 // split 结构完整性（2 个）
 // ═══════════════════════════════════════════════════════════════
+
+/** 构造 n 个 split，全部继承同一个条目 id（模拟该 id 的 fan-out = n）。 */
+function fanOutSplits(n: number, sharedId: string): Split[] {
+  return Array.from({ length: n }, (_, i) => ({
+    slug: `f${i + 1}`,
+    description: `feature ${i + 1}`,
+    dependsOn: [],
+    inheritedItemIds: [sharedId],
+  }));
+}
+
+// fan-out 上限（epicSplitFanOutLimit, MAX_EPIC_TO_FEATURE）
+describe("epic design-review gates: fan-out 上限（epicSplitFanOutLimit）", () => {
+  it(`fan-out 等于上限（${MAX_EPIC_TO_FEATURE} 个 split 继承同一 id）→ pass（count 不 > 上限）`, () => {
+    const unit = validEpic();
+    unit.plan.split = fanOutSplits(MAX_EPIC_TO_FEATURE, "Q1");
+    const r = epicSplitFanOutLimit(unit);
+    expect(r.passed).toBe(true);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+  });
+
+  it(`fan-out 超上限（${MAX_EPIC_TO_FEATURE + 1} 个 split 继承同一 id）→ fail + report 含超限 id 与计数`, () => {
+    const unit = validEpic();
+    unit.plan.split = fanOutSplits(MAX_EPIC_TO_FEATURE + 1, "Q1");
+    const r = epicSplitFanOutLimit(unit);
+    expect(r.passed).toBe(false);
+    expect(r.report).toMatch(/split-fan-out-limit/);
+    expect(r.report).toMatch(/Q1/);
+    expect(r.report).toMatch(String(MAX_EPIC_TO_FEATURE + 1));
+  });
+});
 
 describe("epic design-review gates: split 结构完整性", () => {
   // epicSplitNonEmpty
@@ -250,22 +284,22 @@ describe("epic design-review gates: epic layerSpecific 非空（5 字段）", ()
 });
 
 // ═══════════════════════════════════════════════════════════════
-// runEpicDesignReviewGates 聚合（11 个 gate）
+// runEpicDesignReviewGates 聚合（13 个 gate）
 // ═══════════════════════════════════════════════════════════════
 
-describe("runEpicDesignReviewGates 聚合（11 个 gate，无 FR-AC 强引用）", () => {
-  it("合法 epic → 11 个 gate 全 pass", () => {
+describe("runEpicDesignReviewGates 聚合（13 个 gate，无 FR-AC 强引用）", () => {
+  it("合法 epic → 13 个 gate 全 pass", () => {
     const unit = validEpic();
     const results = runEpicDesignReviewGates(unit);
-    expect(results).toHaveLength(11);
+    expect(results).toHaveLength(13);
     expect(results.every((r) => r.passed)).toBe(true);
   });
 
-  it("无 FR-AC 强引用 gate（不像 feature 的 14 个）—— gate 数量严格为 11", () => {
+  it("无 FR-AC 强引用 gate（不像 feature 的 16 个）—— gate 数量严格为 13", () => {
     const unit = validEpic();
     const results = runEpicDesignReviewGates(unit);
-    // epic 只有 11 个 gate，feature 有 14 个（多 FR-AC 3 gate）
-    expect(results).toHaveLength(11);
+    // epic 只有 13 个 gate，feature 有 16 个（多 FR-AC 3 gate）
+    expect(results).toHaveLength(13);
     // 不含 FR-AC 相关 gate
     const reports = results.map((r) => r.report).join(";");
     expect(reports).not.toMatch(/fr-ac-coverage/);

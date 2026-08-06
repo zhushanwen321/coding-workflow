@@ -33,14 +33,14 @@ describe("buildCommand", () => {
   });
 
   it("action + 多个非空 arg → 空格拼接", () => {
-    expect(buildCommand("clarify", "auth-w1", "--input", "x.json")).toBe(
-      "cw clarify auth-w1 --input x.json",
+    expect(buildCommand("design", "auth-w1", "--input", "x.json")).toBe(
+      "cw design auth-w1 --input x.json",
     );
   });
 
   it("空串 arg 被过滤（filter(Boolean)），不产生多余空格", () => {
-    expect(buildCommand("clarify", "auth-w1", "", "--input", "")).toBe(
-      "cw clarify auth-w1 --input",
+    expect(buildCommand("design", "auth-w1", "", "--input", "")).toBe(
+      "cw design auth-w1 --input",
     );
   });
 
@@ -128,11 +128,11 @@ describe("safeSlugForPath", () => {
 
 describe("inputFilePath", () => {
   it("正常 slug + action → `.cw/<safeSlug>/<action>.json`", () => {
-    expect(inputFilePath("auth-w1", "clarify")).toBe(".cw/auth-w1/clarify.json");
+    expect(inputFilePath("auth-w1", "design")).toBe(".cw/auth-w1/design.json");
   });
 
   it("slug 经 safeSlugForPath 规范化（Auth::W1 → auth-w1）后拼路径", () => {
-    expect(inputFilePath("Auth::W1", "clarify")).toBe(".cw/auth-w1/clarify.json");
+    expect(inputFilePath("Auth::W1", "design")).toBe(".cw/auth-w1/design.json");
   });
 
   it("纯非法字符 slug → 走 misc 兜底（!!! → .cw/misc/create.json）", () => {
@@ -146,9 +146,9 @@ describe("inputFilePath", () => {
     expect(inputFilePath("", "create")).toBe(".cw/misc/create.json");
   });
 
-  it("不同 action 共享同一 slug 目录（clarify / plan / execute 同目录）", () => {
-    expect(inputFilePath("auth-w1", "clarify")).toBe(".cw/auth-w1/clarify.json");
-    expect(inputFilePath("auth-w1", "plan")).toBe(".cw/auth-w1/plan.json");
+  it("不同 action 共享同一 slug 目录（design / design-review / execute 同目录）", () => {
+    expect(inputFilePath("auth-w1", "design")).toBe(".cw/auth-w1/design.json");
+    expect(inputFilePath("auth-w1", "design-review")).toBe(".cw/auth-w1/design-review.json");
     expect(inputFilePath("auth-w1", "execute")).toBe(".cw/auth-w1/execute.json");
   });
 });

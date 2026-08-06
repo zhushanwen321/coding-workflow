@@ -22,8 +22,7 @@ describe("status→action 映射表（core/status.ts 共享源）", () => {
   it("WAVE_STATUS_TO_ACTION 覆盖所有 ExecutionStatus 枚举值", () => {
     const waveStatuses: ExecutionStatus[] = [
       "created",
-      "clarifying",
-      "planning",
+      "designing",
       "design-reviewed",
       "executing",
       "tested",
@@ -43,8 +42,7 @@ describe("status→action 映射表（core/status.ts 共享源）", () => {
   it("PLANNING_STATUS_TO_ACTION 覆盖所有 PlanningStatus 枚举值", () => {
     const planningStatuses: PlanningStatus[] = [
       "created",
-      "clarifying",
-      "planning",
+      "designing",
       "design-reviewed",
       "executing",
       "retrospected",

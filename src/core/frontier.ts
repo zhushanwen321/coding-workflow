@@ -42,10 +42,12 @@ export interface FrontierNode {
   parentUnitId?: string;
   /** planning 层 execute 后创建的子 unit id（wave 层无此字段）。 */
   childUnitIds?: string[];
-  /** statusHistory 最后一条的 action（如 "replan"/"clarify"/"plan"/"execute"）。
+  /** statusHistory 最后一条的 action（如 "replan"/"design"/"execute"）。
    * 供递归调度器做 replan 后备检测——replan 是旁路（status 不变），frontier 的
    *  status→action 映射不反映"需回 plan"，调度器靠此字段识别 replan 发生。 */
   lastStatusHistoryAction?: string;
+  /** wave 层 execute 后的 commit hash（planning 层无此字段）。 */
+  commitHash?: string;
 }
 
 /** computeFrontier 的返回。 */
@@ -111,6 +113,13 @@ function getSplits(unit: WorkUnitRecord): Split[] {
 function getChildDelivery(unit: WorkUnitRecord): ChildDeliveryRecord[] {
   const evidence = readField<{ childDelivery?: unknown }>(unit, "evidence");
   return evidence ? asArray<ChildDeliveryRecord>(evidence.childDelivery) : [];
+}
+
+/** 从宽松 record 安全读 evidence.commitHash（wave 层 execute 后写入，planning 层无）。 */
+function getCommitHash(unit: WorkUnitRecord): string | undefined {
+  const evidence = readField<{ commitHash?: unknown }>(unit, "evidence");
+  if (!evidence) return undefined;
+  return typeof evidence.commitHash === "string" ? evidence.commitHash : undefined;
 }
 
 /** 从宽松 record 安全读 executeResult.childUnitIds（planning 层有，wave 无）。 */
@@ -186,6 +195,7 @@ export function computeFrontier(
       parentUnitId: getStringField(r, "parentUnitId") || undefined,
       childUnitIds: getChildUnitIds(r),
       lastStatusHistoryAction: getLastStatusHistoryAction(r),
+      commitHash: scope === "wave" ? getCommitHash(r) : undefined,
     };
   });
 

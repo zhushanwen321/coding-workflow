@@ -10,7 +10,7 @@
  * 本文件只加 epic 专属：
  * - makeEpicUnit / makeValidEpicSplit / makeValidEpicPlan / makeValidEpicLayerSpecific /
  *   makeValidEpicDesignReviewJudgment / makeValidEpicRetrospectData
- * - 阶段推进 helper：setupToEpicClarified / setupToEpicPlanning / setupToEpicDesignReviewed /
+ * - 阶段推进 helper：setupToEpicDesigning / setupToEpicDesignReviewed /
  *   setupToEpicExecuting / advanceChildFeaturesToClosed / setupEpicWithClosedFeatures
  *
  * 零 mock 框架：真实 CwStore + tmp 目录（同 env.ts 约定）。
@@ -30,11 +30,10 @@ import { dispatch } from "../../src/dispatch.js";
 import type { CwDeps } from "../../src/handlers/types.js";
 import {
   createCwEnv,
-  makeFeatureClarifyInput,
+  makeFeatureDesignInput,
   makeStubDeps,
   makeValidClarification,
   makeValidFeatureDesignReviewJudgment,
-  makeValidFeaturePlan,
   makeValidFeatureRetrospectData,
   STUB_NOW,
 } from "./feature-env.js";
@@ -213,15 +212,15 @@ function epicExecute(unitId: string): DispatchParams {
 }
 
 /**
- * 推进 epic 到 clarifying 状态（create → clarify）。
+ * 推进 epic 到 designing 状态（create → design）。
  *
- * epic clarify 用通用 ClarifyInput（数组形态），走数组 push 累积（非 feature 的容器覆盖）。
- * 返回 epic unit id。
+ * design 合并原 clarify + plan：append clarifications（数组 push 累积，非 feature 容器覆盖）
+ * + 写合法 epic plan.split。返回 epic unit id。
  *
  * @param deps stub CwDeps（store 注入）
  * @param slug epic slug（默认 test-epic）
  */
-export function setupToEpicClarified(deps: CwDeps, slug = "test-epic"): string {
+export function setupToEpicDesigning(deps: CwDeps, slug = "test-epic"): string {
   const unitId = `epic:${slug}`;
   dispatch(
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "epic" } },
@@ -229,23 +228,13 @@ export function setupToEpicClarified(deps: CwDeps, slug = "test-epic"): string {
   );
   dispatch(
     {
-      action: "clarify",
+      action: "design",
       unitId,
-      input: { clarifications: [makeValidClarification()] },
+      input: {
+        ...makeValidEpicPlan(),
+        clarifications: [makeValidClarification()],
+      },
     },
-    deps,
-  );
-  return unitId;
-}
-
-/**
- * 推进 epic 到 planning 状态（+ plan）。
- * 返回 epic unit id（status=planning，plan.split 已写入）。
- */
-export function setupToEpicPlanning(deps: CwDeps, slug = "test-epic"): string {
-  const unitId = setupToEpicClarified(deps, slug);
-  dispatch(
-    { action: "plan", unitId, input: makeValidEpicPlan() },
     deps,
   );
   return unitId;
@@ -256,7 +245,7 @@ export function setupToEpicPlanning(deps: CwDeps, slug = "test-epic"): string {
  * 返回 epic unit id（status=design-reviewed，可直接 execute）。
  */
 export function setupToEpicDesignReviewed(deps: CwDeps, slug = "test-epic"): string {
-  const unitId = setupToEpicPlanning(deps, slug);
+  const unitId = setupToEpicDesigning(deps, slug);
   dispatch(
     {
       action: "design-review",
@@ -288,7 +277,7 @@ function featureExecute(unitId: string): DispatchParams {
  *
  * epic execute 按 plan.split 创建 child feature（status=created，slug=`epicSlug::splitSlug`，
  * parentUnitId=epicId）。这里对每个已存在的 child feature 直接 dispatch 走完整生命周期
- *（clarify→plan→design-review→execute→[推进其 child slice closed]→retrospect→closeout）
+ *（design→design-review→execute→[推进其 child slice closed]→retrospect→closeout）
  * 到 closed，使 epic 的 retrospect allWavesClosed gate 可通过。
  *
  * 注意：不重新 create child feature（epic execute 已创建且写入了 parentUnitId=epicId，
@@ -309,12 +298,9 @@ export function advanceChildFeaturesToClosed(deps: CwDeps, epicId: string): stri
 
   for (const childId of childUnitIds) {
     // child feature 走完整生命周期到 closed（直接 dispatch，不重新 create）
+    // design 合并原 clarify + plan（makeFeatureDesignInput 含 spec+clarifications+split）
     dispatch(
-      { action: "clarify", unitId: childId, input: makeFeatureClarifyInput() },
-      deps,
-    );
-    dispatch(
-      { action: "plan", unitId: childId, input: makeValidFeaturePlan() },
+      { action: "design", unitId: childId, input: makeFeatureDesignInput() },
       deps,
     );
     dispatch(
@@ -387,12 +373,9 @@ export type { Clarification };
  * slice 的 child wave 推进复用 slice-env.advanceWaveToClosed。
  */
 function advanceFeatureChildSliceToClosed(deps: CwDeps, sliceId: string): void {
+  // design 合并原 clarify + plan（用合法 SlicePlan，复用 slice-env 的 makeValidSlicePlan）
   dispatch(
-    { action: "clarify", unitId: sliceId, input: { clarifications: [] } },
-    deps,
-  );
-  dispatch(
-    { action: "plan", unitId: sliceId, input: makeValidSlicePlan() },
+    { action: "design", unitId: sliceId, input: makeValidSlicePlan() },
     deps,
   );
   dispatch(

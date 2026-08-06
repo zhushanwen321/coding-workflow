@@ -50,8 +50,8 @@ afterEach(() => {
  *
  * @param output   renderHandoff 输出
  * @param unitId   焦点 unit id
- * @param action   期望两层一致的 action（如 "clarify" / "plan"）
- * @param wrongAction  Bug 1 曾误用的 nextAction（如 created→clarify 的 nextAction 是 "plan"）
+ * @param action   期望两层一致的 action（如 "design" / "design-review"）
+ * @param wrongAction  Bug 1 曾误用的 nextAction（如 created→design 的 nextAction 是 "design-review"）
  */
 function expectBothCommandsUseAction(
   output: string,
@@ -68,11 +68,11 @@ function expectBothCommandsUseAction(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Bug 1：四层 created 状态 handoff，外层与内层 command 都是 cw clarify（不是 cw plan）
+// Bug 1：四层 created 状态 handoff，外层与内层 command 都是 cw design（不是 cw design-review）
 // ═══════════════════════════════════════════════════════════════
 
-describe("Bug 1: 四层 created handoff 外层与内层 command 一致（都用当前 action=clarify）", () => {
-  it("wave created: 外层「下一步执行」与内层「命令」都是 cw clarify（不是 cw plan）", () => {
+describe("Bug 1: 四层 created handoff 外层与内层 command 一致（都用当前 action=design）", () => {
+  it("wave created: 外层「下一步执行」与内层「命令」都是 cw design（不是 cw design-review）", () => {
     dispatch(
       { action: "create", input: { slug: "bug1-wave", objective: "wave obj" } },
       env.deps,
@@ -80,12 +80,12 @@ describe("Bug 1: 四层 created handoff 外层与内层 command 一致（都用�
     const unitId = "wave:bug1-wave";
     const output = renderHandoff(env.store.load(unitId)!, env.store, "self");
 
-    // created 状态当前 action=clarify，nextAction（Bug 1 曾误用的）也是 clarify（wave clarify 完成后还是 clarify），
-    // 故此处 wrongAction 用 "plan" 验证内层不窜到下一个实质阶段。
-    expectBothCommandsUseAction(output, unitId, "clarify", "plan");
+    // created 状态当前 action=design，nextAction（Bug 1 曾误用的）也是 design（create 后下一步就是 design），
+    // 故此处 wrongAction 用 "design-review" 验证内层不窜到下一个实质阶段。
+    expectBothCommandsUseAction(output, unitId, "design", "design-review");
   });
 
-  it("slice created: 外层与内层 command 都是 cw clarify（不是 cw plan）", () => {
+  it("slice created: 外层与内层 command 都是 cw design（不是 cw design-review）", () => {
     dispatch(
       { action: "create", input: { slug: "bug1-slice", objective: "slice obj", layer: "slice" } },
       env.deps,
@@ -93,12 +93,12 @@ describe("Bug 1: 四层 created handoff 外层与内层 command 一致（都用�
     const unitId = "slice:bug1-slice";
     const output = renderHandoff(env.store.load(unitId)!, env.store, "self");
 
-    // planning 层 created→clarify，nextAction=clarify（仍可追加），但若 Bug 1 复现内层会跳到 nextAction 链下游。
-    // wrongAction 用 "plan" 锁定内层不窜到 plan 阶段。
-    expectBothCommandsUseAction(output, unitId, "clarify", "plan");
+    // planning 层 created→design，nextAction=design（仍可追加），但若 Bug 1 复现内层会跳到 nextAction 链下游。
+    // wrongAction 用 "design-review" 锁定内层不窜到 design-review 阶段。
+    expectBothCommandsUseAction(output, unitId, "design", "design-review");
   });
 
-  it("feature created: 外层与内层 command 都是 cw clarify（不是 cw plan）", () => {
+  it("feature created: 外层与内层 command 都是 cw design（不是 cw design-review）", () => {
     dispatch(
       { action: "create", input: { slug: "bug1-feat", objective: "feat obj", layer: "feature" } },
       env.deps,
@@ -106,10 +106,10 @@ describe("Bug 1: 四层 created handoff 外层与内层 command 一致（都用�
     const unitId = "feature:bug1-feat";
     const output = renderHandoff(env.store.load(unitId)!, env.store, "self");
 
-    expectBothCommandsUseAction(output, unitId, "clarify", "plan");
+    expectBothCommandsUseAction(output, unitId, "design", "design-review");
   });
 
-  it("epic created: 外层与内层 command 都是 cw clarify（不是 cw plan）", () => {
+  it("epic created: 外层与内层 command 都是 cw design（不是 cw design-review）", () => {
     dispatch(
       { action: "create", input: { slug: "bug1-epic", objective: "epic obj", layer: "epic" } },
       env.deps,
@@ -117,28 +117,24 @@ describe("Bug 1: 四层 created handoff 外层与内层 command 一致（都用�
     const unitId = "epic:bug1-epic";
     const output = renderHandoff(env.store.load(unitId)!, env.store, "self");
 
-    expectBothCommandsUseAction(output, unitId, "clarify", "plan");
+    expectBothCommandsUseAction(output, unitId, "design", "design-review");
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// Bug 1 续：中间状态（planning）handoff，外层与内层都是 cw plan
+// Bug 1 续：中间状态（designing）handoff，外层与内层都是 cw design
 // ═══════════════════════════════════════════════════════════════
 
-describe("Bug 1: wave planning handoff 外层与内层 command 都是 cw plan", () => {
-  it("wave 走到 planning（create→clarify→plan）后 handoff，两层 command 一致", () => {
+describe("Bug 1: wave designing handoff 外层与内层 command 都是 cw design", () => {
+  it("wave 走到 designing（create→design）后 handoff，两层 command 一致", () => {
     const unitId = "wave:bug1-wplan";
     dispatch(
       { action: "create", input: { slug: "bug1-wplan", objective: "wave obj" } },
       env.deps,
     );
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [] } },
-      env.deps,
-    );
-    dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           testCases: [makeValidTestCase("TC1")],
@@ -146,45 +142,43 @@ describe("Bug 1: wave planning handoff 外层与内层 command 都是 cw plan", 
           files: [makeValidFile("F1")],
           contracts: [makeValidContract("C1")],
           testCommand: "npx vitest run",
+          clarifications: [],
         },
       },
       env.deps,
     );
     const unit = env.store.load(unitId)!;
-    expect(unit.status).toBe("planning");
+    expect(unit.status).toBe("designing");
 
     const output = renderHandoff(unit, env.store, "self");
-    // planning 状态当前 action=plan，nextAction（Bug 1 曾误用的）=design-review
-    expectBothCommandsUseAction(output, unitId, "plan", "design-review");
+    // designing 状态当前 action=design，nextAction（Bug 1 曾误用的）=design-review
+    expectBothCommandsUseAction(output, unitId, "design", "design-review");
   });
 
-  it("slice 走到 planning（create→clarify→plan）后 handoff，两层 command 都是 cw plan", () => {
+  it("slice 走到 designing（create→design）后 handoff，两层 command 都是 cw design", () => {
     const unitId = "slice:bug1-splan";
     dispatch(
       { action: "create", input: { slug: "bug1-splan", objective: "slice obj", layer: "slice" } },
       env.deps,
     );
     dispatch(
-      { action: "clarify", unitId, input: { clarifications: [] } },
-      env.deps,
-    );
-    dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           split: [{ slug: "w1", description: "wave 1", dependsOn: [], inheritedItemIds: [] }],
           techChoices: [], interfaces: [], dataModels: [], errorSpecs: [],
+          clarifications: [],
         },
       },
       env.deps,
     );
     const unit = env.store.load(unitId)!;
-    expect(unit.status).toBe("planning");
+    expect(unit.status).toBe("designing");
 
     const output = renderHandoff(unit, env.store, "self");
-    // planning 当前 action=plan，nextAction=design-review
-    expectBothCommandsUseAction(output, unitId, "plan", "design-review");
+    // designing 当前 action=design，nextAction=design-review
+    expectBothCommandsUseAction(output, unitId, "design", "design-review");
   });
 });
 
@@ -193,30 +187,32 @@ describe("Bug 1: wave planning handoff 外层与内层 command 都是 cw plan", 
 // ═══════════════════════════════════════════════════════════════
 
 describe("Bug 2: handoff schema 显示真实结构（非兜底文本「无法从 ... 提取」）", () => {
-  it("slice created handoff: schema 含 Clarification 字段（question），不含兜底文本", () => {
+  it("slice created handoff: schema 含 DesignSliceInput 字段（split/techChoices），不含兜底文本", () => {
     dispatch(
       { action: "create", input: { slug: "bug2-slice", objective: "slice obj", layer: "slice" } },
       env.deps,
     );
     const output = renderHandoff(env.store.load("slice:bug2-slice")!, env.store, "self");
 
-    // Clarification schema 字段（id/question/resolution/type）
-    expect(output).toContain("question");
-    expect(output).toContain("type");
+    // DesignSliceInput schema 字段（split/techChoices/errorSpecs）
+    expect(output).toContain("split");
+    expect(output).toContain("techChoices");
+    expect(output).toContain("errorSpecs");
     // Bug 2 兜底文本（readSchemaText 降级路径）
     expect(output).not.toContain("无法从");
     expect(output).not.toContain("提取");
     expect(output).not.toContain("schema，请检查源文件");
   });
 
-  it("feature created handoff: schema 含 FeatureClarification 容器（spec/functionalRequirements）", () => {
+  it("feature created handoff: schema 含 DesignFeatureInput 容器（split/spec/functionalRequirements）", () => {
     dispatch(
       { action: "create", input: { slug: "bug2-feat", objective: "feat obj", layer: "feature" } },
       env.deps,
     );
     const output = renderHandoff(env.store.load("feature:bug2-feat")!, env.store, "self");
 
-    // FeatureClarification 容器字段
+    // DesignFeatureInput 容器字段
+    expect(output).toContain("split");
     expect(output).toContain("spec");
     expect(output).toContain("functionalRequirements");
     expect(output).toContain("acceptanceCriteria");
@@ -224,25 +220,25 @@ describe("Bug 2: handoff schema 显示真实结构（非兜底文本「无法从
     expect(output).not.toContain("无法从");
   });
 
-  it("epic created handoff: schema 含 Clarification 字段（question），不含兜底文本", () => {
+  it("epic created handoff: schema 含 DesignEpicInput 字段（split），不含兜底文本", () => {
     dispatch(
       { action: "create", input: { slug: "bug2-epic", objective: "epic obj", layer: "epic" } },
       env.deps,
     );
     const output = renderHandoff(env.store.load("epic:bug2-epic")!, env.store, "self");
 
-    expect(output).toContain("question");
+    expect(output).toContain("split");
     expect(output).not.toContain("无法从");
   });
 
-  it("wave created handoff: schema 含 Clarification 字段（question），不含兜底文本", () => {
+  it("wave created handoff: schema 含 DesignInput 字段（testCases），不含兜底文本", () => {
     dispatch(
       { action: "create", input: { slug: "bug2-wave", objective: "wave obj" } },
       env.deps,
     );
     const output = renderHandoff(env.store.load("wave:bug2-wave")!, env.store, "self");
 
-    expect(output).toContain("question");
+    expect(output).toContain("testCases");
     expect(output).not.toContain("无法从");
   });
 });
@@ -261,38 +257,40 @@ describe("Bug 2: schemas.gen.json 缓存产物覆盖四层 + get*SchemaText 缓�
   const genPath = getSchemaGenFilePath();
   const hasGenFile = existsSync(genPath);
 
-  it.skipIf(!hasGenFile)("schemas.gen.json 含四层 clarify 条目（wave/slice/feature/epic）", () => {
+  it.skipIf(!hasGenFile)("schemas.gen.json 含四层 design 条目（wave/slice/feature/epic）", () => {
     const genFile = JSON.parse(readFileSync(genPath, "utf-8")) as Record<
       string,
       { schemaText: string } | undefined
     >;
-    // 四层 clarify 缓存 key（Bug 2 修复前 planning 三层缺失）
-    expect(genFile["wave:clarify"]?.schemaText).toContain("question");
-    expect(genFile["slice:clarify"]?.schemaText).toContain("question");
-    expect(genFile["feature:clarify"]?.schemaText).toContain("functionalRequirements");
-    expect(genFile["epic:clarify"]?.schemaText).toContain("question");
+    // 四层 design 缓存 key（Bug 2 修复前 planning 三层缺失）
+    expect(genFile["wave:design"]?.schemaText).toContain("testCases");
+    expect(genFile["slice:design"]?.schemaText).toContain("split");
+    expect(genFile["feature:design"]?.schemaText).toContain("functionalRequirements");
+    expect(genFile["epic:design"]?.schemaText).toContain("split");
     // 缓存产物不应是兜底文本（Bug 2 修复前 planning 层降级兜底）
-    for (const key of ["wave:clarify", "slice:clarify", "feature:clarify", "epic:clarify"]) {
+    for (const key of ["wave:design", "slice:design", "feature:design", "epic:design"]) {
       expect(genFile[key]?.schemaText).not.toContain("无法从");
     }
   });
 
-  it("slice getSliceSchemaText(clarify) 返回真实 schema（含 question，非兜底）", () => {
-    const text = getSliceSchemaText("clarify");
-    expect(text).toContain("question");
+  it("slice getSliceSchemaText(design) 返回真实 schema（含 split/techChoices，非兜底）", () => {
+    const text = getSliceSchemaText("design");
+    expect(text).toContain("split");
+    expect(text).toContain("techChoices");
     expect(text).not.toContain("无法从");
   });
 
-  it("feature getFeatureSchemaText(clarify) 返回 FeatureClarification 容器结构", () => {
-    const text = getFeatureSchemaText("clarify");
+  it("feature getFeatureSchemaText(design) 返回 DesignFeatureInput 容器结构", () => {
+    const text = getFeatureSchemaText("design");
+    expect(text).toContain("split");
     expect(text).toContain("spec");
     expect(text).toContain("functionalRequirements");
     expect(text).not.toContain("无法从");
   });
 
-  it("epic getEpicSchemaText(clarify) 返回真实 schema（含 question，非兜底）", () => {
-    const text = getEpicSchemaText("clarify");
-    expect(text).toContain("question");
+  it("epic getEpicSchemaText(design) 返回真实 schema（含 split，非兜底）", () => {
+    const text = getEpicSchemaText("design");
+    expect(text).toContain("split");
     expect(text).not.toContain("无法从");
   });
 
@@ -316,23 +314,23 @@ describe("Bug 2: schemas.gen.json 缓存产物覆盖四层 + get*SchemaText 缓�
   const distGenPath = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "guidance", "schemas.gen.json");
   const hasDistGen = existsSync(distGenPath);
 
-  it.skipIf(!hasDistGen)("dist/guidance/schemas.gen.json build 产物含四层 clarify 条目（非兜底）", () => {
+  it.skipIf(!hasDistGen)("dist/guidance/schemas.gen.json build 产物含四层 design 条目（非兜底）", () => {
     const genFile = JSON.parse(readFileSync(distGenPath, "utf-8")) as Record<
       string,
       { schemaText: string } | undefined
     >;
     // Bug 2 修复前 planning 三层（slice/feature/epic）缺失或降级兜底
-    expect(genFile["wave:clarify"]?.schemaText).toContain("question");
-    expect(genFile["slice:clarify"]?.schemaText).toContain("question");
-    expect(genFile["feature:clarify"]?.schemaText).toContain("functionalRequirements");
-    expect(genFile["epic:clarify"]?.schemaText).toContain("question");
+    expect(genFile["wave:design"]?.schemaText).toContain("testCases");
+    expect(genFile["slice:design"]?.schemaText).toContain("split");
+    expect(genFile["feature:design"]?.schemaText).toContain("functionalRequirements");
+    expect(genFile["epic:design"]?.schemaText).toContain("split");
     // 全部四层都非兜底文本
-    for (const key of ["wave:clarify", "slice:clarify", "feature:clarify", "epic:clarify"]) {
+    for (const key of ["wave:design", "slice:design", "feature:design", "epic:design"]) {
       expect(genFile[key]?.schemaText).not.toContain("无法从");
     }
-    // 同步验证 plan 层（planning 三层是 Bug 2 重点）
-    expect(genFile["slice:plan"]?.schemaText).toBeDefined();
-    expect(genFile["feature:plan"]?.schemaText).toBeDefined();
-    expect(genFile["epic:plan"]?.schemaText).toBeDefined();
+    // 同步验证 design 层（planning 三层是 Bug 2 重点）
+    expect(genFile["slice:design"]?.schemaText).toBeDefined();
+    expect(genFile["feature:design"]?.schemaText).toBeDefined();
+    expect(genFile["epic:design"]?.schemaText).toBeDefined();
   });
 });

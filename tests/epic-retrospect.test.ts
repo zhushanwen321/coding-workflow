@@ -30,9 +30,8 @@ import {
   setupToEpicExecuting,
 } from "./helpers/epic-env.js";
 import {
-  makeFeatureClarifyInput,
+  makeFeatureDesignInput,
   makeValidFeatureDesignReviewJudgment,
-  makeValidFeaturePlan,
 } from "./helpers/feature-env.js";
 import {
   advanceWaveToClosed,
@@ -451,15 +450,15 @@ function setupEpicWithMixedTerminal(
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "epic" } },
     deps,
   );
-  dispatch(
-    { action: "clarify", unitId: epicId, input: { clarifications: [makeValidClarification()] } },
-    deps,
-  );
+  // design 合并原 clarify + plan：clarifications + split 一次提交
   dispatch(
     {
-      action: "plan",
+      action: "design",
       unitId: epicId,
-      input: { split: [makeValidEpicSplit("f1"), makeValidEpicSplit("f2")] },
+      input: {
+        split: [makeValidEpicSplit("f1"), makeValidEpicSplit("f2")],
+        clarifications: [makeValidClarification()],
+      },
     },
     deps,
   );
@@ -489,12 +488,9 @@ function setupEpicWithMixedTerminal(
 }
 
 function advanceChildFeatureToClosed(deps: CwDeps, featureId: string): void {
+  // design 合并原 clarify + plan（makeFeatureDesignInput 含 spec+clarifications+split）
   dispatch(
-    { action: "clarify", unitId: featureId, input: makeFeatureClarifyInput() },
-    deps,
-  );
-  dispatch(
-    { action: "plan", unitId: featureId, input: makeValidFeaturePlan() },
+    { action: "design", unitId: featureId, input: makeFeatureDesignInput() },
     deps,
   );
   dispatch(
@@ -543,8 +539,8 @@ function advanceChildFeatureToClosed(deps: CwDeps, featureId: string): void {
 }
 
 function advanceSliceToClosed(deps: CwDeps, sliceId: string): void {
-  dispatch({ action: "clarify", unitId: sliceId, input: { clarifications: [] } }, deps);
-  dispatch({ action: "plan", unitId: sliceId, input: makeValidSlicePlan() }, deps);
+  // design 合并原 clarify + plan（用合法 SlicePlan）
+  dispatch({ action: "design", unitId: sliceId, input: makeValidSlicePlan() }, deps);
   dispatch({ action: "design-review", unitId: sliceId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } }, deps);
   dispatch({ action: "execute", unitId: sliceId, input: {} } as unknown as Parameters<typeof dispatch>[0], deps);
 

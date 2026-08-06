@@ -13,22 +13,20 @@
 // 状态枚举
 // ═══════════════════════════════════════════════════════════════
 
-/** model §3.1 — PlanningUnit（epic/feature/slice）的 8 状态。本 topic 不实现 PlanningUnit 流程，但类型预留。 */
+/** model §3.1 — PlanningUnit（epic/feature/slice）的 7 状态。本 topic 不实现 PlanningUnit 流程，但类型预留。 */
 export type PlanningStatus =
   | "created"
-  | "clarifying"
-  | "planning"
+  | "designing"
   | "design-reviewed"
   | "executing"
   | "retrospected"
   | "closed"
   | "aborted";
 
-/** model §3.2 — ExecutionUnit（wave）的 10 状态。 */
+/** model §3.2 — ExecutionUnit（wave）的 9 状态。 */
 export type ExecutionStatus =
   | "created"
-  | "clarifying"
-  | "planning"
+  | "designing"
   | "design-reviewed"
   | "executing"
   | "tested"
@@ -57,7 +55,7 @@ export interface StatusChange {
   to: WorkUnitStatus;
   /** ISO 8601 时间戳。 */
   at: string;
-  /** 触发变更的 action（create/clarify/plan/.../replan/abort）。 */
+  /** 触发变更的 action（create/design/.../replan/abort）。 */
   action: string;
   /** 可选说明（replan 原因 / abort 原因）。 */
   note?: string;
@@ -91,9 +89,8 @@ export interface AbandonedRef {
  * 终态（closed/aborted）为 undefined。
  */
 export const WAVE_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
+  created: "design",
+  designing: "design",
   "design-reviewed": "execute",
   executing: "test",
   tested: "exec-review",
@@ -110,9 +107,8 @@ export const WAVE_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>>
  * 下一步直接是 retrospect。终态（closed/aborted）为 undefined。
  */
 export const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, string | undefined>> = {
-  created: "clarify",
-  clarifying: "clarify",
-  planning: "plan",
+  created: "design",
+  designing: "design",
   "design-reviewed": "execute",
   executing: "retrospect",
   retrospected: "closeout",
@@ -123,15 +119,14 @@ export const PLANNING_STATUS_TO_ACTION: Readonly<Record<string, string | undefin
 /** 终态 status 集合（frontier 不输出这些节点；render 不输出「下一步」段）。 */
 export const TERMINAL_STATUSES = new Set(["closed", "aborted"]);
 
-/** design-review action 之前的状态（plan 尚未定稿）。
+/** design-review action 之前的状态（design 尚未定稿）。
  *
- * created/clarifying/planning——design-review 是 plan→execute 的 gate，处于此三种状态的
+ * created/designing——design-review 是 design→execute 的 gate，处于此两种状态的
  * unit 其 plan.files 尚不确定，跨 wave 冲突 gate 不应纳入。design-reviewed 及其之后的状态
  * 才算「已过 design-review」（plan.files 已定）。 */
 export const PRE_DESIGN_REVIEW_STATUSES = new Set([
   "created",
-  "clarifying",
-  "planning",
+  "designing",
 ]);
 
 /** 判断 status 是否「已过 design-review」（plan 已定稿，plan.files 确定）。

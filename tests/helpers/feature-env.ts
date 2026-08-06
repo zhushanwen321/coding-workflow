@@ -8,9 +8,9 @@
  * 推进 child slice 复用 slice 的合法产物工厂 + wave 推进 helper）。
  *
  * 本文件只加 feature 专属：
- * - makeFeatureUnit / makeFeatureSpec / makeFeatureClarifyInput / makeValidFeaturePlan /
+ * - makeFeatureUnit / makeFeatureSpec / makeFeatureDesignInput / makeValidFeaturePlan /
  *   makeValidFeatureDesignReviewJudgment / makeValidFeatureRetrospectData
- * - 阶段推进 helper：setupToFeaturePlanning / setupToFeatureDesignReviewed /
+ * - 阶段推进 helper：setupToFeatureDesigning / setupToFeatureDesignReviewed /
  *   setupToFeatureExecuting / setupFeatureWithClosedSlices（调 dispatch 推进到各状态）。
  *
  * 零 mock 框架：真实 CwStore + tmp 目录（同 env.ts 约定）。
@@ -132,20 +132,24 @@ export function makeFeatureSpec(overrides?: Partial<FeatureSpec>): FeatureSpec {
 }
 
 /**
- * 合法的 FeatureClarifyInput（clarifications + spec，整体覆盖写入）。
+ * 合法的 FeatureDesignInput（clarifications + spec + split）。
  *
- * spec 用 makeFeatureSpec（满足 FR-AC 强引用 gate）。
+ * spec 用 makeFeatureSpec（满足 FR-AC 强引用 gate）；split 用 makeValidFeatureSplit
+ * （DesignFeatureInputSchema 要求 split 非空）。
  */
-export function makeFeatureClarifyInput(overrides?: {
+export function makeFeatureDesignInput(overrides?: {
   clarifications?: Clarification[];
   spec?: FeatureSpec;
+  split?: Split[];
 }): {
   clarifications: Clarification[];
   spec: FeatureSpec;
+  split: Split[];
 } {
   return {
     clarifications: overrides?.clarifications ?? [makeValidClarification()],
     spec: overrides?.spec ?? makeFeatureSpec(),
+    split: overrides?.split ?? [makeValidFeatureSplit("s1")],
   };
 }
 
@@ -289,15 +293,15 @@ function featureExecute(unitId: string): DispatchParams {
 }
 
 /**
- * 推进 feature 到 clarifying 状态（create → clarify）。
+ * 推进 feature 到 designing 状态（create → design）。
  *
- * 用 dispatch 走完整路径（create → clarify），写入合法 FeatureClarification。
- * 返回 feature unit id。
+ * 用 dispatch 走完整路径（create → design），design 合并原 clarify+plan：
+ * 写入合法 FeatureSpec + clarifications + plan.split。返回 feature unit id。
  *
  * @param deps stub CwDeps（store 注入）
  * @param slug feature slug（默认 test-feature）
  */
-export function setupToFeatureClarified(deps: CwDeps, slug = "test-feature"): string {
+export function setupToFeatureDesigning(deps: CwDeps, slug = "test-feature"): string {
   const unitId = `feature:${slug}`;
   dispatch(
     { action: "create", input: { slug, objective: `obj ${slug}`, layer: "feature" } },
@@ -305,23 +309,10 @@ export function setupToFeatureClarified(deps: CwDeps, slug = "test-feature"): st
   );
   dispatch(
     {
-      action: "clarify",
+      action: "design",
       unitId,
-      input: makeFeatureClarifyInput(),
+      input: makeFeatureDesignInput(),
     },
-    deps,
-  );
-  return unitId;
-}
-
-/**
- * 推进 feature 到 planning 状态（+ plan）。
- * 返回 feature unit id（status=planning，plan.split 已写入）。
- */
-export function setupToFeaturePlanning(deps: CwDeps, slug = "test-feature"): string {
-  const unitId = setupToFeatureClarified(deps, slug);
-  dispatch(
-    { action: "plan", unitId, input: makeValidFeaturePlan() },
     deps,
   );
   return unitId;
@@ -332,7 +323,7 @@ export function setupToFeaturePlanning(deps: CwDeps, slug = "test-feature"): str
  * 返回 feature unit id（status=design-reviewed，可直接 execute）。
  */
 export function setupToFeatureDesignReviewed(deps: CwDeps, slug = "test-feature"): string {
-  const unitId = setupToFeaturePlanning(deps, slug);
+  const unitId = setupToFeatureDesigning(deps, slug);
   dispatch(
     {
       action: "design-review",
@@ -358,7 +349,7 @@ export function setupToFeatureExecuting(deps: CwDeps, slug = "test-feature"): st
  * 推进 feature 的所有 child slice 到 closed（走完 slice 7 步）。
  *
  * feature execute 按 plan.split 创建 child slice（status=created）。这里逐个 child slice
- * 走完整生命周期（clarify→plan→design-review→execute→[child wave closed]→retrospect→closeout）
+ * 走完整生命周期（design→design-review→execute→[child wave closed]→retrospect→closeout）
  * 到 closed，使 feature 的 retrospect allWavesClosed gate 可通过。
  *
  * 注意：child slice closeout 不自动 rollup 到 parent feature（slice closeout 未接入 rollup，
@@ -378,13 +369,9 @@ export function advanceChildSlicesToClosed(deps: CwDeps, featureId: string): str
 
   for (const childId of childUnitIds) {
     // child slice 走完整生命周期到 closed（复用 slice 的 dispatch 流程）
+    // design 合并原 clarify + plan（用合法 SlicePlan，复用 slice-env 的 makeValidSlicePlan）
     dispatch(
-      { action: "clarify", unitId: childId, input: { clarifications: [] } },
-      deps,
-    );
-    // slice plan 用合法 SlicePlan（复用 slice-env 的 makeValidSlicePlan）
-    dispatch(
-      { action: "plan", unitId: childId, input: makeValidSlicePlan() },
+      { action: "design", unitId: childId, input: makeValidSlicePlan() },
       deps,
     );
     dispatch(

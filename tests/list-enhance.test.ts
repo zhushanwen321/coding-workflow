@@ -56,7 +56,7 @@ function makeUnit(
     statusHistory: [
       { at: opts.createdAt ?? "2026-07-26T10:00:00.000Z", action: "create", to: "created" },
       ...(opts.statusHistoryAt
-        ? [{ at: opts.statusHistoryAt, action: "plan", to: opts.status ?? "created" }]
+        ? [{ at: opts.statusHistoryAt, action: "design", to: opts.status ?? "created" }]
         : []),
     ],
     basedOnParent: [],
@@ -442,7 +442,7 @@ describe("W3: renderList 尾行总览 + next-step（#10，T3.2）", () => {
     const annotated: AnnotatedUnit[] = [
       { unit: makeUnit("wave:a", { status: "created" }) },
       { unit: makeUnit("wave:b", { status: "closed" }) }, // 终态
-      { unit: makeUnit("wave:c", { status: "planning" }) },
+      { unit: makeUnit("wave:c", { status: "designing" }) },
     ];
 
     const out = renderList(annotated, {});

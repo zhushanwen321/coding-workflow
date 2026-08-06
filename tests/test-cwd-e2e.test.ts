@@ -150,27 +150,22 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
     );
     expect(created.exitCode, created.stderr).toBe(0);
 
-    const clarifyInput = writeInputJson(e, slug, "clarify", { clarifications: [] });
-    const clarified = runCwCli(
-      ["clarify", "--unitId", unitId, "--input", clarifyInput],
-      e,
-    );
-    expect(clarified.exitCode, clarified.stderr).toBe(0);
-
-    const planInput = writeInputJson(e, slug, "plan", {
+    // design 合并原 clarify + plan：clarifications + WavePlan 4 类条目 + testCommand 一次提交
+    const planInput = writeInputJson(e, slug, "design", {
       testCases: [makeValidTestCase("TC1")],
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
+      clarifications: [],
       // per-wave 设计：testCommand 决定跑什么，--testCwd 决定在哪跑。
       // marker 脚本写 cwd 落盘，验证 spawnSync 的 cwd = --testCwd 指定目录。
       testCommand: "node marker.js",
     });
-    const planned = runCwCli(
-      ["plan", "--unitId", unitId, "--input", planInput],
+    const designed = runCwCli(
+      ["design", "--unitId", unitId, "--input", planInput],
       e,
     );
-    expect(planned.exitCode, planned.stderr).toBe(0);
+    expect(designed.exitCode, designed.stderr).toBe(0);
 
     const drInput = writeInputJson(e, slug, "design-review", {
       designReviewJudgment: makeValidDesignReviewJudgment(),
@@ -220,18 +215,17 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
     );
     expect(created.exitCode, created.stderr).toBe(0);
 
-    const clarifyInput = writeInputJson(e, slug, "clarify", { clarifications: [] });
-    expect(runCwCli(["clarify", "--unitId", unitId, "--input", clarifyInput], e).exitCode).toBe(0);
-
-    const planInput = writeInputJson(e, slug, "plan", {
+    // design 合并原 clarify + plan：clarifications + WavePlan 4 类条目一次提交
+    const planInput = writeInputJson(e, slug, "design", {
       testCases: [makeValidTestCase("TC1")],
       tasks: [makeValidTask("TK1")],
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
+      clarifications: [],
       // 无 --testCwd 时 runner 回退 workspacePath；testCommand 是 marker 脚本验证 cwd。
       testCommand: "node marker.js",
     });
-    expect(runCwCli(["plan", "--unitId", unitId, "--input", planInput], e).exitCode).toBe(0);
+    expect(runCwCli(["design", "--unitId", unitId, "--input", planInput], e).exitCode).toBe(0);
 
     const drInput = writeInputJson(e, slug, "design-review", {
       designReviewJudgment: makeValidDesignReviewJudgment(),

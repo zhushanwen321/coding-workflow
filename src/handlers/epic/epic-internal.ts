@@ -45,7 +45,7 @@ import type { PlanningAction } from "../../rules/state-machine.js";
 import { nextPlanningStatus } from "../../rules/state-machine.js";
 import type { WorkUnitRecord } from "../../store/schema.js";
 import { buildCommand, inputFilePath } from "../../utils/command.js";
-import type { CwDeps, CwNextAction } from "../types.js";
+import type { CwDeps, CwNextAction, OrchestrationMode } from "../types.js";
 
 // ═══════════════════════════════════════════════════════════════
 // guidance 填充静态基建（w1 新增，w2 接入 buildEpicNextAction 主体）
@@ -156,6 +156,11 @@ export interface BuildEpicNextActionOpts {
   nextActionOverride?: string;
   /** 跨层建议（execute 下沉 / closeout 回溯）。 */
   crossLayer?: CwNextAction["crossLayer"];
+  /**
+   * 编排模式（G5）：recursive 时 subagent 调度段追加派发指导 + 续 turn 指导。
+   * 缺省 serial（与现状一致）。仅 execute/closeout 等需要派发/续 turn 语义的调用方传入。
+   */
+  orchestration?: OrchestrationMode;
 }
 
 /**
@@ -209,7 +214,7 @@ export function buildEpicNextAction(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration: opts?.orchestration, childLayer: "feature" }),
   });
 
   return {
@@ -281,8 +286,13 @@ function buildEpicCurrentCommand(
  *
  * @param unit 待交接的 Epic
  * @param action 接手 agent 现在该跑的 PlanningAction（handoff 视角的当前步）
+ * @param orchestration 编排模式（G5，recursive 时 subagent 调度段含派发/续 turn 指导；缺省 serial）
  */
-export function buildEpicCurrentActionGuidance(unit: Epic, action: PlanningAction): string {
+export function buildEpicCurrentActionGuidance(
+  unit: Epic,
+  action: PlanningAction,
+  orchestration?: OrchestrationMode,
+): string {
   const statusDisplay = EPIC_STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
     layer: "epic",
@@ -310,7 +320,7 @@ export function buildEpicCurrentActionGuidance(unit: Epic, action: PlanningActio
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration, childLayer: "feature" }),
   });
 }
 

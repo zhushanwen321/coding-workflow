@@ -1,7 +1,7 @@
 /**
  * v1 feature dispatch e2e 测试。
  *
- * 通过 dispatch 统一入口跑完整 feature 生命周期（create→clarify→plan→design-review→
+ * 通过 dispatch 统一入口跑完整 feature 生命周期（create→design→design-review→
  * execute→[推进 child slice closed]→retrospect→closeout），验证编排层正确串联 feature handler。
  *
  * 另测：
@@ -21,13 +21,12 @@ import type { CwEnv } from "./helpers/env.js";
 import {
   advanceChildSlicesToClosed,
   createCwEnv,
-  makeFeatureClarifyInput,
+  makeFeatureDesignInput,
   makeFeatureRetrospectDataFromStore,
   makeFeatureSpec,
   makeValidFeatureDesignReviewJudgment,
-  makeValidFeaturePlan,
   setupFeatureWithClosedSlices,
-  setupToFeaturePlanning,
+  setupToFeatureDesigning,
   STUB_NOW,
 } from "./helpers/feature-env.js";
 
@@ -57,7 +56,7 @@ function featureExecute(unitId: string): Parameters<typeof dispatch>[0] {
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch 完整 feature 生命周期", () => {
-  it("create→clarify→plan→design-review→execute→[child slice closed]→retrospect→closeout → closed", () => {
+  it("create→design→design-review→execute→[child slice closed]→retrospect→closeout → closed", () => {
     const unitId = "feature:e2e-happy";
 
     // 1. create（layer='feature'）
@@ -73,25 +72,17 @@ describe("dispatch 完整 feature 生命周期", () => {
     // create 返回的 unit 是 feature
     expect((created as { unit?: { scope: string } }).unit?.scope).toBe("feature");
 
-    // 2. clarify（FeatureClarification 容器对象整体覆盖）
-    const clarify = dispatch(
-      { action: "clarify", unitId, input: makeFeatureClarifyInput() },
+    // 2. design（合并原 clarify+plan：spec 覆盖写 + clarifications append + 写 split）
+    const design = dispatch(
+      { action: "design", unitId, input: makeFeatureDesignInput() },
       env.deps,
     );
-    expect(clarify.ok).toBe(true);
-    expect(clarify.status).toBe("clarifying");
+    expect(design.ok).toBe(true);
+    expect(design.status).toBe("designing");
     expect(loadFeature(unitId).clarifications.spec.functionalRequirements).toHaveLength(1);
-
-    // 3. plan（Plan 基类，只 split）
-    const plan = dispatch(
-      { action: "plan", unitId, input: makeValidFeaturePlan() },
-      env.deps,
-    );
-    expect(plan.ok).toBe(true);
-    expect(plan.status).toBe("planning");
     expect(loadFeature(unitId).plan.split).toHaveLength(1);
 
-    // 4. design-review（14 个 gate 全过）
+    // 4. design-review（16 个 gate 全过）
     const dr = dispatch(
       {
         action: "design-review",
@@ -102,7 +93,7 @@ describe("dispatch 完整 feature 生命周期", () => {
     );
     expect(dr.ok).toBe(true);
     expect(dr.status).toBe("design-reviewed");
-    expect(dr.gateResults).toHaveLength(14);
+    expect(dr.gateResults).toHaveLength(16);
 
     // 5. execute（创建 child slice）
     const execute = dispatch(featureExecute(unitId), env.deps);
@@ -157,7 +148,7 @@ describe("dispatch 完整 feature 生命周期", () => {
     expect(finalFeature.status).toBe("closed");
     expect(finalFeature.evidence.frozenAt).toBe(STUB_NOW);
     expect(finalFeature.statusHistory.map((h) => h.action)).toEqual([
-      "create", "clarify", "plan", "design-review", "execute", "retrospect", "closeout",
+      "create", "design", "design-review", "execute", "retrospect", "closeout",
     ]);
   });
 
@@ -175,8 +166,7 @@ describe("dispatch 完整 feature 生命周期", () => {
       },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: makeFeatureClarifyInput() }, env.deps);
-    dispatch({ action: "plan", unitId, input: makeValidFeaturePlan() }, env.deps);
+    dispatch({ action: "design", unitId, input: makeFeatureDesignInput() }, env.deps);
     dispatch(
       { action: "design-review", unitId, input: { designReviewJudgment: makeValidFeatureDesignReviewJudgment() } },
       env.deps,
@@ -315,25 +305,24 @@ describe("dispatch 拒绝 feature 的 test/exec-review", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不流转）", () => {
-  it("spec 空（FR/AC 全空）→ design-review ok=false，status 不变（仍 planning）", () => {
+  it("spec 空（FR/AC 全空）→ design-review ok=false，status 不变（仍 designing）", () => {
     const unitId = "feature:e2e-gate-spec";
     dispatch(
       { action: "create", input: { slug: "e2e-gate-spec", objective: "o", layer: "feature" } },
       env.deps,
     );
-    // clarify 写入空 spec（FR/AC 都空），触发 acNonEmpty fail
+    // design 写入空 spec（FR/AC 都空），触发 acNonEmpty fail
     dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
-        input: makeFeatureClarifyInput({ spec: makeFeatureSpec({
+        input: makeFeatureDesignInput({ spec: makeFeatureSpec({
           functionalRequirements: [],
           acceptanceCriteria: [],
         }) }),
       },
       env.deps,
     );
-    dispatch({ action: "plan", unitId, input: makeValidFeaturePlan() }, env.deps);
 
     const result = dispatch(
       {
@@ -347,12 +336,12 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
     expect(result.ok).toBe(false);
     expect(result.gateResults).toBeDefined();
     expect(result.gateResults!.some((g) => !g.passed)).toBe(true);
-    // status 未推进（仍 planning）
-    expect(loadFeature(unitId).status).toBe("planning");
+    // status 未推进（仍 designing）
+    expect(loadFeature(unitId).status).toBe("designing");
   });
 
   it("judgment layerSpecific undefined → design-review ok=false，含 layer-specific-non-empty fail", () => {
-    const unitId = setupToFeaturePlanning(env.deps, "e2e-gate-ls");
+    const unitId = setupToFeatureDesigning(env.deps, "e2e-gate-ls");
     const judgment = makeValidFeatureDesignReviewJudgment();
     judgment.layerSpecific = undefined;
 
@@ -363,7 +352,7 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
 
     expect(result.ok).toBe(false);
     expect(result.gateResults!.some((g) => /layer-specific-non-empty/.test(g.report))).toBe(true);
-    expect(loadFeature(unitId).status).toBe("planning");
+    expect(loadFeature(unitId).status).toBe("designing");
   });
 
   it("split 有环 → design-review ok=false，含 split-dag-valid fail", () => {
@@ -372,18 +361,17 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
       { action: "create", input: { slug: "e2e-gate-cycle", objective: "o", layer: "feature" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: makeFeatureClarifyInput() }, env.deps);
-    // plan split 有环
+    // design split 有环
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
-        input: {
+        input: makeFeatureDesignInput({
           split: [
             { slug: "a", description: "a", dependsOn: ["b"], inheritedItemIds: [] },
             { slug: "b", description: "b", dependsOn: ["a"], inheritedItemIds: [] },
           ],
-        },
+        }),
       },
       env.deps,
     );
@@ -405,9 +393,9 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
     );
     dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
-        input: makeFeatureClarifyInput({
+        input: makeFeatureDesignInput({
           spec: makeFeatureSpec({
             functionalRequirements: [
               { id: "FR1", status: "active", title: "t", detail: "d", ac: ["GHOST_AC"] },
@@ -417,7 +405,6 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
       },
       env.deps,
     );
-    dispatch({ action: "plan", unitId, input: makeValidFeaturePlan() }, env.deps);
 
     const result = dispatch(
       { action: "design-review", unitId, input: { designReviewJudgment: makeValidFeatureDesignReviewJudgment() } },
@@ -434,19 +421,18 @@ describe("dispatch feature gate fail 短路（design-review 返回 ok=false 不�
       { action: "create", input: { slug: "e2e-gate-count", objective: "o", layer: "feature" } },
       env.deps,
     );
-    // clarify 写入空 spec，触发 acNonEmpty fail
+    // design 写入空 spec，触发 acNonEmpty fail
     dispatch(
       {
-        action: "clarify",
+        action: "design",
         unitId,
-        input: makeFeatureClarifyInput({ spec: makeFeatureSpec({
+        input: makeFeatureDesignInput({ spec: makeFeatureSpec({
           functionalRequirements: [],
           acceptanceCriteria: [],
         }) }),
       },
       env.deps,
     );
-    dispatch({ action: "plan", unitId, input: makeValidFeaturePlan() }, env.deps);
 
     const first = dispatch(
       { action: "design-review", unitId, input: { designReviewJudgment: makeValidFeatureDesignReviewJudgment() } },
@@ -482,14 +468,14 @@ describe("dispatch feature 非法跳步", () => {
   it("feature unit not found → throw CwEngineError(unit_not_found)", () => {
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
+        { action: "design", unitId: "feature:ghost", input: makeFeatureDesignInput() },
         env.deps,
       ),
     ).toThrow(CwEngineError);
 
     try {
       dispatch(
-        { action: "clarify", unitId: "feature:ghost", input: makeFeatureClarifyInput() },
+        { action: "design", unitId: "feature:ghost", input: makeFeatureDesignInput() },
         env.deps,
       );
       throw new Error("should have thrown");
@@ -526,14 +512,14 @@ describe("dispatch feature 非法跳步", () => {
 
     expect(() =>
       dispatch(
-        { action: "clarify", unitId: "custom-unknown:fake", input: makeFeatureClarifyInput() },
+        { action: "design", unitId: "custom-unknown:fake", input: makeFeatureDesignInput() },
         env.deps,
       ),
     ).toThrow(CwEngineError);
 
     try {
       dispatch(
-        { action: "clarify", unitId: "custom-unknown:fake", input: makeFeatureClarifyInput() },
+        { action: "design", unitId: "custom-unknown:fake", input: makeFeatureDesignInput() },
         env.deps,
       );
       throw new Error("should have thrown");
@@ -554,17 +540,17 @@ describe("dispatch feature execute multi-split", () => {
       { action: "create", input: { slug: "e2e-multi", objective: "o", layer: "feature" } },
       env.deps,
     );
-    dispatch({ action: "clarify", unitId, input: makeFeatureClarifyInput() }, env.deps);
+    // design 合并原 clarify+plan：合法 spec（过 FR-AC gate）+ 2-split
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
-        input: {
+        input: makeFeatureDesignInput({
           split: [
             { slug: "s1", description: "slice 1", dependsOn: [], inheritedItemIds: ["FR1"] },
             { slug: "s2", description: "slice 2", dependsOn: ["s1"], inheritedItemIds: ["AC1"] },
           ],
-        },
+        }),
       },
       env.deps,
     );

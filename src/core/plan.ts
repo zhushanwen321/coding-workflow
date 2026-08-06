@@ -7,7 +7,7 @@
  * 注：Decision（SlicePlan.decisions 的元素类型）从 clarifications.ts 引入，
  * 仅 type-only import（编译期擦除，不引入运行时依赖，不形成运行时循环）。
  */
-import type { Decision } from "./clarifications.js";
+import type { Clarification, Decision, FeatureSpec } from "./clarifications.js";
 
 // 重新导出 Decision，让 plan 模块的消费者不必从 clarifications 取（slice plan 语义内聚）。
 export type { Decision };
@@ -40,7 +40,7 @@ export interface Plan {
 /**
  * model §4.2 — 拆分项（无 lifecycle，不逐项废弃）。
  *
- * PlanningUnit 的 plan 阶段，每个 Split 项声明「这个子层负责上游的哪些条目」。
+ * PlanningUnit 的 design 阶段，每个 Split 项声明「这个子层负责上游的哪些条目」。
  * execute 时 cw 根据 Split 创建子层，把 inheritedItemIds 写入子层的 basedOnParent。
  */
 export interface Split {
@@ -49,6 +49,8 @@ export interface Split {
   dependsOn: string[];
   /** 这个子层继承上游的哪些条目 id（写入子层的 basedOnParent）。 */
   inheritedItemIds?: string[];
+  /** 这样拆分（而非其他切法）的理由，供人审/复盘。 */
+  justification?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -71,7 +73,7 @@ export interface WavePlan extends Plan {
    *
    * 类型可选：存量在途 wave JSON 无此字段，加载为 undefined，`?? ""` 兜底为空串
    *（testRunner 守卫 + design-review gate testCommandNonEmpty 联合保障非空）。
-   * 必填由 PlanInputSchema（Type.String()）在运行时 plan 提交时强制。
+   * 必填由 DesignInputSchema（Type.String()）在运行时 design 提交时强制。
    */
   testCommand?: string;
 }
@@ -212,7 +214,7 @@ export interface SliceErrorSpec extends WorkUnitItem {
 /**
  * 声明脱离 parent 条目的 input 基类（append-only）。
  *
- * 被 Plan*Input / ReplanInput 继承。abandonParentItems 声明脱离 parent 的某些条目——
+ * 被 Design*Input / ReplanInput 继承。abandonParentItems 声明脱离 parent 的某些条目——
  * append-only，一旦声明不可撤回。用于「我实际不用 parent 的这个条目」的场景。
  */
 export interface AbandonParentItemsInput {
@@ -222,31 +224,33 @@ export interface AbandonParentItemsInput {
 
 // ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
- * plan handler 输入（写 WavePlan 4 类条目）。
+ * design handler 输入（写 WavePlan 4 类条目）。
  *
- * 由 schema-injector 从 core 源码自动提取 schema 文本，注入 plan 阶段 guidance。
- * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.plan 能指向它。
+ * 由 schema-injector 从 core 源码自动提取 schema 文本，注入 design 阶段 guidance。
+ * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.design 能指向它。
  */
-export interface PlanInput extends AbandonParentItemsInput {
+export interface DesignInput extends AbandonParentItemsInput {
   testCases: WaveTestCase[];
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
-  /** 本 wave 测试执行命令（可选类型；必填由 PlanInputSchema 运行时强制）。 */
+  /** 本 wave 测试执行命令（可选类型；必填由 DesignInputSchema 运行时强制）。 */
   testCommand?: string;
+  /** 补充澄清（progressive append，design 阶段可继续追加）。 */
+  clarifications?: Clarification[];
 }
 
 // ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
- * slice plan handler 输入（写 SlicePlan 5 字段 + split）。
+ * slice design handler 输入（写 SlicePlan 5 字段 + split）。
  *
- * 与 wave 的 PlanInput 完全不同：wave 写 testCases/tasks/files/contracts，
+ * 与 wave 的 DesignInput 完全不同：wave 写 testCases/tasks/files/contracts，
  * slice 写技术方案（techChoices/interfaces/dataModels/errorSpecs）+ split（拆 wave 清单）。
  *
  * decisions 可选——不传时由 handler 从本层 Clarification 投影（model §5.10）。
- * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.plan 能指向它。
+ * 原定义在 handlers/types.ts，搬入 core/plan.ts 让 ACTION_SCHEMA.design 能指向它。
  */
-export interface PlanSliceInput extends AbandonParentItemsInput {
+export interface DesignSliceInput extends AbandonParentItemsInput {
   techChoices: SliceTechChoice[];
   interfaces: SliceInterface[];
   dataModels: SliceDataModel[];
@@ -254,25 +258,37 @@ export interface PlanSliceInput extends AbandonParentItemsInput {
   split: Split[];
   /** 技术决策（投影自本层 Clarification）。可选——不传由 handler 投影。 */
   decisions?: Decision[];
+  /** 补充澄清（progressive append）。 */
+  clarifications?: Clarification[];
 }
 
 // ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
- * feature plan handler 输入（Plan 基类，只 split）。
+ * feature design handler 输入（Plan 基类，只 split）。
  *
- * 与 slice 的 PlanSliceInput 完全不同：feature 不产技术方案，plan 只拆 slice 清单。
+ * 与 slice 的 DesignSliceInput 完全不同：feature 不产技术方案，design 只拆 slice 清单。
+ * spec 可选——传入时覆盖本层 spec（合并 clarify 语义，E1-20）。
  * 原定义在 handlers/types.ts，搬入 core/plan.ts 保持类型归位一致性。
  */
-export interface PlanFeatureInput extends AbandonParentItemsInput {
+export interface DesignFeatureInput extends AbandonParentItemsInput {
   split: Split[];
+  /** 补充澄清（progressive append）。 */
+  clarifications?: Clarification[];
+  /** 覆盖 spec（可选——feature design 阶段可更新需求规格）。 */
+  spec?: FeatureSpec;
 }
 
 // ⚠️ 双份定义：与 src/handlers/types.ts 同名 interface 必须保持字段同步
 /**
- * epic plan handler 输入——与 PlanFeatureInput 同型（Plan 基类，只 split）。
+ * epic design handler 输入——与 DesignFeatureInput 同型（Plan 基类，只 split）。
  *
- * epic 与 feature 的 plan 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
+ * epic 与 feature 的 design 都是 Plan 基类（只拆下层清单，不产技术方案），结构完全一致。
+ * 字段与 DesignFeatureInput 保持同步（types.ts 的 DesignEpicInput = DesignFeatureInput）。
  */
-export interface PlanEpicInput extends AbandonParentItemsInput {
+export interface DesignEpicInput extends AbandonParentItemsInput {
   split: Split[];
+  /** 补充澄清（progressive append）。 */
+  clarifications?: Clarification[];
+  /** 覆盖 spec（epic 不消费 spec，字段保留仅为与 DesignFeatureInput 同步）。 */
+  spec?: FeatureSpec;
 }

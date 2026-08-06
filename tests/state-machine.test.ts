@@ -25,14 +25,12 @@ function errorCode(verdict: GuardVerdict): string {
 }
 
 describe("W1+W2: wave 状态机", () => {
-  // U1: 主链 9 步流转
-  describe("U1: 主链 9 步状态流转", () => {
-    it("created→clarifying→planning→design-reviewed→executing→tested→exec-reviewed→retrospected→closed", () => {
+  // U1: 主链 7 步流转
+  describe("U1: 主链 7 步状态流转", () => {
+    it("created→designing→design-reviewed→executing→tested→exec-reviewed→retrospected→closed", () => {
       let status: ExecutionStatus = "created";
-      status = nextWaveStatus("clarify", status);
-      expect(status).toBe("clarifying");
-      status = nextWaveStatus("plan", status);
-      expect(status).toBe("planning");
+      status = nextWaveStatus("design", status);
+      expect(status).toBe("designing");
       status = nextWaveStatus("design-review", status);
       expect(status).toBe("design-reviewed");
       status = nextWaveStatus("execute", status);
@@ -64,12 +62,8 @@ describe("W1+W2: wave 状态机", () => {
 
   // U3: progressive 语义
   describe("U3: progressive 语义", () => {
-    it("clarifying 再次 clarify → 仍为 clarifying", () => {
-      expect(nextWaveStatus("clarify", "clarifying")).toBe("clarifying");
-    });
-
-    it("planning 再次 plan → 仍为 planning", () => {
-      expect(nextWaveStatus("plan", "planning")).toBe("planning");
+    it("designing 再次 design → 仍为 designing", () => {
+      expect(nextWaveStatus("design", "designing")).toBe("designing");
     });
 
     it("design-reviewed 再次 design-review → 仍为 design-reviewed", () => {
@@ -117,15 +111,15 @@ describe("W1+W2: wave 状态机", () => {
     });
   });
 
-  // U6: wave plan 特化（from 含 design-reviewed）
-  describe("U6: wave plan 特化", () => {
-    it("plan 从 design-reviewed 进入 → ok（replan 后重规划路径）", () => {
-      const verdict = guardWave("plan", "design-reviewed");
+  // U6: wave design 特化（from 含 design-reviewed）
+  describe("U6: wave design 特化", () => {
+    it("design 从 design-reviewed 进入 → ok（replan 后重规划路径）", () => {
+      const verdict = guardWave("design", "design-reviewed");
       expect(verdict.ok).toBe(true);
     });
 
-    it("plan 从 clarifying 进入 → ok（首次规划）", () => {
-      const verdict = guardWave("plan", "clarifying");
+    it("design 从 created 进入 → ok（首次规划）", () => {
+      const verdict = guardWave("design", "created");
       expect(verdict.ok).toBe(true);
     });
   });

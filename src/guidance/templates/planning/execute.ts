@@ -20,4 +20,9 @@ export const PLANNING_EXECUTE_TEMPLATE: PlanningStageTemplate = {
   goal: "按 plan.split 自动创建子层 unit（下沉导航），不直接写代码。",
   constraint:
     "关键约束：execute 是 plan 的冻结点——split 条目从此被冻结（append-only），修改只能走 replan；execute 不接收 input（按 split 自动创建 child，cw 返回 crossLayer.descend 导航）。",
+  // G1 + G5：recursive 模式续 turn 指导——父 execute 后派 N 个子层 agent 并行，空闲等唤醒，
+  // 唤醒后查 status：子全完则派 merge-agent 合并 + 推进本层 retrospect，未完继续等。
+  // 派哪个子层 agent 按子层区分（见 subagent-guidance 派发段：slice→wave-agent，feature/epic→planning-agent）。
+  dispatchGuidance:
+    "execute 已创建 N 个 child，派 N 个子层 agent 并行推进（每个 agent 一个 child；派哪个 agent 见上派发段，task 见上）后空闲等 steer 唤醒；唤醒后 cw status --unitId <本单元> 复查：子全完（closed）则派 merge-agent 合并子交付 + 推进本层 retrospect；未完则继续等，不自己 descend。",
 };

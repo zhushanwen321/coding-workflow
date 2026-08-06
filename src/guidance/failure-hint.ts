@@ -11,14 +11,13 @@
  *
  * 递进规则（§5.1，非「熔断」状态——cw 永不阻断，只是文案引导）：
  *   - failureCount <= 1：空字符串
- *   - failureCount == 2..4：三个出口（clarify / replan / abort 重选，或按 action 适配的出口）
+ *   - failureCount == 2..4：三个出口（design / replan / abort 重选，或按 action 适配的出口）
  *     （§5.1 示例第 3 次出现，2 和 4 是同档位的容差，避免边界写死 3）
  *   - failureCount >= 5：在三个出口基础上加「强烈建议先 cw abort，跳出当前层重新审视」
  *
  * action-aware 出口（M10）：不同 action 的失败提示不同——
- *   - clarify 失败：没有 plan 可 replan，给「重新拆 layer / abort 重选 / 继续 clarify 调整」
- *   - plan/design-review/execute/test/exec-review/retrospect/closeout 失败：标准三出口
- *     （clarify / replan / abort 重选）
+ *   - design/design-review/execute/test/exec-review/retrospect/closeout 失败：标准三出口
+ *     （design / replan / abort 重选）
  *   - replan 失败：plan 反复改不动，建议 abort 跳出重建
  *   - abort 失败：罕见，确认状态是否已转 aborted，流程结束
  *   - create 失败：检查参数合法性，建议重试或换更高层创建
@@ -29,7 +28,7 @@
 
 /** gate fail 派生计数用的 statusHistory 条目形态（取自 StatusChange 的子集）。 */
 export interface FailureHistoryEntry {
-  /** 触发变更的 action（create/clarify/plan/.../replan/abort）。 */
+  /** 触发变更的 action（create/design/.../replan/abort）。 */
   action: string;
   /** 可选说明；连续 fail 记录的 note 含 "gate fail" 标记。 */
   note?: string;
@@ -92,7 +91,7 @@ export function buildFailureHint(
  * 按 action 返回适配的出口集合（M10 action-aware）。
  *
  * 设计原则：每个 exit 必须对当前 action 语义自洽——
- *   - clarify 失败时不该建议「replan」（还没有 plan 可改）
+ *   - design 失败可以建议「回到 design 补充澄清」或「replan」（replan 是改 plan 的途径）
  *   - replan 失败时不该再建议「replan」（已经是修复手段本身）
  *   - abort 失败时不该建议「abort」（已经是出口本身）
  *
@@ -102,16 +101,6 @@ export function buildFailureHint(
  * @returns 出口文案数组（第 0 项是引导句，后续是具体出口）
  */
 function buildExits(action: WaveAction, unitId: string, slug: string): string[] {
-  // clarify 失败：没有 plan 可 replan，给「继续 clarify / 重新拆 layer / abort 重选」
-  if (action === "clarify") {
-    return [
-      "连续失败已超过 1 次。考虑：",
-      `- 表述不到位 → 继续调整 clarify（${buildCommand("clarify", `--unitId ${unitId}`, `--input ${inputFilePath(slug, "clarify")}`)}）`,
-      `- 单元定位不对 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元拆 layer 重建`,
-      `- 选错了层 → 在更高层（epic/feature）建单元`,
-    ];
-  }
-
   // replan 失败：plan 反复改不动，建议 abort 跳出重建
   if (action === "replan") {
     return [
@@ -139,11 +128,11 @@ function buildExits(action: WaveAction, unitId: string, slug: string): string[] 
     ];
   }
 
-  // plan / design-review / execute / test / exec-review / retrospect / closeout：
-  // 标准三出口——回到 clarify / replan / abort 重选
+  // design / design-review / execute / test / exec-review / retrospect / closeout：
+  // 标准三出口——回到 design 补充澄清 / replan / abort 重选
   return [
     "连续失败已超过 1 次。考虑：",
-    `- 需求本身不明确 → 回到 clarify（${buildCommand("clarify", `--unitId ${unitId}`, `--input ${inputFilePath(slug, "clarify")}`)}）`,
+    `- 需求本身不明确 → 回到 design 补充澄清（${buildCommand("design", `--unitId ${unitId}`, `--input ${inputFilePath(slug, "design")}`)}）`,
     `- plan 有根本问题 → replan（${buildCommand("replan", `--unitId ${unitId}`, "--abandonedIds '[...]'", '--note "..."')}）`,
     `- 选错了层 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 重选`,
   ];

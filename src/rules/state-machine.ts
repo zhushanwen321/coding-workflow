@@ -5,7 +5,7 @@
  *      model §3.2（10 状态）、§3.4（wave 状态机特化）、§4.4.1（replan 旁路语义）。
  *
  * 职责：
- * - 声明 wave 的 11 个 action（9 主流程 + abort + replan）的合法 from/to 集
+ * - 声明 wave 的 10 个 action（8 主流程 + abort + replan）的合法 from/to 集
  * - guardWave：查表校验「当前 status 是否允许触发某 action」
  * - nextWaveStatus：算出触发某 action 后的新 status（progressive / replan bypass 语义）
  * - isWaveTerminal：判定终态
@@ -20,13 +20,12 @@ import type { ExecutionStatus, PlanningStatus } from "../core/status.js";
 
 /**
  * wave 的全部 action：
- * - 9 个主流程：create / clarify / plan / design-review / execute / test / exec-review / retrospect / closeout
+ * - 8 个主流程：create / design / design-review / execute / test / exec-review / retrospect / closeout
  * - 2 个旁路：abort（→ aborted）/ replan（原地，不改 status）
  */
 export type WaveAction =
   | "create"
-  | "clarify"
-  | "plan"
+  | "design"
   | "design-review"
   | "execute"
   | "test"
@@ -57,27 +56,22 @@ export interface WaveTransition {
  * wave 附录 A §9 line 1171-1197 — wave 状态机转换表（原样）。
  *
  * 关键特化点（vs PlanningUnit 通用规则，model §3.4）：
- * - `plan.from` 含 `design-reviewed`（不含 executing）：wave replan 后回 planning 重走 design-review
+ * - `design.from` 含 `design-reviewed`（不含 executing）：wave replan 后回 designing 重走 design-review
  * - `replan.from` 含 `executing`/`tested`/`exec-reviewed`/`retrospected`（执行后可 replan），`to=undefined`（旁路不改 status）
  * - `create.from = []`：从无到有，guardWave 允许 status=undefined
  */
 export const WAVE_TRANSITIONS: Record<WaveAction, WaveTransition> = {
   create: { from: [], to: "created" },
-  clarify: {
-    from: ["created", "clarifying"],
-    to: "clarifying",
-    progressive: true,
-  },
-  // ⚠️ wave 特化点：plan 的 from 加 design-reviewed（不含 executing）
-  // 原因：wave 是叶子改 testCases 没下游影响面，允许 plan 在 design-reviewed 回流改 testCases（详见 wave §8.5）
+  // ⚠️ wave 特化点：design 的 from 加 design-reviewed（不含 executing）
+  // 原因：wave 是叶子改 testCases 没下游影响面，允许 design 在 design-reviewed 回流改 testCases（详见 wave §8.5）
   // 不含 executing：避免 executing 状态改 testCases 后 designReviewJudgment 失效的死锁
-  plan: {
-    from: ["clarifying", "planning", "design-reviewed"],
-    to: "planning",
+  design: {
+    from: ["created", "designing", "design-reviewed"],
+    to: "designing",
     progressive: true,
   },
   "design-review": {
-    from: ["planning", "design-reviewed"],
+    from: ["designing", "design-reviewed"],
     to: "design-reviewed",
     progressive: true,
   },
@@ -89,8 +83,7 @@ export const WAVE_TRANSITIONS: Record<WaveAction, WaveTransition> = {
   abort: {
     from: [
       "created",
-      "clarifying",
-      "planning",
+      "designing",
       "design-reviewed",
       "executing",
       "tested",
@@ -102,8 +95,8 @@ export const WAVE_TRANSITIONS: Record<WaveAction, WaveTransition> = {
   // 注：wave 是叶子，无子孙可销毁（abort 只销毁 wave 自己，代码不删——cw 不管 git，commit 留 git，新 wave 可参考）
   // replan：wave 可调（改自己的 WavePlan 条目：废弃/新增 WaveTestCase/WaveTask/WaveFile/WaveContract）
   // wave 是叶子（无 childUnitIds），影响面计算结果恒为空——replan 只影响 wave 自己，无下游级联
-  // 从 design-reviewed 及之后都可调（design-review 前的调整走 plan progressive，见 §8.1 对比表）
-  // replan 后 agent 必须回到 planning 重新 design-review（刷新 designReviewJudgment 匹配新 plan，§8.3）
+  // 从 design-reviewed 及之后都可调（design-review 前的调整走 design progressive，见 §8.1 对比表）
+  // replan 后 agent 必须回到 designing 重新 design-review（刷新 designReviewJudgment 匹配新 design，§8.3）
   // status 不变（replan 是旁路 action）
   replan: {
     from: [
@@ -240,7 +233,7 @@ export function isWaveTerminal(status: ExecutionStatus): boolean {
 
 /**
  * PlanningUnit（epic/feature/slice）的全部 action：
- * - 7 个主流程：create / clarify / plan / design-review / execute / retrospect / closeout
+ * - 6 个主流程：create / design / design-review / execute / retrospect / closeout
  *   （无 wave 的 test / exec-review——PlanningUnit 不跑代码测试 / 不做 exec-review）
  * - 2 个旁路：abort（→ aborted）/ replan（原地，不改 status）
  *
@@ -248,8 +241,7 @@ export function isWaveTerminal(status: ExecutionStatus): boolean {
  */
 export type PlanningAction =
   | "create"
-  | "clarify"
-  | "plan"
+  | "design"
   | "design-review"
   | "execute"
   | "retrospect"
@@ -281,7 +273,7 @@ export interface PlanningTransition {
  * 关键设计决策（D1）——PlanningUnit vs ExecutionUnit 的差异：
  * - **主流程少两步**：PlanningUnit 没有 test / exec-review（不产代码、不做代码品味审查）。
  *   故 `retrospect.from = ['executing']`（wave 是 `['exec-reviewed']`）。
- * - **`plan.from` 含 `design-reviewed`**：replan 后必须回 planning 重走 design-review
+ * - **`design.from` 含 `design-reviewed`**：replan 后必须回 designing 重走 design-review
  *   （对齐 wave §8.3 语义，但 PlanningUnit 的 replan 不在执行后触发，见下）。
  * - **`replan.from` 不含 retrospected**：model §3.4 明确「PlanningUnit 的 replan
  *   不在执行后触发——PlanningUnit 没有 execute 产代码这一步，retrospect 发现
@@ -291,19 +283,14 @@ export interface PlanningTransition {
  */
 export const PLANNING_TRANSITIONS: Record<PlanningAction, PlanningTransition> = {
   create: { from: [], to: "created" },
-  clarify: {
-    from: ["created", "clarifying"],
-    to: "clarifying",
-    progressive: true,
-  },
-  // plan.from 含 design-reviewed：replan 后回 planning 重走 design-review（对齐 wave 语义）
-  plan: {
-    from: ["clarifying", "planning", "design-reviewed"],
-    to: "planning",
+  // design.from 含 design-reviewed：replan 后回 designing 重走 design-review（对齐 wave 语义）
+  design: {
+    from: ["created", "designing", "design-reviewed"],
+    to: "designing",
     progressive: true,
   },
   "design-review": {
-    from: ["planning", "design-reviewed"],
+    from: ["designing", "design-reviewed"],
     to: "design-reviewed",
     progressive: true,
   },
@@ -314,8 +301,7 @@ export const PLANNING_TRANSITIONS: Record<PlanningAction, PlanningTransition> = 
   abort: {
     from: [
       "created",
-      "clarifying",
-      "planning",
+      "designing",
       "design-reviewed",
       "executing",
       "retrospected",

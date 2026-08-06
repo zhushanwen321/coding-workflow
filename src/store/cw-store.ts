@@ -36,6 +36,8 @@ import { getCwJsonPath } from "./schema.js";
 // ── 常量 ─────────────────────────────────────────────────────
 
 const JSON_INDENT = 2;
+/** 当前 store 文件 schema 版本。v4 全新部署无存量数据，词汇迁移退化为版本标记。 */
+const SCHEMA_VERSION = 2;
 /** 文件锁最大重试次数。 */
 const LOCK_MAX_RETRIES = 50;
 /** 文件锁重试间隔（ms）。 */
@@ -112,15 +114,25 @@ export class CwStore {
       );
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
-    // schema 迁移：旧 store 无 schemaVersion 视为已迁移到 v1（向前兼容）
-    if (typeof data.schemaVersion !== "number") data.schemaVersion = 1;
+    // schema 版本：旧 store 无 schemaVersion 视为已迁移到当前版本（全新部署无存量数据）
+    if (typeof data.schemaVersion !== "number") data.schemaVersion = SCHEMA_VERSION;
+    // schema 版本不匹配告警（S-4）：旧 store（如 schemaVersion=1）可能含已删除的 status/action
+    //（v2 删了 clarifying/planning status、clarify/plan action），新状态机无法识别 →
+    // guardWave/guardPlanning 失败、unit 卡死。不阻断加载（CW 0.x 期 greenfield 可接受），
+    // 仅 console.warn 提示用户重建 .cw 目录。
+    if (data.schemaVersion !== SCHEMA_VERSION) {
+      console.warn(
+        `CwStore: store schemaVersion ${data.schemaVersion} !== 当前版本 ${SCHEMA_VERSION}（${this.dbPath}）` +
+          `——旧 store 可能含已删除的 status/action，建议删除 .cw 目录重建。`,
+      );
+    }
     // repoMeta 缺失留 undefined，首次推进类 save 时回填（不在只读 loadFileData 调 git）
     return data;
   }
 
   private emptyFile(): CwJsonFile {
     // 显式 repoMeta: undefined 表明该键存在但尚未回填（首次 save 时由 save() 填充）。
-    return { schemaVersion: 1, repoMeta: undefined, workUnits: [] };
+    return { schemaVersion: SCHEMA_VERSION, repoMeta: undefined, workUnits: [] };
   }
 
   /**

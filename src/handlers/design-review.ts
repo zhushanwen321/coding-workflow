@@ -1,5 +1,5 @@
 /**
- * v1 wave handler — design-review action（跑 9 个 gate + 写 designReviewJudgment）。
+ * v1 wave handler — design-review action（跑 10 个 gate + 写 designReviewJudgment）。
  *
  * 来源：v5 wave 附录 A §10（编排骨架）、§2.7 + §11（WAVE_DESIGN_REVIEW_GATES gate 清单）、
  *      §3（layerSpecific 非空 gate）、state-machine WAVE_TRANSITIONS["design-review"]（progressive，planning/design-reviewed → design-reviewed）。
@@ -7,7 +7,7 @@
  *
  * 职责：
  * 1. load 兄弟 wave 的 plan.files（同 parent，已 design-review 之后，plan.files 才确定）注入聚合 gate
- * 2. 跑 9 个 design-review gate（2 个 testCases 结构 gate + 5 个 judgment 非空 gate
+ * 2. 跑 10 个 design-review gate（3 个 testCases 结构 gate + 5 个 judgment 非空 gate
  *    + 1 个 wave layerSpecific 非空 gate + 1 个跨 wave 文件冲突 gate）
  * 3. 任一 gate fail → 短路返回 ok=false + gateResults（不改 status、不 save、不写 judgment）
  * 4. 全 pass → 写 designReviewJudgment → status 流转（→ design-reviewed）→ save

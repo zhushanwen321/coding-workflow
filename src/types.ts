@@ -8,19 +8,17 @@
 export * from "./core/index.js";
 
 // handlers 共享类型（CwDeps / ActionResult / 各 Input）
-// wave/slice 共用 Input + 各层专属 Input（PlanSliceInput/RetrospectSliceInput）
+// wave/slice 共用 Input + 各层专属 Input（DesignSliceInput/RetrospectSliceInput）
 export type {
   AbortInput,
   ActionResult,
-  ClarifyInput,
   CloseoutInput,
   CreateInput,
   CwDeps,
+  DesignInput,
   DesignReviewInput,
   ExecReviewInput,
   ExecuteInput,
-  PlanInput,
-  PlanSliceInput,
   ReplanInput,
   RetrospectInput,
   RetrospectSliceInput,

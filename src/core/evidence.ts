@@ -37,6 +37,11 @@ export interface Evidence {
 
 /** model §5.11.1 — 交付物引用（一条 = 一个交付物）。 */
 export interface ArtifactRef {
+  /**
+   * 产物类型分类（spec/plan/review-report/retrospect-report/code/test/doc/other/commit）。
+   * 注意：kind 是产物类型标签，与 E1 action 改名无关——"plan" 指代「设计文档」产物，
+   * 是稳定分类，向后兼容历史 closeout evidence，不随 plan→design action 迁移。
+   */
   kind: "spec" | "plan" | "review-report" | "retrospect-report" | "code" | "test" | "doc" | "other" | "commit";
   /** 文件路径 / URL / commit hash。 */
   ref: string;

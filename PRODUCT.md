@@ -27,10 +27,10 @@
 
 | 功能域 | 成熟度 | 说明 |
 |--------|--------|------|
-| **状态机编排** | 核心 | 16 action / 两层 status（PlanningStatus 8 + ExecutionStatus 10）/ 单层 guard（`guardWave`/`guardPlanning` 防跳步，fail 抛 `illegal_transition`）[from: CONTEXT.md「两层 Status」「状态流转规则」] |
+| **状态机编排** | 核心 | 15 action / 两层 status（PlanningStatus 7 + ExecutionStatus 9）/ 单层 guard（`guardWave`/`guardPlanning` 防跳步，fail 抛 `illegal_transition`）[from: CONTEXT.md「两层 Status」「状态流转规则」] |
 | **机器检查 gate** | 核心 | plan 结构校验 / TDD 红灯（testCases 执行通过）/ commit 锚定（commitExists，`git cat-file`）/ testReferencesDesignReview（测试引用设计评审条目）/ append-only 守门——不信任 agent 声明，只信机器证据 [from: CONTEXT.md「Gate」；ARCHITECTURE.md「gate 机制」；src/rules/gates/test.ts] |
 | **gate fail 原地 retry** | 核心 | gate fail 不回退 status、不前进——agent 修代码后重调同一 action 重试；连续 5 次 fail 后 guidance 加「强烈建议 abort」递进文案但不阻断 [from: CONTEXT.md「熔断不阻断」；NFR.md R-1/R-2] |
-| **clarify + design-review 机制** | 稳定 | create→plan 之间的需求/技术澄清，progressive（不阻断 plan），记录 clarifications；design-review 阶段写 designReviewJudgment（necessity/sufficiency/alternatives/tradeoffs/risks），跨层 abandon 通道见 ADR-0010 [from: CONTEXT.md action 表；src/core/judgments.ts] |
+| **design + design-review 机制** | 稳定 | create→design-review 之间的需求/技术澄清（E1 合并原 clarify+plan：progressive append clarifications + 写 plan 条目一次提交，不阻断 design），记录 clarifications；design-review 阶段写 designReviewJudgment（necessity/sufficiency/alternatives/tradeoffs/risks），跨层 abandon 通道见 ADR-0010 [from: CONTEXT.md action 表；src/core/judgments.ts] |
 
 测试基线：801 个测试，零 mock 框架，真实 CwStore + tmp 目录 + git 子进程（含 e2e 子进程跑真实 `cw` CLI）。[from: AGENTS.md「测试规范」；README.md「开发」；测试数随功能增长]
 

@@ -38,10 +38,10 @@ function catchValidate(action: string, keys: string[]): Error | undefined {
 
 describe("validateFlags（#5 flag 白名单）", () => {
   it("T2.1: 未知 flag → throw CwError，消息含 flag 名 + 合法 flag 列表", () => {
-    const err = catchValidate("clarify", ["unid"]);
+    const err = catchValidate("design", ["unid"]);
     expect(err).toBeInstanceOf(CwError);
     expect(err!.message).toContain("unknown flag --unid");
-    // 合法列表含全局基础集（clarify 自身无专属 flag）
+    // 合法列表含全局基础集（design 自身无专属 flag）
     expect(err!.message).toContain("unitId");
     expect(err!.message).toContain("input");
   });
@@ -78,9 +78,9 @@ describe("validateFlags（#5 flag 白名单）", () => {
   });
 
   it("minimist 内部键 _（positional）忽略", () => {
-    expect(catchValidate("clarify", [])).toBeUndefined();
-    const parsed: ParsedArgs = { _: ["clarify", "wave"] };
-    expect(() => validateFlags("clarify", parsed)).not.toThrow();
+    expect(catchValidate("design", [])).toBeUndefined();
+    const parsed: ParsedArgs = { _: ["design", "wave"] };
+    expect(() => validateFlags("design", parsed)).not.toThrow();
   });
 
   it("F-2: 白名单表⊇代码消费键反向断言（buildParams/runReadonly 实际消费的 flag 键镜像）", () => {
@@ -88,7 +88,7 @@ describe("validateFlags（#5 flag 白名单）", () => {
     // 新增消费键时必须同步登记白名单，否则此断言红。
     const consumed: Record<string, string[]> = {
       create: ["slug", "objective", "parent", "basedOnParent"],
-      plan: ["abandonParentItems"],
+      design: ["abandonParentItems"],
       execute: ["commitHash"],
       test: ["testCwd"],
       replan: ["abandonedIds", "note", "abandonParentItems"],

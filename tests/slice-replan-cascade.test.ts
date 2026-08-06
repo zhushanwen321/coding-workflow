@@ -14,8 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { WorkUnitBase } from "../src/core/workunit.js";
 import { createWave } from "../src/core/workunit.js";
 import { buildPrefix } from "../src/guidance/index.js";
-import { handleClarify } from "../src/handlers/clarify.js";
-import { handlePlan } from "../src/handlers/plan.js";
+import { handleDesign } from "../src/handlers/design.js";
 import { handleExecuteSlice } from "../src/handlers/slice/execute.js";
 import { handleReplanSlice } from "../src/handlers/slice/replan.js";
 import { SLICE_STATUS_DISPLAY } from "../src/handlers/slice/slice-internal.js";
@@ -492,12 +491,10 @@ describe("abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnit
     expect((waveBefore as unknown as { basedOnParent: string[] }).basedOnParent).toContain("TC1");
     expect((waveBefore as unknown as { abandonedParentItems: string[] }).abandonedParentItems).toEqual([]);
 
-    // 3. wave 先 plan 声明脱离 TC1（plan input 带 abandonParentItems: ["TC1"]）
+    // 3. wave design 声明脱离 TC1（design input 带 abandonParentItems: ["TC1"]）
     //    经 mergeAbandonParentItems 写入 wave.abandonedParentItems。
-    //    wave 必须在 plan.from ∈ {clarifying, planning, design-reviewed} 才合法——
-    //    createWave 初始 created，先 handleClarify 推进到 clarifying，再 handlePlan。
-    handleClarify(wave, { clarifications: [] }, env.deps);
-    handlePlan(
+    //    wave design.from 含 created——createWave 初始 created 可直接 design。
+    handleDesign(
       wave,
       {
         testCases: [makeValidTestCase()],
@@ -551,9 +548,8 @@ describe("abandonedParentItems 端到端（真实 store + loadChildrenAsWorkUnit
     env.store.save(wave as unknown as WorkUnitRecord);
     const waveId = wave.id;
 
-    // wave plan 不带 abandonParentItems
-    handleClarify(wave, { clarifications: [] }, env.deps);
-    handlePlan(
+    // wave design 不带 abandonParentItems
+    handleDesign(
       wave,
       {
         testCases: [makeValidTestCase()],

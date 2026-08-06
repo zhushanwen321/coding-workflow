@@ -53,8 +53,7 @@ function advanceTo(
   slug: string,
   target:
     | "created"
-    | "clarifying"
-    | "planning"
+    | "designing"
     | "design-reviewed"
     | "executing"
     | "tested"
@@ -78,14 +77,8 @@ function advanceTo(
   if (target === "created") return unitId;
 
   dispatch(
-    { action: "clarify", unitId, input: { clarifications: [] } },
-    env.deps,
-  );
-  if (target === "clarifying") return unitId;
-
-  dispatch(
     {
-      action: "plan",
+      action: "design",
       unitId,
       input: {
         testCases: [makeValidTestCase("TC1")],
@@ -93,11 +86,12 @@ function advanceTo(
         files: [makeValidFile("F1")],
         contracts: [makeValidContract("C1")],
         testCommand: "npx vitest run",
+        clarifications: [],
       },
     },
     env.deps,
   );
-  if (target === "planning") return unitId;
+  if (target === "designing") return unitId;
 
   dispatch(
     {
@@ -155,7 +149,7 @@ function advanceTo(
 // ═══════════════════════════════════════════════════════════════
 
 describe("W7: ok=true handler guidance（三段式非空）", () => {
-  it("create → nextAction.guidance 非空 + action=clarify + 含位置段 + 含 testCommand 提示", () => {
+  it("create → nextAction.guidance 非空 + action=design + 含位置段 + 含 testCommand 提示", () => {
     const r = dispatch(
       {
         action: "create",
@@ -171,12 +165,12 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.ok).toBe(true);
     expect(r.nextAction).toBeDefined();
     expect(r.nextAction!.guidance).toBeTruthy();
-    expect(r.nextAction!.action).toBe("clarify");
+    expect(r.nextAction!.action).toBe("design");
     expect(r.nextAction!.guidance).toContain("## 位置");
     expect(r.nextAction!.guidance).toContain("[wave:g-create]");
     expect(r.nextAction!.guidance).toContain("## 下一步");
-    expect(r.nextAction!.guidance).toContain("cw clarify --unitId wave:g-create");
-    // create 时追加 testCommand 提示（per-wave testCommand 改造：plan 阶段填测试命令）
+    expect(r.nextAction!.guidance).toContain("cw design --unitId wave:g-create");
+    // create 时追加 testCommand 提示（per-wave testCommand 改造：design 阶段填测试命令）
     expect(r.nextAction!.guidance).toContain("## plan 阶段必须填 testCommand");
     expect(r.nextAction!.guidance).toContain("不要跑全量回归");
     // 旧 testRunner config 配置示例已从 hint 移除（cwd 语义由 --testCwd/config.testRunner.cwd 保留，hint 聚焦 testCommand）
@@ -184,25 +178,11 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).not.toContain("--testCwd");
   });
 
-  it("clarify → nextAction.guidance 非空 + action=plan + 含 schema 段", () => {
-    const unitId = advanceTo("g-clarify", "created");
-    const r = dispatch(
-      { action: "clarify", unitId, input: { clarifications: [] } },
-      env.deps,
-    );
-    expect(r.ok).toBe(true);
-    expect(r.nextAction!.guidance).toBeTruthy();
-    expect(r.nextAction!.action).toBe("plan");
-    expect(r.nextAction!.guidance).toContain("## 位置");
-    expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
-    expect(r.nextAction!.guidance).toContain("cw plan --unitId wave:g-clarify");
-  });
-
-  it("plan → nextAction.guidance 非空 + action=design-review + 含 plan 关键约束", () => {
-    const unitId = advanceTo("g-plan", "clarifying");
+  it("design → nextAction.guidance 非空 + action=design-review + 含 schema 段", () => {
+    const unitId = advanceTo("g-design", "created");
     const r = dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           testCases: [makeValidTestCase("TC1")],
@@ -210,6 +190,32 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
           files: [makeValidFile("F1")],
           contracts: [makeValidContract("C1")],
           testCommand: "npx vitest run",
+          clarifications: [],
+        },
+      },
+      env.deps,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.nextAction!.guidance).toBeTruthy();
+    expect(r.nextAction!.action).toBe("design-review");
+    expect(r.nextAction!.guidance).toContain("## 位置");
+    expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
+    expect(r.nextAction!.guidance).toContain("cw design-review --unitId wave:g-design");
+  });
+
+  it("design → nextAction.guidance 非空 + action=design-review + 含 design 关键约束", () => {
+    const unitId = advanceTo("g-design2", "designing");
+    const r = dispatch(
+      {
+        action: "design",
+        unitId,
+        input: {
+          testCases: [makeValidTestCase("TC1")],
+          tasks: [makeValidTask("TK1")],
+          files: [makeValidFile("F1")],
+          contracts: [makeValidContract("C1")],
+          testCommand: "npx vitest run",
+          clarifications: [],
         },
       },
       env.deps,
@@ -218,8 +224,8 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.action).toBe("design-review");
     expect(r.nextAction!.guidance).toContain("testCases 不能为空");
     expect(r.nextAction!.guidance).toContain("冻结");
-    expect(r.nextAction!.guidance).toContain("cw design-review --unitId wave:g-plan");
-    // per-wave testCommand 必填约束（WAVE_PLAN_TEMPLATE 经 buildNextAction 输出）
+    expect(r.nextAction!.guidance).toContain("cw design-review --unitId wave:g-design2");
+    // per-wave testCommand 必填约束（WAVE_DESIGN_TEMPLATE 经 buildNextAction 输出）
     expect(r.nextAction!.guidance).toContain("testCommand 必须填");
     expect(r.nextAction!.guidance).toContain("严禁跑全量");
   });
@@ -238,7 +244,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
   it("design-review 完成 → nextAction=execute + guidance 含 cw execute --commitHash，不含 --input（wave execute 用 commitHash flag）", () => {
     // 守护：wave execute 命令渲染必须用 --commitHash flag，不能拼 --input
     // （CLI src/cli.ts 要求 commitHash；input.json 里没有 commitHash，照 --input 走会立即失败）。
-    const unitId = advanceTo("g-exec-cmd", "planning");
+    const unitId = advanceTo("g-exec-cmd", "designing");
     const r = dispatch(
       {
         action: "design-review",
@@ -293,7 +299,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("W8: schema 段取 nextAction（#1）", () => {
-  it("create 后 schema 段显示 clarify 的 clarifications 字段，非 create 的 slug/objective（T1.1）", () => {
+  it("create 后 schema 段显示 design 的 testCases 字段，非 create 的 slug/objective（T1.1）", () => {
     const r = dispatch(
       {
         action: "create",
@@ -302,16 +308,17 @@ describe("W8: schema 段取 nextAction（#1）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    expect(r.nextAction!.action).toBe("clarify");
+    expect(r.nextAction!.action).toBe("design");
     expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
-    // clarify 的 input schema（clarifications 数组）
-    expect(r.nextAction!.guidance).toContain("clarifications");
+    // design 的 input schema（testCases 等 WavePlan 条目）
+    expect(r.nextAction!.guidance).toContain("testCases");
+    expect(r.nextAction!.guidance).toContain("testCommand");
     // create 的扁平提示（slug/objective）不得出现在 schema 段
     expect(r.nextAction!.guidance).not.toContain("slug: string");
     expect(r.nextAction!.guidance).not.toContain("objective: string");
   });
 
-  it("replan 后 guidance 含 plan 的 schema 段（D-017 透传，T1.1）", () => {
+  it("replan 后 guidance 含 design 的 schema 段（D-017 透传，T1.1）", () => {
     const unitId = advanceTo("g-replan-schema", "design-reviewed");
     const r = dispatch(
       {
@@ -322,8 +329,8 @@ describe("W8: schema 段取 nextAction（#1）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    expect(r.nextAction!.action).toBe("plan");
-    // replan 后下一步是 plan，agent 需要 plan 的 input schema
+    expect(r.nextAction!.action).toBe("design");
+    // replan 后下一步是 design，agent 需要 design 的 input schema
     expect(r.nextAction!.guidance).toContain("## input schema + 关键约束");
     expect(r.nextAction!.guidance).toContain("testCases");
   });
@@ -346,11 +353,11 @@ describe("W8: schema 段取 nextAction（#1）", () => {
     expect(r.nextAction!.guidance).not.toContain("## input schema + 关键约束");
   });
 
-  it("plan 后 schema 段含 design-review layerSpecific 提示（T1.2b，特判跟随 nextAction）", () => {
-    const unitId = advanceTo("g-plan-dr", "clarifying");
+  it("design 后 schema 段含 design-review layerSpecific 提示（T1.2b，特判跟随 nextAction）", () => {
+    const unitId = advanceTo("g-design-dr", "designing");
     const r = dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           testCases: [makeValidTestCase("TC1")],
@@ -370,7 +377,7 @@ describe("W8: schema 段取 nextAction（#1）", () => {
   });
 
   it("abort 终态 guidance 无 schema 段（终态守卫）", () => {
-    const unitId = advanceTo("g-abort-schema", "planning");
+    const unitId = advanceTo("g-abort-schema", "designing");
     const r = dispatch(
       { action: "abort", unitId, input: { reason: "wrong layer" } },
       env.deps,
@@ -386,13 +393,13 @@ describe("W8: schema 段取 nextAction（#1）", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
-  it("plan 无前置 gate（plan handler 无 gate），用 design-review gate fail 验异常 guidance", () => {
-    // plan 本身无 gate。design-review 跑 testCasesNonEmpty gate——空 plan 触发 fail。
-    const unitId = advanceTo("g-fail-dr", "planning");
-    // plan 已经写过合法 testCases；这里再 plan 空的覆盖 → design-review gate fail
+  it("design 无前置 gate（design handler 无 gate），用 design-review gate fail 验异常 guidance", () => {
+    // design 本身无 gate。design-review 跑 testCasesNonEmpty gate——空 plan 触发 fail。
+    const unitId = advanceTo("g-fail-dr", "designing");
+    // design 已经写过合法 testCases；这里再 design 空的覆盖 → design-review gate fail
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
@@ -423,10 +430,10 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
   });
 
   it("连续两次 gate fail → failureCount 递增（派生自 statusHistory）", () => {
-    const unitId = advanceTo("g-fail-twice", "planning");
+    const unitId = advanceTo("g-fail-twice", "designing");
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
@@ -456,14 +463,14 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
     expect(r2.failureCount).toBe(2);
     // 第 2 次含「递进提示」段（failureCount=2 > 1）
     expect(r2.nextAction!.guidance).toContain("## 递进提示");
-    expect(r2.nextAction!.guidance).toContain("cw clarify");
+    expect(r2.nextAction!.guidance).toContain("cw design");
   });
 
   it("gate fail 后 statusHistory 尾部含 fail 记录（note 含 'gate fail'）", () => {
-    const unitId = advanceTo("g-fail-record", "planning");
+    const unitId = advanceTo("g-fail-record", "designing");
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
@@ -482,14 +489,14 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
     const tail = loadUnit(unitId).statusHistory.at(-1)!;
     expect(tail.action).toBe("design-review");
     expect(tail.note).toContain("gate fail");
-    expect(tail.to).toBe("planning"); // status 未变
+    expect(tail.to).toBe("designing"); // status 未变
   });
 
-  it("gate fail 不改 status（仍是 planning）+ 不写 judgment", () => {
-    const unitId = advanceTo("g-fail-nochange", "planning");
+  it("gate fail 不改 status（仍是 designing）+ 不写 judgment", () => {
+    const unitId = advanceTo("g-fail-nochange", "designing");
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: { testCases: [], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" },
       },
@@ -505,7 +512,7 @@ describe("W7: ok=false gate fail guidance（四段式 + fail 记录）", () => {
       env.deps,
     );
 
-    expect(loadUnit(unitId).status).toBe("planning");
+    expect(loadUnit(unitId).status).toBe("designing");
     expect(loadUnit(unitId).designReviewJudgment.necessity).toBe("");
   });
 });
@@ -755,7 +762,7 @@ describe("W8: create 幂等防护（#2）", () => {
   });
 
   it("重复 create 的 existing 为 aborted 终态 → no-op + guidance 含「重建请用新 slug」（T1.6b，D-015）", () => {
-    const unitId = advanceTo("g-idem-abort", "planning");
+    const unitId = advanceTo("g-idem-abort", "designing");
     dispatch(
       { action: "abort", unitId, input: { reason: "wrong layer" } },
       env.deps,
@@ -809,7 +816,7 @@ describe("W8: create 幂等防护（#2）", () => {
     unit.statusHistory.push({
       to: "created",
       at: "2026-08-03T00:00:00.000Z",
-      action: "clarify",
+      action: "design",
       note: "gate fail: simulated",
     });
     env.store.save(unit as unknown as Parameters<typeof env.store.save>[0]);
@@ -856,7 +863,7 @@ describe("W8: create 幂等防护（#2）", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("W7: replan guidance（重走 design-review 提示）", () => {
-  it("replan ok=true → guidance 含「重新 design-review」+ action=plan", () => {
+  it("replan ok=true → guidance 含「重新 design-review」+ action=design", () => {
     const unitId = advanceTo("g-replan", "design-reviewed");
     const r = dispatch(
       {
@@ -868,10 +875,10 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
     );
     expect(r.ok).toBe(true);
     expect(r.nextAction).toBeDefined();
-    expect(r.nextAction!.action).toBe("plan");
+    expect(r.nextAction!.action).toBe("design");
     // replan 模板的关键约束含「重走 design-review」（§6.1 / wave §8.3）
     expect(r.nextAction!.guidance).toContain("重新 design-review");
-    expect(r.nextAction!.guidance).toContain("plan → design-review → execute");
+    expect(r.nextAction!.guidance).toContain("design → design-review → execute");
     // replanImpact 仍在
     expect(r.replanImpact).toBeDefined();
   });
@@ -890,7 +897,7 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
     expect(tc1.status).toBe("abandoned");
   });
 
-  it("executing 纯 testCommand 补充 replan → guidance 重定向到 cw test（不含 cw plan，§4.6）", () => {
+  it("executing 纯 testCommand 补充 replan → guidance 重定向到 cw test（不含 cw design，§4.6）", () => {
     const unitId = advanceTo("g-replan-testcmd", "executing");
     const r = dispatch(
       {
@@ -905,10 +912,10 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    // 重定向：executing → test（plan 在 executing 状态抛 illegal_transition，恢复路径不可达）
+    // 重定向：executing → test（design 在 executing 状态抛 illegal_transition，恢复路径不可达）
     expect(r.nextAction!.guidance).toContain("cw test --unitId wave:g-replan-testcmd");
-    expect(r.nextAction!.guidance).not.toContain("cw plan");
-    // 机器可读字段与 guidance 同步重定向（action=plan 在 executing 状态是 illegal_transition）
+    expect(r.nextAction!.guidance).not.toContain("cw design");
+    // 机器可读字段与 guidance 同步重定向（action=design 在 executing 状态是 illegal_transition）
     expect(r.nextAction!.action).toBe("test");
   });
 
@@ -927,12 +934,12 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    // testCommandOnly：design-reviewed 状态映射 action=execute（不推 plan，避免无谓重走 design-review）
+    // testCommandOnly：design-reviewed 状态映射 action=execute（不推 design，避免无谓重走 design-review）
     expect(r.nextAction!.action).toBe("execute");
     expect(r.nextAction!.guidance).toContain("cw execute --unitId wave:g-replan-testcmd-dr");
   });
 
-  it("executing 内容 replan（含废弃条目）→ guidance 重定向到 cw test + blockedHint 提示回流不可达（不含 cw plan）", () => {
+  it("executing 内容 replan（含废弃条目）→ guidance 重定向到 cw test + blockedHint 提示回流不可达（不含 cw design）", () => {
     const unitId = advanceTo("g-replan-blocked", "executing");
     const r = dispatch(
       {
@@ -943,21 +950,21 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    // 内容 replan @ executing：plan.from 不含 executing，推 cw plan 必抛 illegal_transition（wave 卡死）
+    // 内容 replan @ executing：design.from 不含 executing，推 cw design 必抛 illegal_transition（wave 卡死）
     // → blockedHint 重定向到状态映射 action（executing→test），并显式提示回流不可达
-    expect(r.nextAction!.guidance).not.toContain("cw plan");
+    expect(r.nextAction!.guidance).not.toContain("cw design");
     expect(r.nextAction!.guidance).toContain("无法回流 replan 内容变更");
     expect(r.nextAction!.guidance).toContain("plan/design-review 在此状态均 illegal");
     expect(r.nextAction!.guidance).toContain("只能先执行 test 或 abort 终止");
-    // blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）
+    // blockedHint 替换「重新提交方案 + 命令」段（design 语义不适用，不推非法命令）
     expect(r.nextAction!.guidance).not.toContain("审视完后重新提交方案");
-    // 机器可读字段与 guidance 同步重定向（action=plan 在 executing 状态是 illegal_transition）
+    // 机器可读字段与 guidance 同步重定向（action=design 在 executing 状态是 illegal_transition）
     expect(r.nextAction!.action).toBe("test");
     // 状态感知裁剪：审视引导不含「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）
     expect(r.nextAction!.guidance).not.toContain("重新 plan 并重新 design-review");
   });
 
-  it("正常 replan（含废弃条目）→ guidance 仍指向 cw plan（原行为不变）", () => {
+  it("正常 replan（含废弃条目）→ guidance 仍指向 cw design（原行为不变）", () => {
     const unitId = advanceTo("g-replan-normal", "design-reviewed");
     const r = dispatch(
       {
@@ -968,13 +975,13 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
       env.deps,
     );
     expect(r.ok).toBe(true);
-    expect(r.nextAction!.guidance).toContain("cw plan --unitId wave:g-replan-normal");
+    expect(r.nextAction!.guidance).toContain("cw design --unitId wave:g-replan-normal");
   });
 });
 
 describe("W7: abort guidance（流程结束）", () => {
   it("abort ok=true → action=undefined（终态，流程结束）+ guidance 含位置", () => {
-    const unitId = advanceTo("g-abort", "planning");
+    const unitId = advanceTo("g-abort", "designing");
     const r = dispatch(
       { action: "abort", unitId, input: { reason: "wrong layer" } },
       env.deps,
@@ -1007,9 +1014,19 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
       failEnv.deps,
     );
     // 推进到 executing
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
     dispatch(
-      { action: "plan", unitId, input: { testCases: [makeValidTestCase()], tasks: [makeValidTask()], files: [makeValidFile()], contracts: [makeValidContract()], testCommand: "npx vitest run" } },
+      {
+        action: "design",
+        unitId,
+        input: {
+          testCases: [makeValidTestCase()],
+          tasks: [makeValidTask()],
+          files: [makeValidFile()],
+          contracts: [makeValidContract()],
+          testCommand: "npx vitest run",
+          clarifications: [],
+        },
+      },
       failEnv.deps,
     );
     dispatch(
@@ -1056,10 +1073,10 @@ describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断
       },
       failEnv.deps,
     );
-    dispatch({ action: "clarify", unitId, input: { clarifications: [] } }, failEnv.deps);
+    // create → designing
     dispatch(
       {
-        action: "plan",
+        action: "design",
         unitId,
         input: {
           testCases: [makeValidTestCase()],
@@ -1069,6 +1086,7 @@ describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断
           // 先填合法 testCommand 过 design-review gate（testCommandNonEmpty）；
           // 空 testCommand 的 wave 只能以在途迁移形态存在（下面手工清空模拟存量 wave）。
           testCommand: "npx vitest run",
+          clarifications: [],
         },
       },
       failEnv.deps,

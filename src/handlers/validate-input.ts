@@ -14,16 +14,16 @@
  * 文本来源（那是 guidance 渲染用）。两套 schema 并存，同源于 handlers/types.ts /
  * core/plan.ts 类型定义。
  *
- * schema 清单（13 个定义，别名复用不重复定义）：
- *   wave 10：ClarifyInput / PlanInput / DesignReviewInput / ExecuteInput / TestInput /
- *            ExecReviewInput / RetrospectInput / CloseoutInput / ReplanInput / AbortInput
- *   slice：PlanSliceInput / RetrospectSliceInput
- *   feature：FeatureClarifyInput（容器形态；spec 内容由 rules/spec-schema.ts 软校验，
- *            保畸形 spec 走 ok=false 可重试路径而非硬 throw）
- *   别名：PlanFeatureInput=PlanEpicInput 共用 PlanFeatureInputSchema；
+ * schema 清单（11 个定义，别名复用不重复定义）：
+ *   wave 9：DesignInput / DesignReviewInput / ExecuteInput / TestInput /
+ *           ExecReviewInput / RetrospectInput / CloseoutInput / ReplanInput / AbortInput
+ *   slice：DesignSliceInput / RetrospectSliceInput
+ *   feature：DesignFeatureInput（容器形态，含 clarifications + spec；spec 内容由
+ *            rules/spec-schema.ts 软校验，保畸形 spec 走 ok=false 可重试路径而非硬 throw）
+ *   别名：DesignFeatureInput=DesignEpicInput 共用 DesignFeatureInputSchema；
  *         RetrospectFeatureInput=RetrospectEpicInput=RetrospectSliceInput 共用 RetrospectSliceInputSchema。
  *
- * 显式声明注入字段（F-4）：PlanInput/ReplanInput 含 abandonParentItems?: string[]
+ * 显式声明注入字段（F-4）：DesignInput/ReplanInput 含 abandonParentItems?: string[]
  * （buildParams 在 readInput 之后注入，schema 必须显式声明否则 strict 模式误伤）；
  * ExecuteInput.changedFiles deprecated 但保留接受。
  */
@@ -59,7 +59,7 @@ function strict<T extends Record<string, TSchema>>(properties: T) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ClarifyInput（wave/slice/epic 共用）
+// Clarification（design 共用，四层）
 // ═══════════════════════════════════════════════════════════════
 
 const ClarificationSchema = strict({
@@ -70,30 +70,8 @@ const ClarificationSchema = strict({
   type: Type.Union([Type.Literal("research"), Type.Literal("grilling")]),
 });
 
-export const ClarifyInputSchema = strict({
-  clarifications: Type.Array(ClarificationSchema),
-});
-
 // ═══════════════════════════════════════════════════════════════
-// FeatureClarifyInput（feature 容器形态）
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * feature clarify 容器 schema。
- *
- * spec 字段只验「是对象」不深校验内容（Record<string, unknown>）——spec 内容由
- * handler 内 validateFeatureSpec 软校验（畸形 spec 返回 ok=false + failure guidance，
- * agent 可重试），此处深校验会把软失败变成硬 throw，破坏既有契约
- * （feature-clarify-validate.test.ts 断言 ok=false）。容器形态（clarifications 数组 +
- * spec 对象）仍硬校验——`{}`/`spec:"nope"` 这类结构错误直接 exit 1。
- */
-export const FeatureClarifyInputSchema = strict({
-  clarifications: Type.Array(ClarificationSchema),
-  spec: Type.Record(Type.String(), Type.Unknown()),
-});
-
-// ═══════════════════════════════════════════════════════════════
-// PlanInput（wave）
+// DesignInput（wave）
 // ═══════════════════════════════════════════════════════════════
 
 const WaveTestCaseSchema = strict({
@@ -160,19 +138,20 @@ const WaveContractSchema = strict({
 /** abandonParentItems 是 buildParams 在 readInput 之后注入的字段（F-4），必须显式声明。 */
 const abandonParentItemsField = Type.Optional(Type.Array(Type.String()));
 
-export const PlanInputSchema = strict({
+export const DesignInputSchema = strict({
+  clarifications: Type.Optional(Type.Array(ClarificationSchema)),
   testCases: Type.Array(WaveTestCaseSchema),
   tasks: Type.Array(WaveTaskSchema),
   files: Type.Array(WaveFileSchema),
   contracts: Type.Array(WaveContractSchema),
-  // testCommand 必填：运行时强制新 plan 提交带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
-  // 类型 PlanInput.testCommand 声明为可选（兼容存量字面量），schema 严格于此是“有意漂移”——故 sf8Plan 改单向断言。
+  // testCommand 必填：运行时强制新 design 提交带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
+  // 类型 DesignInput.testCommand 声明为可选（兼容存量字面量），schema 严格于此是“有意漂移”——故 sf8Plan 改单向断言。
   testCommand: Type.String(),
   abandonParentItems: abandonParentItemsField,
 });
 
 // ═══════════════════════════════════════════════════════════════
-// PlanSliceInput / PlanFeatureInput（slice / feature / epic plan）
+// DesignSliceInput / DesignFeatureInput（slice / feature / epic design）
 // ═══════════════════════════════════════════════════════════════
 
 const SplitSchema = strict({
@@ -231,7 +210,8 @@ const SliceErrorSpecSchema = strict({
   errorCode: Type.Optional(Type.String()),
 });
 
-export const PlanSliceInputSchema = strict({
+export const DesignSliceInputSchema = strict({
+  clarifications: Type.Optional(Type.Array(ClarificationSchema)),
   techChoices: Type.Array(SliceTechChoiceSchema),
   interfaces: Type.Array(SliceInterfaceSchema),
   dataModels: Type.Array(SliceDataModelSchema),
@@ -241,9 +221,15 @@ export const PlanSliceInputSchema = strict({
   abandonParentItems: abandonParentItemsField,
 });
 
-/** PlanFeatureInput=PlanEpicInput 共用（feature/epic 的 plan 都是 Plan 基类，只拆下层清单）。 */
-export const PlanFeatureInputSchema = strict({
+/** DesignFeatureInput=DesignEpicInput 共用（feature/epic 的 design 都是 Plan 基类，只拆下层清单）。 */
+export const DesignFeatureInputSchema = strict({
+  clarifications: Type.Optional(Type.Array(ClarificationSchema)),
   split: Type.Array(SplitSchema),
+  // spec 只验「是对象」不深校验内容（Record<string, unknown>）——spec 内容由
+  // handler 内 validateFeatureSpec 软校验（畸形 spec 返回 ok=false + failure guidance，
+  // agent 可重试），此处深校验会把软失败变成硬 throw。容器形态（clarifications 数组 +
+  // spec 对象）仍硬校验——`{}`/`spec:"nope"` 这类结构错误直接 exit 1。
+  spec: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   abandonParentItems: abandonParentItemsField,
 });
 
@@ -407,8 +393,7 @@ const BadTradeoffSchema = strict({
 
 const MissedGapSchema = strict({
   where: Type.Union([
-    Type.Literal("clarify"),
-    Type.Literal("plan"),
+    Type.Literal("design"),
     Type.Literal("design-review"),
     Type.Literal("execute"),
     Type.Literal("test"),
@@ -418,8 +403,7 @@ const MissedGapSchema = strict({
 
 const ProcessIssueSchema = strict({
   type: Type.Union([
-    Type.Literal("clarify"),
-    Type.Literal("plan"),
+    Type.Literal("design"),
     Type.Literal("split"),
     Type.Literal("replan"),
     Type.Literal("execute"),
@@ -484,6 +468,9 @@ export const RetrospectSliceInputSchema = strict({
 // ═══════════════════════════════════════════════════════════════
 
 const ArtifactRefSchema = strict({
+  // 注意：kind 是「产物类型分类」（spec/plan/review-report/...），与 E1 action 改名无关。
+  // "plan" 指代「设计文档」产物（E1 把领域 action clarify+plan→design 迁移后保留），
+  // 是稳定的产物分类标签，向后兼容历史 closeout evidence，不随 action 名迁移。
   kind: Type.Union([
     Type.Literal("spec"),
     Type.Literal("plan"),
@@ -544,7 +531,7 @@ export type HandlerLayer = "wave" | "slice" | "feature" | "epic";
 /**
  * (layer, action) → schema 映射表。
  *
- * 覆盖全部带 input 的 handler 入口（wave 10 + slice/feature/epic 各 7 = 31）：
+ * 覆盖全部带 input 的 handler 入口（wave 9 + slice/feature/epic 各 6 = 27）：
  *   - planning 层 execute 无 input 参数（handler 签名无 input），不校验不登记
  *   - create 无 input（flag 构造），不校验不登记
  *   - test/exec-review 是 wave 专属（planning 层 dispatch 已抛 illegal_transition），只登记 wave
@@ -552,8 +539,7 @@ export type HandlerLayer = "wave" | "slice" | "feature" | "epic";
  */
 export const INPUT_SCHEMAS: Readonly<Record<HandlerLayer, Partial<Record<string, TSchema>>>> = {
   wave: {
-    clarify: ClarifyInputSchema,
-    plan: PlanInputSchema,
+    design: DesignInputSchema,
     "design-review": DesignReviewInputSchema,
     execute: ExecuteInputSchema,
     test: TestInputSchema,
@@ -564,8 +550,7 @@ export const INPUT_SCHEMAS: Readonly<Record<HandlerLayer, Partial<Record<string,
     abort: AbortInputSchema,
   },
   slice: {
-    clarify: ClarifyInputSchema,
-    plan: PlanSliceInputSchema,
+    design: DesignSliceInputSchema,
     "design-review": DesignReviewInputSchema,
     retrospect: RetrospectSliceInputSchema,
     closeout: CloseoutInputSchema,
@@ -573,8 +558,7 @@ export const INPUT_SCHEMAS: Readonly<Record<HandlerLayer, Partial<Record<string,
     abort: AbortInputSchema,
   },
   feature: {
-    clarify: FeatureClarifyInputSchema,
-    plan: PlanFeatureInputSchema,
+    design: DesignFeatureInputSchema,
     "design-review": DesignReviewInputSchema,
     retrospect: RetrospectSliceInputSchema,
     closeout: CloseoutInputSchema,
@@ -582,8 +566,7 @@ export const INPUT_SCHEMAS: Readonly<Record<HandlerLayer, Partial<Record<string,
     abort: AbortInputSchema,
   },
   epic: {
-    clarify: ClarifyInputSchema,
-    plan: PlanFeatureInputSchema,
+    design: DesignFeatureInputSchema,
     "design-review": DesignReviewInputSchema,
     retrospect: RetrospectSliceInputSchema,
     closeout: CloseoutInputSchema,
@@ -600,7 +583,7 @@ export const INPUT_SCHEMAS: Readonly<Record<HandlerLayer, Partial<Record<string,
  * 错误文案以 `input.<field>` 前缀开头（T2.4 断言前缀匹配），field 取自 typebox errors[0].path
  * （如 /clarifications → clarifications；顶层错误 path 为空 → input）。
  *
- * @param action 当前 action 名（如 "clarify"）
+ * @param action 当前 action 名（如 "design"）
  * @param layer 当前 unit 的 scope（wave/slice/feature/epic）
  * @param input agent 提交的原始 input（unknown，任意形态）
  */

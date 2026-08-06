@@ -95,22 +95,28 @@ export function handleExecuteEpic(
 
   saveEpic(deps, unit);
 
-  // ── crossLayer：下沉到第一个 child feature ──
+  // ── crossLayer：下沉到第一个 child feature（serial 模式）──
+  // G5：recursive 模式（多 agent 并行 + steer 唤醒）不填 descend——父派 N 个 planning-agent
+  // 并行推进子层后空闲等唤醒，不自己 descend。serial 模式保持现状（下沉第一个 child）。
   const firstChildId = unit.executeResult.childUnitIds[0];
-  const crossLayer: CwNextAction["crossLayer"] | undefined = firstChildId !== undefined
-    ? {
-        kind: "descend",
-        targetLayer: "feature",
-        targetUnitId: firstChildId,
-        reason: `epic 已拆 ${unit.plan.split.length} 个 feature，去推进第一个 child feature`,
-      }
-    : undefined;
+  const crossLayer: CwNextAction["crossLayer"] | undefined =
+    deps.orchestration === "recursive" || firstChildId === undefined
+      ? undefined
+      : {
+          kind: "descend",
+          targetLayer: "feature",
+          targetUnitId: firstChildId,
+          reason: `epic 已拆 ${unit.plan.split.length} 个 feature，去推进第一个 child feature`,
+        };
 
   return {
     unitId: unit.id,
     status: unit.status,
     ok: true,
     children,
-    nextAction: buildEpicNextAction(unit, "execute", { crossLayer }),
+    nextAction: buildEpicNextAction(unit, "execute", {
+      crossLayer,
+      orchestration: deps.orchestration,
+    }),
   };
 }
