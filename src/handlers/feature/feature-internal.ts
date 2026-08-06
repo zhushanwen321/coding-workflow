@@ -214,7 +214,7 @@ export function buildFeatureNextAction(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action, { orchestration: opts?.orchestration }),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration: opts?.orchestration, childLayer: "slice" }),
   });
 
   return {
@@ -320,7 +320,7 @@ export function buildFeatureCurrentActionGuidance(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action, { orchestration }),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration, childLayer: "slice" }),
   });
 }
 

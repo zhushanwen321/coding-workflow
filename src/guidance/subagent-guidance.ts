@@ -41,13 +41,14 @@ interface Rule {
   /** 为什么是这个档位（一句话根因）。 */
   reason: string;
   /**
-   * 派发指导（recursive 模式渲染；serial 模式不渲染，保持现状）：派哪个 agent 模板 + 子 task 内容。
+   * 派发指导工厂（recursive 模式渲染；serial 模式不渲染，保持现状）：按 child 层返回
+   * 派哪个 agent 模板 + 子 task 内容。planning execute 按 child 层参数化（MF-1）。
    *
    * G1：从"是否委派+理由"升级到"派谁 + task 模板"——recursive 模式下主 agent 派完 subagent
    * 就空闲等唤醒，不再自己串行推进，故派发指令要落到具体的 agent 模板和 task 内容。
    */
-  dispatch?: {
-    /** 派哪个 agent 模板（如 wave-agent / review-agent / chain-agent）。 */
+  dispatch?: (childLayer?: ChildLayer) => {
+    /** 派哪个 agent 模板（如 wave-agent / planning-agent / review-agent）。 */
     agent: string;
     /** 子 task 内容模板（可含 <unitId> 等占位符，由调用方按需替换）。 */
     taskTemplate: string;
@@ -126,14 +127,11 @@ const PLANNING_RULES: Readonly<Record<string, Rule>> = {
     level: "forbidden",
     direction: "",
     reason: "planning execute 是拆分+创建子 unit+下沉的编排决策，主 agent 不可卸载",
-    // G1 + G5：recursive 模式 execute 后主 agent 不自己 descend，改为派 N 个 wave-agent
-    // 并行推进子层 + 空闲等 steer 唤醒（v4 多 agent 编排）。子 task 内容按 child 层不同：
-    // slice execute → child 是 wave；feature → slice；epic → feature。
-    dispatch: {
-      agent: "wave-agent",
-      taskTemplate:
-        "推进 child <unitId>：读 cw handoff --unitId <unitId> 获取目标与合同，然后按 guidance 依次走 cw design → design-review → execute → test → exec-review → retrospect → closeout，每步提交后调 cw 拿下一步 guidance；全部完成即结束，不要处理兄弟或父单元。",
-    },
+    // G1 + G5 + MF-1：recursive 模式 execute 后主 agent 不自己 descend，改为派 N 个子层 agent
+    // 并行推进子层 + 空闲等 steer 唤醒（v4 多 agent 编排）。派发按 child 层区分（见
+    // resolvePlanningExecuteDispatch）：slice→child wave→wave-agent（wave 全流程含 test/exec-review）；
+    // feature→child slice→planning-agent；epic→child feature→planning-agent（planning 流程不含 test/exec-review）。
+    dispatch: resolvePlanningExecuteDispatch,
   },
   retrospect: {
     level: "optional",
@@ -147,8 +145,53 @@ const PLANNING_RULES: Readonly<Record<string, Rule>> = {
   },
 };
 
+/**
+ * planning execute 的 task 模板（child=wave）：wave 全流程（含 test/exec-review）。
+ * wave 是执行层，跑完 design → design-review → execute → test → exec-review → retrospect → closeout。
+ */
+const WAVE_CHILD_DISPATCH_TASK =
+  "推进 child <unitId>：读 cw handoff --unitId <unitId> 获取目标与合同，然后按 guidance 依次走 cw design → design-review → execute → test → exec-review → retrospect → closeout，每步提交后调 cw 拿下一步 guidance；全部完成即结束，不要处理兄弟或父单元。";
+
+/**
+ * planning execute 的 task 模板（child=slice/feature）：planning 流程（不含 test/exec-review）。
+ * slice/feature 是 PlanningUnit，只走 design → design-review → execute → retrospect → closeout。
+ */
+const PLANNING_CHILD_DISPATCH_TASK =
+  "推进 child <unitId>：读 cw handoff --unitId <unitId> 获取目标与合同，然后按 guidance 依次走 cw design → design-review → execute → retrospect → closeout，每步提交后调 cw 拿下一步 guidance；全部完成即结束，不要处理兄弟或父单元。";
+
+/**
+ * 解析 planning execute 的派发指导（按 child 层参数化，MF-1）。
+ *
+ * - child=wave（slice execute）→ wave-agent + wave 全流程（含 test/exec-review）
+ * - child=slice（feature execute）/ child=feature（epic execute）→ planning-agent + planning 流程
+ * - childLayer 缺省 → 默认 wave（向后兼容：serial 模式不渲染派发段，故缺省无影响）
+ */
+function resolvePlanningExecuteDispatch(childLayer?: ChildLayer): {
+  agent: string;
+  taskTemplate: string;
+} {
+  switch (childLayer) {
+    case "slice":
+    case "feature":
+      return { agent: "planning-agent", taskTemplate: PLANNING_CHILD_DISPATCH_TASK };
+    case "wave":
+      return { agent: "wave-agent", taskTemplate: WAVE_CHILD_DISPATCH_TASK };
+    default:
+      // childLayer 缺省：默认 wave（仅 slice execute 的 child 是 wave）
+      return { agent: "wave-agent", taskTemplate: WAVE_CHILD_DISPATCH_TASK };
+  }
+}
+
 /** layer 参数合法值（对应 cw 的四层 unit）。 */
 export type GuidanceLayer = "wave" | "planning";
+
+/**
+ * planning execute 派发的子层（recursive 模式）。决定派哪个 agent + task 流程（MF-1）：
+ * - "wave"（slice execute 的 child）→ wave-agent + wave 全流程（含 test/exec-review）
+ * - "slice"（feature execute 的 child）/ "feature"（epic execute 的 child）
+ *   → planning-agent + planning 流程（不含 test/exec-review，PlanningUnit 无此 action）
+ */
+export type ChildLayer = "wave" | "slice" | "feature";
 
 /** buildSubagentGuidance 可选参数。 */
 export interface BuildSubagentGuidanceOpts {
@@ -157,6 +200,11 @@ export interface BuildSubagentGuidanceOpts {
    * （模板 dispatchGuidance）。缺省/"serial" 时输出与现状完全一致（不新增派发噪音）。
    */
   orchestration?: "serial" | "recursive";
+  /**
+   * planning execute 派发的子层（MF-1）：仅 layer="planning" + action="execute" + recursive
+   * 时读取，决定派 wave-agent 还是 planning-agent。planning 三层 handler 各自传入对应 child 层。
+   */
+  childLayer?: ChildLayer;
 }
 
 /**
@@ -221,8 +269,9 @@ export function buildSubagentGuidance(
   // recursive 模式：追加派发指导段 + 续 turn 指导段。
   const recursiveSections: string[] = [text];
   if (rule.dispatch !== undefined) {
+    const dispatchSpec = rule.dispatch(opts?.childLayer);
     recursiveSections.push(
-      `【派发】派 ${rule.dispatch.agent}：${rule.dispatch.taskTemplate}`,
+      `【派发】派 ${dispatchSpec.agent}：${dispatchSpec.taskTemplate}`,
     );
   }
   // 续 turn 指导（被 steer 唤醒后做什么）在阶段模板的 dispatchGuidance 字段（G1 §9），

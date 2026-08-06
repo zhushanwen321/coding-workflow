@@ -214,7 +214,7 @@ export function buildEpicNextAction(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action, { orchestration: opts?.orchestration }),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration: opts?.orchestration, childLayer: "feature" }),
   });
 
   return {
@@ -320,7 +320,7 @@ export function buildEpicCurrentActionGuidance(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("planning", action, { orchestration }),
+    commonGuidance: buildSubagentGuidance("planning", action, { orchestration, childLayer: "feature" }),
   });
 }
 
