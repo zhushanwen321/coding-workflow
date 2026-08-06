@@ -9,7 +9,7 @@
 ┌──────────────────────────────────────────────────────────┐
 │  CLI 层 (src/cli.ts)                                       │
 │  argv 解析 → stdin → buildParams → CwParams               │
-│  ADVANCE_ACTIONS(10) / READONLY_QUERIES(5) / create 路由   │
+│  ADVANCE_ACTIONS(9) / READONLY_QUERIES(5) / create 路由   │
 │  exit code 映射（0 正常 / 1 CwError·CwEngineError / 2 内部） │
 │  migrateLegacyV1Home() + 只读查询（tree/status/list/handoff/frontier）│
 ├──────────────────────────────────────────────────────────┤
@@ -24,7 +24,7 @@
 │ .ts            │ + freeze.ts   │ (CwStore)                 │
 ├───────────────┴───────────────┴──────────────────────────┤
 │  Action Handlers (src/handlers/)                           │
-│  wave: src/handlers/<action>.ts（11 个 wave handler）       │
+│  wave: src/handlers/<action>.ts（10 个 wave handler）       │
 │  planning: src/handlers/{epic,feature,slice}/<action>.ts    │
 │  事务内 gate → store 变更 → transitionStatus → buildNextAction │
 ├──────────────────────────────────────────────────────────┤
@@ -69,7 +69,7 @@ epic → feature → slice → wave
 | `cli` | `src/cli.ts` + `src/cli-params.ts` | CLI 入口：argv 解析、stdin、buildParams、exit code、只读查询路由；`cli-params.ts` 提供 per-action flag 白名单表（`FlagWhitelist` + 全局共享基础集 + `validateFlags`，unknown flag → CwError exit 1）+ per-command help 双入口（`cw help <action>` / `cw <action> --help` 同源复用白名单表） | 新增 action 时加 buildParams case + 白名单登记 + `ADVANCE_ACTIONS`/`READONLY_QUERIES` | [from: cw-guidance-hardening §system-architecture] |
 | `dispatch` | `src/dispatch.ts` | 统一入口纯函数：create 按 layer 路由 / 非 create `loadWorkUnit` → guard → 按 scope 分派 → `ActionResult`；定义 `CwEngineError` + `CwParams` 联合类型 | 新增 action/层时加 dispatch 子函数 switch case |
 | `state-machine` | `src/rules/state-machine.ts` | `WAVE_TRANSITIONS` + `PLANNING_TRANSITIONS` 两张表 + `guardWave`/`guardPlanning`（单重 guard）+ `nextWaveStatus`/`nextPlanningStatus` + `isWaveTerminal`/`isPlanningTerminal` | 新增 action/status 时改对应表 |
-| `handlers` | `src/handlers/`（wave 直放 + `{epic,feature,slice}/` 子目录）+ `validate-input.ts` | 各 action 的事务编排：gate 检查 → store 变更 → status 流转 → 拼下一动作；`internal.ts` 提供 `transitionStatus`/`buildNextAction`/`buildFailureNextAction`/`appendFailRecord`/`buildCreateIdempotentResult`；`validate-input.ts` 提供 typebox 全深度 input 校验（13 schema × 4 层 34 入口，CwError exit 1）；create handler 带幂等预检（layer 定界 + 终态特判 + idempotent 提示） | 新增 action 时加每层 handler + input schema 登记 | [from: cw-guidance-hardening §system-architecture] |
+| `handlers` | `src/handlers/`（wave 直放 + `{epic,feature,slice}/` 子目录）+ `validate-input.ts` | 各 action 的事务编排：gate 检查 → store 变更 → status 流转 → 拼下一动作；`internal.ts` 提供 `transitionStatus`/`buildNextAction`/`buildFailureNextAction`/`appendFailRecord`/`buildCreateIdempotentResult`；`validate-input.ts` 提供 typebox 全深度 input 校验（11 schema × 4 层 27 入口，CwError exit 1）；create handler 带幂等预检（layer 定界 + 终态特判 + idempotent 提示） | 新增 action 时加每层 handler + input schema 登记 | [from: cw-guidance-hardening §system-architecture] |
 | `gates` | `src/rules/gates/`（`design-review.ts`/`test.ts`/`exec-review.ts`/`retrospect.ts`/`types.ts`）+ `src/rules/freeze.ts` + `src/rules/replan.ts` | 各阶段机器检查纯函数（零 IO，返回 `GateResult`）；`freeze.ts` 的 `checkFreeze` 验 append-only 不变性；`replan.ts` 的 `computeImpact` 算影响面；`retrospect.ts` 带 key 防御（codeSmell/followup/tradeoff typeof 防御）+ failure 报告扩展（期望全集+缺失子集）；`test.ts` 的 `commitExists` 可复用（execute 前置校验 + test gate 纵深防御） | 新增 gate 时加检查函数 | [from: cw-guidance-hardening §system-architecture] |
 | `store` | `src/store/cw-store.ts` + `schema.ts` + `migrate-v1.ts` | `CwStore`：store.json 读写（POSIX 原子写 + 跨进程文件锁 + 内存事务）+ `WorkUnitRecord` upsert/load/findChildren | 存储格式变化时改 schema |
 | `core` | `src/core/`（`workunit.ts`/`status.ts`/`plan.ts`/`evidence.ts`/`judgments.ts`/`clarifications.ts`/`git.ts`/`errors.ts`/`frontier.ts`/`hierarchy.ts`） | 领域模型与类型（零依赖）；`CwError`（预期错误，exit 1）；`frontier.ts` 算 frontier 视图（非终态节点 + blocked/dependsOn）；`hierarchy.ts` 跨父子 WorkUnit 关系只读遍历 + `isDependencySatisfied`（依赖全终态判定，frontier 消费） | 核心契约，变更影响面大 |
@@ -97,21 +97,19 @@ epic → feature → slice → wave
 
 状态机定义在 `src/rules/state-machine.ts`，**两张表**分别对应两层 status 枚举（`src/core/status.ts`）：
 
-- **`WAVE_TRANSITIONS`**（ExecutionUnit/wave，`ExecutionStatus` 10 态）：9 主流程 + `abort` + `replan`。
-- **`PLANNING_TRANSITIONS`**（PlanningUnit：epic/feature/slice，`PlanningStatus` 8 态）：7 主流程（无 wave 的 `test`/`exec-review`）+ `abort` + `replan`。
+- **`WAVE_TRANSITIONS`**（ExecutionUnit/wave，`ExecutionStatus` 9 态）：8 主流程 + `abort` + `replan`。
+- **`PLANNING_TRANSITIONS`**（PlanningUnit：epic/feature/slice，`PlanningStatus` 7 态）：6 主流程（无 wave 的 `test`/`exec-review`）+ `abort` + `replan`。
 
-wave 主链（9 步）+ abort/replan 两个旁路：
+wave 主链（8 步）+ abort/replan 两个旁路：
 
 ```mermaid
 stateDiagram-v2
     [*] --> created: create
-    created --> clarifying: clarify
-    clarifying --> clarifying: clarify
-    clarifying --> planning: plan
-    planning --> planning: plan
-    planning --> design-reviewed: design-review
+    created --> designing: design
+    designing --> designing: design
+    designing --> design-reviewed: design-review
     design-reviewed --> design-reviewed: design-review
-    design-reviewed --> planning: plan
+    design-reviewed --> designing: design
     design-reviewed --> executing: execute
     executing --> tested: test
     tested --> exec-reviewed: exec-review
@@ -127,8 +125,8 @@ stateDiagram-v2
 PlanningUnit 主链少两步（无 `test`/`exec-review`）：`retrospect` 直接从 `executing` 进入；`replan.from` 不含 `retrospected`（retrospect 发现的问题走重建下层而非 replan 本层，只允许 `design-reviewed`/`executing` 触发）。完整 from→to 表见 [CONTEXT.md](./CONTEXT.md)「状态流转规则」与 `WAVE_TRANSITIONS`/`PLANNING_TRANSITIONS` 源码。
 
 设计要点：
-- **progressive action**（`clarify`/`plan`/`design-review`/`replan`）带 `progressive: true`——若 current 已是目标 `to`，允许原地再次触发（不改 status）。
-- **replan 是旁路**（`to = undefined`）：不改 status，但仍 append 一条 statusHistory（`from = to = current`），并要求 agent 回 `planning` 重走 `design-review`。
+- **progressive action**（`design`/`design-review`/`replan`）带 `progressive: true`——若 current 已是目标 `to`，允许原地再次触发（不改 status）。
+- **replan 是旁路**（`to = undefined`）：不改 status，但仍 append 一条 statusHistory（`from = to = current`），并要求 agent 回 `designing` 重走 `design-review`。
 - **终态**：`closed` / `aborted` 不可逆（`isWaveTerminal`/`isPlanningTerminal`）。
 - **单重 guard**：只有 `guard{Wave|Planning}`（查表防跳步），无纵深防御；`GuardErrorCode` 仅 `illegal_transition`。新 status 由 handler 侧的 `transitionStatus`（`src/handlers/internal.ts`）按 `next{Wave|Planning}Status` 算出后写入。
 
@@ -143,9 +141,8 @@ gate 是 CW 的核心价值——不信任 agent 的声明，只信机器验证�
 | action | gate / 校验 | 校验内容 | 出处 |
 |--------|------------|---------|------|
 | `create` | 无 gate | 工厂初始化全字段空态 | `src/handlers/create.ts` |
-| `clarify` | `validateFeatureSpec`（仅 feature） | feature spec 结构校验（typebox schema）；wave/slice/epic 无 gate | `src/rules/spec-schema.ts`、`src/handlers/feature/clarify.ts` |
-| `plan` | 无 gate | testCases/split 结构在 `design-review` 阶段才验 | `src/handlers/plan.ts` |
-| `design-review` | wave 9 个 / slice 12 个 / feature 14 个 / epic 11 个 | 结构完整性（wave: `test-cases-non-empty`/`test-cases-have-expected`/`no-sibling-wave-file-conflict`[跨 wave 文件冲突，handler 注入兄弟 plan.files]；slice: `tech-choice-non-empty`/`split-non-empty`/`split-dag-valid`/`duplicate-split-slug`；feature: FR-AC 强引用 `fr-ac-coverage`/`ac-reachable-from-fr`/`ac-non-empty` + `slice-split-*` + `duplicate-split-slug`；epic: `feature-split-*` + `duplicate-split-slug`）+ `all-decisions-resolved` + `inherited-item-ids-valid` + judgment 非空（`design-review-{necessity,sufficiency,alternatives}-*`/`design-review-{tradeoffs,risks}-present`）+ `layer-specific-non-empty`（各层专属维度） | `src/rules/gates/design-review.ts` |
+| `design` | 无 gate（feature 专属 `validateFeatureSpec`） | testCases/split 结构在 `design-review` 阶段才验；feature 的 input.spec 存在时先过 typebox 结构校验（防畸形 spec 入库），wave/slice/epic 无 | `src/handlers/design.ts`、`src/rules/spec-schema.ts` |
+| `design-review` | wave 9 个 / slice 14 个 / feature 16 个 / epic 13 个 | 结构完整性（wave: `test-cases-non-empty`/`test-cases-have-expected`/`no-sibling-wave-file-conflict`[跨 wave 文件冲突，handler 注入兄弟 plan.files]；slice: `tech-choice-non-empty`/`split-non-empty`/`split-dag-valid`/`split-fan-out-limit`/`duplicate-split-slug`；feature: FR-AC 强引用 `fr-ac-coverage`/`ac-reachable-from-fr`/`ac-non-empty` + `slice-split-*`（含 `slice-split-fan-out-limit`）+ `duplicate-split-slug`；epic: `feature-split-*`（含 `feature-split-fan-out-limit`）+ `duplicate-split-slug`）+ `all-decisions-resolved` + `inherited-item-ids-valid` + `inherited-item-ids-declared`（软 gate，severity=warn 不阻断）+ judgment 非空（`design-review-{necessity,sufficiency,alternatives}-*`/`design-review-{tradeoffs,risks}-present`）+ `layer-specific-non-empty`（各层专属维度） | `src/rules/gates/design-review.ts` |
 | `execute` | 无 gate | commit 存在性在 `test` gate 验（避免 executing 状态因 commit 无效卡死） | `src/handlers/execute.ts` |
 | `test` | 4 个 gate（wave 专属） | `commit-exists`（commitHash 真实存在，整个 cw 唯一 git 校验点）+ `tests-all-pass`（业务正确性机器验证）+ `test-cases-executed`（用例被执行）+ `test-references-design-review`（引用一致性，覆盖 tradeoffs/risks） | `src/rules/gates/test.ts` |
 | `exec-review` | 4 个 gate（wave 专属） | `exec-review-readability-non-empty` + `exec-review-architecture-non-empty` + `exec-review-overall-verdict-non-empty` + `exec-review-followup-actions-when-needed`（纯人审，验结构不验内容） | `src/rules/gates/exec-review.ts` |
@@ -171,7 +168,7 @@ gate fail 语义（[CONTEXT.md](./CONTEXT.md)「核心架构概念」）：
 - **内存事务**：`transaction(fn)` 在 `structuredClone` 的深拷贝副本上操作，正常→原子落盘，异常→丢弃副本（ROLLBACK）；支持嵌套（复用外层副本）。
 - **DAO**：`load(id)` / `loadAll()` / `save(unit)`（upsert，按 id）/ `findChildren(parentUnitId)`（按外键查子层）。
 
-中间产物（clarify/plan/design-review 等阶段 input JSON）落 `<workspacePath>/.cw/<slug>/<action>.json`（已 gitignore），不进 store.json。历史 v1 文件名/目录迁移见 `src/store/migrate-v1.ts`（`migrateLegacyV1Home` / `migrateLegacyV1Filename`，cli.ts 启动时调）。
+中间产物（design/design-review 等阶段 input JSON）落 `<workspacePath>/.cw/<slug>/<action>.json`（已 gitignore），不进 store.json。历史 v1 文件名/目录迁移见 `src/store/migrate-v1.ts`（`migrateLegacyV1Home` / `migrateLegacyV1Filename`，cli.ts 启动时调）。
 
 ## 外部依赖
 
