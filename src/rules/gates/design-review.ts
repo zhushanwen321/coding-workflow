@@ -59,7 +59,7 @@ export function testCasesNonEmpty(unit: ExecutionUnit): GateResult {
 export function testCommandNonEmpty(unit: ExecutionUnit): GateResult {
   const cmd = unit.plan.testCommand?.trim() ?? "";
   return cmd === ""
-    ? { passed: false, report: "test-command-non-empty: plan.testCommand 为空（plan 阶段必须填本 wave 的测试执行命令）" }
+    ? { passed: false, report: "test-command-non-empty: plan.testCommand 为空（design 阶段必须填本 wave 的测试执行命令）" }
     : { passed: true, report: `test-command-non-empty: testCommand 已配置` };
 }
 
@@ -277,7 +277,7 @@ export function designReviewSufficiencyComplete(
       report: "design-review-sufficiency-complete: sufficiency 缺失",
     };
   }
-  // guard: gaps/overlaps 可能 undefined（replan 等路径绕过 clarify 校验时）。
+  // guard: gaps/overlaps 可能 undefined（replan 等路径绕过 design 校验时）。
   // 给可读 fail 而非下面 s.gaps.length 访问 undefined 崩溃。
   if (!Array.isArray(s.gaps) || !Array.isArray(s.overlaps)) {
     return {
@@ -328,7 +328,7 @@ export function designReviewAlternativesNonEmpty(
 export function designReviewTradeoffsPresent(
   judgment: DesignReviewJudgment,
 ): GateResult {
-  // guard: tradeoffs 可能 undefined（replan 等路径绕过 clarify 校验时）。
+  // guard: tradeoffs 可能 undefined（replan 等路径绕过 design 校验时）。
   // 给可读 fail 而非 judgment.tradeoffs.length 访问 undefined 崩溃。
   if (!Array.isArray(judgment.tradeoffs)) {
     return {
@@ -835,7 +835,7 @@ export function frAcCoverage(unit: Feature): GateResult {
   const problems: string[] = [];
   for (const fr of spec.functionalRequirements) {
     if (fr.status !== "active") continue;
-    // guard: fr.ac 可能 undefined（replan 等路径绕过 clarify 校验时入库的畸形 FR）。
+    // guard: fr.ac 可能 undefined（replan 等路径绕过 design 校验时入库的畸形 FR）。
     // 给可读 fail 而非 fr.ac.length 访问 undefined 崩溃——这是原崩溃 bug 的根因点。
     if (!Array.isArray(fr.ac)) {
       problems.push(`${fr.id}（ac 字段缺失，应为引用 AC id 的数组）`);
@@ -1061,7 +1061,7 @@ export function runFeatureDesignReviewGates(unit: Feature): GateResult[] {
 // ═══════════════════════════════════════════════════════════════
 // epic design-review gate（epic §2.4 / epic §3.2）
 // ═══════════════════════════════════════════════════════════════
-// 来源：design-v5-epic.md §2.4（plan 阶段机器 gate 建议）、§3.2（layerSpecific 5 字段）。
+// 来源：design-v5-epic.md §2.4（design 阶段机器 gate 建议）、§3.2（layerSpecific 5 字段）。
 // 与 feature gate 的差异：
 //   - gate 接收 Epic（plan 是 Plan 基类只含 split，epic 不产 spec 也不产技术方案）
 //   - 结构完整性验 split 非空/DAG 无环（同 feature，转调通用 splitDagValidBySplits）

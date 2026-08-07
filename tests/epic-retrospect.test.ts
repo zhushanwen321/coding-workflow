@@ -539,7 +539,7 @@ function advanceChildFeatureToClosed(deps: CwDeps, featureId: string): void {
 }
 
 function advanceSliceToClosed(deps: CwDeps, sliceId: string): void {
-  // design 合并原 clarify + plan（用合法 SlicePlan）
+  // design（用合法 SlicePlan）
   dispatch({ action: "design", unitId: sliceId, input: makeValidSlicePlan() }, deps);
   dispatch({ action: "design-review", unitId: sliceId, input: { designReviewJudgment: makeValidSliceDesignReviewJudgment() } }, deps);
   dispatch({ action: "execute", unitId: sliceId, input: {} } as unknown as Parameters<typeof dispatch>[0], deps);

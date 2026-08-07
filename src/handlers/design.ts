@@ -4,9 +4,9 @@
  * 来源：v5 wave 附录 A §10（编排骨架）、§3（WavePlan 4 类条目：testCases/tasks/files/contracts）、
  *      state-machine WAVE_TRANSITIONS.design（progressive，from 含 design-reviewed）。
  *
- * 职责：append input.clarifications → 写 plan.{testCases,tasks,files,contracts} → status 流转（→ designing）→ save。
+ * 职责：append input.clarifications → 写 unit.plan.{testCases,tasks,files,contracts} → status 流转（→ designing）→ save。
  *      progressive：可在 created/designing/design-reviewed 重复触发（wave 特化：design-reviewed 后可回流改 testCases）。
- *      clarifications 是渐进式 append（不覆盖历史，合并原 clarify action 的产物写入）。
+ *      clarifications 是渐进式 append（不覆盖历史，承接 progressive append 的 clarifications 写入）。
  *
  * 不变量：design 无独立 gate（testCases 结构在 design-review 阶段才验，见 design-review.ts）。
  */
@@ -28,11 +28,11 @@ export function handleDesign(
   deps: CwDeps,
 ): ActionResult {
   validateInput("design", "wave", input);
-  // 写产物：append clarifications（progressive，不覆盖历史，承接原 clarify action）
+  // 写产物：append clarifications（progressive，不覆盖历史，承接 progressive append 的 clarifications）
   if (input.clarifications?.length) {
     unit.clarifications = [...unit.clarifications, ...input.clarifications];
   }
-  // 写 plan：整体替换 plan 的 4 类条目（wave 是叶子，split 恒为 []）
+  // 写 unit.plan：整体替换 unit.plan 的 4 类条目（wave 是叶子，split 恒为 []）
   unit.plan = {
     split: [],
     testCases: input.testCases,

@@ -8,7 +8,7 @@
  * 1. input.spec 存在时：先 validateFeatureSpec（结构校验，防畸形 spec 入库），通过后覆盖写
  *    unit.clarifications.spec（feature 的 spec 是 design 阶段产物，每次提交整体覆盖——
  *    spec 语义是“当前完整规格”，非渐进追加）
- * 2. append input.clarifications 到 unit.clarifications.clarifications（渐进式，承接原 clarify action）
+ * 2. append input.clarifications 到 unit.clarifications.clarifications（渐进式）
  * 3. 写 unit.plan.split = input.split（Plan 基类）→ status 流转 → save。
  *
  * 与 slice design 的关键差异：slice 写 SlicePlan（split + techChoices/interfaces/dataModels/
@@ -67,7 +67,7 @@ export function handleDesignFeature(
     unit.clarifications = { ...unit.clarifications, spec: input.spec };
   }
 
-  // append clarifications（渐进式，不覆盖历史，承接原 clarify action）
+  // append clarifications（渐进式，不覆盖历史）
   if (input.clarifications?.length) {
     unit.clarifications = {
       ...unit.clarifications,

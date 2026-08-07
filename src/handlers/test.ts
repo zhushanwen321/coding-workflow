@@ -79,8 +79,8 @@ export function handleTest(
       const scopeMissing = (unit.plan.testCommand?.trim() ?? "") === "";
       let hint: string;
       if (scopeMissing) {
-        hint = `\n\nplan.testCommand 缺失（空或纯空白）：本 wave 的测试执行命令未在 plan 阶段声明。
-回补 testCommand：design-reviewed 状态走 plan progressive（直接重新 plan 带 testCommand），executing 状态走 replan 旁路（replan input 带 testCommand）。
+        hint = `\n\nplan.testCommand 缺失（空或纯空白）：本 wave 的测试执行命令未在 design 阶段声明。
+回补 testCommand：design-reviewed 状态走 design progressive（直接重新 design 带 testCommand），executing 状态走 replan 旁路（replan input 带 testCommand）。
 这是 testsAllPass 与 testCasesExecuted 双 gate fail 的共同根因——补上 testCommand 后两个 gate 都会正常。`;
       } else {
         // 失败数超过此阈值提示 monorepo 测试目录问题（失败过多通常是跑错了目录）

@@ -131,7 +131,7 @@ export interface Slice extends PlanningUnit {
  *
  * 收窄字段类型：plan: Plan 基类（只 split）/ evidence: PlanningEvidence /
  * clarifications: FeatureClarification（容器对象，非数组）/ retrospectData: PlanningRetrospectData。
- * 与 slice 相比：feature 的 clarify 产物形态不对称（容器对象含 spec），
+ * 与 slice 相比：feature 的 design 产物形态不对称（容器对象含 spec），
  * plan 只用 Plan 基类（feature 不产技术方案，只拆 slice）。
  */
 export interface Feature extends PlanningUnit {
@@ -150,7 +150,7 @@ export interface Feature extends PlanningUnit {
  * 收窄字段类型：plan: Plan 基类（只 split）/ evidence: PlanningEvidence /
  * clarifications: Clarification[]（数组形态，同 slice/wave，非 feature 的容器对象）/
  * retrospectData: PlanningRetrospectData。与 feature 相比：epic 是 4 层顶层无父层
- *（parentUnitId 永远 undefined），不产 spec（FR/AC/UC 是 feature 的事），clarify 产物
+ *（parentUnitId 永远 undefined），不产 spec（FR/AC/UC 是 feature 的事），design 产物
  * 只是战略决策的 Clarification 数组。epic 的 plan 只用 Plan 基类（拆 feature 清单）。
  */
 export interface Epic extends PlanningUnit {

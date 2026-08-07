@@ -2,7 +2,7 @@
  * v1 feature design 结构校验 e2e 测试。
  *
  * 测畸形 spec（FR 缺 ac 数组）在 design 阶段被 validateFeatureSpec 软校验拦截
- * （E1 合并 clarify→design 后，spec 校验随 design action 走）：
+ * spec 校验随 design action 走：
  * - 返回 ok=false（而非崩溃或静默通过）
  * - error 含具体字段路径（functionalRequirements / ac）
  * - status 不流转（仍 created），failureCount 派生（可重试）

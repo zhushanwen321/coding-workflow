@@ -13,7 +13,7 @@
  * 3. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
  *    （action='abort', note='级联 abort'）、append abandonedRefs、save
  * 4. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
- * 5. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
+ * 5. 返回 ok=true + replanImpact + nextAction.action='design'（replan 后回 planning 重走 design-review）
  *
  * 与 feature replan 同构（跳过 freeze 校验）：
  * - feature/epic plan 是 Plan 基类，只有 split（Split 不继承 WorkUnitItem、无 status 字段，不可废弃），

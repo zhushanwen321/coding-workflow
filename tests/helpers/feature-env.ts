@@ -295,7 +295,7 @@ function featureExecute(unitId: string): DispatchParams {
 /**
  * 推进 feature 到 designing 状态（create → design）。
  *
- * 用 dispatch 走完整路径（create → design），design 合并原 clarify+plan：
+ * 用 dispatch 走完整路径（create → design）：
  * 写入合法 FeatureSpec + clarifications + plan.split。返回 feature unit id。
  *
  * @param deps stub CwDeps（store 注入）
@@ -369,7 +369,7 @@ export function advanceChildSlicesToClosed(deps: CwDeps, featureId: string): str
 
   for (const childId of childUnitIds) {
     // child slice 走完整生命周期到 closed（复用 slice 的 dispatch 流程）
-    // design 合并原 clarify + plan（用合法 SlicePlan，复用 slice-env 的 makeValidSlicePlan）
+    // design（用合法 SlicePlan，复用 slice-env 的 makeValidSlicePlan）
     dispatch(
       { action: "design", unitId: childId, input: makeValidSlicePlan() },
       deps,

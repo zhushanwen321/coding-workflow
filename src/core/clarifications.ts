@@ -2,12 +2,12 @@
  * v1 Clarification + Decision（领域模型，零依赖）。
  *
  * 来源：v5 model §5.9（Clarification）、§5.10（Decision）。
- * FeatureClarification/FeatureSpec 类型（feature 层 clarify 产物，见 workunit.ts 的 createFeature）。
+ * FeatureClarification/FeatureSpec 类型（feature 层 design 产物，见 workunit.ts 的 createFeature）。
  */
 import type { WorkUnitItem } from "./plan.js";
 
 // ═══════════════════════════════════════════════════════════════
-// Clarification（clarify 阶段产物）
+// Clarification（design 阶段产物）
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -49,7 +49,7 @@ export interface Decision {
 /**
  * model §6 / wave 附录 A 注释 — feature 的 clarification 容器。
  *
- * feature 的 clarify 产物形态不对称：epic/slice/wave 是 Clarification[]，
+ * feature 的 design 产物形态不对称：epic/slice/wave 是 Clarification[]，
  * feature 是 FeatureClarification（容器对象，含 spec）。
  * 本 topic 不实现 feature，但类型预留。
  */

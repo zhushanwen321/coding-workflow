@@ -17,10 +17,10 @@
  * 5. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
  *    （action='abort', note='级联 abort'）、append abandonedRefs、save
  * 6. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
- * 7. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
+ * 7. 返回 ok=true + replanImpact + nextAction.action='design'（replan 后回 planning 重走 design-review）
  *
  * 与 slice replan 的差异：
- * - slice 改 plan 4 类条目（techChoices/interfaces/dataModels/errorSpecs），feature 改 spec 3 类条目（FR/AC/UC）
+ * - slice 改 unit.plan 4 类条目（techChoices/interfaces/dataModels/errorSpecs），feature 改 spec 3 类条目（FR/AC/UC）
  * - 用 checkFreezeFeatureSpec（不是 checkFreezePlanning）
  * - feature 的 child 是 slice，级联 abort 会实际触发
  *

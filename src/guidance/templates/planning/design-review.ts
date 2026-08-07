@@ -18,7 +18,7 @@ import type { PlanningStageTemplate } from "./index.js";
  *（wave=WaveDesignReviewLayerSpecific，slice=SliceDesignReviewLayerSpecific，feature/epic 各自专属）。
  */
 export const PLANNING_DESIGN_REVIEW_TEMPLATE: PlanningStageTemplate = {
-  goal: "设计审查。对照需求验 plan 是否必要、充分、MECE、有替代/取舍/风险。",
+  goal: "设计审查。对照需求验 design 产出（unit.plan）是否必要、充分、MECE、有替代/取舍/风险。",
   constraint:
     "关键约束：designReviewJudgment 的 5 个字段都必须填（necessity/sufficiency/alternatives/tradeoffs/risks）；layerSpecific 不能为空（各层专属判断）；tradeoffs 和 risks 的 id 会被后续 retrospect 引用。",
 };

@@ -16,7 +16,7 @@
  * 5. 对返回的 aborted 列表里每个 child unit：加载、置 status='aborted'、append statusHistory
  *    （action='abort', note='级联 abort'）、append abandonedRefs、save
  * 6. append unit 自己的 statusHistory（from=to=current, action='replan', note=input.note）→ save
- * 7. 返回 ok=true + replanImpact + nextAction.action='plan'（replan 后回 planning 重走 design-review）
+ * 7. 返回 ok=true + replanImpact + nextAction.action='design'（replan 后回 planning 重走 design-review）
  *
  * 与 wave replan 的差异：
  * - 用 checkFreezePlanning（不是 checkFreeze）
@@ -72,7 +72,7 @@ export function handleReplanSlice(
   // ── before 快照（深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
 
-  // ── 改 plan：把 abandonedIds 命中的条目标 status='abandoned'（不删，append-only）──
+  // ── 改 unit.plan：把 abandonedIds 命中的条目标 status='abandoned'（不删，append-only）──
   const abandonedSet = new Set(input.abandonedIds);
   unit.plan.techChoices = unit.plan.techChoices.map((it) =>
     abandonedSet.has(it.id) ? ({ ...it, status: "abandoned" } as SliceTechChoice) : it,
@@ -88,7 +88,7 @@ export function handleReplanSlice(
   );
 
   // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
-  // 放在 freeze 校验之前——freeze 只校验 plan 条目不校验此字段，不会误报 violation。
+  // 放在 freeze 校验之前——freeze 只校验 unit.plan 条目不校验此字段，不会误报 violation。
   mergeAbandonParentItems(unit, input);
 
   // ── checkFreezePlanning：验 abandoned 条目核心字段未被改/未删 ──

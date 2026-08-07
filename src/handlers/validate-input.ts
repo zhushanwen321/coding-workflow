@@ -6,7 +6,7 @@
  * 全深度严格校验（D-016：嵌套对象全深度 Type.Object，默认 additionalProperties:false），
  * 失败 → CwError「input.<field> 校验失败: <message>」→ CLI 映射 exit 1（非 crash exit 2）。
  *
- * 背景：handler 原本零输入校验。实测 `clarify` 传 `{}` → TypeError crash exit 2；
+ * 背景：handler 原本零输入校验。实测传 `{}` → TypeError crash exit 2；
  * 传 `{"clarifications":"hello"}` → 静默存 `['h','e','l','l','o']`。本模块在最早期
  * 阶段（handler 入口、任何 mutation 之前）拦截畸形 input。
  *
@@ -464,9 +464,8 @@ export const RetrospectSliceInputSchema = strict({
 // ═══════════════════════════════════════════════════════════════
 
 const ArtifactRefSchema = strict({
-  // 注意：kind 是「产物类型分类」（spec/plan/review-report/...），与 E1 action 改名无关。
-  // "plan" 指代「设计文档」产物（E1 把领域 action clarify+plan→design 迁移后保留），
-  // 是稳定的产物分类标签，向后兼容历史 closeout evidence，不随 action 名迁移。
+  // 注意：kind 是「产物类型分类」（spec/plan/review-report/...），是稳定的产物分类标签。
+  // "plan" 指代「设计文档」产物，向后兼容历史 closeout evidence。
   kind: Type.Union([
     Type.Literal("spec"),
     Type.Literal("plan"),

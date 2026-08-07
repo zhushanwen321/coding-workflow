@@ -290,7 +290,7 @@ export interface ReplanInput extends AbandonParentItemsInput {
   /** replan 原因（写 statusHistory.note）。 */
   note: string;
   /**
-   * 仅 executing 状态在途 wave 补 testCommand 用（design-reviewed 走 plan progressive 主路径）。
+   * 仅 executing 状态在途 wave 补 testCommand 用（design-reviewed 走 design progressive 主路径）。
    * 若本次 replan 仅含此字段（abandonedIds/abandonParentItems/addedSpecItems 均空），
    * replan guidance 重定向到当前 status 映射的 action（executing→test）。
    */
@@ -358,7 +358,7 @@ export interface RetrospectSliceInput {
  * feature design handler 输入（Plan 基类，只 split）。
  *
  * 与 slice 的 DesignSliceInput 完全不同：feature 不产技术方案，design 只拆 slice 清单。
- * spec 可选——传入时覆盖本层 spec（合并 clarify 语义，E1-20）。
+ * spec 可选——传入时覆盖本层 spec。
  */
 export interface DesignFeatureInput extends AbandonParentItemsInput {
   split: Split[];

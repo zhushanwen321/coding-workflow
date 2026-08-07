@@ -82,7 +82,7 @@
 |---|---|
 | `tests/helpers/env.ts` | wave 测试基建：`createCwEnv`（tmp 目录 + CW_HOME 隔离 + 真实 CwStore + stub CwDeps）、`makeStubDeps`、wave unit 工厂 + 合法产物工厂（testCase/task/file/contract/judgment/retrospectData）、`commitWithFiles`（造 git commit 验证 extractChangedFiles） |
 | `tests/helpers/git.ts` | `setupGitRepo(repoDir)`：在 tmp 目录初始化真实 git 仓库 + 非空初始 commit（统一 user.email/name + README） |
-| `tests/helpers/slice-env.ts` | slice 测试基建：slice unit 工厂 + 合法 SlicePlan 条目工厂（techChoice/interface/dataModel/errorSpec/split）+ slice 阶段推进 helper（setupToSlicePlanning / setupToSliceDesignReviewed / setupSliceWithClosedWaves / advanceWaveToClosed） |
+| `tests/helpers/slice-env.ts` | slice 测试基建：slice unit 工厂 + 合法 SlicePlan 条目工厂（techChoice/interface/dataModel/errorSpec/split）+ slice 阶段推进 helper（setupToSliceDesigning / setupToSliceDesignReviewed / setupSliceWithClosedWaves / advanceWaveToClosed） |
 | `tests/helpers/feature-env.ts` | feature 测试基建：feature unit 工厂 + 合法 FeatureSpec/Plan/Judgment/RetrospectData 工厂 + feature 阶段推进 helper（经 dispatch 推进到各状态） |
 | `tests/helpers/epic-env.ts` | epic 测试基建：epic unit 工厂 + 合法 epic Split/Plan/Judgment/RetrospectData 工厂 + epic 阶段推进 helper |
 
@@ -173,9 +173,9 @@ dispatch-e2e 测试经 `dispatch({ action, unitId, input }, deps)` 在进程内�
 | helper | 作用 | 出处 |
 |---|---|---|
 | `createCwEnv()` / `env.cleanup()` | tmp + CW_HOME + 真实 CwStore + stub CwDeps | env.ts |
-| `setupToFeaturePlanning` / `setupToFeatureDesignReviewed` / `setupToFeatureExecuting` / `setupFeatureWithClosedSlices` | feature 经 dispatch 推进到各状态（含 child slice 全链 closed） | feature-env.ts |
-| `setupToSlicePlanning` / `setupToSliceDesignReviewed` / `setupSliceWithClosedWaves` | slice 推进到各状态（含 child wave 全链 closed） | slice-env.ts |
-| `setupToEpicClarified` / `setupToEpicPlanning` / `setupToEpicDesignReviewed` / `setupToEpicExecuting` / `setupEpicWithClosedFeatures` | epic 经 dispatch 推进到各状态（含 child feature/slice/wave 全链 closed） | epic-env.ts |
+| `setupToFeatureDesigning` / `setupToFeatureDesignReviewed` / `setupToFeatureExecuting` / `setupFeatureWithClosedSlices` | feature 经 dispatch 推进到各状态（含 child slice 全链 closed） | feature-env.ts |
+| `setupToSliceDesigning` / `setupToSliceDesignReviewed` / `setupSliceWithClosedWaves` | slice 推进到各状态（含 child wave 全链 closed） | slice-env.ts |
+| `setupToEpicDesigning` / `setupToEpicDesignReviewed` / `setupToEpicExecuting` / `setupEpicWithClosedFeatures` | epic 经 dispatch 推进到各状态（含 child feature/slice/wave 全链 closed） | epic-env.ts |
 | `advanceWaveToClosed` / `advanceChildSlicesToClosed` / `advanceChildFeaturesToClosed` | 单个 child unit 走完整生命周期到 closed | slice-env.ts / feature-env.ts / epic-env.ts |
 
 ### 编写模板（子进程 e2e）
@@ -237,8 +237,8 @@ describe("create wave happy path", () => {
 | action | flag（必填/常用） | input payload（`--input` / stdin） | 出处 |
 |---|---|---|---|
 | `create` | `--layer <wave\|slice\|feature\|epic>` + `--slug` + `--objective`（可选 `--parent` / `--basedOnParent`） | 无（参数走 flag） | cli.ts buildParams create 分支 |
-| `design` | `--unitId`（可选 `--abandonParentItems`） | wave: `{ testCases, tasks, files, contracts, clarifications? }`；slice: `{ techChoices, interfaces, dataModels, errorSpecs, split, clarifications? }`；feature/epic: `{ split, clarifications? }`（feature 可选 `spec` 容器形态） | DesignInput (handlers/types.ts:230) / DesignSliceInput (:329) / DesignFeatureInput (:368) |
-| `design-review` | `--unitId` | `{ designReviewJudgment }`（layerSpecific 按层 6/6/6/5 字段） | DesignReviewInput (handlers/types.ts:242) |
+| `design` | `--unitId`（可选 `--abandonParentItems`） | wave: `{ testCases, tasks, files, contracts, testCommand, clarifications? }`；slice: `{ techChoices, interfaces, dataModels, errorSpecs, split, clarifications? }`；feature/epic: `{ split, clarifications? }`（feature 可选 `spec` 容器形态） | DesignInput (handlers/types.ts:230) / DesignSliceInput (:329) / DesignFeatureInput (:368) |
+| `design-review` | `--unitId` | `{ designReviewJudgment }`（layerSpecific 按层 4/6/6/5 字段） | DesignReviewInput (handlers/types.ts:242) |
 | `execute` | `--unitId`；wave 需 `--commitHash` | wave: `{ commitHash }`（changedFiles 由 cw 从 commit 提取，agent 无需传）；slice/feature/epic: 无 input（按 plan.split 自动下沉子 unit） | ExecuteInput (handlers/types.ts:247) |
 | `test` | `--unitId` | `{ testJudgment }`（wave 专属） | TestInput (handlers/types.ts:257) |
 | `exec-review` | `--unitId` | `{ execReviewJudgment }`（wave 专属） | ExecReviewInput (handlers/types.ts:262) |

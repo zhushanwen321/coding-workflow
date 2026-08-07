@@ -6,7 +6,7 @@ description: >-
   coding task through the cw CLI. 唯一入口：bash 调 `cw create <layer>`，
   之后按返回的 nextAction.guidance 驱动全流程。guidance 是唯一导航——每步只给
   当前决策需要的最小信息（渐进式），agent 不需要记忆 action 列表。
-  Not for pure analysis/research/design. 不适合纯分析/调研任务——
+  Not for pure analysis/research/系统设计（无代码产出的任务）。
   只有要写代码+测试的编码任务才用 CW。
 ---
 
@@ -20,12 +20,12 @@ description: >-
 
 | 场景 | 判断 | 原因 |
 |------|------|------|
-| 新功能 / 复杂 bug / 重构模块 | 用 CW | 有明确目标，需要 plan→execute→test 完整链路 |
+| 新功能 / 复杂 bug / 重构模块 | 用 CW | 有明确目标，需要 design→execute→test 完整链路 |
 | 改 typo / 改配置值 / 加注释 | 不用 CW | 流程开销 >> 收益 |
 | 纯调研 / 可行性分析 / 架构评估 | 不用 CW | 无代码产出 |
-| 加简单工具函数（无外部依赖）| 不用 CW | 单文件单函数，无 plan 必要 |
+| 加简单工具函数（无外部依赖）| 不用 CW | 单文件单函数，无 design 必要 |
 
-**判断标准**：如果不会走完至少 plan → execute → test → closeout，就不要 create。
+**判断标准**：如果不会走完至少 design → execute → test → closeout，就不要 create。
 
 ## 核心理念
 
@@ -51,8 +51,10 @@ description: >-
 epic    （战略目标）       execute → 拆出多个 feature
   └─ feature （需求规格）    execute → 拆出多个 slice
        └─ slice  （技术方案）  execute → 拆出多个 wave
-            └─ wave   （施工执行） 唯一产生代码的层（写 testCases/files/contracts）
+            └─ wave   （施工执行） 唯一产生代码的层（写 testCases/tasks/files/contracts）
 ```
+
+> 注：`plan.split` 是 WorkUnit 的拆分清单字段（`unit.plan.split`）。
 
 **关键认知**：选 1 个上层 unit 即可，下层会自动拆解。例如一个 feature 的需求可能拆出 3 个 slice、每个 slice 拆出 2 个 wave——你只需建那 1 个 feature，execute 时 cw 自动建 6 个 wave 孙单元，guidance 引导逐个推进。**不要手动建多个同级 unit 去凑覆盖面**。
 
@@ -64,8 +66,8 @@ epic    （战略目标）       execute → 拆出多个 feature
 
 | 规模（预估工作量） | 推荐起步层 | 理由 |
 |-------------------|-----------|------|
-| **1 个 wave 能搞定**（单文件 / 几个函数 / 明确的小 bug） | 直接 `wave` | 无需 plan 设计，直接施工 |
-| **多个 wave，但共享一套技术方案** | 直接 `slice` | slice 的 plan 设计接口/数据模型，execute 自动拆出多个 wave |
+| **1 个 wave 能搞定**（单文件 / 几个函数 / 明确的小 bug） | 直接 `wave` | 无需 design，直接施工 |
+| **多个 wave，但共享一套技术方案** | 直接 `slice` | slice 的 design 写接口/数据模型，execute 自动拆出多个 wave |
 | **需求模糊，需要规格化后才能拆技术方案** | `feature` | feature 先出 FR/AC/UC，execute 拆多个 slice |
 | **多个独立功能方向、需战略级拆解** | `epic` | execute 拆多个 feature |
 
@@ -74,7 +76,7 @@ epic    （战略目标）       execute → 拆出多个 feature
 #### 反模式（必读）
 
 - ❌ **单个 slice 维度的任务，为每个 wave 手动建一个 slice** → 产出多个碎 slice。正解：建 **1 个 slice**，execute 时 cw 自动按 plan.split 拆出多个 wave，guidance 引导 descend。
-- ❌ **能 1 个 wave 搞定却上 slice** → 多走 plan/design-review 的开销，无收益。
+- ❌ **能 1 个 wave 搞定却上 slice** → 多走 design/design-review 的开销，无收益。
 - ❌ **手动建多个 wave 挂同一个 parent** → 没有 slice 层的技术方案聚合，接口/数据模型割裂。正解：建 1 个 slice 让它拆。
 
 核心原则：**选能覆盖全貌的最小层，宁低勿高；上层会自动拆解下层，不要手动凑**。
@@ -103,8 +105,8 @@ cw create epic    --slug <slug> --objective "..."
   "status": "created",
   "ok": true,
   "nextAction": {
-    "action": "clarify",
-    "guidance": "## 位置\n[wave:auth-w1] 状态：created\n\n## 下一步\n澄清需求...\n命令：cw clarify --unitId wave:auth-w1 --input @clarify.json\n\n## input schema\n...",
+    "action": "design",
+    "guidance": "## 位置\n[wave:auth-w1] 状态：created\n\n## 下一步\n写 design（testCases/tasks/files/contracts）...\n命令：cw design --unitId wave:auth-w1 --input .cw/auth-w1/design.json\n\n## input schema\n...",
     "unitPath": { "layer": "wave", "unitId": "wave:auth-w1", "rootUnitId": "wave:auth-w1" }
   }
 }
@@ -117,11 +119,21 @@ cw create epic    --slug <slug> --objective "..."
   - `crossLayer` 非空 → 跨层（下一个 unitId = `crossLayer.targetUnitId`）
   - `crossLayer` 为空 + status 终态（closed/aborted）→ 流程结束
 
-### wave 的 9 步流程
+### 两套主流程（因层而异）
+
+**wave（ExecutionUnit）8 步**——唯一产生代码的层：
 
 ```
-create → clarify → plan → design-review → execute → test → exec-review → retrospect → closeout
+create → design → design-review → execute → test → exec-review → retrospect → closeout
 ```
+
+**planning 层（epic/feature/slice，PlanningUnit）6 步**——无 test / exec-review（不跑代码测试、不做代码品味审查）：
+
+```
+create → design → design-review → execute → retrospect → closeout
+```
+
+> planning 层的 `execute` 不接收 input、不记录 commit，而是按 plan.split 自动创建下层 unit。wave 的 `execute` 才记录 commitHash。
 
 每个阶段的 **input schema、关键约束、异常处理** 全部内嵌在 guidance 里，按 nextAction 走即可获得。
 
@@ -129,24 +141,45 @@ create → clarify → plan → design-review → execute → test → exec-revi
 
 | action | 命令 | input 方式 |
 |--------|------|-----------|
-| `clarify` | `cw clarify --unitId <id> --input .cw/<slug>/clarify.json` | JSON 文件或 stdin |
-| `plan` | `cw plan --unitId <id> --input .cw/<slug>/plan.json` | JSON 文件或 stdin |
+| `design` | `cw design --unitId <id> --input .cw/<slug>/design.json` | JSON 文件或 stdin（**四层 input 不同，见下表**） |
 | `design-review` | `cw design-review --unitId <id> --input .cw/<slug>/review.json` | JSON 文件或 stdin |
-| `execute` | `cw execute --unitId <id> --commitHash <sha>` | flags |
-| `test` | `cw test --unitId <id> --input .cw/<slug>/test.json` | JSON 文件或 stdin |
-| `exec-review` | `cw exec-review --unitId <id> --input .cw/<slug>/review.json` | JSON 文件或 stdin |
+| `execute` | `cw execute --unitId <id> --commitHash <sha>` | flags（wave 记 commit；planning 层忽略 commitHash，按 split 下沉） |
+| `test` | `cw test --unitId <id> --input .cw/<slug>/test.json` | JSON 文件或 stdin（**wave 专属**） |
+| `exec-review` | `cw exec-review --unitId <id> --input .cw/<slug>/review.json` | JSON 文件或 stdin（**wave 专属**） |
 | `retrospect` | `cw retrospect --unitId <id> --input .cw/<slug>/retrospect.json` | JSON 文件或 stdin |
 | `closeout` | `cw closeout --unitId <id> --input .cw/<slug>/closeout.json` | JSON 文件或 stdin |
 | `replan` | `cw replan --unitId <id> --abandonedIds '["T2"]' --note "原因"` | flags |
 | `abort` | `cw abort --unitId <id> [--reason "原因"]` | flags |
 
-`--input` 支持**文件路径**（如 `.cw/<slug>/plan.json`，相对项目根）或 `-`（stdin 读管道）。
+`--input` 支持**文件路径**（如 `.cw/<slug>/design.json`，相对项目根）或 `-`（stdin 读管道）。
 
 [MANDATORY] **不要直接传 JSON 字符串**——CLI 会把整段 JSON 当文件路径解析，报 `--input 文件不存在: .../{"clarifications":...}`。正确写法二选一：
 - 写文件：`echo '{...}' > .cw/<slug>/<action>.json && cw <action> --input .cw/<slug>/<action>.json`
 - 用 stdin：`echo '{...}' | cw <action> --input -`
 
 guidance 给的命令已自带 `.cw/<slug>/<action>.json` 路径，中间产物按此路径写入即可（`.cw/` 已在 .gitignore，不进 git）。
+
+### design 的 input（四层各异，最易出错）
+
+design 是写设计方案 + 追加需求澄清问答的 action（progressive，可多次调用追加 clarifications）。四层 input 顶层都是裸对象（无包裹），但字段差异大：
+
+| 层 | 必填字段 | 可选字段 |
+|----|---------|---------|
+| **wave**（DesignInput） | `testCases, tasks, files, contracts, testCommand`（无 split，wave 是叶子） | `clarifications?, abandonParentItems?` |
+| **slice**（DesignSliceInput） | `split, techChoices, interfaces, dataModels, errorSpecs` | `decisions?, clarifications?, abandonParentItems?` |
+| **feature**（DesignFeatureInput） | `split` | `clarifications?, spec?（覆盖本层需求规格）, abandonParentItems?` |
+| **epic**（DesignEpicInput） | `split` | `clarifications?, abandonParentItems?`（epic 不消费 spec） |
+
+> `split` 是 plan.split 数据字段（拆出下层 unit 的清单）；`abandonParentItems` 声明脱离 parent 的哪些条目（append-only）；`clarifications` 是 progressive append 的澄清问答。
+>
+> guidance 的 schema block 会从 `handlers/types.ts` 的 Input 接口自动提取并内联展开完整字段结构，**直接照 schema block 写即可**，上表是快速参考。
+
+### design 的 progressive 语义
+
+`design` / `design-review` / `replan` 都是 **progressive action**——可在当前 status 原地多次调用：
+- `design` 在 `created/designing/design-reviewed` 都能调，多次调用会 append `clarifications`（不会覆盖已写的 testCases/split 等）。需要补充澄清时直接再调一次 `cw design`，不必开新 unit。
+- `design-review` 在 `designing/design-reviewed` 都能调，多次审查 OK。
+- `replan` 是旁路（不改 status），在 `design-reviewed` 之后的多个 status 都能调。
 
 ## guidance 的渐进式特性
 
@@ -155,25 +188,27 @@ guidance 是**渐进式**的——每个 action 返回的 guidance 只包含「�
 - **正常走（ok=true）**：三段式（位置 / 下一步+命令 / input schema+关键约束）
 - **gate fail（ok=false）**：四段式（位置 / 问题 / 怎么修 / 递进提示）
   - 第 1 次 fail：只说问题
-  - 第 2 次 fail 起：加三出口（回到 clarify / replan / abort）
-  - 第 5 次 fail：强烈建议先 abort 跳出重审
+  - 第 2 次 fail 起：加三出口（回到 design 当前阶段 / replan / abort）
+  - 第 5 次 fail：强烈建议先 abort 跳出重审（**cw 永不阻断**，熔断只换文案，不阻止重试）
 
 **replan 的三层渐进**（解决「agent 不知道 replan 存在就调不了」的悖论）：
-1. plan 阶段的 guidance 关键约束段提及「条目 execute 后冻结，修改走 replan」
+1. design 阶段的 guidance 关键约束段提及「条目 execute 后冻结，修改走 replan」
 2. gate fail 递进提示里提到 replan 出口
 3. replan action 触发后才给完整操作细节（影响面 + append-only 机制 + 重走 design-review）
 
 ## 跨层导航（closeout 后）
 
-wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
-- 有 parent + 有未终态兄弟 wave → 指向下一个兄弟（横向）
-- 有 parent + 所有兄弟终态 → 指向父单元 retrospect（回溯）
+子单元 closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
+- 有 parent + 有未终态兄弟 → 指向下一个兄弟（横向 sibling）
+- 有 parent + 所有兄弟终态 → 指向父单元 retrospect（回溯 ascend）
 - 无 parent → 流程结束（孤立终点）
+
+> 递归编排模式下 crossLayer 路由会被抑制（改由调度器派发），见末尾「进阶：递归编排模式」。
 
 ## 数据存储
 
-- 状态库：`~/.cw/<encodedCwd>/store.json`（per-cwd 隔离）
-- unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`）
+- 状态库：`~/.cw/<encodedCwd>/store.json`（per-cwd 隔离，`CW_HOME` 环境变量可覆盖默认 `~/.cw`）
+- unitId 格式：`{scope}:{slug}`（如 `wave:auth-w1`、`slice:auth::token-exchange`，child slug = `${parentSlug}::${splitSlug}`）
 - 跨 session 接续 / 交接：`cw handoff --unitId <id>`（首选，见下方只读查询）
 
 ## 只读查询命令（不经 dispatch、不写 store）
@@ -182,9 +217,9 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 |------|------|
 | `cw list [flags]` | unit 表格定位（见下方「list 定位 topic」），扫当前/跨 cwd 用 |
 | `cw tree [--unitId <id>]` | 以某 unit 为根的父子树（缩进），看拆解结构用 |
-| `cw status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传） |
-| `cw handoff --unitId <id>` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
-| `cw frontier --root <id>` | 以某 unit 为根，列出所有非终态节点 + 各自可推进性（`blocked`/`blockedReason`/`dependsOn`）。**递归调度器（BFS）的主循环驱动**——每轮调取可推进节点。也供 agent / 人查看树的整体进度 |
+| `cw status --unitId <id>` | 单 unit 的完整 JSON dump，程序化消费用（含全部字段原样透传，`--full` 不截断） |
+| `cw handoff --unitId <id> [--scope self\|upstream\|full]` | **交接首选**——单 unit 的五段式叙述性摘要（目标/已定决策/当前位置与下一步/涉及文件与契约/历史），给 agent 或人读 |
+| `cw frontier --root <id>` | 以某 unit 为根，列出所有非终态节点 + 各自可推进性（`blocked`/`blockedReason`/`dependsOn`）。**递归调度器（BFS）的主循环驱动**——每轮调取可推进节点（见「进阶：递归编排模式」） |
 
 ### list 定位 topic（新 agent 接手的第一步）
 
@@ -194,8 +229,8 @@ wave closeout 后，`nextAction.action = undefined`，读 `crossLayer`：
 - 无参数 → 当前 cwd 最近 10 个（**90% 接手场景用这个**）
 - `--limit N` / `--offset N` → 分页（默认 limit=10）
 - `--grep <keyword>` → slug + objective 大小写不敏感 substring 过滤
-- `--all` → 跨所有 cwd 遍历（扫 CW_HOME 全部 store，按 repo/branch 分组带 group header）
-- `--cwd <path>` → 指定查别的 cwd（不 cd，与 `--all` 互斥）
+- `--all` → 跨所有 cwd 遍历（扫 CW_HOME 全部 store，按 repo/branch 分组带 group header；**与 `--cwd` 互斥**）
+- `--cwd <path>` → 指定查别的 cwd（**必须绝对路径**，不 cd）
 - `--long` → 追加 children/created 列
 - `--layer epic|feature|slice|wave` → 按 scope 过滤
 
@@ -217,7 +252,7 @@ cw list --grep "关键词"           # 或 --all 跨 cwd
 cw handoff --unitId <id>         # 五段式 markdown，开干
 ```
 
-**交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（clarify 问答 + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
+**交接场景**（开发到一半换 agent 接手）：接手 agent 跑 `cw handoff --unitId <id>` 即可重建认知——输出含目标、之前的设计决策（design 含 clarifications + design-review 取舍/风险）、当前停在哪、下一步该跑什么命令 + 阶段 guidance（input schema + 关键约束）、涉及的文件与接口契约、完整变更历史。handoff 复用 buildNextAction 生成 guidance，与实际跑 action 返回的 guidance 逐字一致。
 
 - wave / slice / feature / epic 四层均完整支持（handoff 按 scope 调对应的 build{Scope}NextAction 生成 guidance）
 - handoff 不落盘文件（守「store 是唯一真相」不变量），需保存输出自己 redirect
@@ -232,31 +267,15 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 
 ## 失败模式
 
-### input 顶层包裹（layer-specific）
-各 action 的 `--input` JSON 顶层结构因 action 和 **layer** 而异。guidance 的 schema block 会显示完整的顶层包裹 + 内联展开的字段结构（从 `handlers/types.ts` 的 Input 接口自动提取），**直接照 schema block 写即可**。以下是快速参考：
-
-**plan（四层各异，最易出错）**：
-- `plan`（wave）：`{testCases,tasks,files,contracts}`（**无 split**；可选 `abandonParentItems`）
-- `plan`（slice）：`{split,techChoices,interfaces,dataModels,errorSpecs,decisions?}`（与 wave 完全不同）
-- `plan`（feature/epic）：`{split}`（仅 split）
-
-**其他 action 的顶层包裹**：
-- `clarify`（wave/slice/epic）：`{clarifications:[...]}`
-- `clarify`（feature）：`{clarifications:[...], spec:{...}}`（多 spec 字段）
-- `design-review`：`{designReviewJudgment:{...}}`
-- `test`（wave 专属）：`{testJudgment:{...}}`
-- `exec-review`（wave 专属）：`{execReviewJudgment:{...}}`
-- `retrospect`（wave）：`{retrospectData:{...}}`（RetrospectData）
-- `retrospect`（slice/feature/epic）：`{retrospectData:{...}}`（PlanningRetrospectData，多 deliveryVerdict/childUnitIdsEvidence/splitFulfillment）
-- `closeout`：`{summary?, artifacts?:[...]}`
-- `replan`：`{abandonedIds, note}`（可选 `abandonParentItems` / feature 的 `addedSpecItems`）
-
-**execute 特殊**（用 flag 不用 input）：`cw execute --unitId <id> --commitHash <sha>`（wave 记录 commit；planning 层按 plan.split 自动创建子层 unit，忽略 commitHash）。
-
-历史教训：plan input 误用 `{plan:{...}}` 包裹时，cw 不报错直接把 undefined 存入 store（plan 阶段无 gate），到 design-review 才 crash。**plan 阶段的错误 input 不会立即报错，会在下游 gate 延迟失败**——写完后用 `cw status --unitId <id>` 确认 plan 字段正确存储了。
-
 ### illegal_transition（跳阶段）
 调了状态机不允许的 action → CwEngineError（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。
+
+### design input 写错的延迟失败
+design 阶段**无 gate**，错误 input 不会立即报错——cw 会把它存入 store，到 design-review 才 crash。
+
+注意：design input 误用 `{design:{...}}` 多包了一层时，cw 不报错直接把 undefined 存入 store，到 design-review 才 crash。**design 阶段的错误 input 会在下游 gate 延迟失败**——写完后用 `cw status --unitId <id>` 确认字段正确存储了。
+
+> 顶部包裹规则：design 是裸对象（无包裹，直接 `{testCases,...}` 或 `{split,...}`）；design-review/test/exec-review/retrospect 是 `{xxxJudgment:{...}}` / `{retrospectData:{...}}` 包裹；closeout 是 `{summary?, artifacts?}`；replan 是扁平 `{abandonedIds, note}`。guidance 的 schema block 会显示完整结构，照写即可。
 
 ### gate fail
 返回 `ok: false` + `gateResults` + 异常 guidance（四段式）。**不要慌**——guidance 的「问题」段会告诉你具体哪里错了，「怎么修」段告诉你修正后重提什么命令。
@@ -266,6 +285,64 @@ unitId 不对（跨 worktree/子目录/session）。`node -p "process.cwd()"` �
 
 ### 任务不适合走 CW（abort）
 发现任务走偏、不适用时，和用户确认后调 `cw abort --unitId <id>`。status 流到 aborted 终态。
+
+## 进阶：递归编排模式（条件触发）
+
+> ⚠️ 本节是**可选的进阶模式**，依赖外部生态。默认线性模式（agent 直接 bash 调 cw，按上文流程走）已能满足所有场景。**仅当下面三个前提同时满足时**才考虑切换到递归编排。缺任一前提，请忽略本节，继续用线性模式。
+
+### 三前提（缺一不可）
+
+递归编排模式 = 一个主 agent 当调度器，用 `cw frontier` BFS 驱动多个 cw 适配 subagent 并行推进整棵 WorkUnit 树（而非单 agent 线性逐层 descend）。它依赖以下生态，**三者必须同时满足**：
+
+1. **处于 pi coding-agent 环境**（或基于 pi 的 coding-agent）：
+   ```bash
+   [ "$PI_CODING_AGENT" = "true" ] && echo "PI_ENV=yes" || echo "PI_ENV=no"
+   ```
+2. **cw 适配 subagent 已被 pi 发现并加载到系统提示词**——当前 `<available_subagents>` 段应含：`planning-agent` / `wave-agent` / `dev-agent` / `review-agent` / `merge-agent`（注意 `planner` ≠ `planning-agent`，必须全名精确匹配）。
+3. **cw-tool 已安装**（提供 cw_planning / cw_wave / cw_dev / cw_review 四个 role-restricted 工具）：
+   ```bash
+   ls -d "$HOME/.pi/agent/npm/node_modules/@zhushanwen/pi-cw-tool" 2>/dev/null \
+     && echo "CW_TOOL=npm-installed" || echo "CW_TOOL=not-installed"
+   # 或 xyz-agent dev-link 环境：echo "${XYZ_EXTENSION_PATHS:-}" | tr ':' '\n' | grep -i cw-tool
+   ```
+
+任一为假 → 留在默认线性模式。
+
+### 生态归属（重要）
+
+递归编排生态**不属于 coding-workflow**，属于 **xyz-agent 项目**：
+
+| 组件 | 归属 | 作用 |
+|------|------|------|
+| recursive-split skill | xyz-agent | 教主 agent 如何当调度器 |
+| cw-tool（@zhushanwen/pi-cw-tool） | xyz-agent | 把 cw 命令包成 pi 工具，按 role 限制可调 action |
+| cw 适配 agent（planning/wave/dev/review/merge-agent） | xyz-agent（project-agent） | 各层执行/审查/合并的专用角色 |
+
+> cw 适配 agent 是 xyz-agent 的 **project-agent**（定义在 `.agents/agents/`），仅当 workspaceRoot 指向 xyz-agent worktree 时才被 pi 的 `project-agents` 发现源自动发现。在别的项目里默认发现不了——需要 link 到全局发现源（`~/.pi/agent/agents/` 或 `~/.agents/agents/`）或打成 npm pi-package 安装。
+
+### 调用链变化（条件满足时）
+
+- **默认线性模式**：agent 直接 bash 调 `cw`（本 skill 上文所有内容）。
+- **递归编排模式**：主 agent 只 `cw create <顶层>` + 派发第一个 planning-agent；cw 适配 agent **不直接 bash 调 cw**，而是通过 cw-tool 的 4 个 role 工具调（工具白名单硬约束「层主不写码 / review 不改被审物」）；主 agent 用 `cw frontier --root <顶层>` 每轮取可推进节点决定派谁，子 agent 完成后 steer 唤醒主 agent（事件驱动，无轮询）。
+
+### frontier 作为调度主循环
+
+`cw frontier --root <rootUnitId>` 返回整棵树的非终态节点 + 各自 `blocked`/`dependsOn`。调度器每轮：
+1. 调 frontier 取 `advanceableCount`（非 blocked 节点）
+2. 对每个可推进节点，按 scope 派对应 cw 适配 agent（planning 层 → planning-agent，wave 层 → wave-agent）
+3. 各 subagent 线性走 cw 流程（design → design-review → execute → ...）
+4. 子完成唤醒父，父汇总后继续 frontier 下一轮，直到全树 closed
+
+> 失败恢复分 L0-L3（gate fail 原地改 / replan / 父级 replan 级联 / 人工介入），细节见 xyz-agent 的 recursive-split skill `design-v4.md`。
+
+### 不满足前提时怎么办
+
+如果想用递归编排但环境不满足：
+- 条件①假（非 pi 环境）：递归编排依赖 pi 的 subagent 派发机制，无法用，坚持线性模式。
+- 条件②假（subagent 未发现）：把 cw 适配 agent 的 `.md` link 到 `~/.pi/agent/agents/` 或 `~/.agents/agents/`，重启 session。
+- 条件③假（cw-tool 未装）：`pi install npm:@zhushanwen/pi-cw-tool`（纯 pi 环境）或在 xyz-agent worktree 用 dev-link skill 的 `link-local.sh cw-tool`。
+
+具体安装/配置步骤以 xyz-agent 项目的 recursive-split skill 和 cw-tool README 为准（本 skill 不负责该生态的安装）。
 
 ## Self-Check
 

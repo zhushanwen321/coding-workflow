@@ -21,8 +21,8 @@ WorkUnit 是 4 层模型（epic/feature/slice/wave），plan 的形态因层而�
 | 层 | Plan 内容 | 落地核对对象 |
 |----|----------|-------------|
 | wave | `WavePlan`：testCases / tasks / **files** / contracts（`src/core/plan.ts:64`） | wave 的 commitHash 对应的实际变更文件 |
-| slice | `SlicePlan`：techChoices / **interfaces** / **split**（`src/core/plan.ts:122`） | split 拆出的子 wave 是否都被创建并产代码 |
-| epic/feature | `Plan` 基类：只含 split | split 拆出的下层 unit 是否存在 |
+| slice | `SlicePlan`：techChoices / interfaces / dataModels / errorSpecs / split（`src/core/plan.ts:122`） | split 拆出的子 wave 是否都被创建并产代码 |
+| epic/feature | `Plan` 基类：split（核心）+ 可选 `spec`（不参与落地核对） | split 拆出的下层 unit 是否存在 |
 
 plan 数据存于 `~/.cw/<encodedCwd>/store.json` 的 `workUnits[].plan`（扁平存储，子 unit 通过 `parentUnitId` 外键关联）。
 实际变更文件取 `git diff main...HEAD --name-only`，或从 store.json 里 wave 的 evidence.commitHash 反查。

@@ -50,5 +50,5 @@ npm run build       # tsc 编译到 dist/
 | [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |
 | [TEST-STRATEGY.md](./TEST-STRATEGY.md) | 测试策略（金字塔边界 / mock 约定 / 不可回退基线） |
 | [DESIGN-LOG.md](./DESIGN-LOG.md) | 设计历史索引（主题台账 / ADR 索引） |
-| [docs/architecture-review.md](./docs/architecture-review.md) | 早期架构评审笔记（三层防线设计历史） |
-| [docs/architecture-three-layers.md](./docs/architecture-three-layers.md) | 三层防线详细设计（证据层 / 数据源） |
+| [docs/archive/architecture-review.md](./docs/archive/architecture-review.md) | 早期架构评审笔记（三层防线设计历史，已归档） |
+| [docs/archive/architecture-three-layers.md](./docs/archive/architecture-three-layers.md) | 三层防线详细设计（证据层 / 数据源，已归档） |

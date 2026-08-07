@@ -2,7 +2,7 @@
 
 Agent-agnostic CLI that keeps AI coding agents on track through a state-machine pipeline: `create → design → design-review → execute → test → exec-review → retrospect → closeout`.
 
-CW 不假设调用方有任何特定 agent harness 的能力（无 skill 加载、无 workflow 引擎）。agent 只需通过 bash 调用 `cw`，按返回的 `nextAction.guidance` 推进。guidance 内嵌完整阶段提示词（spec / plan / execute / review / retrospect 方法论），agent 不需要记忆命令列表。
+CW 不假设调用方有任何特定 agent harness 的能力（无 skill 加载、无 workflow 引擎）。agent 只需通过 bash 调用 `cw`，按返回的 `nextAction.guidance` 推进。guidance 内嵌完整阶段提示词（design / design-review / execute / test / exec-review / retrospect 方法论），agent 不需要记忆命令列表。
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ created → designing → design-reviewed → executing → tested → exec-revi
 
 agent 调 `cw create` 建一个 WorkUnit（4 层：epic/feature/slice/wave），之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
 
-gate 机制在每个阶段做机器检查（plan 结构、commit 真实性、TDD 红灯、测试结果重算）。gate fail 时 `nextAction.action` 指回当前阶段 retry，并附 `mustFix` 说明原因。
+gate 机制在每个阶段做机器检查（plan 结构、commit 真实性、testCases 覆盖校验、测试结果重算）。gate fail 时 `nextAction.action` 指回当前阶段 retry，并附 `mustFix` 说明原因。
 
 ## Skill
 

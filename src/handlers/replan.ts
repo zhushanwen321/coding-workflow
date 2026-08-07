@@ -15,7 +15,7 @@
  * 6. save → 返回 ActionResult + replanImpact
  *
  * 注意：replan 不改 status（旁路 action）。agent replan 后必须回 planning 重新 design-review
- * （刷新 designReviewJudgment 匹配新 plan，§8.3）——该回流走 plan progressive（plan.from 含 design-reviewed）。
+ * （刷新 designReviewJudgment 匹配新 unit.plan，§8.3）——该回流走 design progressive（design.from 含 design-reviewed）。
  */
 import type {
   WaveContract,
@@ -59,7 +59,7 @@ export function handleReplan(
   // ── before 快照（structuredClone 保证深拷贝，对比 append-only 不变性）──
   const before = structuredClone(unit);
 
-  // ── 改 plan：把 abandonedIds 命中的条目标 status="abandoned"（不删，append-only 保历史）──
+  // ── 改 unit.plan：把 abandonedIds 命中的条目标 status="abandoned"（不删，append-only 保历史）──
   const abandonedSet = new Set(input.abandonedIds);
   unit.plan.testCases = unit.plan.testCases.map((it) =>
     abandonedSet.has(it.id) ? ({ ...it, status: "abandoned" } as WaveTestCase) : it,
@@ -75,7 +75,7 @@ export function handleReplan(
   );
 
   // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems。
-  // 放在 freeze 校验之前——freeze 只校验 plan 条目不校验此字段，不会误报 violation。
+  // 放在 freeze 校验之前——freeze 只校验 unit.plan 条目不校验此字段，不会误报 violation。
   mergeAbandonParentItems(unit, input);
 
   // ── checkFreeze：验 abandoned 条目核心字段未被改/未删 ──
@@ -105,7 +105,7 @@ export function handleReplan(
   const allUnits = allRecords as unknown as ExecutionUnit[];
   const replanImpact = computeImpact(allUnits, input.abandonedIds);
 
-  // per-wave testCommand 旁路：executing 状态在途 wave 补测试命令（design-reviewed 走 plan progressive）。
+  // per-wave testCommand 旁路：executing 状态在途 wave 补测试命令（design-reviewed 走 design progressive）。
   if (input.testCommand !== undefined) {
     unit.plan.testCommand = input.testCommand;
   }
@@ -137,10 +137,10 @@ export function handleReplan(
     testCommandOnly || !planReachable
       ? (WAVE_STATUS_TO_ACTION[unit.status] ?? "test")
       : "design";
-  // 无回流通道的内容 replan：blockedHint 替换「重新提交方案 + 命令」段（plan 语义不适用，不推非法命令）。
+  // 无回流通道的内容 replan：blockedHint 替换「重新提交方案 + 命令」段（design 语义不适用，不推非法命令）。
   const blockedHint =
     !testCommandOnly && !planReachable
-      ? `当前状态（${STATUS_DISPLAY[unit.status] ?? unit.status}）无法回流 replan 内容变更：plan/design-review 在此状态均 illegal，只能先执行 ${nextAction} 或 abort 终止。`
+      ? `当前状态（${STATUS_DISPLAY[unit.status] ?? unit.status}）无法回流 replan 内容变更：design/design-review 在此状态均 illegal，只能先执行 ${nextAction} 或 abort 终止。`
       : "";
   const nextCommand = buildCommand(nextAction, `--unitId ${unit.id}`, `--input ${inputFilePath(unit.slug, nextAction)}`);
   const schemaText = getSchemaText(nextAction);
@@ -156,10 +156,10 @@ export function handleReplan(
     replanCount,
     impactSummary,
     nextCommand,
-    // #1 D-017：replan 后下一步是 plan，透传 plan 的 input schema 段。
+    // #1 D-017：replan 后下一步是 design，透传 design 的 input schema 段。
     schemaText,
     blockedHint,
-    // 状态感知审视引导：无回流通道时省略「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）。
+    // 状态感知审视引导：无回流通道时省略「重新 design 并重新 design-review」句（与 blockedHint 同屏矛盾）。
     planReachable,
   });
 

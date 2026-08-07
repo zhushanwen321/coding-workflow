@@ -1,5 +1,7 @@
 # TaskShape 架构
 
+> ⚠️ **已归档（历史档案）**：TaskShape 可插拔验证策略抽象已被 [ADR-0007](../adr/0007-v1-isolation-no-engine.md) 推翻，`src/shapes/` 已删除，当前 v1 实现不存在该抽象，仅作历史档案保留。
+
 > CW 的可插拔验证策略架构。支持多种开发模式（TDD / 纯删除 / 文档），通过 TaskShape 统一配置轴驱动。
 
 ## 概述

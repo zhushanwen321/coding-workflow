@@ -54,7 +54,7 @@ import { PLANNING_RETROSPECT_TEMPLATE } from "./retrospect.js";
  * planning 各 action 名 → 对应阶段模板。
  *
  * create 无 guidance（入口 action，下一步即 design）。replan 复用 design 模板的 constraint
- *（replan 改完 plan 重走 design-review，§6.1）——w2 接入时由调用方决定是否单独取 constraint。
+ *（replan 改完 unit.plan 重走 design-review，§6.1）——w2 接入时由调用方决定是否单独取 constraint。
  *
  * key 是 PlanningAction 名（create/design/design-review/execute/retrospect/closeout/abort/replan），
  * create/abort/replan 无独立模板（undefined），查表时调用方自行降级。

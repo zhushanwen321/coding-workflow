@@ -203,7 +203,7 @@ if (!isWave && action === "execute") {
       "unitId": "wave:xxx::w2",
       "scope": "wave",
       "status": "created",
-      "nextAction": "clarify",
+      "nextAction": "design",
       "blocked": true,
       "blockedReason": "依赖 wave:xxx::w1 未完成",
       "dependsOn": ["wave:xxx::w1"],
@@ -307,6 +307,8 @@ w3: guidance-gates-spec — C3+C4+C5+C6，改 render.ts(renderDecisionsSection) 
 
 ## 5. CONTEXT.md 更新清单（实施差异说明）
 
+> ✅ **已解决（2026-08 复核）**：CONTEXT.md 已同步更新——`frontier` 词表行已加（L58）、`READONLY_QUERIES` 已改为 5 只读（L61）、`ADVANCE_ACTIONS` 标注为 create + 9 推进（L61）。注：本报告原述「action 数=16」系 ADVANCE 误计为 10（`cli.ts:162` 注释同源 bug），实测 `ADVANCE_ACTIONS`=9（`cli.ts:150-160`），故 create+9=10 VALID + 5 只读 = **15 个 action**；CONTEXT.md L40「## 15 个 Action」即此正确值。以下差异说明保留作历史记录。
+
 > 本节原标题「待办」，因实现已完成，改为记录实施差异：原计划同步更新仓库根 `CONTEXT.md`（按用户要求，新增字段进词表），**实际代码已落地（action 数=16、`frontier` 命令、`children`/`blocked` 字段均已实现），但 `CONTEXT.md` 文件本身未被本次开发更新**——它仍停留在「15 种操作 / 15 个 Action / READONLY_QUERIES = 4 只读」的旧文本，缺 frontier / children / blocked / lastStatusHistoryAction 词表行。
 
 **代码侧已确认的现状**（与下表对照）：
@@ -357,14 +359,14 @@ w3: guidance-gates-spec — C3+C4+C5+C6，改 render.ts(renderDecisionsSection) 
 
 `replan` action 是**旁路**——不改 status，只 append 一条 `statusHistory`（`action="replan"`）并做影响面计算/级联 abort。这意味着 frontier 的 Pass 1 用 `status→action` 映射（`WAVE_STATUS_TO_ACTION` / `PLANNING_STATUS_TO_ACTION`，frontier.ts:22-46）算出的 `nextAction` **反映不出"刚发生了 replan"**。
 
-递归调度器（xyz-agent spec-f 的 BFS 主循环）需要知道某个 unit 刚被 replan 过——因为 replan 后通常需要回 plan 阶段重做（即便 status 仍停在 `executing`）。
+递归调度器（xyz-agent spec-f 的 BFS 主循环）需要知道某个 unit 刚被 replan 过——因为 replan 后通常需要回 design 阶段重做（即便 status 仍停在 `executing`）。
 
 ### 7.2 改动：FrontierNode 新增 lastStatusHistoryAction
 
 `FrontierNode`（frontier.ts:59-78）新增字段：
 
 ```typescript
-/** statusHistory 最后一条的 action（如 "replan"/"clarify"/"plan"/"execute"）。
+/** statusHistory 最后一条的 action（如 "replan"/"design"/"execute"）。
  *  供递归调度器做 replan 后备检测——replan 是旁路（status 不变），frontier 的
  *  status→action 映射不反映"需回 plan"，调度器靠此字段识别 replan 发生。 */
 lastStatusHistoryAction?: string;
@@ -375,7 +377,7 @@ lastStatusHistoryAction?: string;
 ### 7.3 对 xyz-agent spec-f 的影响
 
 - **契约新增（向后兼容）**：frontier 输出每个 node 多一个可选字段 `lastStatusHistoryAction`。spec-f 的消费代码（§2.3 的 `queryFrontier`/`topoSort`）**不读这个字段也能工作**——它是后备检测的补充信号，非必需。
-- **推荐用法**：调度器优先用 `nextAction`（status 派生），当 `lastStatusHistoryAction === "replan"` 时降级为"该 unit 需要回 plan 阶段处理 replan 影响面"，而非按 status 推进。
+- **推荐用法**：调度器优先用 `nextAction`（status 派生），当 `lastStatusHistoryAction === "replan"` 时降级为"该 unit 需要回 design 阶段处理 replan 影响面"，而非按 status 推进。
 - **§2.2 字段清单**：原表列 frontier 输出字段时未含此项，实际已含（见下表更新）。
 
 ### 7.4 §2.2 字段清单更新

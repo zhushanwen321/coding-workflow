@@ -1,5 +1,7 @@
 # 三层防线：详细设计
 
+> ⚠️ **已归档（历史档案）**：本文描述的「证据层」（解析测试报告判定 pass、commit diff 内容校验）当前未实现——test gate 现为 tests-all-pass（信 testCommand 退出码），wave commit 校验为 commit-exists（git cat-file）。仅作历史设计档案保留。
+
 > 配套 [architecture-review.md](./architecture-review.md)。本文档展开第二层（证据层）和第三层（数据源）的设计细节。
 
 ---

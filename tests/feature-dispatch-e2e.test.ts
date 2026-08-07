@@ -540,7 +540,7 @@ describe("dispatch feature execute multi-split", () => {
       { action: "create", input: { slug: "e2e-multi", objective: "o", layer: "feature" } },
       env.deps,
     );
-    // design 合并原 clarify+plan：合法 spec（过 FR-AC gate）+ 2-split
+    // design：合法 spec（过 FR-AC gate）+ 2-split
     dispatch(
       {
         action: "design",
