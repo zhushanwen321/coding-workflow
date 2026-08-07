@@ -5,7 +5,7 @@
 #   1. npm uninstall -g @zhushanwen/coding-workflow（preuninstall 自动调用）
 #   2. 手动 bash scripts/uninstall-skill.sh
 #
-# 只删 symlink，不删 .bak 备份（用户手动恢复用）。
+# 只删 symlink。实体目录/文件不自动删（可能是用户自定义 skill）。
 set -euo pipefail
 
 SKILL_NAME="cw-cli"

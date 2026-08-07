@@ -35,27 +35,8 @@ for SKILL_NAME in "${SKILL_NAMES[@]}"; do
     target="$base/$SKILL_NAME"
     mkdir -p "$base"
 
-    # 已存在（symlink 或目录）→ 检查是否需要处理
-    if [ -e "$target" ] || [ -L "$target" ]; then
-      current=""
-      if [ -L "$target" ]; then
-        current="$(readlink "$target")"
-      fi
-
-      # 悬空 symlink（目标已不存在，如 npm uninstall / nvm 切版本后）→ 直接删除重建
-      if [ -L "$target" ] && [ ! -e "$target" ]; then
-        echo "→ $target 是悬空 symlink（目标已不存在），重建"
-        rm -f "$target"
-      elif [ "$current" = "$SKILL_SRC" ]; then
-        echo "✓ $target 已指向正确源，跳过"
-        continue
-      else
-        # 指向不同源或不是 symlink → 直接删除重建（两个源都是固定的，不需要备份）
-        rm -rf "$target"
-        echo "→ $target 已存在但指向不同位置，删除后重建"
-      fi
-    fi
-
+    # 无条件重建：无论悬空、指向别处、指向正确源，统一 rm -rf + ln -s
+    rm -rf "$target"
     ln -s "$SKILL_SRC" "$target"
     echo "✓ $target → $SKILL_SRC"
   done
