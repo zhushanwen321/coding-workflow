@@ -11,7 +11,7 @@
 │  argv 解析 → stdin → buildParams → CwParams               │
 │  ADVANCE_ACTIONS(9) / READONLY_QUERIES(5) / create 路由   │
 │  exit code 映射（0 正常 / 1 CwError·CwEngineError / 2 内部） │
-│  migrateLegacyV1Home() + 只读查询（tree/status/list/handoff/frontier）│
+│  只读查询（tree/status/list/handoff/frontier）                        │
 ├──────────────────────────────────────────────────────────┤
 │  Engine 层 (src/dispatch.ts)                               │
 │  create: 按 input.layer 路由（epic/feature/slice/wave）     │
@@ -37,7 +37,7 @@
 
 ```
 agent bash 调 cw <action> [flags]
-  → cli.ts: argv 解析 + migrateLegacyV1Home() + stdin/buildParams 构造 CwParams
+  → cli.ts: argv 解析 + stdin/buildParams 构造 CwParams
   → dispatch.ts:
       create     → 按 input.layer 路由 handleCreate{Epic|Feature|Slice|}（不 loadWorkUnit）
       非 create  → loadWorkUnit(store, unitId)（按 scope 返回 Epic|Feature|Slice|ExecutionUnit）
@@ -71,7 +71,7 @@ epic → feature → slice → wave
 | `state-machine` | `src/rules/state-machine.ts` | `WAVE_TRANSITIONS` + `PLANNING_TRANSITIONS` 两张表 + `guardWave`/`guardPlanning`（单重 guard）+ `nextWaveStatus`/`nextPlanningStatus` + `isWaveTerminal`/`isPlanningTerminal` | 新增 action/status 时改对应表 |
 | `handlers` | `src/handlers/`（wave 直放 + `{epic,feature,slice}/` 子目录）+ `validate-input.ts` | 各 action 的事务编排：gate 检查 → store 变更 → status 流转 → 拼下一动作；`internal.ts` 提供 `transitionStatus`/`buildNextAction`/`buildFailureNextAction`/`appendFailRecord`/`buildCreateIdempotentResult`；`validate-input.ts` 提供 typebox 全深度 input 校验（11 schema × 4 层 27 入口，CwError exit 1）；create handler 带幂等预检（layer 定界 + 终态特判 + idempotent 提示） | 新增 action 时加每层 handler + input schema 登记 | [from: cw-guidance-hardening §system-architecture] |
 | `gates` | `src/rules/gates/`（`design-review.ts`/`test.ts`/`exec-review.ts`/`retrospect.ts`/`types.ts`）+ `src/rules/freeze.ts` + `src/rules/replan.ts` | 各阶段机器检查纯函数（零 IO，返回 `GateResult`）；`freeze.ts` 的 `checkFreeze` 验 append-only 不变性；`replan.ts` 的 `computeImpact` 算影响面；`retrospect.ts` 带 key 防御（codeSmell/followup/tradeoff typeof 防御）+ failure 报告扩展（期望全集+缺失子集）；`test.ts` 的 `commitExists` 可复用（execute 前置校验 + test gate 纵深防御） | 新增 gate 时加检查函数 | [from: cw-guidance-hardening §system-architecture] |
-| `store` | `src/store/cw-store.ts` + `schema.ts` + `migrate-v1.ts` | `CwStore`：store.json 读写（POSIX 原子写 + 跨进程文件锁 + 内存事务）+ `WorkUnitRecord` upsert/load/findChildren | 存储格式变化时改 schema |
+| `store` | `src/store/cw-store.ts` + `schema.ts` | `CwStore`：store.json 读写（POSIX 原子写 + 跨进程文件锁 + 内存事务）+ `WorkUnitRecord` upsert/load/findChildren | 存储格式变化时改 schema |
 | `core` | `src/core/`（`workunit.ts`/`status.ts`/`plan.ts`/`evidence.ts`/`judgments.ts`/`clarifications.ts`/`git.ts`/`errors.ts`/`frontier.ts`/`hierarchy.ts`） | 领域模型与类型（零依赖）；`CwError`（预期错误，exit 1）；`frontier.ts` 算 frontier 视图（非终态节点 + blocked/dependsOn）；`hierarchy.ts` 跨父子 WorkUnit 关系只读遍历 + `isDependencySatisfied`（依赖全终态判定，frontier 消费） | 核心契约，变更影响面大 |
 | `guidance` | `src/guidance/`（`build-guidance.ts`/`cross-layer.ts`/`failure-hint.ts`/`prefix-builder.ts`/`schema-injector.ts`/`subagent-guidance.ts`/`templates/`） | 拼入 `nextAction.guidance` 的纯文本提示词（正常三段式 / 异常四段式），agent 的唯一导航来源；`cross-layer.ts` 算 closeout 回溯方向（sibling/ascend/undefined）；schema 段取 **nextAction**（非刚完成 action）；`prefix-builder.ts` 渲染剥离 layer: 前缀（单 layer 显示）；replan guidance 透传 schema 段 | 阶段方法论变化时改 template | [from: cw-guidance-hardening §system-architecture] |
 | `readonly` | `src/readonly/`（`render.ts`/`cross-cwd.ts`/`index.ts`） | 只读查询（tree/status/list/handoff/frontier）的渲染——不经 dispatch、不写 store；frontier 输出含聚合字段（advanceableCount/blockedCount）；list 尾行总览 + next-step 建议（--all 带 --cwd）；status 大字段默认截断 + `--full` 全量 | 查询输出格式变化时改 render | [from: cw-guidance-hardening §system-architecture] |
@@ -162,13 +162,13 @@ gate fail 语义（[CONTEXT.md](./CONTEXT.md)「核心架构概念」）：
 `CwStore`（`src/store/cw-store.ts`）是 store.json 持久化层，单集合扁平存储：
 
 - **存储布局**：`~/.cw/<encodedCwd>/store.json`（per-cwd 隔离），`encodeCwd` 把路径分隔符 `/`、`\` → `__`（`src/store/schema.ts`）。`CW_HOME` 环境变量可覆盖默认 `~/.cw`（必须绝对路径）。
-- **文件结构**（`CwJsonFile`，`src/store/schema.ts:22`）：`{ schemaVersion?, repoMeta?, workUnits: WorkUnitRecord[] }`。`workUnits` 是扁平集合，子 unit 通过 `parentUnitId` 外键关联（不嵌套）；`repoMeta`（git 元信息）首次 save 时回填。
+- **文件结构**（`CwJsonFile`，`src/store/schema.ts:22`）：`{ schemaVersion?, repoMeta?, workUnits: WorkUnitRecord[] }`。`schemaVersion` 为写侧版本标记（`emptyFile` 写入 `SCHEMA_VERSION`，读侧不做版本判断）。`workUnits` 是扁平集合，子 unit 通过 `parentUnitId` 外键关联（不嵌套）；`repoMeta`（git 元信息）首次 save 时回填。
 - **POSIX 原子写**：write tmp → `fsync(tmp)` → `rename` → `fsync(dir)`，任一阶段 crash 磁盘上要么旧文件完整要么新文件完整。
 - **跨进程文件锁**：lockfile + `O_EXCL` 原子创建 + stale 检测（超 30s 或持有进程已死）+ fingerprint 二次比对防 TOCTOU 误删。
 - **内存事务**：`transaction(fn)` 在 `structuredClone` 的深拷贝副本上操作，正常→原子落盘，异常→丢弃副本（ROLLBACK）；支持嵌套（复用外层副本）。
 - **DAO**：`load(id)` / `loadAll()` / `save(unit)`（upsert，按 id）/ `findChildren(parentUnitId)`（按外键查子层）。
 
-中间产物（design/design-review 等阶段 input JSON）落 `<workspacePath>/.cw/<slug>/<action>.json`（已 gitignore），不进 store.json。历史 v1 文件名/目录迁移见 `src/store/migrate-v1.ts`（`migrateLegacyV1Home` / `migrateLegacyV1Filename`，cli.ts 启动时调）。
+中间产物（design/design-review 等阶段 input JSON）落 `<workspacePath>/.cw/<slug>/<action>.json`（已 gitignore），不进 store.json。
 
 ## 外部依赖
 

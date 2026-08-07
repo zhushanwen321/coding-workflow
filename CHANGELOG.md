@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.4.0] - 2026-08-07
+
+### Miscellaneous
+- chore: remove ~/.v1 → ~/.cw data migration (migrate-v1.ts) (TBD)
+- chore: remove schemaVersion read-side compat check/warning (TBD)
+- chore: remove ExecuteInput.changedFiles compat field (TBD)
+- chore: remove cw.config.json testRunner.command compat reading (TBD)
+- chore: narrow guardTestCommand to string-only signature (drop undefined branch) (TBD)
+- docs: sync NFR/CONTEXT/ARCHITECTURE/TEST-STRATEGY with zero-historical-compat contract (TBD)
+
 ## [v1.1.0] - 2026-08-02
 
 ### Features

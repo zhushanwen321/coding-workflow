@@ -72,12 +72,12 @@
 
 ## 兼容性
 
-### V-1 旧 store 向前兼容
+### V-1 不做历史兼容：store 只读写当前格式
 
-- **约束**：加载旧版本创建的 store（缺少 `schemaVersion` / `repoMeta` 或新加的 WorkUnit 字段）必须正常工作——缺 `schemaVersion` 视为 1，未知字段以 unknown 透传不丢弃，不得抛错或拒绝整个 store。
-- **为什么**：CW 的 WorkUnit 数据持久化在用户磁盘，升级 CW 版本后旧 store 必须可读可用。若新字段缺失就报错，用户升级后历史 WorkUnit 全部失效，这是不可接受的数据迁移风险。向前兼容保证"新版本读旧数据"始终成立，字段渐进式增强。
-- **验证**：`schemaVersion?` 缺失时补 1（src/store/schema.ts `CwJsonFile` 注释 + `loadFileData` 实现）；`WorkUnitRecord` 以 `[key: string]: unknown` 透传未知字段（src/store/schema.ts）；`migrateLegacyV1Home`（src/store/migrate-v1.ts，把旧 `~/.v1` 迁到 `~/.cw`，按 `repoMeta.recordedAt` 合并）
-- **例外**：缺少 `repoMeta` 的旧 store 在首次推进类 action 时回填（git 命令失败时降级为空串，不抛）。
+- **约束**：store 只读写当前格式，不做任何历史兼容——旧版本数据（`~/.v1` 目录、`_v1.json` 文件名、缺 `schemaVersion` 的 store）不迁移、不识别、不兜底；`schemaVersion` 仅作写侧版本标记（`emptyFile` 写入 `SCHEMA_VERSION`），读侧不做版本判断/告警。
+- **为什么**：CW 定位为当前格式契约，升级即换新 store，无数据迁移诉求。保留"新版本读旧数据"兼容会让代码长期背负 dead 分支与误判路径，且旧数据迁移逻辑已整体删除。
+- **验证**：`loadFileData`（src/store/cw-store.ts）读侧无版本判断；`emptyFile` 写侧写 `schemaVersion: SCHEMA_VERSION`（src/store/cw-store.ts:135）；`WorkUnitRecord` 以 `[key: string]: unknown` 透传未知字段（src/store/schema.ts），透传不丢弃但不做提取逻辑。
+- **例外**：`repoMeta` 缺失时首次 save 回填（当前功能，git 命令失败时降级为空串，不抛）。
 
 ### V-2 plan 经 `--input` 程序化消费
 
