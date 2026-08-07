@@ -146,7 +146,8 @@ describe("design-review gates", () => {
 
     it("testCommand 为 undefined → fail", () => {
       const unit = emptyWave();
-      unit.plan.testCommand = undefined;
+      // 类型必填后 undefined 仅可能来自磁盘旧数据运行时防御路径，as 构造保持该分支覆盖
+      unit.plan.testCommand = undefined as unknown as string;
       const r = testCommandNonEmpty(unit);
       expect(r.passed).toBe(false);
       expect(r.report).toMatch(/test-command-non-empty/);
@@ -354,12 +355,12 @@ describe("test gates", () => {
   // U10: testsAllPass
   describe("U10: testsAllPass", () => {
     it("passed=true → pass", () => {
-      const r = testsAllPass({ passed: true, passedCount: 1, failedCount: 0 });
+      const r = testsAllPass({ passed: true, passedCount: 1, failedCount: 0, failedTests: [] });
       expect(r.passed).toBe(true);
     });
 
     it("passed=false → fail", () => {
-      const r = testsAllPass({ passed: false, passedCount: 0, failedCount: 1 });
+      const r = testsAllPass({ passed: false, passedCount: 0, failedCount: 1, failedTests: [] });
       expect(r.passed).toBe(false);
       expect(r.report).toMatch(/tests-all-pass/);
     });
@@ -551,7 +552,7 @@ describe("exec-review gates", () => {
     it("非 manual 用例 5 个 + testRunResult 记录 5 次执行 → pass", () => {
       const r = testCasesExecuted(
         waveWith(5),
-        { passed: true, passedCount: 5, failedCount: 0 },
+        { passed: true, passedCount: 5, failedCount: 0, failedTests: [] },
         okTj,
       );
       expect(r.passed).toBe(true);
@@ -566,7 +567,7 @@ describe("exec-review gates", () => {
     it("executedCount < 非 manual 用例数 → fail", () => {
       const r = testCasesExecuted(
         waveWith(5),
-        { passed: true, passedCount: 3, failedCount: 0 },
+        { passed: true, passedCount: 3, failedCount: 0, failedTests: [] },
         okTj,
       );
       expect(r.passed).toBe(false);
@@ -582,14 +583,14 @@ describe("exec-review gates", () => {
       const vitestFileCount = 110; // 旧 bug 会错取这个值
       const r = testCasesExecuted(
         waveWith(200),
-        { passed: true, passedCount: vitestTestCaseCount, failedCount: 0 },
+        { passed: true, passedCount: vitestTestCaseCount, failedCount: 0, failedTests: [] },
         okTj,
       );
       expect(r.passed).toBe(true);
       // 反证：若 passedCount 被错取为文件数，gate 会 fail——锁住回归。
       const buggyR = testCasesExecuted(
         waveWith(200),
-        { passed: true, passedCount: vitestFileCount, failedCount: 0 },
+        { passed: true, passedCount: vitestFileCount, failedCount: 0, failedTests: [] },
         okTj,
       );
       expect(buggyR.passed).toBe(false);

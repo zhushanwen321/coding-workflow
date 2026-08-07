@@ -68,7 +68,7 @@ export interface WavePlan extends Plan {
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
-  /** 本 wave 测试执行命令（per-wave，取代全局 config.testRunner.command）。 */
+  /** 本 wave 测试执行命令（per-wave）。 */
   testCommand: string;
 }
 
