@@ -1,10 +1,9 @@
 /**
- * Wave A: collectRepoMeta + CwJsonFile schemaVersion/repoMeta 迁移测试。
+ * Wave A: collectRepoMeta + CwJsonFile schemaVersion/repoMeta 持久化测试。
  *
  * 测试目标：
  *   - collectRepoMeta 在真实 git repo / 非 git 目录 / bare+worktree 三种环境的行为
  *   - CwStore 新建 store 写入 schemaVersion=2 + repoMeta
- *   - 旧 store（无 schemaVersion/repoMeta）加载降级不 crash
  *   - 推进类 save 刷新 repoMeta，readonly query 不刷新
  *
  * 测试策略：真 git 子进程 + mkdtempSync 真实 tmp 目录（zero mock 基线）。
@@ -13,7 +12,7 @@
  * afterEach 还原 + 清理。不污染用户真实 ~/.cw/（C1 修复）。
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -161,7 +160,7 @@ describe("Wave A: collectRepoMeta", () => {
   });
 });
 
-describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
+describe("Wave A: CwStore schemaVersion 写侧标记 + repoMeta 保存", () => {
   let cwd: string;
   let cwHome: string;
   let prevCwHome: string | undefined;
@@ -192,25 +191,6 @@ describe("Wave A: CwStore schemaVersion + repoMeta 迁移", () => {
     expect(raw.repoMeta.headCommit).toMatch(/^[0-9a-f]{7,40}$/);
     expect(raw.repoMeta.worktreePath).toBe(cwd);
     expect(raw.repoMeta.recordedAt).toBeTruthy();
-  });
-
-  it("旧 store（无 schemaVersion/repoMeta）加载不 crash + schemaVersion 内存补 2 + 磁盘未写", () => {
-    // 手动构造旧格式 store.json
-    const storePath = getCwJsonPath(cwd);
-    mkdirSync(join(storePath, ".."), { recursive: true });
-    const oldUnit = makeUnit("wave:old-unit");
-    writeFileSync(storePath, JSON.stringify({ workUnits: [oldUnit] }));
-
-    const store = new CwStore(cwd);
-    const units = store.loadAll();
-
-    expect(units).toHaveLength(1);
-    expect(units[0].id).toBe("wave:old-unit");
-
-    // loadFileData 是只读路径——磁盘上不应有 schemaVersion 键（内存补不写盘，M4 修复）
-    const rawOnDisk = JSON.parse(readFileSync(storePath, "utf-8"));
-    expect(rawOnDisk.schemaVersion).toBeUndefined();
-    expect(rawOnDisk.repoMeta).toBeUndefined();
   });
 
   it("再次 save 不刷新 repoMeta（M1：首次记录后冻结，避免批量 save N*3 git 进程 + cwd 迁移覆盖）", () => {

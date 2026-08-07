@@ -20,7 +20,7 @@ import { isAbsolute, join } from "node:path";
 
 /** v1 持久化文件的顶层 schema（扁平集合 + parentUnitId 外键）。 */
 export interface CwJsonFile {
-  /** schema 版本，初始 = 1。缺失/非数字时 loadFileData 补 1（旧 store 向前兼容） */
+  /** schema 版本（写侧版本标记，emptyFile 写入当前版本；读侧不做版本校验） */
   schemaVersion?: number;
   /** git repo 元信息，可选（旧 store 缺失时降级，首次推进类 action 时回填） */
   repoMeta?: RepoMeta;
