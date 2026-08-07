@@ -24,8 +24,7 @@
  *         RetrospectFeatureInput=RetrospectEpicInput=RetrospectSliceInput 共用 RetrospectSliceInputSchema。
  *
  * 显式声明注入字段（F-4）：DesignInput/ReplanInput 含 abandonParentItems?: string[]
- * （buildParams 在 readInput 之后注入，schema 必须显式声明否则 strict 模式误伤）；
- * ExecuteInput.changedFiles deprecated 但保留接受。
+ * （buildParams 在 readInput 之后注入，schema 必须显式声明否则 strict 模式误伤）。
  */
 import { type TSchema,Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -144,8 +143,7 @@ export const DesignInputSchema = strict({
   tasks: Type.Array(WaveTaskSchema),
   files: Type.Array(WaveFileSchema),
   contracts: Type.Array(WaveContractSchema),
-  // testCommand 必填：运行时强制新 design 提交带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
-  // 类型 DesignInput.testCommand 声明为可选（兼容存量字面量），schema 严格于此是“有意漂移”——故 sf8Plan 改单向断言。
+  // testCommand 必填：新 design 提交必须带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
   testCommand: Type.String(),
   abandonParentItems: abandonParentItemsField,
 });
@@ -277,8 +275,6 @@ export const DesignReviewInputSchema = strict({
 
 export const ExecuteInputSchema = strict({
   commitHash: Type.String(),
-  // changedFiles @deprecated：§4.4 由 cw 从 commit 提取，handler 不再读；schema 保留接受（向后兼容）。
-  changedFiles: Type.Optional(Type.Array(Type.String())),
 });
 
 // ═══════════════════════════════════════════════════════════════

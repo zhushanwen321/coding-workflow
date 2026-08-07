@@ -232,8 +232,8 @@ export interface DesignInput extends AbandonParentItemsInput {
   tasks: WaveTask[];
   files: WaveFile[];
   contracts: WaveContract[];
-  /** 本 wave 测试执行命令（可选类型；必填由 DesignInputSchema 运行时强制）。双份定义，与 core/plan.ts 同步。 */
-  testCommand?: string;
+  /** 本 wave 测试执行命令。双份定义，与 core/plan.ts 同步。 */
+  testCommand: string;
   /** 补充澄清（progressive append，design 阶段可继续追加）。 */
   clarifications?: Clarification[];
 }
@@ -246,11 +246,6 @@ export interface DesignReviewInput {
 /** execute handler 输入。 */
 export interface ExecuteInput {
   commitHash: string;
-  /**
-   * @deprecated §4.4 changedFiles 由 cw 从 commit 提取，agent 无需传入。
-   * 保留字段仅为向后兼容，execute handler 不再读它（传入将被忽略）。
-   */
-  changedFiles?: string[];
 }
 
 /** test handler 输入。 */

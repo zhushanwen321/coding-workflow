@@ -196,6 +196,7 @@ describe("replan handler 通过 input 写入 abandonedParentItems", () => {
       tasks: [],
       files: [],
       contracts: [],
+      testCommand: "",
     };
     env.deps.store.save(w as unknown as WorkUnitRecord);
 
@@ -360,6 +361,7 @@ describe("wave replan guidance prefix（#12，T3.7）", () => {
       tasks: [],
       files: [],
       contracts: [],
+      testCommand: "",
     };
     env.deps.store.save(w as unknown as WorkUnitRecord);
 
