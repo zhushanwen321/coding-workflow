@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createEpic, createFeature, createSlice, createWave } from "../src/core/workunit.js";
-import { renderHandoff } from "../src/readonly/render.js";
+import { type HandoffStore,renderHandoff } from "../src/readonly/render.js";
 import type { WorkUnitRecord } from "../src/store/schema.js";
 
 /** 把强类型 unit 当 WorkUnitRecord 传（兼容：core unit 是 store record 的超集）。 */
@@ -21,13 +21,19 @@ function asRecord(unit: unknown): WorkUnitRecord {
   return unit as WorkUnitRecord;
 }
 
+/** 空 store stub：scope=self 不触达 store 方法，仅满足签名必传。 */
+const emptyStore: HandoffStore = {
+  load: () => null,
+  findChildren: () => [],
+};
+
 // ── TC1: wave 空态 ──────────────────────────────────────────
 
 describe("TC1: renderHandoff 空态 wave（刚 create）", () => {
   const unit = asRecord(
     createWave({ slug: "auth-w1", objective: "实现登录" }),
   );
-  const out = renderHandoff(unit);
+  const out = renderHandoff(unit, emptyStore);
 
   it("标题含 unitId 和 status", () => {
     expect(out).toContain("# Handoff: wave:auth-w1 [created]");
@@ -103,7 +109,7 @@ describe("TC2: renderHandoff 走到 design-reviewed 的 wave", () => {
       ],
     },
   });
-  const out = renderHandoff(unit);
+  const out = renderHandoff(unit, emptyStore);
 
   it("已定决策段含 design 问答", () => {
     expect(out).toContain("## 已定决策");
@@ -149,7 +155,7 @@ describe("TC2b: renderHandoff wave executing 下一步是 test", () => {
       // design-review 已过，进入 executing（execute 完成）
       designReviewJudgment: { alternatives: [], tradeoffs: [], risks: [] },
     });
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     expect(out).toContain("状态：executing");
     // 关键回归：executing 状态的下一步是 test（execute 已完成），原 bug 错写成 execute
     expect(out).toContain("下一步执行：cw test --unitId wave:exec-w1");
@@ -165,7 +171,7 @@ describe("TC3: renderHandoff 终态 wave", () => {
       ...createWave({ slug: "done-w1", objective: "完成" }),
       status: "closed",
     });
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     expect(out).toContain("状态：closed");
     expect(out).toContain("终态");
     // 不应出现「下一步执行」（终态跳过）
@@ -181,7 +187,7 @@ describe("TC3: renderHandoff 终态 wave", () => {
         { at: "2026-07-24T11:00:00.000Z", action: "abort", to: "aborted", note: "需求取消" },
       ],
     });
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     expect(out).toContain("状态：aborted");
     expect(out).toContain("终态");
     expect(out).not.toContain("下一步执行");
@@ -196,7 +202,7 @@ describe("TC3: renderHandoff 终态 wave", () => {
 describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
   it("slice created：输出真实 guidance（调 buildSliceNextAction）", () => {
     const unit = asRecord(createSlice({ slug: "tech-s1", objective: "技术方案" }));
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     expect(out).toContain("# Handoff: slice:tech-s1 [created]");
     expect(out).toContain("技术方案");
     expect(out).toContain("create → created");
@@ -213,7 +219,7 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
       ...createSlice({ slug: "exec-s1", objective: "执行中" }),
       status: "executing",
     });
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     // 关键：planning 的 executing → retrospect，不是 wave 的 executing → test
     expect(out).toContain("下一步执行：cw retrospect --unitId slice:exec-s1");
     expect(out).not.toContain("cw test");
@@ -221,7 +227,7 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
 
   it("feature 空态：不 crash + clarifications 容器对象不报错 + 输出 guidance", () => {
     const unit = asRecord(createFeature({ slug: "req-f1", objective: "需求规格" }));
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     expect(out).toContain("# Handoff: feature:req-f1 [created]");
     expect(out).toContain("需求规格");
     // feature 的 clarifications 是 {clarifications:[], spec:{...}} 容器，不应 crash
@@ -231,7 +237,7 @@ describe("TC4: renderHandoff planning 层（slice/feature/epic）", () => {
 
   it("epic 空态：不 crash + 有目标 + 输出 guidance", () => {
     const unit = asRecord(createEpic({ slug: "big-e1", objective: "战略目标" }));
-    const out = renderHandoff(unit);
+    const out = renderHandoff(unit, emptyStore);
     expect(out).toContain("# Handoff: epic:big-e1 [created]");
     expect(out).toContain("战略目标");
     expect(out).toContain("下一步执行：cw design --unitId epic:big-e1");

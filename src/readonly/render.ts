@@ -180,7 +180,7 @@ export interface ListOptions {
   offset?: number;
   /** 跨 cwd 模式（带 group header），默认 false */
   all?: boolean;
-  /** scope 过滤（向后兼容旧 layer 参数） */
+  /** scope 过滤（按 unit.scope 精确匹配） */
   layer?: string;
   /** slug + objective 大小写不敏感 substring 过滤 */
   grep?: string;
@@ -219,20 +219,13 @@ const DATE_PAD_WIDTH = 2;
  * 处理顺序：layer（scope）+ grep 过滤 → updatedAt DESC 排序 → offset/limit 分页 → 渲染。
  * all=true 按 cwd 分组（每组前加 repo/branch/cwd header），否则单表格。
  *
- * 第二个参数兼容旧签名（layer 字符串），现有调用方迁移到 ListOptions 后可删。
- *
- * @param annotated       全部 unit（带可选 cwd/repoMeta 标注）
- * @param optionsOrLayer  渲染选项，或旧式 layer 字符串
+ * @param annotated  全部 unit（带可选 cwd/repoMeta 标注）
+ * @param opts       渲染选项
  */
 export function renderList(
   annotated: ReadonlyArray<AnnotatedUnit>,
-  optionsOrLayer?: ListOptions | string,
+  opts: ListOptions,
 ): string {
-  // 向后兼容：第二个参数是 string 时视为 { layer: string }
-  const opts: ListOptions = typeof optionsOrLayer === "string"
-    ? { layer: optionsOrLayer }
-    : (optionsOrLayer ?? {});
-
   const limit = opts.limit ?? DEFAULT_LIMIT;
   const offset = opts.offset ?? 0;
   const all = opts.all ?? false;
@@ -645,13 +638,12 @@ export interface HandoffStore {
  * 保证 handoff 输出的 guidance 与实际跑 action 返回的 guidance 逐字一致。
  *
  * @param unit   已读出的焦点 WorkUnitRecord（调用方负责 load + not found 判定）
- * @param store  读方法结构类型（load / findChildren）；scope=self 时不使用，
- *               默认空 store（仅给老的单参数调用方兜底，scope=self 时不会触达）
+ * @param store  读方法结构类型（load / findChildren）；scope=self 时不触达 store 方法
  * @param scope  视图范围，默认 "self"
  */
 export function renderHandoff(
   unit: WorkUnitRecord,
-  store: HandoffStore = noopStore,
+  store: HandoffStore,
   scope: HandoffScope = "self",
   orchestration?: OrchestrationMode,
 ): string {
@@ -662,21 +654,6 @@ export function renderHandoff(
   if (scope === "upstream") return renderHandoffUpstream(unit, store, orchestration);
   return renderHandoffFull(unit, store, orchestration);
 }
-
-/**
- * 默认空 store：load 永远返回 null，findChildren 永远返回空数组。
- *
- * 仅用于 renderHandoff 的老调用方（只传 unit、scope 隐式 self）兜底默认参数；
- * scope=self 时根本不会触达 store 方法，故空实现安全。
- */
-const noopStore: HandoffStore = {
-  load(): null {
-    return null;
-  },
-  findChildren(): WorkUnitRecord[] {
-    return [];
-  },
-};
 
 /** 运行时判定字符串是否为合法 HandoffScope（narrow 谓词）。 */
 function isValidHandoffScope(s: string): s is HandoffScope {
@@ -702,7 +679,7 @@ function isValidHandoffScope(s: string): s is HandoffScope {
  */
 function renderHandoffSelf(
   unit: WorkUnitRecord,
-  store: HandoffStore = noopStore,
+  store: HandoffStore,
   orchestration?: OrchestrationMode,
 ): string {
   const scope = unit.scope;

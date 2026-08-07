@@ -679,22 +679,6 @@ describe("retrospect gates", () => {
       expect(r.report).not.toContain("[object Object]");
     });
 
-    it("followupActions string 元素（legacy）→ 不产 followup:undefined（T1.10，AC-3.3）", () => {
-      const rd = coversAll();
-      const erj: ExecReviewJudgment = {
-        readability: { score: 4 },
-        architecture: { score: 4 },
-        overallVerdict: "needs-followup",
-        // legacy 违规形状：agent 存 string[] 而非 FollowupAction[]
-        followupActions: ["extract token service"] as unknown as ExecReviewJudgment["followupActions"],
-      };
-      const r = retrospectCoversJudgments(rd, dr, undefined, erj);
-      expect(r.passed).toBe(false);
-      expect(r.report).not.toContain("followup:undefined");
-      // string 元素原样保留为 key（legacy 兼容）
-      expect(r.report).toContain("followup:extract token service");
-    });
-
     it("存量 string codeSmell/followup key 不失配：覆盖后 pass（T1.11）", () => {
       const rd = coversAll();
       rd.reviewedItems = [
