@@ -1,14 +1,41 @@
 # Changelog
 
-## [v1.4.0] - 2026-08-07
+## [v1.5.0] - 2026-08-07
+
+### Refactoring
+- refactor(cli): remove legacy compatibility paths (D1/D3/D9/D10) (5446b3a)
+- refactor: remove legacy layer string param and noopStore default (D4/D7/D8) (bdd0d6c)
+- refactor: drop ExecuteInput.changedFiles, make testCommand/failedTests required (zero-compat cleanup) (a31e9ab)
+
+### Bug Fixes
+- fix: gates.test.ts TestRunResult literals + testCommand undefined case (D5/D6 leftover) (9156b56)
 
 ### Miscellaneous
-- chore: remove ~/.v1 → ~/.cw data migration (migrate-v1.ts)
-- chore: remove schemaVersion read-side compat check/warning
-- chore: remove ExecuteInput.changedFiles compat field
-- chore: remove cw.config.json testRunner.command compat reading
-- chore: narrow guardTestCommand to string-only signature (drop undefined branch)
-- docs: sync NFR/CONTEXT/ARCHITECTURE/TEST-STRATEGY with zero-historical-compat contract
+- chore: remove legacy v1 store migration and read-side schemaVersion compat (34a6635)
+- docs: sync docs with zero historical compatibility cleanup (cbf18e8)
+- docs: remove TBD placeholders in v1.4.0 changelog entries (9ee93de)
+
+## [v1.4.0] - 2026-08-07
+
+### Refactoring
+- refactor: align cross-layer.ts with v5 (G5-crossLayer) — orchestration-aware routing (f8ce3ea)
+- refactor(cli): export internal functions for layer-2 test access (test layering Step 0) (b99557f)
+
+### Bug Fixes
+- fix: address review suggestions (S-3/S-4/I-1/I-2/S-5) (7a1778d)
+- fix: review batch 1 round 1 — 1 must-fix (99a6bec)
+- fix(guidance): rename chain-agent → merge-agent to align with xyz-agent (c0b1e57)
+
+### Features
+- feat: rethink cw architecture (E1: clarify merged into design, plan→design rename, G5 cross-layer orchestration-aware routing) (7d3ffa5)
+
+### Miscellaneous
+- test: cover recursive orchestration mode (S-2) (7a9fab9)
+- test: cover fan-out/inherited-declared gates + fix stale JSDoc counts (S-1) (8fd12f9)
+- test: migrate cli wiring tests to layer-2 in-process (Step 1) (e94b0ec)
+- test: slim cli.test.ts to layer-3 smoke tests only (Step 2) (ff468f3)
+- docs: sync 4 main docs to E1 (clarify merged into design, plan→design) (52dcf11)
+- chore: bump version 1.3.0 → 1.4.0 (89c1c28)
 
 ## [v1.1.0] - 2026-08-02
 
