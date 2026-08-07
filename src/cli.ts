@@ -265,7 +265,7 @@ function parseJsonArg(name: string, value: unknown): unknown {
  *
  * @returns 解析后的 input 对象（调用方按 action cast 成对应 Input 类型）
  */
-function readInput(
+export function readInput(
   inputFlag: string | undefined,
   stdinData: string,
   isStdinTTY: boolean,
@@ -335,7 +335,7 @@ function readInput(
  * @param scope     unit 的 scope（wave/slice/feature/epic），仅 execute 用以区分参数构造；
  *                  unit 不存在时 null（execute 会走 unit_not_found 错误路径）
  */
-function buildParams(
+export function buildParams(
   action: string,
   layer: string | undefined,
   parsed: ParsedArgs,
@@ -534,7 +534,7 @@ function buildParams(
 }
 
 /** cw.config.json 的结构（支持 testRunner + orchestration 配置）。 */
-interface CwConfig {
+export interface CwConfig {
   testRunner?: {
     /** @deprecated 已废弃：改用 per-wave plan.testCommand。值不用于执行，仅兼容读取。 */
     command?: string;
@@ -558,7 +558,7 @@ interface CwConfig {
  * JSON 解析失败打印警告返回 undefined（不阻塞 CLI）。
  * orchestration 非法值（非 "serial"/"recursive"）打印警告忽略（缺省 serial，不阻塞 CLI）。
  */
-function loadCwConfig(workspacePath: string): CwConfig | undefined {
+export function loadCwConfig(workspacePath: string): CwConfig | undefined {
   const configPath = resolve(workspacePath, "cw.config.json");
   if (!existsSync(configPath)) return undefined;
   try {
@@ -600,7 +600,7 @@ function loadCwConfig(workspacePath: string): CwConfig | undefined {
  * 都指向包根的 package.json（dist 和 src 的上一级都是项目根）。
  * 失败（文件缺失/解析失败）返回 "unknown"——version 不该 crash CLI。
  */
-function readCliVersion(): string {
+export function readCliVersion(): string {
   try {
     const packageJsonPath = resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -624,7 +624,7 @@ function readCliVersion(): string {
  * action 列表分组与 ALL_ACTIONS = VALID_ACTIONS ∪ READONLY_QUERIES 对齐，
  * help/version 单列一组（它们不进 dispatch、不写 store）。
  */
-function renderHelp(): string {
+export function renderHelp(): string {
   return `cw — Agent-agnostic 编码流程编排 CLI
 
 用法：
@@ -670,7 +670,7 @@ function renderHelp(): string {
  * 触发场景：`cw help <action>` 与 `cw <action> --help` 双入口（main 的 help 分支判定）。
  * flag 列表来自 FLAG_WHITELIST + GLOBAL_FLAGS（单源，不另维护文案），camel 形态展示。
  */
-function renderActionHelp(action: string): string {
+export function renderActionHelp(action: string): string {
   const names = [...new Set([...GLOBAL_FLAGS, ...(FLAG_WHITELIST[action] ?? [])])].sort();
   const lines = names
     .map((name) => `  ${name.length === 1 ? `-${name}` : `--${name}`}`)
@@ -686,6 +686,24 @@ ${lines}
 }
 
 /**
+ * guardTestCommand — per-wave testCommand 空值守卫（纯函数，供 layer-1 单测）。
+ *
+ * testCommand 为空（undefined / 空串 / 纯空白）时返回短路结果 {passed:false, 0/0 计数}，
+ * 调用方据此跳过 spawn。否则返回 null 表示需真跑。
+ *
+ * 抽离自 constructCwDeps 的 testRunner.run 守卫逻辑：防 spawnSync(undefined/空白,
+ * {shell:true}) 抛 TypeError crash，也防 '   ' 跑空命令 exit 0 假通过。与 design-review
+ * gate testCommandNonEmpty 判空一致（trim）。抽成纯函数便于 layer-1 单测直接断言。
+ */
+export function guardTestCommand(cmd: string | undefined): TestRunResult | null {
+  const trimmed = cmd?.trim() ?? "";
+  if (trimmed === "") {
+    return { passed: false, passedCount: 0, failedCount: 0, failedTests: [] };
+  }
+  return null;
+}
+
+/**
  * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
  *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 store.json）
@@ -698,7 +716,7 @@ ${lines}
  * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
  * 执行命令：per-wave unit.plan.testCommand（shell 串），cw.config.json 的 testRunner.command 已废弃。
  */
-function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
+export function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
   debugLog("constructCwDeps workspacePath", workspacePath, "testCwd", testCwd);
   const store = new CwStore(workspacePath);
   const gitValidator = {
@@ -731,16 +749,13 @@ function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
       debugLog("testRunner.run unit", unit.id, "cwd", runnerCwd);
-      // per-wave 守卫：testCommand 空（含纯空白）短路，不 spawn——
-      // 防 spawnSync(undefined/空白,{shell:true}) 抛 TypeError crash，也防 '   ' 跑空命令 exit 0 假通过。
-      // 与 design-review gate testCommandNonEmpty 判空一致（trim）。
-      const cmd = unit.plan.testCommand?.trim() ?? "";
-      if (cmd === "") {
-        return { passed: false, passedCount: 0, failedCount: 0, failedTests: [] };
-      }
+      // per-wave 守卫：testCommand 空（含纯空白）短路，不 spawn（逻辑见 guardTestCommand）。
+      const guard = guardTestCommand(unit.plan.testCommand);
+      if (guard !== null) return guard;
+      // 守卫通过 → testCommand 非空（trim 后有内容），spawn 执行。
       // shell:true 支持完整 shell 串（cd <dir> && ...、pnpm test、自定义脚本），最大框架灵活性。
       // 超时 120s（防 agent 误配死循环测试卡死 CLI）。
-      const r = spawnSync(cmd, {
+      const r = spawnSync(unit.plan.testCommand!.trim(), {
         cwd: runnerCwd,
         shell: true,
         encoding: "utf8",
@@ -890,7 +905,7 @@ async function runWithAction(
  *
  * 输出是纯文本（tree/列表/handoff）或 JSON（status），不走 ActionResult 序列化。
  */
-async function runReadonly(
+export async function runReadonly(
   action: string,
   parsed: ParsedArgs,
   workspacePath: string,
