@@ -135,7 +135,7 @@ describe("U17: evidence 主观部分 + 冻结（closeout）", () => {
   it("handleCloseout 后 evidence.frozenAt 非空 + summary/artifacts 填充", () => {
     // 完整推进到 retrospected
     let unit = advanceToDesignReviewed("ev-closeout");
-    handleExecute(unit, { commitHash: "abc123", changedFiles: ["src/foo.ts"] }, env.deps);
+    handleExecute(unit, { commitHash: "abc123" }, env.deps);
     unit = loadUnit(unit.id);
 
     handleTest(unit, { testJudgment: makeValidTestJudgment() }, env.deps);

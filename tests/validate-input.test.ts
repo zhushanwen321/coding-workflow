@@ -59,9 +59,8 @@ type AssertBidirectional<S extends TSchema, T> = IsAssignable<Static<S>, T> exte
 
 // wave 9 个 Input schema 全双向断言
 
-// testCommand 有意漂移：DesignInputSchema.Type.String() 必填（运行时强制新 design 提交带 testCommand），
-// DesignInput 类型 testCommand?: string 可选（兼容存量 WavePlan/DesignInput 字面量，加载为 undefined）。
-// 双向断言不适用于「schema 严格 / type 宽松」的有意漂移——改单向：schema 实例 ⊆ type。
+// testCommand 必填：DesignInputSchema.Type.String() 与 DesignInput 类型一致，无有意漂移。
+// 双向断言直接适用。
 // 注意：单向断言不防字段名拼错（泛型可赋值性允许多余属性），拼错拦截靠下方 sf8DesignKeys key 方向断言——
 // 须 tuple 包裹 [keyof X] extends [keyof Y] 强制即时求值（普通 IsAssignable 条件类型延迟求值会静默放行）。
 export const sf8Design: IsAssignable<Static<typeof DesignInputSchema>, DesignInput> = true;

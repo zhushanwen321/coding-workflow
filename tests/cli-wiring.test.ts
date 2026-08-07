@@ -14,22 +14,17 @@
  *   renderCliError:     #39
  *   runReadonly:        #32
  *   renderStatus:       #43
- *   loadCwConfig:       #44
- *   testRunner/守卫:    #45 #46 #48
+ *   testRunner/守卫:    #45 #46
  *
  * 真正的子进程端到端烟雾（create happy-path / version / help / unit_not_found /
  * illegal_transition / flag→exit / --input @file）保留在 tests/cli.test.ts。
  */
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildParams,
   constructCwDeps,
   guardTestCommand,
-  loadCwConfig,
   type ParsedArgs,
   readInput,
   renderActionHelp,
@@ -41,7 +36,7 @@ import type { ExecutionUnit } from "../src/core/workunit.js";
 import { renderStatus } from "../src/index.js";
 import { createCwEnv, type CwEnv } from "./helpers/env.js";
 
-// ── 共享：隔离 cwd（runReadonly / loadCwConfig / testRunner 绑 workspacePath）──
+// ── 共享：隔离 cwd（runReadonly / testRunner 绑 workspacePath）──
 
 let env: CwEnv;
 
@@ -309,39 +304,10 @@ describe("renderStatus: 大字段默认截断 + --full 全量（#43）", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// loadCwConfig — cw.config.json 读取（纯函数 + console.error 副作用）
-// ═══════════════════════════════════════════════════════════════
-
-describe("loadCwConfig: testRunner.command 废弃 warning（#44）", () => {
-  it("#44: cw.config.json 含 testRunner.command → stderr warning「已废弃」+ 值兼容读取", () => {
-    writeFileSync(
-      join(env.cwd, "cw.config.json"),
-      JSON.stringify({ testRunner: { command: "npx vitest run" } }),
-      "utf8",
-    );
-
-    // 捕获 console.error（loadCwConfig 发射废弃 warning 到 stderr）
-    const originalError = console.error;
-    const messages: string[] = [];
-    console.error = (...args: unknown[]): void => {
-      messages.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
-    };
-    try {
-      const config = loadCwConfig(env.cwd);
-      // 值兼容读取保留（不用于执行，仅提示迁移到 per-wave plan.testCommand）
-      expect(config?.testRunner?.command).toBe("npx vitest run");
-      expect(messages.some((m) => m.includes("已废弃"))).toBe(true);
-    } finally {
-      console.error = originalError;
-    }
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
 // guardTestCommand + constructCwDeps.testRunner — per-wave testCommand 守卫与执行
 // ═══════════════════════════════════════════════════════════════
 
-describe("guardTestCommand: 空值守卫（#46 空串/空白 / #48 undefined）", () => {
+describe("guardTestCommand: 空值守卫（#46 空串/空白）", () => {
   const SHORT_CIRCUIT = {
     passed: false,
     passedCount: 0,
@@ -351,10 +317,6 @@ describe("guardTestCommand: 空值守卫（#46 空串/空白 / #48 undefined）"
 
   it.each(["", "  "])("#46: guardTestCommand(%j) → 短路 0/0（不 spawn）", (cmd) => {
     expect(guardTestCommand(cmd)).toEqual(SHORT_CIRCUIT);
-  });
-
-  it("#48: guardTestCommand(undefined) → 短路 0/0（存量在途 wave 迁移场景）", () => {
-    expect(guardTestCommand(undefined)).toEqual(SHORT_CIRCUIT);
   });
 
   it("guardTestCommand 非空命令 → null（需真跑，含前后空白 trim 后非空）", () => {

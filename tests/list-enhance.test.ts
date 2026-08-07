@@ -317,7 +317,7 @@ describe("Wave B: loadAllCwdsFromHome 跨 cwd 遍历", () => {
     const encoded = encodeCwd(cwd);
     const dir = join(cwHome, encoded);
     mkdirSync(dir, { recursive: true });
-    const data: Record<string, unknown> = { schemaVersion: 1, workUnits: units };
+    const data: Record<string, unknown> = { workUnits: units };
     if (repoMeta) data.repoMeta = repoMeta;
     writeFileSync(join(dir, "store.json"), JSON.stringify(data));
   }

@@ -67,7 +67,6 @@ import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { migrateLegacyV1Filename, migrateLegacyV1Home } from "./store/migrate-v1.js";
 import { getCwHome } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
@@ -410,7 +409,7 @@ export function buildParams(
       };
     case "execute": {
       // execute 按 scope 区分参数构造：
-      // - wave（ExecutionUnit）：需 --commitHash（记录代码提交）+ 可选 --input/stdin（带 changedFiles）。
+      // - wave（ExecutionUnit）：需 --commitHash（记录代码提交）。
       // - slice 及其他 PlanningUnit（feature/epic）：不接收 input（dispatchSlice 里 handleExecuteSlice
       //   忽略 params.input，按 plan.split 自动创建 child wave），input 传空对象。
       //   CwParams 联合的 execute 分支类型是 ExecuteInput（commitHash 必填），slice 场景无 commitHash，
@@ -427,18 +426,6 @@ export function buildParams(
       const commitHash = flag(parsed, "commitHash");
       if (!commitHash) throw new CwError("execute 需要 --commitHash");
       const input: ExecuteInput = { commitHash };
-      // execute 允许 --input 传 { changedFiles: [...] }，非 TTY stdin 有内容时也接受
-      const hasStdin = !isStdinTTY && stdinData.trim().length > 0;
-      const inputFlag = flag(parsed, "input");
-      if (inputFlag !== undefined || hasStdin) {
-        const extra = readInput(inputFlag, stdinData, isStdinTTY) as Record<
-          string,
-          unknown
-        >;
-        if (Array.isArray(extra.changedFiles)) {
-          input.changedFiles = extra.changedFiles as string[];
-        }
-      }
       return { action: "execute", unitId, input };
     }
     case "test":
@@ -536,8 +523,6 @@ export function buildParams(
 /** cw.config.json 的结构（支持 testRunner + orchestration 配置）。 */
 export interface CwConfig {
   testRunner?: {
-    /** @deprecated 已废弃：改用 per-wave plan.testCommand。值不用于执行，仅兼容读取。 */
-    command?: string;
     cwd?: string;
   };
   /**
@@ -577,13 +562,6 @@ export function loadCwConfig(workspacePath: string): CwConfig | undefined {
     if (typeof obj.testRunner === "object" && obj.testRunner !== null) {
       const tr = obj.testRunner as Record<string, unknown>;
       config.testRunner = {};
-      if (typeof tr.command === "string") {
-        config.testRunner.command = tr.command;
-        // 读取兼容保留：值不用于执行，仅提示迁移。
-        console.error(
-          "[cw] cw.config.json testRunner.command 已废弃,改用 per-wave plan.testCommand(wave design 阶段填写)。此值不再用于执行测试。",
-        );
-      }
       if (typeof tr.cwd === "string") config.testRunner.cwd = tr.cwd;
     }
     return config;
@@ -688,15 +666,15 @@ ${lines}
 /**
  * guardTestCommand — per-wave testCommand 空值守卫（纯函数，供 layer-1 单测）。
  *
- * testCommand 为空（undefined / 空串 / 纯空白）时返回短路结果 {passed:false, 0/0 计数}，
+ * testCommand 为空（空串 / 纯空白）时返回短路结果 {passed:false, 0/0 计数}，
  * 调用方据此跳过 spawn。否则返回 null 表示需真跑。
  *
- * 抽离自 constructCwDeps 的 testRunner.run 守卫逻辑：防 spawnSync(undefined/空白,
- * {shell:true}) 抛 TypeError crash，也防 '   ' 跑空命令 exit 0 假通过。与 design-review
- * gate testCommandNonEmpty 判空一致（trim）。抽成纯函数便于 layer-1 单测直接断言。
+ * 抽离自 constructCwDeps 的 testRunner.run 守卫逻辑：防 spawnSync('   ', {shell:true})
+ * 跑空命令 exit 0 假通过。与 design-review gate testCommandNonEmpty 判空一致（trim）。
+ * 抽成纯函数便于 layer-1 单测直接断言。
  */
-export function guardTestCommand(cmd: string | undefined): TestRunResult | null {
-  const trimmed = cmd?.trim() ?? "";
+export function guardTestCommand(cmd: string): TestRunResult | null {
+  const trimmed = cmd.trim();
   if (trimmed === "") {
     return { passed: false, passedCount: 0, failedCount: 0, failedTests: [] };
   }
@@ -714,7 +692,7 @@ export function guardTestCommand(cmd: string | undefined): TestRunResult | null 
  *   - orchestration：编排模式（cw.config.json orchestration，缺省 serial）
  *
  * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
- * 执行命令：per-wave unit.plan.testCommand（shell 串），cw.config.json 的 testRunner.command 已废弃。
+ * 执行命令：per-wave unit.plan.testCommand（shell 串）。
  */
 export function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
   debugLog("constructCwDeps workspacePath", workspacePath, "testCwd", testCwd);
@@ -1142,13 +1120,6 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const action = String(rawAction);
-
-  // 迁移旧 ~/.v1 存储到 ~/.cw（幂等，~/.v1 不存在秒过）。放在所有 new CwStore 之前，
-  // 确保后续读写的是迁移后的数据。CW_HOME 被覆盖时不迁移（尊重用户自定义路径）。
-  migrateLegacyV1Home();
-  // 文件名迁移：_v1.json → store.json（必须在 home 迁移之后，rename 同目录内的旧文件名）。
-  // 无论 CW_HOME 是否覆盖都执行（同目录改名，用户自定义路径里的旧文件名也得改）。
-  migrateLegacyV1Filename();
 
   // workspacePath 解析（所有子命令共用）。
   const workspacePath =

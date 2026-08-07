@@ -136,13 +136,6 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
     ].join("\n");
     writeFileSync(join(testCwdDir, "marker.js"), marker, "utf8");
 
-    // 配置 testRunner.command（相对于 runnerCwd 解析，marker.js 在 testCwdDir 内）
-    writeFileSync(
-      join(e.workspaceDir, "cw.config.json"),
-      JSON.stringify({ testRunner: { command: "node marker.js" } }),
-      "utf8",
-    );
-
     // ── 1. 真实 CLI 全链推进到 executing ──
     const created = runCwCli(
       ["create", "wave", "--slug", slug, "--objective", "testCwd e2e"],
@@ -240,11 +233,6 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
     writeFileSync(
       join(e.workspaceDir, "marker.js"),
       'const fs = require("fs");\nfs.writeFileSync("cwd-marker-default.txt", process.cwd());\nconsole.log("Tests  1 passed");\nprocess.exit(0);\n',
-      "utf8",
-    );
-    writeFileSync(
-      join(e.workspaceDir, "cw.config.json"),
-      JSON.stringify({ testRunner: { command: "node marker.js" } }),
       "utf8",
     );
 

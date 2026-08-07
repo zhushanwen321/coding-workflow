@@ -116,7 +116,7 @@ guard（`guardWave`/`guardPlanning`，`src/rules/state-machine.ts`）只验状�
 数据流：
 ```
 agent bash 调 cw <action> [flags]
-  → cli.ts: argv 解析 + migrateLegacyV1Home() + buildParams → CwParams
+  → cli.ts: argv 解析 + buildParams → CwParams
   → dispatch.ts: loadWorkUnit → guard → handler（按 scope 路由）
   → handler: gate 检查 → 事务内 store 变更 → transitionStatus → buildNextAction
   → cli.ts: stdout JSON + exit code（0 正常 / 1 CwError·CwEngineError / 2 内部异常）
@@ -162,7 +162,7 @@ encodeCwd 规则：路径分隔符 `/` 和 `\` → `__`（`src/store/schema.ts:8
 CwStore 数据结构（`src/store/schema.ts:22` CwJsonFile）：
 ```ts
 {
-  schemaVersion?: number,  // 缺失视为 1
+  schemaVersion?: number,  // 写侧版本标记（emptyFile 写入 SCHEMA_VERSION，读侧不判断）
   repoMeta?: RepoMeta,     // git 元信息，首次 save 回填
   workUnits: WorkUnitRecord[]  // 扁平集合，子 unit 通过 parentUnitId 外键关联
 }

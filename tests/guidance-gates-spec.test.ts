@@ -20,7 +20,7 @@ import { buildEpicNextAction } from "../src/handlers/epic/epic-internal.js";
 import { buildFeatureNextAction } from "../src/handlers/feature/feature-internal.js";
 import { buildNextAction } from "../src/handlers/internal.js";
 import { buildSliceNextAction } from "../src/handlers/slice/slice-internal.js";
-import { renderHandoff } from "../src/readonly/render.js";
+import { type HandoffStore,renderHandoff } from "../src/readonly/render.js";
 import {
   duplicateSplitSlug,
   epicDuplicateSplitSlug,
@@ -48,6 +48,12 @@ import {
 function asRecord(unit: unknown): WorkUnitRecord {
   return unit as WorkUnitRecord;
 }
+
+/** 空 store stub：scope=self 不触达 store 方法，仅满足签名必传。 */
+const emptyStore: HandoffStore = {
+  load: () => null,
+  findChildren: () => [],
+};
 
 /** 构造含 FR1→AC1 的合法 FeatureSpec（满足强引用结构）。 */
 function specWithFrAc(): FeatureSpec {
@@ -81,7 +87,7 @@ describe("GTC1（C3）: feature handoff 输出含 FeatureSpec 的 FR/AC", () => 
     const unit = makeFeatureUnit("handoff-fr-ac");
     unit.clarifications.spec = specWithFrAc();
 
-    const out = renderHandoff(asRecord(unit));
+    const out = renderHandoff(asRecord(unit), emptyStore);
 
     // C3 新增的 feature 层 FR/AC 渲染段标题
     expect(out).toContain("功能需求与验收条件");
@@ -97,13 +103,13 @@ describe("GTC1（C3）: feature handoff 输出含 FeatureSpec 的 FR/AC", () => 
   it("feature 空 spec（无 FR/AC）→ 不输出「功能需求与验收条件」段", () => {
     // createFeature 初始 spec 各数组为空，renderDecisionsSection 应跳过该段
     const unit = createFeature({ slug: "empty-spec", objective: "o" });
-    const out = renderHandoff(asRecord(unit));
+    const out = renderHandoff(asRecord(unit), emptyStore);
     expect(out).not.toContain("功能需求与验收条件");
   });
 
   it("非 feature 层（slice/epic）不渲染 FeatureSpec 段", () => {
     const slice = makeSliceUnit();
-    const out = renderHandoff(asRecord(slice));
+    const out = renderHandoff(asRecord(slice), emptyStore);
     expect(out).not.toContain("功能需求与验收条件");
   });
 });

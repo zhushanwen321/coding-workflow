@@ -100,6 +100,7 @@ export function makeStubDeps(store: CwStore, cwd: string): CwDeps {
         passed: true,
         passedCount: 1,
         failedCount: 0,
+        failedTests: [],
       }),
     },
     fileExists: { exists: (_ref: string) => true },

@@ -51,8 +51,7 @@
 | `handler-guidance.test.ts` | 18 | wave 10 个 handler 的 guidance 接入（正常三段式 / 异常四段式 / closeout crossLayer） |
 | `evidence-lifecycle.test.ts` | 7 | evidence 跨阶段填充：execute→commitHash、test→testRunResult、closeout→frozenAt |
 | `store.test.ts` | 20 | CwStore DAO：save/load 往返、原子写、findChildren、事务回滚、损坏文件抛错 |
-| `repo-meta.test.ts` | 8 | collectRepoMeta + CwJsonFile schemaVersion/repoMeta 迁移（真 git 子进程） |
-| `migrate-v1.test.ts` | 13 | `~/.v1 → ~/.cw` 数据迁移（migrateLegacyV1Home / migrateLegacyV1Filename） |
+| `repo-meta.test.ts` | 7 | collectRepoMeta + CwJsonFile schemaVersion 写侧标记 / repoMeta 回填（真 git 子进程） |
 | `git-extract.test.ts` | 4 | extractChangedFiles 失败上下文（真 git 子进程，note 不丢 stderr） |
 | `parse-abandon-markers.test.ts` | 10 | parseAbandonMarkers + extractCommitMessage（真 git commit trailer） |
 | `abandon-parent-items-input.test.ts` | 16 | ADR-0010 跨层跨时机 abandonParentItems 通道（plan/replan input append-only 合并） |
@@ -87,14 +86,14 @@
 | `tests/helpers/feature-env.ts` | feature 测试基建：feature unit 工厂 + 合法 FeatureSpec/Plan/Judgment/RetrospectData 工厂 + feature 阶段推进 helper（经 dispatch 推进到各状态） |
 | `tests/helpers/epic-env.ts` | epic 测试基建：epic unit 工厂 + 合法 epic Split/Plan/Judgment/RetrospectData 工厂 + epic 阶段推进 helper |
 
-> **注意**：无 `tests/helpers/e2e.ts`、无 `tests/helpers/plan.ts`、无 `v1-env.ts`（已改名为 `env.ts`）。e2e 子进程测试（`cli.test.ts` / `e2e-handoff.test.ts`）在文件内联 `runCwCli` / `createCwCliEnv` / `parseStdout`，dispatch-e2e 测试经 `dispatch()` 跑完整链路（进程内，不 spawn 子进程）。
+> **注意**：无 `tests/helpers/e2e.ts`、无 `tests/helpers/plan.ts`。e2e 子进程测试（`cli.test.ts` / `e2e-handoff.test.ts`）在文件内联 `runCwCli` / `createCwCliEnv` / `parseStdout`，dispatch-e2e 测试经 `dispatch()` 跑完整链路（进程内，不 spawn 子进程）。
 
 ## 测试金字塔与边界
 
 | 层 | 测什么 | 不测什么 | 对应文件 |
 |---|---|---|---|
 | 单元（纯函数） | 无副作用的判定与计算：状态机（`guardWave`/`guardPlanning`/`nextWaveStatus`/`nextPlanningStatus`）、gate 纯函数（`src/rules/gates/*`）、append-only 校验（`src/rules/freeze.ts` 的 `checkFreeze*`）、影响面计算（`src/rules/replan.ts` 的 `computeImpact`）、guidance 子系统、vitest 输出解析 | 不碰文件系统、不碰 git、不碰 store | state-machine / *-state-machine / gates / *-gates / freeze / replan / spec-schema / parse-* / guidance* / readonly-handoff / list-enhance / replan-review |
-| 集成（dispatch / handler / store） | 走完整 dispatch 路径：`loadWorkUnit → guard → handler（按 scope 路由）→ store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 + guidance 接入 + evidence/rollup；CwStore 用真实 tmp 文件系统；git 走真实子进程 | 不 spawn 子进程跑真实 `cw` CLI（dispatch-e2e 经 dispatch 跑，进程内） | dispatch-e2e / *-dispatch-e2e / handler-guidance / evidence-* / rollup-* / store / repo-meta / migrate-v1 / git-extract / parse-abandon-markers / abandon-parent-items-input / feature-replan-spec / slice-replan-cascade / *-retrospect / feature-design-validate / handoff-scope |
+| 集成（dispatch / handler / store） | 走完整 dispatch 路径：`loadWorkUnit → guard → handler（按 scope 路由）→ store 变更`，验证状态流转 + store 落盘 + gate 通过/失败 + guidance 接入 + evidence/rollup；CwStore 用真实 tmp 文件系统；git 走真实子进程 | 不 spawn 子进程跑真实 `cw` CLI（dispatch-e2e 经 dispatch 跑，进程内） | dispatch-e2e / *-dispatch-e2e / handler-guidance / evidence-* / rollup-* / store / repo-meta / git-extract / parse-abandon-markers / abandon-parent-items-input / feature-replan-spec / slice-replan-cascade / *-retrospect / feature-design-validate / handoff-scope |
 | e2e（子进程 CLI） | 真实 `spawnSync` node 子进程跑 `dist/cli.js`，`CW_HOME` 指向 tmp 子目录（per-cwd 隔离），cwd 绑 workspaceDir。覆盖 CLI 入口到归档的关键链路 + 只读命令（handoff）的端到端可用性 | 不 mock 任何东西——入口/状态机/store/git 全部真实 | cli / e2e-handoff |
 
 **三层职责切分原则**：单元层保证判定逻辑正确（机器重算/gate 校验的核心防线）；集成层保证 handler 编排与 store 读写正确（覆盖每个 handler 的正常 + 异常路径 + 跨层 rollup/级联）；e2e 层保证 CLI 入口到归档的整条链路在子进程层不断裂。集成层不重复单元层的纯逻辑断言，e2e 层不重复集成层的 handler 细节——只验证「端到端跑得通」。

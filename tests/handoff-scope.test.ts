@@ -13,9 +13,15 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { renderHandoff } from "../src/readonly/render.js";
+import { type HandoffStore,renderHandoff } from "../src/readonly/render.js";
 import { CwStore } from "../src/store/cw-store.js";
 import type { WorkUnitRecord } from "../src/store/schema.js";
+
+/** 空 store stub：scope=self 不触达 store 方法，仅满足签名必传。 */
+const emptyStore: HandoffStore = {
+  load: () => null,
+  findChildren: () => [],
+};
 
 /** 造一个最小 WorkUnitRecord（靠索引签名过类型）。 */
 function makeUnit(
@@ -67,7 +73,7 @@ function makeFourLayerTree(): WorkUnitRecord[] {
 describe("Wave C: renderHandoff --scope self（向后兼容）", () => {
   it("TC-C1: 不传 scope 默认 self，输出单 unit 五段式（无 FOCUS 标记）", () => {
     const units = makeFourLayerTree();
-    const out = renderHandoff(units[2]!); // slice，不传 store/scope
+    const out = renderHandoff(units[2]!, emptyStore); // slice，scope 隐式 self
     expect(out).toMatch(/# Handoff: slice:slc/);
     expect(out).toMatch(/## 目标/);
     // self 模式不加 FOCUS 标记（那是 upstream/full 的）

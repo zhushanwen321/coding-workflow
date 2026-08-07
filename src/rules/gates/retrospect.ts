@@ -138,20 +138,17 @@ export function retrospectCoversJudgments(
     expected.add("architecture");
     if (execReviewJudgment.codeSmells) {
       for (const item of execReviewJudgment.codeSmells.items) {
-        // #3 typeof 防御（AC-3.2）：items 类型声明 string[]，agent 违规填对象时稳定序列化，
+        // #3 typeof 防御（AC-3.2）：string 是当前 schema 强制形状（validate-input 要求
+        // items: string[]）；object 分支仅防 agent 违规填对象时稳定序列化，
         // 不产 `codeSmell:[object Object]` 垃圾 key（agent 无法照抄 missing 清单）。
-        // 存量 string 数据原样保留（key 不变，存量 itemId 不失配）。
         expected.add(`codeSmell:${typeof item === "string" ? item : JSON.stringify(item)}`);
       }
     }
     if (execReviewJudgment.followupActions) {
       for (const fa of execReviewJudgment.followupActions) {
         // #3 followup 容错（AC-3.3）：合法 FollowupAction 对象取 description；
-        // legacy string[] 违规输入原样保留（不产 `followup:undefined`）；
         // 其他形状（对象缺 description）跳过，不产垃圾 key。
-        if (typeof fa === "string") {
-          expected.add(`followup:${fa}`);
-        } else if (fa !== null && typeof fa === "object" && typeof fa.description === "string") {
+        if (fa !== null && typeof fa === "object" && typeof fa.description === "string") {
           expected.add(`followup:${fa.description}`);
         }
       }

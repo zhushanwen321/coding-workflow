@@ -107,7 +107,7 @@ function advanceTo(
     {
       action: "execute",
       unitId,
-      input: { commitHash: "deadbeef", changedFiles: ["src/x.ts"] },
+      input: { commitHash: "deadbeef" },
     },
     env.deps,
   );
@@ -1003,7 +1003,7 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
     // 构造 testRunner 返回失败的 deps
     const failEnv = createCwEnv();
     failEnv.deps.testRunner = {
-      run: () => ({ passed: false, passedCount: 0, failedCount: 5 }),
+      run: () => ({ passed: false, passedCount: 0, failedCount: 5, failedTests: [] }),
     };
     const unitId = "wave:g-test-fail";
     dispatch(
@@ -1034,7 +1034,7 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
       failEnv.deps,
     );
     dispatch(
-      { action: "execute", unitId, input: { commitHash: "deadbeef", changedFiles: ["src/x.ts"] } },
+      { action: "execute", unitId, input: { commitHash: "deadbeef" } },
       failEnv.deps,
     );
     // test action 会因 testRunner 失败而 gate fail
@@ -1061,8 +1061,8 @@ describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断
       run: (unit: ExecutionUnit) => {
         const cmd = unit.plan.testCommand?.trim() ?? "";
         return cmd === ""
-          ? { passed: false, passedCount: 0, failedCount: 0 }
-          : { passed: false, passedCount: 0, failedCount: 5 };
+          ? { passed: false, passedCount: 0, failedCount: 0, failedTests: [] }
+          : { passed: false, passedCount: 0, failedCount: 5, failedTests: [] };
       },
     };
     const unitId = "wave:g-test-empty-cmd";
@@ -1103,7 +1103,7 @@ describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断
       {
         action: "execute",
         unitId,
-        input: { commitHash: "deadbeef", changedFiles: ["src/x.ts"] },
+        input: { commitHash: "deadbeef" },
       },
       failEnv.deps,
     );

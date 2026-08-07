@@ -6,6 +6,7 @@
  *   - POSIX 原子写：tmp 文件 → fsync(tmp) → rename → fsync(dir)
  *   - 跨进程文件锁：lockfile + O_EXCL 原子创建 + stale 检测
  *   - 内存事务：fn 在深拷贝副本上操作，正常→原子落盘，异常→丢弃（ROLLBACK）
+ *   - schema 版本：仅写侧标记（emptyFile 写入 SCHEMA_VERSION），读侧不做版本校验
  *
  * 仅 import src/core 类型 + node:fs / node:path 内置模块，无外部依赖。
  *
@@ -36,7 +37,7 @@ import { getCwJsonPath } from "./schema.js";
 // ── 常量 ─────────────────────────────────────────────────────
 
 const JSON_INDENT = 2;
-/** 当前 store 文件 schema 版本。v4 全新部署无存量数据，词汇迁移退化为版本标记。 */
+/** 当前 store 文件 schema 版本。仅写侧版本标记（emptyFile 写入），读侧不做版本校验。 */
 const SCHEMA_VERSION = 2;
 /** 文件锁最大重试次数。 */
 const LOCK_MAX_RETRIES = 50;
@@ -114,18 +115,6 @@ export class CwStore {
       );
     }
     if (!Array.isArray(data.workUnits)) data.workUnits = [];
-    // schema 版本：旧 store 无 schemaVersion 视为已迁移到当前版本（全新部署无存量数据）
-    if (typeof data.schemaVersion !== "number") data.schemaVersion = SCHEMA_VERSION;
-    // schema 版本不匹配告警（S-4）：旧 store（如 schemaVersion=1）可能含已删除的 status/action
-    //（v2 删了 clarifying/planning status、clarify/plan action），新状态机无法识别 →
-    // guardWave/guardPlanning 失败、unit 卡死。不阻断加载（CW 0.x 期 greenfield 可接受），
-    // 仅 console.warn 提示用户重建 .cw 目录。
-    if (data.schemaVersion !== SCHEMA_VERSION) {
-      console.warn(
-        `CwStore: store schemaVersion ${data.schemaVersion} !== 当前版本 ${SCHEMA_VERSION}（${this.dbPath}）` +
-          `——旧 store 可能含已删除的 status/action，建议删除 .cw 目录重建。`,
-      );
-    }
     // repoMeta 缺失留 undefined，首次推进类 save 时回填（不在只读 loadFileData 调 git）
     return data;
   }

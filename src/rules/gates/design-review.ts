@@ -52,7 +52,7 @@ export function testCasesNonEmpty(unit: ExecutionUnit): GateResult {
 /**
  * wave §2.7 `test-command-non-empty` — plan.testCommand 非空。
  *
- * testCommand 是 test 阶段 testRunner 执行的 shell 命令（per-wave，取代全局 config.testRunner.command）。
+ * testCommand 是 test 阶段 testRunner 执行的 shell 命令（per-wave）。
  * 仅校验字段非空——不 spawn、不校验文件存在、不解析命令有效性（命令拼错到 test 阶段才暴露）。
  * 与 testCasesNonEmpty 同层（plan 无独立 gate，结构校验全在 design-review）。
  */
