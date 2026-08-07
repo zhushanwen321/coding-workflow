@@ -227,6 +227,29 @@ else
     remove_worktree "$WORKSPACE_ROOT" "$BRANCH_NAME" true
 fi
 
+# --- 清理指向被删 worktree 的 cw-cli dev symlink ---
+# dev-link（use-link.sh）会把 cw-cli symlink 指向 feature worktree；worktree 删除后
+# 该 symlink 悬空，pi 读到悬空 link 当 skill 不存在。仅处理指向本次被删 worktree 的
+# link（不误伤多 worktree 并行场景下其他仍有效的 dev link）。
+_npm_root="$(npm root -g 2>/dev/null || true)"
+_npm_skill="${_npm_root}/@zhushanwen/coding-workflow/skill/cw-cli"
+for _skill_link in "$HOME/.agents/skills/cw-cli" "$HOME/.claude/skills/cw-cli"; do
+    [ -L "$_skill_link" ] || continue
+    _link_target="$(readlink "$_skill_link")"
+    case "$_link_target" in
+        "$WT_PATH"|"$WT_PATH"/*)
+            if [ -d "$_npm_skill" ]; then
+                rm -rf "$_skill_link"
+                ln -s "$_npm_skill" "$_skill_link"
+                echo "  → cw-cli symlink 切回 npm: $_skill_link"
+            else
+                rm -f "$_skill_link"
+                echo "  → cw-cli dev symlink 删除（npm 包未全局安装）: $_skill_link"
+            fi
+            ;;
+    esac
+done
+
 # --- 输出报告 ---
 echo ""
 echo "============================================"
