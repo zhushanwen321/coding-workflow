@@ -91,7 +91,6 @@ describe("E1: dispatch 完整 wave 生命周期", () => {
     const execute = dispatch(
       { action: "execute", unitId, input: {
         commitHash: "deadbeef",
-        changedFiles: ["src/auth.ts"],
       } },
       env.deps,
     );
@@ -224,7 +223,7 @@ describe("E2: dispatch 非法跳步 → CwEngineError(illegal_transition)", () =
         testCommand: "npx vitest run",
       }],
       ["design-review", { designReviewJudgment: makeValidDesignReviewJudgment() }],
-      ["execute", { commitHash: "abc", changedFiles: ["x.ts"] }],
+      ["execute", { commitHash: "abc" }],
       ["test", { testJudgment: makeValidTestJudgment() }],
       ["exec-review", { execReviewJudgment: makeValidExecReviewJudgment() }],
       ["retrospect", { retrospectData: makeValidRetrospectData() }],
@@ -450,7 +449,7 @@ describe("E: dispatch replan 旁路（不改 status）", () => {
       designReviewJudgment: makeValidDesignReviewJudgment(),
     } }, env.deps);
     dispatch({ action: "execute", unitId, input: {
-      commitHash: "deadbeef", changedFiles: ["src/x.ts"],
+      commitHash: "deadbeef",
     } }, env.deps);
     expect(loadUnit(unitId).status).toBe("executing");
     expect(loadUnit(unitId).plan.testCommand).toBe("npx vitest run");
