@@ -2,7 +2,7 @@
  * CLI wiring 层测试（layer-2：in-process import，无 spawnSync 子进程）。
  *
  * 迁移自原 tests/cli.test.ts 的 22 个 spawnSync 测试——这些测试的回归价值在 CLI
- * 内部纯函数（buildParams / readInput / renderActionHelp / loadCwConfig /
+ * 内部纯函数（buildParams / readInput / renderActionHelp /
  * guardTestCommand / constructCwDeps.testRunner / renderStatus / renderCliError /
  * runReadonly）而非「真实子进程端到端」。改用直接 import 调用，单测 5-30ms
  * （testRunner 含 1 次真实 echo spawn ~50ms）。

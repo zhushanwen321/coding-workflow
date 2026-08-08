@@ -12,6 +12,7 @@
 | cw-1-0-lifecycle-redesign | cw 1.0 生命周期重构：4 层 WorkUnit 模型（epic/feature/slice/wave）+ V5 设计文档集 + ADR 0006-0011 | 07-19 | — | `.xyz-harness/cw-1-0-lifecycle-redesign/design-v5-*.md`, `docs/adr/0006-0011`, `src/{core,rules,store,handlers,dispatch}` 五层架构 | in-progress |
 | recursive-parallel-scheduling | recursive 并行优化：parallelTargets + scheduling + 并行段 + 递归指令载体（**2026-08-04 全回退**，仅保留跨 wave 文件冲突 gate，见 ADR-0011 回退章节） | 08-03 | 08-04 | `docs/adr/0011-recursive-parallel-scheduling.md`, `src/rules/gates/design-review.ts`（noSiblingWaveFileConflict）, `src/core/hierarchy.ts`（isDependencySatisfied） | archived |
 | cw-guidance-hardening | 契约级加固：15 项改进（guidance schema 取 nextAction / create 幂等+终态 / typebox input 校验 / flag 白名单+help / retrospect gate 报告 / execute commitHash 前置 / prefix 修复 / readonly 聚合+截断 / replan 一致） | 08-03 | 08-03 | `docs/adr/0012-contract-hardening.md`, `.xyz-harness/cw-guidance-hardening/`, `src/{cli-params,handlers/validate-input}.ts` 新增 + 10 文件修改 + 6 测试文件 | archived |
+| cw-config-deprecation | 配置层清理：废弃 cw.config.json（CwConfig + loadCwConfig 全删）+ 删 orchestration 死配置 + testRunner.cwd 下沉 per-wave testCwd（见 ADR-0013） | 08-09 | — | `docs/adr/0013-cw-config-deprecation.md`, `src/{cli,core/plan,handlers/types,handlers/replan,cli-params}.ts` | delivered |
 | metrics-eval-waves | 评估指标体系 Wave 1-5：changedFiles 持久化 + retrospect 结构化 + 三层指标 + review 3-subagent 架构 + assess post-closeout | 07-14 | — | `docs/metrics-design.md`, `docs/metrics-usage.md`（已归档至 `.xyz-harness/deprecated-metrics/`） | deprecated（随 0.x `cw stats`/`cw assess` 一并删除，设计文档归档保留可追溯） |
 | issue-tracking-fix-loop | review_fix / test_fix loop：issue tracking + fix loop 闭环追踪（reviewIssues / testFixLog） | 07-14 | — | `.xyz-harness/issue-tracking-fix-loop/`, types.reviewIssues/testFixLog | archived（历史·已重构移除） |
 | clarify-adr-mechanism | 需求/技术澄清 + ADR 机制 | 07-14 | — | ADR 机制（非正式，见下表） | archived（已并入 design） |
@@ -44,6 +45,7 @@
 | [0010](./docs/adr/0010-cross-layer-abandon-parent-items.md) | 跨层跨时机的 abandon parent items 声明能力 | Accepted | cw-1-0-lifecycle-redesign |
 | [0011](./docs/adr/0011-recursive-parallel-scheduling.md) | Recursive 并行调度（parallelTargets + scheduling + 文件冲突 gate，2026-08-04 并行链路回退） | Amended | 设计文档 /tmp/cw-recursive-parallel-design.md |
 | [0012](./docs/adr/0012-contract-hardening.md) | 契约级加固（guidance schema 取 nextAction + 输入防线 + gate 可操作性） | Accepted | cw-guidance-hardening |
+| [0013](./docs/adr/0013-cw-config-deprecation.md) | 废弃 cw.config.json + 删 orchestration 死配置 + testRunner.cwd 下沉 per-wave testCwd | Accepted | cw-config-deprecation |
 | D-001 | CLI 协议用子命令风格（cw create --slug X）+ 大 JSON 走 stdin pipe 或 --xxx-file | confirmed | [from: cw-cli-extract] |
 | D-002 | 存储路径 ~/.cw/&lt;encoded-cwd&gt;/store.json，env CW_HOME 可覆盖 | confirmed | [from: cw-cli-extract] |
 | D-003 | 产物为独立 npm 包 @zhushanwen/coding-workflow，bin 名 cw；engine+CLI 同包 | confirmed | [from: cw-cli-extract] |

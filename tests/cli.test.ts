@@ -3,7 +3,7 @@
  *
  * 仅保留必须经真实 `dist/cli.js` 子进程验证的端到端烟雾：argv 解析 → dispatch →
  * stdout/exit 全链路。纯逻辑（参数构造 / flag 解析 / help 渲染 / testRunner 守卫 /
- * status 截断 / loadCwConfig 等）已下沉到层 1/2：
+ * status 截断 等）已下沉到层 1/2：
  *   - tests/cli-wiring.test.ts（层 2，in-process import，25 test ~28ms）
  *   - tests/dispatch-e2e.test.ts（dispatch 路由 / guard / unit_not_found / illegal_transition）
  *   - tests/cli-params.test.ts（flag 白名单）、tests/validate-input.test.ts（input shape）

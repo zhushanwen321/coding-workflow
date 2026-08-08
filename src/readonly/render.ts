@@ -25,7 +25,6 @@ import { buildEpicCurrentActionGuidance } from "../handlers/epic/epic-internal.j
 import { buildFeatureCurrentActionGuidance } from "../handlers/feature/feature-internal.js";
 import { buildWaveCurrentActionGuidance } from "../handlers/internal.js";
 import { buildSliceCurrentActionGuidance } from "../handlers/slice/slice-internal.js";
-import type { OrchestrationMode } from "../handlers/types.js";
 import type { PlanningAction,WaveAction } from "../rules/state-machine.js";
 import type { CwStore } from "../store/cw-store.js";
 import type { RepoMeta, WorkUnitRecord } from "../store/schema.js";
@@ -645,14 +644,13 @@ export function renderHandoff(
   unit: WorkUnitRecord,
   store: HandoffStore,
   scope: HandoffScope = "self",
-  orchestration?: OrchestrationMode,
 ): string {
   if (!isValidHandoffScope(scope)) {
     throw new CwError(`scope 必须是 self/upstream/full，当前值: ${scope}`);
   }
-  if (scope === "self") return renderHandoffSelf(unit, store, orchestration);
-  if (scope === "upstream") return renderHandoffUpstream(unit, store, orchestration);
-  return renderHandoffFull(unit, store, orchestration);
+  if (scope === "self") return renderHandoffSelf(unit);
+  if (scope === "upstream") return renderHandoffUpstream(unit, store);
+  return renderHandoffFull(unit, store);
 }
 
 /** 运行时判定字符串是否为合法 HandoffScope（narrow 谓词）。 */
@@ -679,8 +677,6 @@ function isValidHandoffScope(s: string): s is HandoffScope {
  */
 function renderHandoffSelf(
   unit: WorkUnitRecord,
-  store: HandoffStore,
-  orchestration?: OrchestrationMode,
 ): string {
   const scope = unit.scope;
   const status = getStringField(unit, "status");
@@ -705,7 +701,7 @@ function renderHandoffSelf(
   }
 
   // ── §3 当前位置与下一步 ──
-  const nextStep = renderNextStepSection(unit, scope, status, store, orchestration);
+  const nextStep = renderNextStepSection(unit, scope, status);
   lines.push(...nextStep);
   lines.push("");
 
@@ -756,8 +752,6 @@ const SUBTREE_HEADING_BASE_DEPTH = 4;
 function renderHandoffBrief(
   unit: WorkUnitRecord,
   depth: number,
-  store: HandoffStore,
-  orchestration?: OrchestrationMode,
 ): string {
   const headerDepth = Math.min(Math.max(depth, 1), HANDOFF_MAX_HEADING_DEPTH);
   const hashes = "#".repeat(headerDepth);
@@ -776,7 +770,7 @@ function renderHandoffBrief(
   }
 
   // 下一步（renderNextStepSection 首行是 `## 当前位置与下一步`，改写到 headerDepth+1）
-  const nextStep = renderNextStepSection(unit, scope, status, store, orchestration);
+  const nextStep = renderNextStepSection(unit, scope, status);
   lines.push(...rewriteHeadingDepth(nextStep, headerDepth + 1, "位置/下一步"));
 
   return lines.join("\n") + "\n";
@@ -819,15 +813,14 @@ function rewriteHeadingDepth(
 function renderHandoffUpstream(
   focus: WorkUnitRecord,
   store: HandoffStore,
-  orchestration?: OrchestrationMode,
 ): string {
   const { ancestors } = collectAncestors(focus, store);
 
   const parts: string[] = [];
   ancestors.forEach((u, i) => {
-    parts.push(renderHandoffBrief(u, ANCESTOR_HEADING_BASE_DEPTH + i, store, orchestration));
+    parts.push(renderHandoffBrief(u, ANCESTOR_HEADING_BASE_DEPTH + i));
   });
-  parts.push("=== FOCUS ===\n" + renderHandoffSelf(focus, store, orchestration));
+  parts.push("=== FOCUS ===\n" + renderHandoffSelf(focus));
 
   return appendSizeWarningIfNeeded(parts.join("\n"));
 }
@@ -842,15 +835,14 @@ function renderHandoffUpstream(
 function renderHandoffFull(
   focus: WorkUnitRecord,
   store: HandoffStore,
-  orchestration?: OrchestrationMode,
 ): string {
   const { ancestors, visited } = collectAncestors(focus, store);
 
   const parts: string[] = [];
   ancestors.forEach((u, i) => {
-    parts.push(renderHandoffBrief(u, ANCESTOR_HEADING_BASE_DEPTH + i, store, orchestration));
+    parts.push(renderHandoffBrief(u, ANCESTOR_HEADING_BASE_DEPTH + i));
   });
-  parts.push("=== FOCUS ===\n" + renderHandoffSelf(focus, store, orchestration));
+  parts.push("=== FOCUS ===\n" + renderHandoffSelf(focus));
 
   // 子树递归 brief（#### 深度起，比 focus 深）
   const subtreeLines: string[] = [];
@@ -859,7 +851,7 @@ function renderHandoffFull(
     for (const child of children) {
       if (visited.has(child.id)) continue; // RK-C3 防循环
       visited.add(child.id);
-      subtreeLines.push(renderHandoffBrief(child, depth, store, orchestration));
+      subtreeLines.push(renderHandoffBrief(child, depth));
       renderSubtree(child.id, depth + 1);
     }
   };
@@ -1038,33 +1030,11 @@ function buildGuidanceForScope(
   unit: WorkUnitRecord,
   scope: string,
   status: string,
-  store: HandoffStore,
-  orchestration?: OrchestrationMode,
 ): { action: string; guidance: string } | undefined {
   const action = (scope === "wave" ? WAVE_STATUS_TO_ACTION : PLANNING_STATUS_TO_ACTION)[status];
   if (!action) return undefined;
   try {
-    // G5：recursive 模式下 planning executing 是被唤醒的续 turn 场景——父不自己 descend，
-    // guidance 按子状态给：子全完 → 派 merge-agent 合并 + retrospect；子未完 → 继续等。
-    // serial 模式无此场景（execute 后直接 descend），保持现状。
-    if (orchestration === "recursive" && scope !== "wave" && status === "executing") {
-      const children = store.findChildren(unit.id);
-      const pendingChild = children.find(
-        (c) => !TERMINAL_STATUSES.has(getStringField(c, "status")),
-      );
-      const base = buildCurrentGuidanceForScope(unit, scope, action, orchestration) ?? "";
-      const continuation =
-        pendingChild !== undefined
-          ? [
-              "【续 turn】子单元仍在建：空闲等 steer 唤醒（recursive 模式不要自己 descend）。",
-              "唤醒后重跑 cw handoff --unitId <本单元> 复查：子全完则派 merge-agent 合并子交付 + 推进本层 retrospect；未完继续等。",
-            ].join("\n")
-          : [
-              "【续 turn】子单元已全完（closed）：派 merge-agent 合并子交付，然后推进本层 retrospect。",
-            ].join("\n");
-      return { action, guidance: `${base}\n\n${continuation}` };
-    }
-    const guidance = buildCurrentGuidanceForScope(unit, scope, action, orchestration);
+    const guidance = buildCurrentGuidanceForScope(unit, scope, action);
     if (guidance === undefined) return undefined;
     return { action, guidance };
   } catch (e) {
@@ -1077,35 +1047,32 @@ function buildGuidanceForScope(
 
 /**
  * 按 scope 调对应的 build{Scope}CurrentActionGuidance 取阶段 guidance。
- *
- * orchestration 透传给 build 函数（recursive 模式 subagent 调度段含派发/续 turn 指导）。
  * 返回 undefined 表示该 scope 未配置 build 函数（调用方降级处理）。
  */
 function buildCurrentGuidanceForScope(
   unit: WorkUnitRecord,
   scope: string,
   action: string,
-  orchestration?: OrchestrationMode,
 ): string | undefined {
   if (scope === "wave") {
     const exec = asUnit<ExecutionUnit>(unit, "wave");
     if (!exec) return undefined;
-    return buildWaveCurrentActionGuidance(exec, action as WaveAction, orchestration);
+    return buildWaveCurrentActionGuidance(exec, action as WaveAction);
   }
   if (scope === "slice") {
     const slice = asUnit<Slice>(unit, "slice");
     if (!slice) return undefined;
-    return buildSliceCurrentActionGuidance(slice, action as PlanningAction, orchestration);
+    return buildSliceCurrentActionGuidance(slice, action as PlanningAction);
   }
   if (scope === "feature") {
     const feature = asUnit<Feature>(unit, "feature");
     if (!feature) return undefined;
-    return buildFeatureCurrentActionGuidance(feature, action as PlanningAction, orchestration);
+    return buildFeatureCurrentActionGuidance(feature, action as PlanningAction);
   }
   if (scope === "epic") {
     const epic = asUnit<Epic>(unit, "epic");
     if (!epic) return undefined;
-    return buildEpicCurrentActionGuidance(epic, action as PlanningAction, orchestration);
+    return buildEpicCurrentActionGuidance(epic, action as PlanningAction);
   }
   return undefined;
 }
@@ -1117,8 +1084,6 @@ function renderNextStepSection(
   unit: WorkUnitRecord,
   scope: string,
   status: string,
-  store: HandoffStore,
-  orchestration?: OrchestrationMode,
 ): string[] {
   const lines: string[] = [];
   lines.push("## 当前位置与下一步");
@@ -1129,7 +1094,7 @@ function renderNextStepSection(
     return lines;
   }
 
-  const resolved = buildGuidanceForScope(unit, scope, status, store, orchestration);
+  const resolved = buildGuidanceForScope(unit, scope, status);
   if (!resolved) {
     lines.push(`（状态 ${status} 无已知下一步 action，请用 ${buildCommand("status", `--unitId ${unit.id}`)} 确认）`);
     return lines;

@@ -520,57 +520,6 @@ export function buildParams(
   }
 }
 
-/** cw.config.json 的结构（支持 testRunner + orchestration 配置）。 */
-export interface CwConfig {
-  testRunner?: {
-    cwd?: string;
-  };
-  /**
-   * 编排模式（G5，缺省 serial）。
-   *
-   * - "serial"（默认）：单 agent 串行——planning execute 后 crossLayer.descend 下沉第一个 child，
-   *   closeout 后 crossLayer.sibling/ascend 回溯。现状行为。
-   * - "recursive"：多 agent 并行 + steer 唤醒——execute 后不 descend（父派 subagent 空闲等唤醒），
-   *   closeout 后不 ascend（结束让 steer 唤醒父）；guidance 给派发指导 + 续 turn 指导。
-   */
-  orchestration?: "serial" | "recursive";
-}
-
-/**
- * loadCwConfig — 读取项目根目录的 cw.config.json。
- *
- * 文件不存在返回 undefined（静默 fallback）。
- * JSON 解析失败打印警告返回 undefined（不阻塞 CLI）。
- * orchestration 非法值（非 "serial"/"recursive"）打印警告忽略（缺省 serial，不阻塞 CLI）。
- */
-export function loadCwConfig(workspacePath: string): CwConfig | undefined {
-  const configPath = resolve(workspacePath, "cw.config.json");
-  if (!existsSync(configPath)) return undefined;
-  try {
-    const raw = readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return undefined;
-    const config: CwConfig = {};
-    const obj = parsed as Record<string, unknown>;
-    if (obj.orchestration === "serial" || obj.orchestration === "recursive") {
-      config.orchestration = obj.orchestration;
-    } else if (obj.orchestration !== undefined) {
-      console.error(
-        `[cw] cw.config.json orchestration 必须是 "serial" 或 "recursive"，当前值: ${String(obj.orchestration)}，已忽略（默认 serial）`,
-      );
-    }
-    if (typeof obj.testRunner === "object" && obj.testRunner !== null) {
-      const tr = obj.testRunner as Record<string, unknown>;
-      config.testRunner = {};
-      if (typeof tr.cwd === "string") config.testRunner.cwd = tr.cwd;
-    }
-    return config;
-  } catch (err) {
-    console.error(`loadCwConfig: cw.config.json at ${configPath} unreadable, ignoring`, err);
-    return undefined;
-  }
-}
-
 /**
  * readCliVersion — 读 package.json 的 version 字段。
  *
@@ -689,7 +638,6 @@ export function guardTestCommand(cmd: string): TestRunResult | null {
  *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
  *   - clock：new Date().toISOString()
- *   - orchestration：编排模式（cw.config.json orchestration，缺省 serial）
  *
  * testRunner cwd：per-wave unit.plan.testCwd（design/replan 阶段填，缺省 workspacePath）。
  * 执行命令：per-wave unit.plan.testCommand（shell 串）。
@@ -714,8 +662,6 @@ export function constructCwDeps(workspacePath: string): CwDeps {
       }
     },
   };
-  const config = loadCwConfig(workspacePath);
-
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
       // per-wave testCwd：缺省 = workspacePath（单包项目）；monorepo 多包项目在 design/replan 阶段填子包目录。
@@ -751,10 +697,7 @@ export function constructCwDeps(workspacePath: string): CwDeps {
     },
   };
   const clock = { now: (): string => new Date().toISOString() };
-  // orchestration：cw.config.json 配置，缺省 serial（向后兼容）。
-  // recursive 模式由各 handler 分支 descend/ascend + guidance 派发指导（G5）。
-  const orchestration = config?.orchestration ?? "serial";
-  return { store, gitValidator, testRunner, fileExists, workspacePath, clock, orchestration };
+  return { store, gitValidator, testRunner, fileExists, workspacePath, clock };
 }
 
 /** spawn 抛 ENOENT（git/npx 未安装）判定——基础设施异常，应抛出而非静默吞。 */
@@ -932,10 +875,7 @@ export async function runReadonly(
     if (scope !== "self" && scope !== "upstream" && scope !== "full") {
       throw new CwError(`--scope 必须是 self/upstream/full，当前值: ${scope}`);
     }
-    // G5：recursive 模式下 handoff 对 planning executing 返回续 turn guidance（查子状态），
-    // 故 renderHandoff 需要知道编排模式（缺省 serial = 现状行为）。
-    const orchestration = loadCwConfig(workspacePath)?.orchestration;
-    process.stdout.write(renderHandoff(unit, store, scope, orchestration));
+    process.stdout.write(renderHandoff(unit, store, scope));
     return;
   }
 
