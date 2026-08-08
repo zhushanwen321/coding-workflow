@@ -173,7 +173,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     // create 时追加 testCommand 提示（per-wave testCommand 改造：design 阶段填测试命令）
     expect(r.nextAction!.guidance).toContain("## design 阶段必须填 testCommand");
     expect(r.nextAction!.guidance).toContain("不要跑全量回归");
-    // 旧 testRunner config 配置示例已从 hint 移除（cwd 语义由 --testCwd/config.testRunner.cwd 保留，hint 聚焦 testCommand）
+    // 旧 testRunner config 配置示例已从 hint 移除；--testCwd flag / cw.config.json 均已废（per-wave testCwd 由 design 阶段填）
     expect(r.nextAction!.guidance).not.toContain("cw.config.json");
     expect(r.nextAction!.guidance).not.toContain("--testCwd");
   });
@@ -998,8 +998,8 @@ describe("W7: abort guidance（流程结束）", () => {
   });
 });
 
-describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）", () => {
-  it("testsAllPass 失败 → guidance 含 cw.config.json / --testCwd 提示", () => {
+describe("W7: test gate fail guidance（testsAllPass 失败时引导补 testCwd）", () => {
+  it("testsAllPass 失败 → guidance 引导 design/replan 补 testCwd", () => {
     // 构造 testRunner 返回失败的 deps
     const failEnv = createCwEnv();
     failEnv.deps.testRunner = {
@@ -1046,9 +1046,10 @@ describe("W7: test gate fail guidance（testsAllPass 失败时含配置提示）
     expect(r.nextAction).toBeDefined();
     expect(r.nextAction!.guidance).toContain("## 问题");
     expect(r.nextAction!.guidance).toContain("tests-all-pass");
-    // 验证配置提示
-    expect(r.nextAction!.guidance).toContain("cw.config.json");
-    expect(r.nextAction!.guidance).toContain("--testCwd");
+    // 验证 testCwd 引导（per-wave testCwd：design/replan 阶段补，旧 cw.config.json / --testCwd 已废）
+    expect(r.nextAction!.guidance).toContain("testCwd");
+    expect(r.nextAction!.guidance).not.toContain("cw.config.json");
+    expect(r.nextAction!.guidance).not.toContain("--testCwd");
     failEnv.cleanup();
   });
 });

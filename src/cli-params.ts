@@ -9,7 +9,7 @@
  *
  * 单源提取：白名单从 buildParams（推进 action）+ runReadonly（只读 action）现有消费键
  * 机械提取（tests/cli-params.test.ts 的 F-2 反向断言锁住「表⊇消费键」不漂移）。
- * camel/kebab 双形态（flag() helper 同时接受 `--testCwd`/`--test-cwd`）：登记抽象名后
+ * camel/kebab 双形态（flag() helper 同时接受 `--unitId`/`--unit-id`）：登记抽象名后
  * 由 kebabize 展开为两种键（F-1）。
  */
 import type { ParsedArgs } from "./cli.js";
@@ -45,7 +45,7 @@ export const GLOBAL_FLAGS: ReadonlySet<string> = new Set([
  * 键 = action 名（create/design/.../abort + tree/status/list/handoff/frontier），
  * 值 = 该 action 专属的抽象 flag 名集合。来源：
  *   - 推进 action：buildParams 的 flag()/parsed 消费键（slug/objective/parent/basedOnParent/
- *     abandonParentItems/commitHash/testCwd/abandonedIds/note/reason）
+ *     abandonParentItems/commitHash/abandonedIds/note/reason）
  *   - 只读 action：runReadonly 的 flag()/parsed 消费键（full/scope/root/layer/grep/cwd/all/
  *     long/limit/offset；tree 的 --unitId 在全局集，F-2 补漏登记）
  */
@@ -54,7 +54,7 @@ export const FLAG_WHITELIST: Readonly<Record<string, ReadonlySet<string>>> = {
   design: new Set(["abandonParentItems"]),
   "design-review": new Set(),
   execute: new Set(["commitHash"]),
-  test: new Set(["testCwd"]),
+  test: new Set(),
   "exec-review": new Set(),
   retrospect: new Set(),
   closeout: new Set(),

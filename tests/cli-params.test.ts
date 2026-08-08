@@ -90,7 +90,7 @@ describe("validateFlags（#5 flag 白名单）", () => {
       create: ["slug", "objective", "parent", "basedOnParent"],
       design: ["abandonParentItems"],
       execute: ["commitHash"],
-      test: ["testCwd"],
+      test: [],
       replan: ["abandonedIds", "note", "abandonParentItems"],
       abort: ["reason"],
       status: ["full"],

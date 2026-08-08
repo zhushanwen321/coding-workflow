@@ -59,7 +59,8 @@ export const WAVE_DESIGN_TEMPLATE: WaveStageTemplate = {
     "这是 append-only 的——一旦声明不可撤回。不确定是否需要脱离时不要声明。" +
     "testCommand 必须填：一个能启动本 wave 测试的完整 shell 命令（如 `npx vitest run src/quota/__tests__/index.test.ts`）。" +
     "严禁跑全量测试——只限定本 wave 改动相关的最小测试文件集合。多文件空格分隔。" +
-    "测试文件此时可不存在（execute 阶段才创建，TDD），但路径要按项目测试约定先定好。",
+    "测试文件此时可不存在（execute 阶段才创建，TDD），但路径要按项目测试约定先定好。" +
+    "monorepo 多包项目必须填 testCwd：指定 testCommand 在哪个子包目录跑（如 `packages/auth`），否则 cw 在仓库根跑会跑错目录。单包项目可不填（缺省 = 仓库根）。",
 };
 
 /** design-review 阶段（7 gate + 写 designReviewJudgment）。 */
@@ -129,7 +130,7 @@ export const WAVE_REPLAN_TEMPLATE: WaveStageTemplate = {
     "replan 已废弃指定条目并计算影响面。重新编写 design 方案（unit.plan），把废弃条目的意图承接进新条目。",
   constraint:
     "关键约束：replan 改完 plan 后必须重新 design-review（design → design-review → execute 完整重走），designReviewJudgment 要刷新匹配新 plan；废弃条目标 status=\"abandoned\" 保留（append-only，不可删不可复活）。" +
-    "纯 testCommand 补充（无 unit.plan 条目变更，如 executing 状态补本 wave 测试命令）跳过「重做 design-review」——直接重跑 test 即可。",
+    "纯 testCommand/testCwd 补充（无 unit.plan 条目变更，如 executing 状态补本 wave 测试命令或测试目录）跳过「重做 design-review」——直接重跑 test 即可。",
 };
 
 // ═══════════════════════════════════════════════════════════════

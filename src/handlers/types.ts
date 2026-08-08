@@ -234,6 +234,8 @@ export interface DesignInput extends AbandonParentItemsInput {
   contracts: WaveContract[];
   /** 本 wave 测试执行命令。双份定义，与 core/plan.ts 同步。 */
   testCommand: string;
+  /** per-wave 测试执行目录。双份定义，与 core/plan.ts 同步。 */
+  testCwd?: string;
   /** 补充澄清（progressive append，design 阶段可继续追加）。 */
   clarifications?: Clarification[];
 }
@@ -295,6 +297,8 @@ export interface ReplanInput extends AbandonParentItemsInput {
    * replan guidance 重定向到当前 status 映射的 action（executing→test）。
    */
   testCommand?: string;
+  /** per-wave 测试执行目录（与 DesignInput.testCwd 同义，replan 旁路补写）。 */
+  testCwd?: string;
 }
 
 /** abort handler 输入。 */

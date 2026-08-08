@@ -691,11 +691,11 @@ export function guardTestCommand(cmd: string): TestRunResult | null {
  *   - clock：new Date().toISOString()
  *   - orchestration：编排模式（cw.config.json orchestration，缺省 serial）
  *
- * testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath。
+ * testRunner cwd：per-wave unit.plan.testCwd（design/replan 阶段填，缺省 workspacePath）。
  * 执行命令：per-wave unit.plan.testCommand（shell 串）。
  */
-export function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps {
-  debugLog("constructCwDeps workspacePath", workspacePath, "testCwd", testCwd);
+export function constructCwDeps(workspacePath: string): CwDeps {
+  debugLog("constructCwDeps workspacePath", workspacePath);
   const store = new CwStore(workspacePath);
   const gitValidator = {
     exists: (hash: string): boolean => {
@@ -714,19 +714,15 @@ export function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps
       }
     },
   };
-  // testRunner 配置优先级：CLI --testCwd > cw.config.json > 默认 workspacePath
   const config = loadCwConfig(workspacePath);
-  const resolvedTestCwd = testCwd
-    ?? config?.testRunner?.cwd
-    ?? undefined;
-  const runnerCwd = resolvedTestCwd
-    ? (isAbsolute(resolvedTestCwd) ? resolvedTestCwd : resolve(workspacePath, resolvedTestCwd))
-    : workspacePath;
-  debugLog("constructCwDeps runnerCwd", runnerCwd);
 
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
-      debugLog("testRunner.run unit", unit.id, "cwd", runnerCwd);
+      // per-wave testCwd：缺省 = workspacePath（单包项目）；monorepo 多包项目在 design/replan 阶段填子包目录。
+      const resolvedCwd = unit.plan.testCwd
+        ? (isAbsolute(unit.plan.testCwd) ? unit.plan.testCwd : resolve(workspacePath, unit.plan.testCwd))
+        : workspacePath;
+      debugLog("testRunner.run unit", unit.id, "cwd", resolvedCwd);
       // per-wave 守卫：testCommand 空（含纯空白）短路，不 spawn（逻辑见 guardTestCommand）。
       const guard = guardTestCommand(unit.plan.testCommand);
       if (guard !== null) return guard;
@@ -734,7 +730,7 @@ export function constructCwDeps(workspacePath: string, testCwd?: string): CwDeps
       // shell:true 支持完整 shell 串（cd <dir> && ...、pnpm test、自定义脚本），最大框架灵活性。
       // 超时 120s（防 agent 误配死循环测试卡死 CLI）。
       const r = spawnSync(unit.plan.testCommand!.trim(), {
-        cwd: runnerCwd,
+        cwd: resolvedCwd,
         shell: true,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -861,8 +857,7 @@ async function runWithAction(
   debugLog("runWithAction params", params);
 
   // 构造 CwDeps + 调 v1Dispatch。
-  const testCwd = flag(parsed, "testCwd");
-  const deps = constructCwDeps(workspacePath, testCwd);
+  const deps = constructCwDeps(workspacePath);
   debugLog("runWithAction deps constructed");
   const result: CwActionResult = v1Dispatch(params, deps);
   debugLog("runWithAction dispatch result", result);

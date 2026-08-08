@@ -1,11 +1,12 @@
 /**
  * v1 testCwd e2e 回归测试（#4，T1.12 / AC-3.4）。
  *
- * 背景：retrospect 数据多处提及「testRunner --testCwd 未生效，monorepo 根目录跑全量」，
- * 但 3 路 review + 实机验证（marker 文件验证 spawnSync cwd）证明当前链完整：
- *   cli.ts --testCwd flag → constructCwDeps resolvedTestCwd → runnerCwd → spawnSync cwd。
+ * 背景：retrospect 数据多处提及「testRunner cwd 未生效，monorepo 根目录跑全量」,
+ * 原 testCwd flag 链路已废除，testCwd 下沉为 per-wave 属性。新链路：
+ *   design/replan 阶段在 input 填 testCwd → 写入 unit.plan.testCwd → testRunner.run 读
+ *   unit.plan.testCwd（缺省 = workspacePath，相对路径 resolve(workspacePath)）→ spawnSync cwd。
  * 本测试用 marker 脚本把 testRunner 子进程的真实 process.cwd() 落盘，
- * 断言 `cw test --testCwd <dir>` 时实际运行目录 = <dir>——锁定行为防回归。
+ * 断言 design 填 testCwd 后 `cw test` 实际运行目录 = testCwd 指定目录——锁定行为防回归。
  *
  * 真实子进程跑 dist/cli.js（需先 npm run build），复用 cli.test.ts 的子进程模式。
  */
@@ -117,10 +118,10 @@ afterAll(() => {
   disposeCwCliEnv(e);
 });
 
-// ── T1.12：--testCwd 真实运行目录 ────────────────────────────
+// ── T1.12：per-wave testCwd 真实运行目录 ────────────────────────────
 
-describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
-  it("testRunner 子进程实际 cwd = --testCwd 指定目录（marker 文件验证）", () => {
+describe("W8: cw test per-wave testCwd 真实运行目录（#4，T1.12）", () => {
+  it("testRunner 子进程实际 cwd = plan.testCwd 指定目录（marker 文件验证）", () => {
     const slug = "tcwd";
     const unitId = `wave:${slug}`;
     const testCwdDir = join(e.workspaceDir, "packages", "renderer");
@@ -150,9 +151,10 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
       clarifications: [],
-      // per-wave 设计：testCommand 决定跑什么，--testCwd 决定在哪跑。
-      // marker 脚本写 cwd 落盘，验证 spawnSync 的 cwd = --testCwd 指定目录。
+      // per-wave 设计：testCommand 决定跑什么，testCwd 决定在哪跑。
+      // marker 脚本写 cwd 落盘，验证 spawnSync 的 cwd = plan.testCwd 指定目录。
       testCommand: "node marker.js",
+      testCwd: "packages/renderer",
     });
     const designed = runCwCli(
       ["design", "--unitId", unitId, "--input", planInput],
@@ -175,12 +177,12 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
     );
     expect(executed.exitCode, executed.stderr).toBe(0);
 
-    // ── 2. 关键断言：test 用 --testCwd 指定 monorepo 子包目录 ──
+    // ── 2. 关键断言：design 已填 testCwd 指定子包目录，cw test 直接跑 ──
     const testInput = writeInputJson(e, slug, "test", {
       testJudgment: makeValidTestJudgment(),
     });
     const tested = runCwCli(
-      ["test", "--unitId", unitId, "--testCwd", "packages/renderer", "--input", testInput],
+      ["test", "--unitId", unitId, "--input", testInput],
       e,
     );
     expect(tested.exitCode, tested.stderr).toBe(0);
@@ -189,16 +191,16 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
     const result = JSON.parse(tested.stdout.trim()) as Record<string, unknown>;
     expect(result.status).toBe("tested");
 
-    // marker 文件在 --testCwd 目录下生成，内容 = 该目录的绝对路径
+    // marker 文件在 plan.testCwd 目录下生成，内容 = 该目录的绝对路径
     const markerFile = join(testCwdDir, "cwd-marker.txt");
-    expect(existsSync(markerFile), "marker 文件应落在 --testCwd 目录").toBe(true);
+    expect(existsSync(markerFile), "marker 文件应落在 plan.testCwd 目录").toBe(true);
     const recordedCwd = readFileSync(markerFile, "utf8").trim();
     expect(recordedCwd).toBe(testCwdDir);
     // 显式断言非工作区根目录（防「没生效退回根目录」的回归）
     expect(recordedCwd).not.toBe(e.workspaceDir);
   });
 
-  it("无 --testCwd 时 runner 回退到 workspacePath（对照）", () => {
+  it("无 testCwd 时 runner 回退到 workspacePath（对照）", () => {
     const slug = "tcwd-default";
     const unitId = `wave:${slug}`;
 
@@ -215,7 +217,7 @@ describe("W8: cw test --testCwd 真实运行目录（#4，T1.12）", () => {
       files: [makeValidFile("F1")],
       contracts: [makeValidContract("C1")],
       clarifications: [],
-      // 无 --testCwd 时 runner 回退 workspacePath；testCommand 是 marker 脚本验证 cwd。
+      // 无 testCwd 时 runner 回退 workspacePath；testCommand 是 marker 脚本验证 cwd。
       testCommand: "node marker.js",
     });
     expect(runCwCli(["design", "--unitId", unitId, "--input", planInput], e).exitCode).toBe(0);

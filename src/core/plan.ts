@@ -70,6 +70,8 @@ export interface WavePlan extends Plan {
   contracts: WaveContract[];
   /** 本 wave 测试执行命令（per-wave）。 */
   testCommand: string;
+  /** per-wave 测试执行目录。相对 workspacePath 或绝对路径。缺省=workspacePath。monorepo 多包项目各 wave 填子包目录。 */
+  testCwd?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -230,6 +232,8 @@ export interface DesignInput extends AbandonParentItemsInput {
   contracts: WaveContract[];
   /** 本 wave 测试执行命令。 */
   testCommand: string;
+  /** per-wave 测试执行目录。相对 workspacePath 或绝对路径。缺省=workspacePath。monorepo 多包项目各 wave 填子包目录。 */
+  testCwd?: string;
   /** 补充澄清（progressive append，design 阶段可继续追加）。 */
   clarifications?: Clarification[];
 }

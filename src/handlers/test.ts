@@ -24,7 +24,6 @@ import {
   testReferencesDesignReview,
   testsAllPass,
 } from "../rules/gates/test.js";
-import { buildCommand } from "../utils/command.js";
 import {
   appendFailRecord,
   buildFailureNextAction,
@@ -86,11 +85,11 @@ export function handleTest(
         // 失败数超过此阈值提示 monorepo 测试目录问题（失败过多通常是跑错了目录）
         const MONOREPO_FAIL_HINT_THRESHOLD = 20;
         hint = testRunResult.failedCount > MONOREPO_FAIL_HINT_THRESHOLD
-          ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是 monorepo 测试目录问题。排查：
-1. 确认测试命令在正确目录跑：在项目根目录创建 cw.config.json 配置 testRunner.cwd
-2. 或使用 --testCwd 临时指定：${buildCommand("test", `--unitId ${unit.id}`, "--testCwd <测试目录>")}
-3. 配置后可在正确目录手动跑测试验证：cd <测试目录> && npx vitest run`
-          : "\n\n如果测试目录不在仓库根，请在项目根目录创建 cw.config.json 配置 testRunner.cwd，或使用 --testCwd 参数";
+          ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是测试目录问题（monorepo 多包项目跑错了子包目录）。排查：
+1. 在 design 阶段补 plan.testCwd 指定子包目录（design-reviewed 状态走 design progressive，带 testCwd 重提）
+2. executing 之后走 replan 旁路补 testCwd（replan input 带 testCwd，testCommandOnly 路径无需重做 design-review）
+3. 补完后可在正确目录手动跑测试验证：cd <子包目录> && npx vitest run`
+          : "\n\n如果测试不在仓库根跑，在 design 阶段补 plan.testCwd 指定子包目录，或 executing 之后走 replan 旁路补 testCwd";
       }
       reason += hint;
     }
