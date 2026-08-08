@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_SRC_ROOT="$(cd "$SCRIPT_DIR/../skills" && pwd)"
-AGENT_SRC_ROOT="$SCRIPT_DIR/../agents"
+AGENT_SRC_ROOT="$(cd "$SCRIPT_DIR/../agents" && pwd)"
 
 SKILL_TARGETS=(
   "$HOME/.agents/skills"
@@ -25,6 +25,17 @@ AGENT_TARGETS=(
 # agent 文件以 YAML frontmatter（---）开头；跳过 README 等说明文档
 is_agent_file() {
   [ -f "$1" ] && [ "$(head -1 "$1")" = "---" ]
+}
+
+# 跳过非 agent 文件：真实文件跳过时打 warning（避免静默），
+# 未匹配的 glob 字面量（目录为空）不是真实文件，不打 warning
+skip_non_agent_file() {
+  local f="$1"
+  if is_agent_file "$f"; then
+    return 1
+  fi
+  [ -f "$f" ] && echo "warning: skip non-agent file: $f" >&2
+  return 0
 }
 
 # 只删 symlink，实体跳过（保留用户手动创建的资产）
@@ -49,7 +60,7 @@ if [ -d "$SKILL_SRC_ROOT" ]; then
     done
     if [ -d "$skill_dir/agents" ]; then
       for agent_file in "$skill_dir"/agents/*.md; do
-        is_agent_file "$agent_file" || continue
+        skip_non_agent_file "$agent_file" && continue
         agent_name="$(basename "$agent_file" .md)"
         for base in "${AGENT_TARGETS[@]}"; do
           # 与 install-skill.sh 对称：安装目标是带 .md 后缀的 symlink
@@ -63,7 +74,7 @@ fi
 # ── 清理独立 agents ──
 if [ -d "$AGENT_SRC_ROOT" ]; then
   for agent_file in "$AGENT_SRC_ROOT"/*.md; do
-    is_agent_file "$agent_file" || continue
+    skip_non_agent_file "$agent_file" && continue
     agent_name="$(basename "$agent_file" .md)"
     for base in "${AGENT_TARGETS[@]}"; do
       # 与 install-skill.sh 对称：安装目标是带 .md 后缀的 symlink

@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -112,6 +113,35 @@ describe("install-skill.sh", () => {
     runScript(INSTALL_SCRIPT, home);
     expect(isSymlink(link)).toBe(true);
     expect(realpathSync(link)).toBe(realpathSync(AGENT_SOURCE));
+  });
+
+  it("保护指向别处的 symlink：不重建（INFO-4 (a)）", () => {
+    const home = makeHome();
+    const link = join(home, ".pi", "agent", "agents", "tech-design-review.md");
+    const userTarget = join(home, "my-own-agent.md");
+    writeFileSync(userTarget, "user agent content\n");
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(userTarget, link);
+    runScript(INSTALL_SCRIPT, home);
+    expect(isSymlink(link)).toBe(true);
+    expect(readlinkSync(link)).toBe(userTarget);
+    // macOS /var → /private/var 是 symlink，realpath 后对比解析路径
+    expect(realpathSync(link)).toBe(realpathSync(userTarget));
+    // 其余目标目录照常安装
+    for (const base of AGENT_TARGETS.filter((b) => b !== ".pi/agent/agents")) {
+      expect(isSymlink(join(home, base, "tech-design-review.md"))).toBe(true);
+    }
+  });
+
+  it("跨文件同名不覆盖：symlink 指向本包其他文件时跳过（INFO-4 (b)）", () => {
+    const home = makeHome();
+    const link = join(home, ".agents", "agents", "tech-design-review.md");
+    const otherPackageFile = join(REPO_ROOT, "agents", "README.md");
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(otherPackageFile, link);
+    runScript(INSTALL_SCRIPT, home);
+    expect(isSymlink(link)).toBe(true);
+    expect(realpathSync(link)).toBe(realpathSync(otherPackageFile));
   });
 
   it("frontmatter 过滤：非 --- 开头的 .md（顶层 agents/README.md）不安装", () => {
