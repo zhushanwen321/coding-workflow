@@ -69,7 +69,8 @@ if [ -d "$SKILL_SRC_ROOT" ]; then
         is_agent_file "$agent_file" || continue
         agent_name="$(basename "$agent_file" .md)"
         for base in "${AGENT_TARGETS[@]}"; do
-          install_link "$agent_file" "$base/$agent_name"
+          # pi 的 agent 发现要求文件名以 .md 结尾，目标必须保留后缀
+          install_link "$agent_file" "$base/$agent_name.md"
         done
       done
     fi
@@ -82,7 +83,8 @@ if [ -d "$AGENT_SRC_ROOT" ]; then
     is_agent_file "$agent_file" || continue
     agent_name="$(basename "$agent_file" .md)"
     for base in "${AGENT_TARGETS[@]}"; do
-      install_link "$agent_file" "$base/$agent_name"
+      # pi 的 agent 发现要求文件名以 .md 结尾，目标必须保留后缀
+      install_link "$agent_file" "$base/$agent_name.md"
     done
   done
 fi

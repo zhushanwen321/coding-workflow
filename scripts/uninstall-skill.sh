@@ -52,7 +52,8 @@ if [ -d "$SKILL_SRC_ROOT" ]; then
         is_agent_file "$agent_file" || continue
         agent_name="$(basename "$agent_file" .md)"
         for base in "${AGENT_TARGETS[@]}"; do
-          remove_link "$base/$agent_name"
+          # 与 install-skill.sh 对称：安装目标是带 .md 后缀的 symlink
+          remove_link "$base/$agent_name.md"
         done
       done
     fi
@@ -65,7 +66,8 @@ if [ -d "$AGENT_SRC_ROOT" ]; then
     is_agent_file "$agent_file" || continue
     agent_name="$(basename "$agent_file" .md)"
     for base in "${AGENT_TARGETS[@]}"; do
-      remove_link "$base/$agent_name"
+      # 与 install-skill.sh 对称：安装目标是带 .md 后缀的 symlink
+      remove_link "$base/$agent_name.md"
     done
   done
 fi

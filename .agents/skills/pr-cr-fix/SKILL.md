@@ -34,6 +34,8 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 
 **runId 约定**：`Date.now()` 秒数，eg `1764297600`。同一轮 review 的所有 subagent 共用同一个 runId，路径对齐 `.review/run-<runId>/round-1/`。各 subagent 不得各自生成 runId，否则 aggregator 找不到 reviewer 报告。
 
+> **路径落点约定**：`.review/run-<runId>/round-1/` 的 `round-1` 前缀是 **pr-cr-fix 流水线约定**——本 skill 阶段 2 路径 B/C 的报告落点由调用方（pr-cr-fix 主 agent）在 task 中显式指定。code-review skill 独立路径 B 的默认落点是 `.review/run-<runId>/aggregated.md`（无 `round-1` 前缀），两者各自调用链自洽；交叉参考时以调用方 task 显式指定的路径为准，不要按另一 skill 的默认值推断。
+
 **阶段 3a worker 回执 schema** [MANDATORY]：每个 worker 完成后必须按实际采用的隔离路径返回对应字段：
 
 ```json
@@ -59,6 +61,8 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 |------|--------------|------------------|------|
 | 1. 打开 PR | `general-purpose` | `pull-request` | PR URL |
 | 2. 多维 review | `general-purpose` × 1（加载 code-review） | `code-review`（内部按环境分流：pi→review-fix-loop / 否则→维度 subagent） | 路径A: review-fix-loop 闭环 / 路径B/C: `.review/run-<runId>/round-1/aggregated.md` |
+
+> 注：路径 B/C 的 `round-1` 前缀是 pr-cr-fix 流水线约定（本路径由调用方显式指定）；code-review skill 独立路径 B 的默认落点为 `.review/run-<runId>/aggregated.md`（无前缀），详见解「runId 约定」。
 | 3. 修 must-fix + 验证 + 推 PR | `worker` × N + `general-purpose` × 2 | `cr-fix`（分组规则）/ `pull-request`（推） | fix commits + PR URL |
 
 **主 agent 始终不直接跑实现命令**：所有 bash 调用都在 subagent 内部完成。例外有两类：(a) 只读查询——`gh pr view`（查 PR 是否可查）、`git show <sha> --stat`（抽验 worker commit）、`git apply --stat <patch>`（预览 patch 核验 fixed_files）、`git status`（查本地与 origin 同步状态）；(b) **阶段 3a 路径 1 的 patch 合并**——worker 在隔离 worktree 内无法触及主工作区，patch 必须由主 agent 在主工作区 `git apply --cached` + `git commit` 拉回（见路径 1「合并」），这是路径 1 的结构性要求，不违背本约束。

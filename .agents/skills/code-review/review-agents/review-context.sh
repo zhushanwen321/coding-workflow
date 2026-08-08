@@ -56,21 +56,39 @@ PRIMARY_LANG="typescript"
 # ── 6. 输出 JSON ──
 # files 数组：用 jq -R 逐行读，正确转义特殊字符（空格、引号、反斜杠）
 # FILES_RAW 为空时 jq -R 不产出任何行 → files 为 []
-FILES_JSON="$(printf '%s' "$FILES_RAW" | grep -v '^$' | jq -R . 2>/dev/null | jq -s . 2>/dev/null || printf '[]')"
+# jq 缺失时走 else 降级：手工构造等价 JSON，保证调用方（code-review Step 1）总能拿到输出
+if command -v jq >/dev/null 2>&1; then
+  FILES_JSON="$(printf '%s' "$FILES_RAW" | grep -v '^$' | jq -R . 2>/dev/null | jq -s . 2>/dev/null || printf '[]')"
 
-# 用 jq 构造最终 JSON（保证字段顺序 + 合法性）
-jq -n \
-  --arg harness_mode "$HARNESS_MODE" \
-  --argjson subagent_capable "$SUBAGENT_CAPABLE" \
-  --argjson dimensions "$DIMENSIONS" \
-  --arg git_root "$GIT_ROOT" \
-  --argjson files "$FILES_JSON" \
-  --arg primary_lang "$PRIMARY_LANG" \
-  '{
-    harness_mode: $harness_mode,
-    subagent_capable: $subagent_capable,
-    dimensions: $dimensions,
-    git_root: $git_root,
-    files: $files,
-    primary_lang: $primary_lang
-  }'
+  # 用 jq 构造最终 JSON（保证字段顺序 + 合法性）
+  jq -n \
+    --arg harness_mode "$HARNESS_MODE" \
+    --argjson subagent_capable "$SUBAGENT_CAPABLE" \
+    --argjson dimensions "$DIMENSIONS" \
+    --arg git_root "$GIT_ROOT" \
+    --argjson files "$FILES_JSON" \
+    --arg primary_lang "$PRIMARY_LANG" \
+    '{
+      harness_mode: $harness_mode,
+      subagent_capable: $subagent_capable,
+      dimensions: $dimensions,
+      git_root: $git_root,
+      files: $files,
+      primary_lang: $primary_lang
+    }'
+else
+  # jq 缺失降级：仅对含用户输入的两个字段（git_root / files）转义引号和反斜杠；
+  # 其余字段（harness_mode / subagent_capable / dimensions / primary_lang）是固定枚举值，直接内插
+  json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  }
+  FILES_LIST=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    [ -n "$FILES_LIST" ] && FILES_LIST="$FILES_LIST,"
+    FILES_LIST="$FILES_LIST\"$(json_escape "$line")\""
+  done < <(printf '%s\n' "$FILES_RAW")
+  printf '{"harness_mode":"%s","subagent_capable":%s,"dimensions":%s,"git_root":"%s","files":[%s],"primary_lang":"%s"}\n' \
+    "$HARNESS_MODE" "$SUBAGENT_CAPABLE" "$DIMENSIONS" \
+    "$(json_escape "$GIT_ROOT")" "$FILES_LIST" "$PRIMARY_LANG"
+fi
