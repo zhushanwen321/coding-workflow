@@ -33,6 +33,10 @@ export function handleDesign(
     unit.clarifications = [...unit.clarifications, ...input.clarifications];
   }
   // 写 unit.plan：整体替换 unit.plan 的 4 类条目（wave 是叶子，split 恒为 []）
+  // testCwd「omit 即保留」：progressive 重做 design 时 input 常不带 testCwd，直接整体替换会
+  // 把首次写入的 unit.plan.testCwd 覆盖为 undefined，导致 testRunner.run 回退 workspacePath
+  // （cli.ts falsy 回退），monorepo 测试跑错目录。与 replan 旁路的条件赋值语义对齐（见 replan.ts）。
+  // 旧值在 RHS 求值时读取（赋值前），安全。
   unit.plan = {
     split: [],
     testCases: input.testCases,
@@ -40,7 +44,7 @@ export function handleDesign(
     files: input.files,
     contracts: input.contracts,
     testCommand: input.testCommand,
-    testCwd: input.testCwd,
+    testCwd: input.testCwd ?? unit.plan.testCwd,
   };
 
   // abandon parent 条目声明（ADR-0010 跨层跨时机通道）：append-only 合并到 unit.abandonedParentItems
