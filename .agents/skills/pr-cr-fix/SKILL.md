@@ -78,29 +78,41 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；完成后按 schem
 
 > 注：cw 的 pull-request skill 内部已用 `git push origin HEAD --force-with-lease`，故 force_push 语义为「是否需要强推覆盖远端历史」；阶段 3c 传给 push subagent 时保持一致。
 
-### 阶段 2：多维 review（加载 code-review skill）
+### 阶段 2：多维 review（主 agent 直接环境分流，不套 subagent）
 
-**阶段 2 不再内联 review 编排**——派 1 个 subagent 加载 `code-review` skill，由 code-review 检测环境分流（路径 A/B/C，见 code-review SKILL.md Step 1）。pr-cr-fix 只负责告诉 subagent「这是 PR review+fix 流水线，要 review+fix 一体」+ 接收返回的 `path` 决定后续。
+**主 agent 自己判断环境**——`available_workflows` 就在主 agent 上下文，直接查，不派 subagent 包装。
+
+**Step 2.0 确定维度**：主 agent 跑 `bash .agents/skills/code-review/review-agents/review-context.sh`，读 JSON 的 `dimensions` 字段（standalone 裁掉 plan-completeness，只剩 project-conventions + quality-criteria）。
+
+**Step 2.1 环境分流**：`available_workflows` 含 `review-fix-loop`？
+
+#### 路径 A：是（pi）→ 主 agent 直接启动 review-fix-loop workflow
 
 ```text
-agent:     "general-purpose"
-skillPath: "code-review"
-cwd:       <git 根>
-task:      "按 .agents/skills/code-review/SKILL.md 审查 git diff main...HEAD。
-            这是 pr-cr-fix 的 PR 流水线，调用方明确要 review+fix 一体（优先走路径 A：review-fix-loop）。
-            先跑 review-context.sh 确定 dimensions，再按 code-review Step 1 分流执行。
-            完成后按 schema 返回 JSON。"
-schema:    { path: "A"|"B"|"C", report_file?: string, must_fix?: number, suggestion?: number, workflow_run_id?: string }
+workflow: {
+  action: "run",
+  name:   "review-fix-loop",
+  args: {
+    targetType: "git-diff",
+    target:     "main...HEAD",
+    batch1: "<维度1>",
+    batch2: "<维度2>"
+    # batch3: "<维度3>"   # harness 模式才加（plan-completeness）
+  }
+}
 ```
 
-subagent 返回的 `path` 字段决定 pr-cr-fix 后续：
+`<维度N>` 依次取 Step 2.0 的 `dimensions` 列表项（维度 agent 名）。review-fix-loop 内部完成：各 batch 并行 review（batch 值 = 维度 agent 名，被加载为 reviewer）→ aggregate → fix must-fix → 重审直到 clean。
 
-| path | 含义 | pr-cr-fix 后续 |
-|------|------|----------------|
-| **A** | review-fix-loop 跑了（review+fix+重审闭环） | **跳过阶段 3a**（fix 已在 workflow 内完成），直接进 3b 验证 |
-| **B/C** | 产 aggregated.md（只 review，未 fix） | 按 Gate-2 判 must_fix，决定阶段 3a |
+**返回 path=A**：fix 已在 workflow 内闭环 → **跳过阶段 3a**，直接进 3b 验证。
 
-**Gate-2（仅 path=B/C）**：`must_fix === 0` 直接进阶段 3（跳过 3a）；否则暂停用 AskUserQuestion 弹 3 选项：
+#### 路径 B：否（非 pi）→ 主 agent 派维度 subagent 并行 + aggregator 串行
+
+为 `dimensions` 列表每个维度派 1 个 `general-purpose` subagent（task: read `.agents/skills/code-review/review-agents/<维度>.md` + 审 `git diff main...HEAD` + 写报告到 `.review/run-<runId>/round-1/<维度>.md` + 返回 `{report_file, must_fix, suggestion, info}`），全部完成后再派第 N+1 个串行 aggregator（read `review-aggregator.md` 去重 → `aggregated.md`）。
+
+**返回 path=B + aggregated.md** → 按 Gate-2 判 must_fix 决定 3a。
+
+**Gate-2（仅 path=B）**：`must_fix === 0` 直接进阶段 3（跳过 3a）；否则暂停用 AskUserQuestion 弹 3 选项：
 
 | 选项 | 后续动作 |
 |------|----------|
@@ -108,7 +120,7 @@ subagent 返回的 `path` 字段决定 pr-cr-fix 后续：
 | **只修 top N** | 用户回复 N，主 agent 把 aggregated.md 截取 N 条再派 worker |
 | **跳过修复直接推 PR** | 显式 ack 风险后仍走阶段 3（跳过 3a 直接推） |
 
-**单轮不循环**（path=B/C）：Gate-2 决策后不回阶段 2。path=A 的收敛由 review-fix-loop 内部循环负责（不受「单轮不循环」约束）。
+**单轮不循环**（path=B）：Gate-2 决策后不回阶段 2。path=A 的收敛由 review-fix-loop 内部循环负责（不受「单轮不循环」约束）。
 
 ### 阶段 3：修 must-fix + 验证 + 推 PR
 
