@@ -172,3 +172,22 @@
 ### Refactoring
 - refactor: align cross-layer.ts with v5 (G5-crossLayer) — orchestration-aware routing (f8ce3ea)
 
+
+## [v1.6.0] - 2026-08-08
+
+### Features
+- feat(skill): add tech-design skill for writing + reviewing design docs (5822b0c)
+
+### Bug Fixes
+- fix: address review info items + verify agent install (round 2) (1a71e92)
+- fix: address review must-fix/suggestions (round 1) (850a571)
+- fix: address review suggestions (round 1) (ec623d6)
+
+### Refactoring
+- refactor(skill): adapt code-review/pr-cr-fix to pi review-fix-loop (e6b1714)
+- refactor(skill): restructure distribution layout to skills/ + agents/ (7acf9c1)
+- refactor(merge-skill): self-contained, dynamic path resolution, sync main only (ac0522a)
+
+### Miscellaneous
+- docs(skill): pr-cr-fix stage-2 direct env dispatch (fc39772)
+
