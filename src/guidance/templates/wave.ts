@@ -28,11 +28,6 @@ export interface WaveStageTemplate {
   goal: string;
   /** 关键约束段（填正常 guidance 的「关键约束」部分；无约束时为空字符串）。 */
   constraint: string;
-  /**
-   * 续 turn 指导（recursive 模式渲染为 subagent 调度段的「【续 turn】」行；serial 不渲染）。
-   * 内容：被 steer 唤醒后做什么（G1 §9）。无续 turn 语义的阶段省略。
-   */
-  dispatchGuidance?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -114,9 +109,6 @@ export const WAVE_CLOSEOUT_TEMPLATE: WaveStageTemplate = {
   goal: "冻结交付，补充 evidence 主观部分（summary + artifacts）。",
   constraint:
     "关键约束：closeout 后 evidence.frozenAt 填入，整个 evidence 不可再改；cw 会校验每个 artifacts[].ref 是否存在。",
-  // G5：recursive 模式 wave 是叶子，closeout 后该结束——不自己 ascend/sibling（steer 负责唤醒父）。
-  dispatchGuidance:
-    "closeout 已完成，你的任务结束：steer 已通知父 agent（recursive 模式不需要你自己 ascend/回溯父单元）。",
 };
 
 /**

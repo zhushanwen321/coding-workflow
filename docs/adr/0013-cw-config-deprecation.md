@@ -49,7 +49,7 @@ Accepted — 2026-08-09
 - **决策**：删除 `CwConfig` 接口、`loadCwConfig` 函数及「项目根 cw.config.json 文件约定」。
 - **为什么**：TC1 删除 orchestration、TC2 把 testRunner.cwd 下沉后，cw.config.json 再无有效字段（command/model 早是死字段）。整体废弃是对「配置契约与消费者长期脱节」的修正，而非局部修补。
 - **备选**：保留空文件约定向后兼容——被否，空契约无意义且误导（让用户以为配置有效）。
-- **后果**：`src/cli.ts` 删 `loadCwConfig`；`src/handlers/types.ts` 删 `CwConfig` 接口。
+- **后果**：`src/cli.ts` 删 `CwConfig` 接口 + `loadCwConfig` 函数；`src/handlers/types.ts` 删 `OrchestrationMode` 类型 + `CwDeps.orchestration` 字段。
 - `[from: /tmp/cw-config-cleanup-design.md TC4]`
 
 ### TC5：废除 `--testCwd` CLI flag
@@ -76,6 +76,6 @@ Accepted — 2026-08-09
 - **设计文档**：`/tmp/cw-config-cleanup-design.md`（slice: cleanup-cw-config，techChoices TC1-TC5）。
 - **代码落地**：
   - TC2 / TC3：`src/core/plan.ts`（`WavePlan.testCwd?`）、`src/cli.ts`（testRunner.cwd 取 `unit.plan.testCwd`）、`src/handlers/{design,replan}.ts`（testCwd 透传）、`src/handlers/types.ts`（`DesignInput.testCwd` / `ReplanInput.testCwd`）、`src/handlers/validate-input.ts`（testCwd 非空校验）、`src/guidance/templates/wave.ts`（testCwd 提示）。
-  - TC1 / TC4：`src/handlers/types.ts`（删 `CwConfig` + orchestration 字段）、`src/cli.ts`（删 `loadCwConfig` + orchestration guidance 段）、`src/guidance/{cross-layer,subagent-guidance}.ts`、`src/handlers/{closeout,internal,epic/*,feature/*,slice/*}.ts`、`src/readonly/render.ts`。
+  - TC1 / TC4：`src/handlers/types.ts`（删 `OrchestrationMode` 类型 + `CwDeps.orchestration` 字段）、`src/cli.ts`（删 `CwConfig` 接口 + `loadCwConfig` 函数 + orchestration guidance 段）、`src/guidance/{cross-layer,subagent-guidance}.ts`、`src/handlers/{closeout,internal,epic/*,feature/*,slice/*}.ts`、`src/readonly/render.ts`。
   - TC5：`src/cli-params.ts`（test 白名单删 `--testCwd`）、`src/handlers/replan.ts`（`testCwd` 旁路为唯一在途修改入口）。
   - 测试：删除 `tests/recursive-orchestration.test.ts`（orchestration 死配置回归测试随实现删除）。

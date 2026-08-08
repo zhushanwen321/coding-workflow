@@ -27,11 +27,6 @@ export interface PlanningStageTemplate {
   goal: string;
   /** 关键约束段（填正常 guidance 的「关键约束」部分；无约束时为空字符串）。 */
   constraint: string;
-  /**
-   * 续 turn 指导（recursive 模式渲染为 subagent 调度段的「【续 turn】」行；serial 不渲染）。
-   * 内容：被 steer 唤醒后做什么（G1 §9）。无续 turn 语义的阶段省略。
-   */
-  dispatchGuidance?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
