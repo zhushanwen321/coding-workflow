@@ -295,33 +295,36 @@ unitId 不对（跨 worktree/子目录/session）。`node -p "process.cwd()"` �
 
 ### 三前提（缺一不可）
 
-递归编排模式 = 一个主 agent 当调度器，用 `cw frontier` BFS 驱动多个 cw 适配 subagent 并行推进整棵 WorkUnit 树（而非单 agent 线性逐层 descend）。它依赖以下生态，**三者必须同时满足**：
+递归编排模式 = 一个主 agent 当调度器，用 `cw frontier` BFS 驱动多个 cw 适配 subagent 并行推进整棵 WorkUnit 树（而非单 agent 线性逐层 descend）。编排所需的全部组件（cw_planning / cw_wave / cw_dev / cw_review 四个 role 工具 + planning / wave / dev / review / merge 五个编排 agent + pi-cw 编排 skill）都打包在 **cw-tool**（@zhushanwen/pi-cw-tool，0.3.0+）这一个 npm 包内。三前提：
 
 1. **处于 pi coding-agent 环境**（或基于 pi 的 coding-agent）：
    ```bash
    [ "$PI_CODING_AGENT" = "true" ] && echo "PI_ENV=yes" || echo "PI_ENV=no"
    ```
-2. **cw 适配 subagent 已被 pi 发现并加载到系统提示词**——当前 `<available_subagents>` 段应含：`planning-agent` / `wave-agent` / `dev-agent` / `review-agent` / `merge-agent`（注意 `planner` ≠ `planning-agent`，必须全名精确匹配）。
-3. **cw-tool 已安装**（提供 cw_planning / cw_wave / cw_dev / cw_review 四个 role-restricted 工具）：
+2. **cw-tool 已 npm 安装到 pi 扫描目录**（`<agentDir>/npm/` 或 `<agentDir>/extensions/`）：
    ```bash
    ls -d "$HOME/.pi/agent/npm/node_modules/@zhushanwen/pi-cw-tool" 2>/dev/null \
      && echo "CW_TOOL=npm-installed" || echo "CW_TOOL=not-installed"
-   # 或 xyz-agent dev-link 环境：echo "${XYZ_EXTENSION_PATHS:-}" | tr ':' '\n' | grep -i cw-tool
    ```
+3. **cw 适配 subagent 已被发现并加载到系统提示词**——当前 `<available_subagents>` 段应含：`planning-agent` / `wave-agent` / `dev-agent` / `review-agent` / `merge-agent`（注意 `planner` ≠ `planning-agent`，必须全名精确匹配）。
+
+> **前提②→③**：编排 agent 内置在 cw-tool 包内（经 package.json 的 `pi.agents` manifest 声明），走 npm 发现源。**npm 装 cw-tool（前提②）即让前提③自动成立**——装一个包就齐了 agent + 工具 + skill。
+>
+> ⚠️ **dev-link（XYZ_EXTENSION_PATHS）不算安装**：dev-link 只发现 cw-tool 的 **skill + 工具**，**不发现 agent**。用 dev-link live-edit 测 cw-tool 时 pi-cw skill 可读、cw_* 工具可用，但前提③不成立（agent 不可发现），`subagent agent="planning-agent"` 会失败。编排必须把 cw-tool npm 安装到扫描目录。
 
 任一为假 → 留在默认线性模式。
 
 ### 生态归属（重要）
 
-递归编排生态**不属于 coding-workflow**，属于 **xyz-agent 项目**：
+递归编排生态全部打包在 **cw-tool**（@zhushanwen/pi-cw-tool，由 xyz-agent 项目维护）这一个 npm 包内，三类组件经 package.json 的 `pi.extensions` / `pi.agents` / `pi.skills` manifest 声明：
 
 | 组件 | 归属 | 作用 |
 |------|------|------|
-| recursive-split skill | xyz-agent | 教主 agent 如何当调度器 |
-| cw-tool（@zhushanwen/pi-cw-tool） | xyz-agent | 把 cw 命令包成 pi 工具，按 role 限制可调 action |
-| cw 适配 agent（planning/wave/dev/review/merge-agent） | xyz-agent（project-agent） | 各层执行/审查/合并的专用角色 |
+| pi-cw skill | cw-tool 内置（`pi.skills`） | 教主 agent 如何当调度器（原 recursive-split，已改名内置） |
+| cw_* 工具（cw_planning / cw_wave / cw_dev / cw_review） | cw-tool 内置（`pi.extensions`） | 把 cw 命令包成 pi 工具，按 role 限制可调 action |
+| cw 适配 agent（planning / wave / dev / review / merge-agent） | cw-tool 内置（`pi.agents`） | 各层执行/审查/合并的专用角色 |
 
-> cw 适配 agent 是 xyz-agent 的 **project-agent**（定义在 `.agents/agents/`），仅当 workspaceRoot 指向 xyz-agent worktree 时才被 pi 的 `project-agents` 发现源自动发现。在别的项目里默认发现不了——需要 link 到全局发现源（`~/.pi/agent/agents/` 或 `~/.agents/agents/`）或打成 npm pi-package 安装。
+> cw-tool 作为独立 npm 包，任何 pi 环境都能装（`pi install npm:@zhushanwen/pi-cw-tool`），不限于 xyz-agent worktree。装好后 skill + 工具 + agent 三类组件同时就绪。
 
 ### 调用链变化（条件满足时）
 
@@ -336,16 +339,16 @@ unitId 不对（跨 worktree/子目录/session）。`node -p "process.cwd()"` �
 3. 各 subagent 线性走 cw 流程（design → design-review → execute → ...）
 4. 子完成唤醒父，父汇总后继续 frontier 下一轮，直到全树 closed
 
-> 失败恢复分 L0-L3（gate fail 原地改 / replan / 父级 replan 级联 / 人工介入），细节见 xyz-agent 的 recursive-split skill `design-v4.md`。
+> 失败恢复分 L0-L3（gate fail 原地改 / replan / 父级 replan 级联 / 人工介入），细节见 cw-tool 内置的 pi-cw skill `design-v4.md`。
 
 ### 不满足前提时怎么办
 
 如果想用递归编排但环境不满足：
 - 条件①假（非 pi 环境）：递归编排依赖 pi 的 subagent 派发机制，无法用，坚持线性模式。
-- 条件②假（subagent 未发现）：把 cw 适配 agent 的 `.md` link 到 `~/.pi/agent/agents/` 或 `~/.agents/agents/`，重启 session。
-- 条件③假（cw-tool 未装）：`pi install npm:@zhushanwen/pi-cw-tool`（纯 pi 环境）或在 xyz-agent worktree 用 dev-link skill 的 `link-local.sh cw-tool`。
+- 条件②假（cw-tool 未装）：`pi install npm:@zhushanwen/pi-cw-tool`（纯 pi 环境）。装好后条件③自动满足（编排 agent 内置在包内，随安装被发现）。
+- **dev-link 不算安装**：dev-link（`XYZ_EXTENSION_PATHS`）只加载 cw-tool 的 skill + 工具，**不发现 agent**——编排会卡在 `subagent agent="planning-agent"`。要编排必须 npm 安装到扫描目录。
 
-具体安装/配置步骤以 xyz-agent 项目的 recursive-split skill 和 cw-tool README 为准（本 skill 不负责该生态的安装）。
+具体安装/配置步骤以 cw-tool 内置的 pi-cw skill 和 cw-tool README 为准（本 skill 不负责该生态的安装）。
 
 ## Self-Check
 
