@@ -33,7 +33,7 @@ gate 机制在每个阶段做机器检查（plan 结构、commit 真实性、tes
 
 ## Skill
 
-agent 的完整操作手册在 [skill/cw-cli/SKILL.md](./skill/cw-cli/SKILL.md)——含入口判断、命令语法、gate fail 恢复、cwd 隔离、失败模式诊断等。
+agent 的完整操作手册在 [skills/cw-cli/SKILL.md](./skills/cw-cli/SKILL.md)——含入口判断、命令语法、gate fail 恢复、cwd 隔离、失败模式诊断等。
 
 ## 本地开发
 
@@ -58,7 +58,7 @@ npm run build        # tsc 编译到 dist/
 
 | 文档 | 内容 |
 |------|------|
-| [SKILL.md](./skill/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、失败模式） |
+| [SKILL.md](./skills/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、失败模式） |
 | [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
 | [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |

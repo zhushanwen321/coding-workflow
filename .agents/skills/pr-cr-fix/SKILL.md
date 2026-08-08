@@ -34,6 +34,8 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 
 **runId 约定**：`Date.now()` 秒数，eg `1764297600`。同一轮 review 的所有 subagent 共用同一个 runId，路径对齐 `.review/run-<runId>/round-1/`。各 subagent 不得各自生成 runId，否则 aggregator 找不到 reviewer 报告。
 
+> **路径落点约定**：`.review/run-<runId>/round-1/` 的 `round-1` 前缀是 **pr-cr-fix 流水线约定**——本 skill 阶段 2 路径 B/C 的报告落点由调用方（pr-cr-fix 主 agent）在 task 中显式指定。code-review skill 独立路径 B 的默认落点是 `.review/run-<runId>/aggregated.md`（无 `round-1` 前缀），两者各自调用链自洽；交叉参考时以调用方 task 显式指定的路径为准，不要按另一 skill 的默认值推断。
+
 **阶段 3a worker 回执 schema** [MANDATORY]：每个 worker 完成后必须按实际采用的隔离路径返回对应字段：
 
 ```json
@@ -58,7 +60,9 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 | 阶段 | subagent 类型 | 注入 skill / 维度 | 产出 |
 |------|--------------|------------------|------|
 | 1. 打开 PR | `general-purpose` | `pull-request` | PR URL |
-| 2. 多维 review | `general-purpose` × N（维度数并行 + 1 串行 aggregator） | `skill/review-agents/*.md` | `.review/run-<runId>/round-1/aggregated.md` |
+| 2. 多维 review | `general-purpose` × 1（加载 code-review） | `code-review`（内部按环境分流：pi→review-fix-loop / 否则→维度 subagent） | 路径A: review-fix-loop 闭环 / 路径B/C: `.review/run-<runId>/round-1/aggregated.md` |
+
+> 注：路径 B/C 的 `round-1` 前缀是 pr-cr-fix 流水线约定（本路径由调用方显式指定）；code-review skill 独立路径 B 的默认落点为 `.review/run-<runId>/aggregated.md`（无前缀），详见解「runId 约定」。
 | 3. 修 must-fix + 验证 + 推 PR | `worker` × N + `general-purpose` × 2 | `cr-fix`（分组规则）/ `pull-request`（推） | fix commits + PR URL |
 
 **主 agent 始终不直接跑实现命令**：所有 bash 调用都在 subagent 内部完成。例外有两类：(a) 只读查询——`gh pr view`（查 PR 是否可查）、`git show <sha> --stat`（抽验 worker commit）、`git apply --stat <patch>`（预览 patch 核验 fixed_files）、`git status`（查本地与 origin 同步状态）；(b) **阶段 3a 路径 1 的 patch 合并**——worker 在隔离 worktree 内无法触及主工作区，patch 必须由主 agent 在主工作区 `git apply --cached` + `git commit` 拉回（见路径 1「合并」），这是路径 1 的结构性要求，不违背本约束。
@@ -78,62 +82,53 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；完成后按 schem
 
 > 注：cw 的 pull-request skill 内部已用 `git push origin HEAD --force-with-lease`，故 force_push 语义为「是否需要强推覆盖远端历史」；阶段 3c 传给 push subagent 时保持一致。
 
-### 阶段 2：多维 review
+### 阶段 2：多维 review（主 agent 直接环境分流，不套 subagent）
 
-#### 先跑 review-context.sh 确定维度集
+**主 agent 自己判断环境**——`available_workflows` 就在主 agent 上下文，直接查，不派 subagent 包装。
 
-```bash
-bash skill/review-agents/review-context.sh
-```
+**Step 2.0 确定维度**：主 agent 跑 `bash .agents/skills/code-review/review-agents/review-context.sh`，读 JSON 的 `dimensions` 字段（standalone 裁掉 plan-completeness，只剩 project-conventions + quality-criteria）。
 
-读输出的 `dimensions` 字段：
+**Step 2.1 环境分流**：`available_workflows` 含 `review-fix-loop`？
 
-- `harness_mode = harness`（cw 工作流目录下，有 store.json）→ 三维：`project-conventions` / `quality-criteria` / `plan-completeness`
-- `harness_mode = standalone` → 二维：裁掉 `plan-completeness`，只跑前两维
-
-cw 最多 3 维，**第一批即可一次性并行**（不超 subagent 并行上限 5）。
-
-> **禁止写死维度**：必须读 review-context.sh 的 `dimensions` 字段，否则 standalone 模式会误跑 plan-completeness（无 plan 可核对）。
-
-#### 第一批：维度并行（≤5，cw 最多 3 维一次性 fire）
-
-为 `dimensions` 列表里的每个维度派一个 `general-purpose` subagent：
+#### 路径 A：是（pi）→ 主 agent 直接启动 review-fix-loop workflow
 
 ```text
-agent: "general-purpose"
-cwd:   <git 根>
-task:  "1. read skill/review-agents/<dimension>.md
-        2. 完全按该维度的审查标准，审查 git diff main...HEAD 的变更
-        3. 把报告写到 .review/run-<runId>/round-1/<dimension>.md
-        4. 按 schema 返回 JSON { report_file, must_fix, suggestion, info }"
+workflow: {
+  action: "run",
+  name:   "review-fix-loop",
+  args: {
+    targetType: "git-diff",
+    target:     "main...HEAD",
+    batch1: "<维度1>",
+    batch2: "<维度2>"
+    # batch3: "<维度3>"   # harness 模式才加（plan-completeness）
+  }
+}
 ```
 
-`<dimension>` 依次取 `dimensions` 列表的每一项（`project-conventions` / `quality-criteria` / `plan-completeness`）。
+`<维度N>` 依次取 Step 2.0 的 `dimensions` 列表项（维度 agent 名）。review-fix-loop 内部完成：各 batch 并行 review（batch 值 = 维度 agent 名，被加载为 reviewer）→ aggregate → fix must-fix → 重审直到 clean。
 
-#### 第 N+1 个串行（第一批全部完成后再 fire）：aggregator
+**返回 path=A**：fix 已在 workflow 内闭环 → **跳过阶段 3a**，直接进 3b 验证。
 
-```text
-agent: "general-purpose"
-cwd:   <git 根>
-task:  "read skill/review-agents/review-aggregator.md；按其步骤读取各维度报告
-        （.review/run-<runId>/round-1/<dimension>.md，仅读 dimensions 字段列出的维度），
-        去重后写到 .review/run-<runId>/round-1/aggregated.md；
-        按 schema 返回 JSON { report_file, must_fix, suggestion, info }"
-```
+#### 路径 B：否（非 pi）→ 主 agent 派维度 subagent 并行 + aggregator 串行
 
-> aggregator 依赖各维度报告，**不可与 reviewer 并行**，必须等第一批全部返回后再 fire。
+为 `dimensions` 列表每个维度派 1 个 `general-purpose` subagent（task: read `.agents/skills/code-review/review-agents/<维度>.md` + 审 `git diff main...HEAD` + 写报告到 `.review/run-<runId>/round-1/<维度>.md` + 返回 `{report_file, must_fix, suggestion, info}`），全部完成后再派第 N+1 个串行 aggregator（read `review-aggregator.md` 去重 → `aggregated.md`）。
 
-**Gate-2**：aggregator 返回的 `must_fix === 0` 才直接进阶段 3；否则主 agent **暂停**阶段 3 派工，用 AskUserQuestion 弹 3 选项：
+**返回 path=B + aggregated.md** → 按 Gate-2 判 must_fix 决定 3a。
+
+**Gate-2（仅 path=B）**：`must_fix === 0` 直接进阶段 3（跳过 3a）；否则暂停用 AskUserQuestion 弹 3 选项：
 
 | 选项 | 后续动作 |
-|------|---------|
+|------|----------|
 | **全部修**（推荐） | 按 cr-fix 分组规则派 worker 修全部 must-fix |
 | **只修 top N** | 用户回复 N，主 agent 把 aggregated.md 截取 N 条再派 worker |
-| **跳过修复直接推 PR** | 显式 ack 风险后仍走阶段 3（fix 阶段发空 subagent 跳过，直接进推 PR） |
+| **跳过修复直接推 PR** | 显式 ack 风险后仍走阶段 3（跳过 3a 直接推） |
 
-**单轮不循环**：Gate-2 触发决策后不再回到阶段 2，不会再派 review 一轮。`must_fix` 是修复前快照，修复是否闭合由阶段 3a worker 回执（软 gate）保证。
+**单轮不循环**（path=B）：Gate-2 决策后不回阶段 2。path=A 的收敛由 review-fix-loop 内部循环负责（不受「单轮不循环」约束）。
 
 ### 阶段 3：修 must-fix + 验证 + 推 PR
+
+**阶段 3a 分流**：若阶段 2 走了**路径 A**（review-fix-loop 闭环），fix 已在 workflow 内完成，**跳过 3a**（worker 派工），直接进 3b 验证。仅**路径 B/C**（产 aggregated.md）才走 3a 派 worker 修 must-fix。
 
 #### 并发 commit 冲突的本质 [HISTORICAL]
 
@@ -303,7 +298,7 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；
 |--------|------|
 | 主 agent 自己跑实现命令（`git push` / `npm test` / `gh pr create`） | 浪费主 agent 上下文；改派 subagent（只读查询除外） |
 | worker 用 monorepo 递归验证命令（如 pnpm 递归跑各子包的 typecheck）验证 | cw 是单包 npm，无多包递归语义，命令报错；用 `npm run check:all` |
-| 删/改 `skill/review-agents/*.md` 或维度文件 | 破坏 review 维度完整性 |
+| 删/改 `.agents/skills/code-review/review-agents/*.md` 或维度文件 | 破坏 review 维度完整性 |
 | 阶段 2 subagent 全并行超 5 | 超 subagent 并行上限；cw 最多 3 维不会超，但仍标注上限 5 |
 | runId 各 subagent 各自生成 | 路径不对齐，aggregator 找不到 reviewer 报告 |
 | 跳过 review-context.sh 直接写死维度 | 忽略了 standalone 模式该裁掉 plan-completeness |

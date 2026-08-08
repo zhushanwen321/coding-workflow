@@ -1,6 +1,7 @@
 {
   "name": "@zhushanwen/coding-workflow",
   "version": "1.5.2",
+  "packageManager": "npm@11.6.2",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +19,8 @@
   },
   "files": [
     "dist",
-    "skill",
+    "skills",
+    "agents",
     "scripts",
     "README.md",
     "LICENSE"

@@ -1,3 +1,8 @@
+---
+description: "Plan 落地率审查（维度 C）。客观事实核对：plan 声明的 changes/files 有没有落地 + plan 设计正确性。仅 harness 模式（有 store.json）启用。"
+name: plan-completeness
+---
+
 # Plan 落地率审查标准（Subagent C 用）
 
 ## 目的

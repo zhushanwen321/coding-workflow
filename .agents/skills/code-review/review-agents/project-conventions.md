@@ -1,3 +1,8 @@
+---
+description: "项目约定审查（维度 A）。审查 CW 引擎特有约定：状态机正确性 / Gate 完备性 / 引擎类型边界 / CLI 契约。只在 src/ 有改动时适用。"
+name: project-conventions
+---
+
 # 项目约定审查标准（Subagent A 用）
 
 ## 目的

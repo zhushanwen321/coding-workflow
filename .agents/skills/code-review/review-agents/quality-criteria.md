@@ -1,3 +1,8 @@
+---
+description: "通用代码质量审查（维度 B）。跨语言通用范式：类型安全 / 错误处理 / 边界条件 / 测试有效性。是兜底维度（C > A > B）。"
+name: quality-criteria
+---
+
 # 通用代码质量审查标准（Subagent B 用）
 
 ## 目的
