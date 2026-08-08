@@ -202,6 +202,15 @@ describe("validateInput（#6 input shape 校验）", () => {
     ).not.toThrow();
   });
 
+  it("design 纯空白 testCwd → 拒绝（与 ReplanInput 对齐非空校验，防 spawnSync cwd 解析到不存在目录）", () => {
+    const base = { testCases: [makeValidTestCase()], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" };
+    expect(() => validateInput("design", "wave", { ...base, testCwd: "   " })).toThrowError(CwError);
+    expect(() => validateInput("design", "wave", { ...base, testCwd: "" })).toThrowError(CwError);
+    // 合法值与缺省放行
+    expect(() => validateInput("design", "wave", { ...base, testCwd: "packages/auth" })).not.toThrow();
+    expect(() => validateInput("design", "wave", base)).not.toThrow();
+  });
+
   it("replan 纯空白 testCommand → 拒绝（trim 判空对齐 gate，防覆盖清空在途 wave 合法值）", () => {
     // replan 旁路不改 status 不走 design-review，testCommandNonEmpty gate 不会复验——
     // schema 是唯一防线：minLength 只拦空串，纯空白串（长度 ≥ 1）必须靠 pattern 拒绝。

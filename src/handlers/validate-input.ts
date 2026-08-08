@@ -145,7 +145,8 @@ export const DesignInputSchema = strict({
   contracts: Type.Array(WaveContractSchema),
   // testCommand 必填：新 design 提交必须带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
   testCommand: Type.String(),
-  testCwd: Type.Optional(Type.String()),
+  // testCwd 与 ReplanInput 对齐非空校验：纯空白 testCwd 会导致 spawnSync cwd 解析到不存在的目录。
+  testCwd: Type.Optional(Type.String({ minLength: 1, pattern: "^\\s*\\S" })),
   abandonParentItems: abandonParentItemsField,
 });
 

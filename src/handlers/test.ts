@@ -85,11 +85,10 @@ export function handleTest(
         // 失败数超过此阈值提示 monorepo 测试目录问题（失败过多通常是跑错了目录）
         const MONOREPO_FAIL_HINT_THRESHOLD = 20;
         hint = testRunResult.failedCount > MONOREPO_FAIL_HINT_THRESHOLD
-          ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是测试目录问题（monorepo 多包项目跑错了子包目录）。排查：
-1. 在 design 阶段补 plan.testCwd 指定子包目录（design-reviewed 状态走 design progressive，带 testCwd 重提）
-2. executing 之后走 replan 旁路补 testCwd（replan input 带 testCwd，testCommandOnly 路径无需重做 design-review）
-3. 补完后可在正确目录手动跑测试验证：cd <子包目录> && npx vitest run`
-          : "\n\n如果测试不在仓库根跑，在 design 阶段补 plan.testCwd 指定子包目录，或 executing 之后走 replan 旁路补 testCwd";
+          ? `\n\n测试失败数过多（${testRunResult.failedCount}），可能是测试目录问题（monorepo 多包项目跑错了子包目录）。当前状态 executing，合法恢复路径：
+1. 走 replan 旁路补 plan.testCwd 指定子包目录：cw replan --unitId ${unit.id} --input <replan.json>（replan.json 带 testCwd 字段，纯 testCwd 补充无需重做 design-review）
+2. 补完后重跑 cw test，或先手动验证：cd <子包目录> && npx vitest run`
+          : `\n\n如果测试不在仓库根跑，走 replan 旁路补 plan.testCwd 指定子包目录：cw replan --unitId ${unit.id} --input <replan.json>（带 testCwd 字段），补完重跑 cw test`;
       }
       reason += hint;
     }
