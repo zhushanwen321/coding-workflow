@@ -2,32 +2,67 @@
 name: merge
 description: >-
   合并分支并发布。触发词："合并"、"merge"、"发布"、"release"、
-  "上线"。仅用于 coding-workflow 项目。
+  "上线"。仅用于 coding-workflow 项目。自包含：动态定位 workspace/main worktree
+  （不写死路径），main 不存在自动创建兜底，清理阶段只同步 main 不触碰其他 worktree。
 ---
 
 # Merge
 
 > **范围**：coding-workflow 的手动合并 + 发布流程。单包项目，版本管理用单一 `package.json` + `npm version`，发布由 push tag 触发的 GitHub Actions `release.yml` 自动完成（`npm publish --provenance`）。
+>
+> **自包含**：本 skill 自带两个脚本（`merge-helpers.sh` / `cleanup-worktree.sh`），不依赖 remove-worktree 或任何其他 skill。所有路径动态解析，不写死。
+
+## workspace 定位（全流程前置）
+
+本 skill 通过 `merge-helpers.sh` 动态解析路径，**全程不写死绝对路径**：
+
+| 子命令 | 输出 | 用途 |
+|--------|------|------|
+| `selfcheck` | workspace root / main 分支 / main worktree（三行） | 阶段 0 前置验证 |
+| `root` | workspace root 路径 | 定位 feature worktree（`$WS_ROOT/<分支名 / 换 ->`） |
+| `resolve-main` | main worktree 路径（不存在则**自动创建**） | 阶段 3 需要进入 main worktree 时 |
+| `sync-main` | 同步 main worktree 到 `origin/<main>` | 阶段 3.1、阶段 6 清理后 |
+
+**main worktree 兜底机制**：`resolve-main` / `sync-main` 发现 main worktree 不存在时，会自动 `fetch origin` + `worktree add` 创建（基于 `origin/<main>`）。创建失败则明确报错退出，绝不 cd 失败后静默在错误目录继续。
+
+**[设计约束] 只同步 main**：`sync-main` 只在 main worktree 内执行 `fetch + merge --ff-only`，**绝不遍历其他 feature worktree**。feature worktree 的同步是各分支自己的职责，merge 流程不越权触碰。
 
 ## 流程阶段
 
-### 阶段 0: 前置确认
+### 阶段 0: 前置确认 + 动态定位
 
-- 当前位于 **workspace root**（`/Users/zhushanwen/Code/coding-workflow-workspace`），不在 feature worktree 内（阶段 6 会删 worktree）
-- feature 分支的 PR 已创建且为 open 状态（`gh pr view <num> --json state`）
-- 已确定版本类型（patch / minor / major）
-- `main` worktree 可用（阶段 4 在 `$WS_ROOT/main` 内执行 bump/tag/push）
+1. 用 selfcheck 动态定位并验证 main worktree 可用（不存在会自动创建）：
+
+```bash
+bash .agents/skills/merge/merge-helpers.sh selfcheck
+```
+
+输出示例（路径动态解析，非写死）：
+```
+Workspace root: /path/to/coding-workflow-workspace
+Main branch:    main
+Main worktree:  /path/to/coding-workflow-workspace/main
+✓ 自检通过
+```
+
+2. 确认其余前置条件：
+   - 当前位于 **workspace root 或某 worktree 内**（selfcheck 能定位即可，无需特定起点）
+   - feature 分支的 PR 已创建且为 open 状态（`gh pr view <num> --json state`）
+   - 已确定版本类型（patch / minor / major）
 
 ### 阶段 1: 本地验证
 
-在 feature worktree 内执行全量检查：
+在 feature worktree 内执行全量检查。feature worktree 路径 = `$WS_ROOT/<分支名中的 / 换成 ->`：
 
 ```bash
-cd /Users/zhushanwen/Code/coding-workflow-workspace/<feature-worktree>
-npm run check    # tsc --noEmit 类型检查
-npm run lint     # eslint src/ tests/
-npm test         # vitest run（单测 + e2e）
-npm run build    # tsc 编译到 dist/（确认产物可生成）
+WS_ROOT=$(bash .agents/skills/merge/merge-helpers.sh root)
+FEATURE_DIR="${BRANCH_NAME//\//-}"   # 例 feat/foo → feat-foo
+cd "$WS_ROOT/$FEATURE_DIR"
+
+npm run check:all   # tsc 类型检查（src + tests，比单独 check 更全）
+npm run lint        # eslint src/ tests/
+npm test            # vitest run（单测 + e2e）
+npm run build       # tsc + 生成 schemas（确认产物可生成）
 ```
 
 **[MANDATORY] 零容忍**：任何失败必须正面修复，不允许跳过。四项均 exit 0 方可继续。
@@ -45,15 +80,15 @@ gh pr merge <PR_NUM> --merge --delete-branch
 
 ### 阶段 3: 版本 bump + tag + push
 
-**[MANDATORY] 在 `main` worktree 内执行**（`cd /Users/zhushanwen/Code/coding-workflow-workspace/main`）。
+**[MANDATORY] 在 main worktree 内执行**（用 `resolve-main` 动态定位，不写死）。
 
 #### 3.1 同步 main
 
 ```bash
-cd /Users/zhushanwen/Code/coding-workflow-workspace/main
-git fetch origin          # 走 refspec 更新 origin/main（不带分支名，确保 tracking ref 更新）
-git merge --ff-only origin/main
+bash .agents/skills/merge/merge-helpers.sh sync-main
 ```
+
+脚本内部：动态定位 main worktree → `git fetch origin`（**不带分支名，走 refspec**）→ `git merge --ff-only origin/<main>`。只在 main worktree 执行，不触碰其他 worktree。
 
 **[HISTORICAL] 禁止用 `git fetch origin main`**：带显式分支参数的 fetch 只写 `FETCH_HEAD`，不更新 `refs/remotes/origin/main`，后续 `merge --ff-only origin/main` 会读到陈旧 ref 导致静默同步失败。2026-07-27 事故：`git fetch origin main` 后 origin/main 仍停在旧 commit，本地 main 碰巧等于旧 commit 被 ff-only 判为 "already up to date" 跳过，远程新 commit 完全没同步进来。根因是 bare repo 初始化时 `remote.origin.fetch` refspec 为空，已修复补 `+refs/heads/*:refs/remotes/origin/*`；此处 fetch 命令也必须走 refspec（不带分支名）。
 
@@ -81,9 +116,11 @@ git merge --ff-only origin/main
 - CLI 参数不兼容（已有子命令参数格式变化、输出 JSON schema 变更）
 - 删除已发布的 action / gate / handler（下游依赖断裂）
 
-#### 3.3 bump 版本
+#### 3.3 bump 版本（在 main worktree 内）
 
 ```bash
+cd "$(bash .agents/skills/merge/merge-helpers.sh resolve-main)"
+
 CURRENT_VER=$(node -p "require('./package.json').version")
 npm version <patch|minor|major> --no-git-tag-version
 NEW_VER=$(node -p "require('./package.json').version")
@@ -95,12 +132,10 @@ echo "版本: $CURRENT_VER → $NEW_VER"
 **[OPTIONAL]** 自动生成变更记录。基于 conventional commits 前缀（feat/fix/chore/docs/refactor/test）提取，追加到 `CHANGELOG.md`。
 
 ```bash
-cd /Users/zhushanwen/Code/coding-workflow-workspace/main
-
+# 仍在 main worktree 内
 PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 TAG="v$NEW_VER"
 
-# 提取上个 tag 到 HEAD 的 commit，按前缀分类
 if [ -n "$PREV_TAG" ]; then
   RANGE="${PREV_TAG}..HEAD"
 else
@@ -160,6 +195,7 @@ git diff --quiet CHANGELOG.md && echo "无 conventional commit，跳过 CHANGELO
 #### 3.4 commit + tag + push
 
 ```bash
+# 仍在 main worktree 内
 git add -A
 git commit -m "chore: bump version $CURRENT_VER → $NEW_VER" 2>/dev/null || echo "无变更需提交"
 TAG="v$NEW_VER"
@@ -191,7 +227,7 @@ gh run watch --workflow=release.yml
 tag 推送后 CI 构建/测试失败，版本未发布到 npm。需要清理 tag、修复后重新走 bump 流程。
 
 ```bash
-cd /Users/zhushanwen/Code/coding-workflow-workspace/main
+cd "$(bash .agents/skills/merge/merge-helpers.sh resolve-main)"
 
 # 1. 删除远程 tag
 TAG="v$NEW_VER"
@@ -241,27 +277,33 @@ npm view @zhushanwen/coding-workflow@$NEW_VER version && \
 gh run list --workflow=release.yml --limit=1
 ```
 
-### 阶段 6: 清理
+### 阶段 6: 清理（自包含）
 
-用项目内 `remove-worktree` skill 清理 feature worktree（会检查分支已合并到 main，并同步其他 worktree）：
-
-```bash
-cd /Users/zhushanwen/Code/coding-workflow-workspace
-bash .agents/skills/remove-worktree/remove-worktree.sh <branch-name>
-# 例: bash .agents/skills/remove-worktree/remove-worktree.sh feat-replan-process-refactor
-```
-
-脚本内部会：检查已合并 → 同步其他 worktree（`git fetch origin` 走 refspec）→ 删除 worktree + 本地分支。冲突时脚本不 abort，保留冲突状态，按 remove-worktree skill 的"冲突处理"步骤解决。
-
-若需手动逐条执行（不推荐，绕过合并检查）：
+用本 skill 自带的 `cleanup-worktree.sh` 清理 feature worktree。**自包含，不委托 remove-worktree skill**：
 
 ```bash
-cd /Users/zhushanwen/Code/coding-workflow-workspace
-git worktree remove <feature-worktree>   # 删 worktree 目录
-git branch -d <branch-name>               # 删本地分支（远程分支阶段 2 已删）
-# 同步其他 worktree（fetch 必须不带分支名，走 refspec 更新 origin/main）
-cd main && git fetch origin && git merge --ff-only origin/main
+bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
+# 例: bash .agents/skills/merge/cleanup-worktree.sh feat-optimize-by-retrospec
 ```
+
+脚本行为（自包含，workspace 函数复用同目录 `merge-helpers.sh`）：
+1. 动态定位 workspace root（向上找 `.bare/`）
+2. 检查分支已合并到 `origin/<main>`（未合并 → 拒绝删除，需 `--force`）
+3. 检查 worktree 无未提交变更
+4. 删除 feature worktree 目录 + 本地分支
+5. **只同步 main worktree**（`sync-main`：fetch + merge --ff-only origin/main），**不遍历其他 feature worktree**
+6. 清理指向被删 worktree 的 cw-cli dev symlink（切回 npm 版或删除）
+
+**与原 remove-worktree 的关键差异**：去掉了"遍历同步所有 feature worktree"的逻辑——那是各分支自己的事，merge 流程不越权。只同步 main，确保本地 main 追上刚合并的远程提交。
+
+参数：
+
+| 参数 | 说明 |
+|------|------|
+| `<branch-name>` | 要清理的分支名，`/` 自动转 `-` 作为目录名 |
+| `--force` | 跳过合并检查 + 未提交检查，强制删除（用 `git worktree remove --force` + `branch -D`） |
+
+冲突处理：`sync-main` 的 ff-only 失败不阻塞清理（main 有独立 commit 的罕见情况），脚本只警告并继续。
 
 ## 项目特点
 
@@ -279,3 +321,5 @@ cd main && git fetch origin && git merge --ff-only origin/main
 |------|------|----------|
 | `[MANDATORY]` | 流程强制要求。不遵守会导致流程失败或产生严重后果 | 必须严格遵守 |
 | `[OPTIONAL]` | 可选步骤。可根据实际情况决定是否执行 | 可根据项目需求调整 |
+| `[HISTORICAL]` | 历史事故教训固化的规则 | 不允许删除或削弱，只能加强 |
+| `[设计约束]` | 架构层面的明确边界约定 | 修改需评估对整体设计的影响 |
