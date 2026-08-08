@@ -1,11 +1,11 @@
 /**
  * v1 rules — FeatureSpec 的 typebox schema + 校验纯函数。
  *
- * 设计来源：core/clarifications.ts 的 FeatureSpec interface（feature clarify 阶段的 spec 产物）。
+ * 设计来源：core/clarifications.ts 的 FeatureSpec interface（feature design 阶段的 spec 产物）。
  *
- * 为什么需要它：feature clarify handler 原本对 spec 内部结构零校验，agent 提交畸形 spec
+ * 为什么需要它：feature design handler 原本对 spec 内部结构零校验，agent 提交畸形 spec
  * （如 FR 字段名拼错、缺 ac 数组）会直接覆盖入库，到 design-review gate 访问 fr.ac.length 时
- * 抛 `Cannot read properties of undefined`，崩在 rules 层（非可读 fail）。schema 在 clarify 写入前
+ * 抛 `Cannot read properties of undefined`，崩在 rules 层（非可读 fail）。schema 在 design 写入前
  * 拦截畸形结构，让 agent 在最早阶段看到「字段路径: 错误描述」可读报错。
  *
  * 不变量：零 IO，零 mock，纯函数。schema 启用 strict 模式（additionalProperties: false），拒绝
@@ -32,7 +32,7 @@ const itemStatus = Type.Union([Type.Literal("active"), Type.Literal("abandoned")
  * FunctionalRequirement 的 schema（FR，feature 专属，model §5.7）。
  *
  * 必填：id / status / title / detail / ac（ac 是引用 AC id 的 string 数组，FR-AC 强引用的基础）。
- * ac 缺失是崩溃根因——schema 拒绝缺 ac 的 FR，在 clarify 阶段挡下。
+ * ac 缺失是崩溃根因——schema 拒绝缺 ac 的 FR，在 design 阶段挡下。
  * 额外字段（priority/statement 等 agent 自创字段）用 Optional 允许：不破坏已入库数据，
  * agent 附加信息无害（gate 不读这些字段）。
  */

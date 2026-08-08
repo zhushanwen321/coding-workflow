@@ -6,7 +6,7 @@
  * PLANNING_TRANSITIONS.design（progressive，created/designing/design-reviewed → designing）。
  *
  * 职责：
- * 1. append input.clarifications（渐进式，承接原 clarify action）
+ * 1. append input.clarifications（渐进式）
  * 2. 写 SlicePlan 5 字段：techChoices/interfaces/dataModels/errorSpecs/split
  * 3. decisions：input 提供 → 用；否则从 unit.clarifications 投影（每个有 resolution 的 Clarification
  *    生成一条 Decision，最小投影：id/decision/sourceClarification = Clarification.id，rationale 取 resolution）
@@ -34,7 +34,7 @@ export function handleDesignSlice(
   deps: CwDeps,
 ): ActionResult {
   validateInput("design", "slice", input);
-  // 写产物：append clarifications（progressive，不覆盖历史，承接原 clarify action）
+  // 写产物：append clarifications（progressive，不覆盖历史）
   if (input.clarifications?.length) {
     unit.clarifications = [...unit.clarifications, ...input.clarifications];
   }

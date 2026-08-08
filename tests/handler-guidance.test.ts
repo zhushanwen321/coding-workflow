@@ -171,7 +171,7 @@ describe("W7: ok=true handler guidance（三段式非空）", () => {
     expect(r.nextAction!.guidance).toContain("## 下一步");
     expect(r.nextAction!.guidance).toContain("cw design --unitId wave:g-create");
     // create 时追加 testCommand 提示（per-wave testCommand 改造：design 阶段填测试命令）
-    expect(r.nextAction!.guidance).toContain("## plan 阶段必须填 testCommand");
+    expect(r.nextAction!.guidance).toContain("## design 阶段必须填 testCommand");
     expect(r.nextAction!.guidance).toContain("不要跑全量回归");
     // 旧 testRunner config 配置示例已从 hint 移除（cwd 语义由 --testCwd/config.testRunner.cwd 保留，hint 聚焦 testCommand）
     expect(r.nextAction!.guidance).not.toContain("cw.config.json");
@@ -954,14 +954,14 @@ describe("W7: replan guidance（重走 design-review 提示）", () => {
     // → blockedHint 重定向到状态映射 action（executing→test），并显式提示回流不可达
     expect(r.nextAction!.guidance).not.toContain("cw design");
     expect(r.nextAction!.guidance).toContain("无法回流 replan 内容变更");
-    expect(r.nextAction!.guidance).toContain("plan/design-review 在此状态均 illegal");
+    expect(r.nextAction!.guidance).toContain("design/design-review 在此状态均 illegal");
     expect(r.nextAction!.guidance).toContain("只能先执行 test 或 abort 终止");
     // blockedHint 替换「重新提交方案 + 命令」段（design 语义不适用，不推非法命令）
     expect(r.nextAction!.guidance).not.toContain("审视完后重新提交方案");
     // 机器可读字段与 guidance 同步重定向（action=design 在 executing 状态是 illegal_transition）
     expect(r.nextAction!.action).toBe("test");
-    // 状态感知裁剪：审视引导不含「重新 plan 并重新 design-review」句（与 blockedHint 同屏矛盾）
-    expect(r.nextAction!.guidance).not.toContain("重新 plan 并重新 design-review");
+    // 状态感知裁剪：审视引导不含「重新 design 并重新 design-review」句（与 blockedHint 同屏矛盾）
+    expect(r.nextAction!.guidance).not.toContain("重新 design 并重新 design-review");
   });
 
   it("正常 replan（含废弃条目）→ guidance 仍指向 cw design（原行为不变）", () => {
@@ -1116,7 +1116,7 @@ describe("W2(testCommand): 空 testCommand fail hint 分档（短路优先诊断
       failEnv.deps,
     );
     expect(r.ok).toBe(false);
-    // 根因诊断优先：空 testCommand 提示（design-reviewed 走 plan progressive / executing 走 replan 旁路）
+    // 根因诊断优先：空 testCommand 提示（design-reviewed 走 design progressive / executing 走 replan 旁路）
     expect(r.nextAction!.guidance).toContain("plan.testCommand 缺失");
     expect(r.nextAction!.guidance).toContain("replan");
     // 上下文化：双 gate fail 归因到 testCommand 缺失（而非暗示覆盖不足）

@@ -98,7 +98,7 @@ describe("feature design-review gates: FR-AC 强引用（3 个）", () => {
     });
 
     it("[BUG-HUNT 修复] FR.ac 字段 undefined（畸形数据绕过 design 校验时）→ 可读 fail 而非崩溃", () => {
-      // 原崩溃 bug：replan 等路径绕过 clarify 校验，fr.ac 为 undefined，
+      // 原崩溃 bug：replan 等路径绕过 design 校验，fr.ac 为 undefined，
       // fr.ac.length 访问抛 Cannot read properties of undefined。
       // guard 后应返回可读 fail，不抛异常。
       const unit = validFeature();

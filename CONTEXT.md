@@ -13,7 +13,7 @@
 | **Status（状态）** | WorkUnit 的生命周期阶段，两层枚举（见下文） | `src/core/status.ts` |
 | **Gate（机器检查门）** | action 流转前的结构化检查，gate fail 可 retry 不阻断 | `src/rules/gates/*.ts` |
 | **Guard** | 状态机合法性校验（防跳步），guard fail 抛 CwEngineError 不可恢复 | `src/rules/state-machine.ts` |
-| **Plan** | plan 阶段的产物，4 层形态不同（见数据模型） | `src/core/plan.ts` |
+| **Plan** | design 阶段的产物，4 层形态不同（见数据模型） | `src/core/plan.ts` |
 | **Split** | PlanningUnit execute 时按 Split 创建子层 unit | `src/core/plan.ts:46` |
 | **Evidence** | unit 的交付证据（commitHash/changedFiles/artifacts/testRunResult），closeout 时冻结 | `src/core/evidence.ts` |
 | **Judgment** | 阶段产物的人工判断（designReview/test/execReview/retrospect 四种） | `src/core/judgments.ts` |
@@ -42,7 +42,7 @@ epic → feature → slice → wave
 | Action | 类型 | 说明 |
 |--------|------|------|
 | `create` | 入口 | 建 WorkUnit（按 layer 建 epic/feature/slice/wave），工厂初始化全字段空态 |
-| `design` | progressive | 写 plan 条目（wave: testCases/tasks/files/contracts；slice: 技术方案+split；上层: 只 split）+ append clarifications（合并原 clarify 语义） |
+| `design` | progressive | 写 plan 条目（wave: testCases/tasks/files/contracts/testCommand；slice: 技术方案+split；上层: 只 split）+ append clarifications（progressive 追加需求澄清） |
 | `design-review` | 线性 | 审方案合理性，写 designReviewJudgment，跑 design-review gate |
 | `execute` | 线性 | wave: 记录 commitHash；PlanningUnit: 按 split 下沉创建子 unit（nextAction 填 crossLayer.descend 指向第一个 child） |
 | `test` | 线性（wave 专属） | 跑测试 + 4 gate（commitExists/testsAllPass/testCasesExecuted/testReferencesDesignReview） |

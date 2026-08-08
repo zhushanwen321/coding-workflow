@@ -44,7 +44,7 @@ export interface FrontierNode {
   childUnitIds?: string[];
   /** statusHistory 最后一条的 action（如 "replan"/"design"/"execute"）。
    * 供递归调度器做 replan 后备检测——replan 是旁路（status 不变），frontier 的
-   *  status→action 映射不反映"需回 plan"，调度器靠此字段识别 replan 发生。 */
+   *  status→action 映射不反映"需回 design"，调度器靠此字段识别 replan 发生。 */
   lastStatusHistoryAction?: string;
   /** wave 层 execute 后的 commit hash（planning 层无此字段）。 */
   commitHash?: string;

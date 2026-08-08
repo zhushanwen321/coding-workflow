@@ -48,7 +48,7 @@
 ### SUGGESTION 标准
 
 - guard 的错误消息（CwEngineError 的 reason）未说明「当前 status / 期望 action / 合法后继」，调试困难
-- progressive action（clarify/plan）的多次调用语义在转换表注释里未说明
+- progressive action（design / design-review）的多次调用语义在转换表注释里未说明
 
 ### 示例
 
@@ -83,11 +83,11 @@ Gate 是 CW 的核心价值（机器检查门，防 AI 谎报）。本子维度�
 - **新增 gate 未接入 handler**：`src/rules/gates/*.ts` 新增具名 check 函数时，对应 handler 必须调用它。写了 check 但没接 = 检查形同虚设
 - **gate 结果未写 statusHistory**：每次 gate 执行（pass/fail）的结果必须 append 到 unit 的 `statusHistory`（`src/core/status.ts` StatusChange，含 fail 记录）。遗漏记录 = 审计断链，closeout 回溯失真
 - **关键检查被弱化**：
-  - `commitExists`（`test.ts:44`）校验 commit 存在/在 repo/非空——改校验逻辑时确认 `extraFiles`/`extraCommitReuse` 警告（非 fail）的语义没变
-  - `testsAllPass`（`test.ts:79`）跑测试 exit code 判定——任何「测试失败也当 pass」的改动 = MUST_FIX
+  - `commitExists`（`test.ts:44`）校验 commitHash 非空 + `git cat-file -e` 存在性（IO 由 handler 注入，gate 零 IO）——改校验逻辑时确认「commitHash 非空 + commit 存在于 repo」的语义没变
+  - `testsAllPass`（`test.ts:79`）判定 `testRunResult.passed=true`（fail 数=0）；测试由 cli.ts 用 `spawnSync` 执行（per-wave testCommand），结果解析后传入 gate，gate 零 IO。任何「测试失败也当 pass」的改动 = MUST_FIX
   - `testCasesExecuted` / `testReferencesDesignReview`（`test.ts:117` / `:212`）做精确匹配。若改匹配逻辑（加 trim/substring 容差），破坏「防 AI 谎报」设计意图 → MUST_FIX
 - **freeze 校验绕过**：`checkFreeze`（`freeze.ts:141`）在 closeout 时校验 artifacts drift + 冻结 evidence（frozenAt）。任何跳过 freeze 检查的改动 → MUST_FIX
-- **execFileSync 命令注入**：`testsAllPass` 调 `execFileSync` 执行测试 runner。确认 command 来自 `TestRunnerConfig`（用户配置），不拼 shell 字符串、不把用户输入直接当 shell 参数
+- **测试命令执行安全**：cli.ts:736 用 `spawnSync(testCommand, {shell:true})` 执行 per-wave testCommand（agent 撰写）。审查命令注入风险应聚焦此处 + `guardTestCommand`（cli.ts:672）的空白短路守卫，确认 testCommand 非纯空白才放行 spawn
 
 ### SUGGESTION 标准
 
@@ -101,8 +101,9 @@ Gate 是 CW 的核心价值（机器检查门，防 AI 谎报）。本子维度�
 const result = commitExists(unit, deps);
 // 缺：store.appendStatusHistory(unit, { action: "test", gateResult: result });
 
-// pass：execFileSync 不拼 shell，参数走数组
-execFileSync(runner.command, runner.args, { cwd: runnerCwd });
+// pass：testCommand 非纯空白才 spawn（guardTestCommand 空白短路守卫），shell:true 执行 per-wave 命令
+guardTestCommand(unit.plan.testCommand); // 空白短路返回，不 spawn
+const r = spawnSync(unit.plan.testCommand.trim(), { shell: true });
 ```
 
 ---
@@ -132,7 +133,7 @@ CW 是强类型 TypeScript 引擎，schema 是外部输入的契约边界。本�
   - 普通 `Error` = 内部异常（不变式违反、lock 失败），CLI 映射 exit 2
   - 新增 throw 时分类错误（如把 guard fail 抛成普通 Error → 误判 exit 2）→ MUST_FIX
 - **store schema 绕过**：`store.json` 是外部输入（`~/.cw/<encodedCwd>/store.json`），必须经 `src/store/schema.ts` 校验。新增 WorkUnit 字段时必须同步更新 schema，否则外部输入绕过类型检查
-- **encodeCwd 不一致**：`encodeCwd`（`schema.ts:85`）把 `/` 和 `\` 都映射为 `__`。改编码规则时必须同步 `decodeCwd`（`schema.ts:93`）和 store 路径定位逻辑，否则找不到 store
+- **encodeCwd 不一致**：`encodeCwd`（`schema.ts:85`）把 `/` 和 `\` 都映射为 `__`。改编码规则时必须同步 `decodeCwd`（`schema.ts:98`）和 store 路径定位逻辑，否则找不到 store
 - **引擎层出现 any**：项目硬规则禁止 `any`（用 `unknown` 或具体类型）。引擎层（`src/core/`、`src/dispatch.ts`、`src/rules/`、`src/store/`）出现裸 `any` 且无注释 → MUST_FIX
 
 ### SUGGESTION 标准
@@ -173,7 +174,7 @@ CLI 是 agent 与引擎的唯一接口（agent 通过 bash 调 cw）。本子维
   - 新增错误类型或改 `mapExitCode` 时破坏此映射 → MUST_FIX
 - **dispatch 引入 agent 特定依赖**：`dispatch.ts` 是 platform-agnostic 纯函数（`(params, deps) => ActionResult`）。新增逻辑引入 pi / claude-code / 特定 harness runtime 依赖 → MUST_FIX（破坏 agent-agnostic 设计）
 - **参数解析不透传**：`cli.ts` 用 argv 解析（`buildParams`）。新增参数时若透传到 dispatch 的路径断裂（参数在 cli 层丢了没进 CwParams）→ MUST_FIX
-- **只读命令误写 store**：`tree` / `status` / `list` / `handoff`（`READONLY_QUERIES`，`cli.ts:162`）不经 dispatch、不写 store、不 append statusHistory。若误改成走 dispatch 写 store → MUST_FIX
+- **只读命令误写 store**：`tree` / `status` / `list` / `handoff` / `frontier`（`READONLY_QUERIES`，`cli.ts:166`）不经 dispatch、不写 store、不 append statusHistory。若误改成走 dispatch 写 store → MUST_FIX
 
 ### SUGGESTION 标准
 

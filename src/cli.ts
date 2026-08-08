@@ -159,7 +159,7 @@ const ADVANCE_ACTIONS = new Set([
   "abort",
 ]);
 
-/** 合法 action 总集（create + 10 个推进 action）。 */
+/** 合法 action 总集（create + 9 个推进 action）。 */
 const VALID_ACTIONS = new Set(["create", ...ADVANCE_ACTIONS]);
 
 /** 只读查询命令（tree/status/list/handoff/frontier）——不经 dispatch、不写 store。 */

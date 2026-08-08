@@ -71,7 +71,7 @@ const WAVE_RULES: Readonly<Record<string, Rule>> = {
   "design-review": {
     level: "mandatory",
     direction: "代码审查",
-    reason: "审查主 agent 刚做的 plan，隔离后的 subagent 更客观，避免确认偏差",
+    reason: "审查主 agent 刚做的 design 产出，隔离后的 subagent 更客观，避免确认偏差",
   },
   execute: {
     level: "mandatory",

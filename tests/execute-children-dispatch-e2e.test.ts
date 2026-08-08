@@ -68,7 +68,7 @@ describe("dispatch slice execute 返回 children", () => {
       { action: "create", input: { slug: "ch-slice", objective: "o", layer: "slice" } },
       env.deps,
     );
-    // design 合并原 clarify + plan：split 两项 w1←(无依赖)、w2←w1
+    // design：split 两项 w1←(无依赖)、w2←w1
     dispatch(
       {
         action: "design",
@@ -242,7 +242,7 @@ describe("dispatch slice execute 无依赖 split", () => {
       { action: "create", input: { slug: "ch-no-deps", objective: "o", layer: "slice" } },
       env.deps,
     );
-    // design 合并原 clarify + plan：split 两项互不依赖
+    // design：split 两项互不依赖
     dispatch(
       {
         action: "design",

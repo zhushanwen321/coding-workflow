@@ -4,7 +4,7 @@
  * 设计来源：core plan.Plan（基类，只有 split 字段）、
  * PLANNING_TRANSITIONS.design（progressive，created/designing/design-reviewed → designing）。
  *
- * 职责：append input.clarifications（渐进式，承接原 clarify action）→
+ * 职责：append input.clarifications（渐进式）→
  *       写 unit.plan.split = input.split（Plan 基类）→ status 流转 → save。
  *
  * 与 feature design 同构：epic 也只写 Plan 基类的 split——epic 不产技术方案也不产 spec，
@@ -34,7 +34,7 @@ export function handleDesignEpic(
   deps: CwDeps,
 ): ActionResult {
   validateInput("design", "epic", input);
-  // 写产物：append clarifications（progressive，不覆盖历史，承接原 clarify action）
+  // 写产物：append clarifications（progressive，不覆盖历史）
   if (input.clarifications?.length) {
     unit.clarifications = [...unit.clarifications, ...input.clarifications];
   }

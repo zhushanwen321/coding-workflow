@@ -4,11 +4,10 @@
  * 来源：v5 cli-and-guidance §4.x + §6.1（replan 三层渐进第 1 层：告知选项）+
  *      design-v5-slice §2（SlicePlan）/ feature §3（feature Plan 基类）。
  *
- * 职责：定义 design 阶段的一句话目标 + 关键约束。design 合并了原 clarify 与 plan 两阶段——
- *      同时接收 clarifications（progressive append 澄清）与 Split/技术方案（写 plan），
- *      故本模板吸收原 PLANNING_CLARIFY_TEMPLATE 的 goal+constraint（去重，append-only 语义）。
+ * 职责：定义 design 阶段的一句话目标 + 关键约束。design 同时接收 clarifications（progressive append 澄清）
+ *      与 Split/技术方案（写 unit.plan），append-only 语义。
  *      §6 replan 第 1 层告知保留——design 阶段必须告知 agent：split 非空 + 条目 execute 后
- *      冻结 + replan 是改 plan 唯一途径。
+ *      冻结 + replan 是改 unit.plan 唯一途径。
  *
  * 设计原则：与 WaveStageTemplate 同构。纯静态文本。
  */
@@ -34,7 +33,7 @@ export const PLANNING_DESIGN_TEMPLATE: PlanningStageTemplate = {
     "是 FR-AC 强引用 gate 的基础；缺失 ac 会在 design-review 阶段崩溃。示例：\n" +
     'FR: { id: "FR1", status: "active", title: "...", detail: "...", ac: ["AC1"] }\n' +
     'AC: { id: "AC1", status: "active", condition: "系统应...", verification: "review" }\n' +
-    "split 不能为空；条目一旦 execute 就被冻结（append-only），修改只能走 replan（replan 是改 plan 的唯一途径）。" +
+    "split 不能为空；条目一旦 execute 就被冻结（append-only），修改只能走 replan（replan 是改 unit.plan 的唯一途径）。" +
     "如果你设计 design 时发现 parent 的某个条目实际不适用（如 slice 发现 feature 的某个 AC 不可行、wave 发现 slice 的 interface 定义错了），" +
     "在 design input 里带 abandonParentItems: [\"<条目id>\"] 声明脱离（CLI 用 --abandonParentItems '[\"TC1\"]'）。" +
     "这是 append-only 的——一旦声明不可撤回。不确定是否需要脱离时不要声明——错误声明不可撤回，会让本该被 abort 的单元逃过级联。声明后后续 parent replan 废弃该条目时，cw 不会误 abort 你（基于历史 basedOnParent 的级联判定会跳过你）。" +

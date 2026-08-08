@@ -14,9 +14,9 @@ export function buildReplanReviewText(args: {
   abandonedIds: string[];
   replanCount: number;
   /**
-   * 状态机是否有回流通道（plan/design-review 是否可达，如 executing 内容 replan 时均 illegal）。
-   * false 时省略「重新 plan 并重新 design-review（完整重走）」引导句——该句在无回流状态与
-   * blockedHint 同屏矛盾，agent 读到仍可能发起非法 cw plan（illegal_transition 死锁）。
+   * 状态机是否有回流通道（design/design-review 是否可达，如 executing 内容 replan 时均 illegal）。
+   * false 时省略「重新 design 并重新 design-review（完整重走）」引导句——该句在无回流状态与
+   * blockedHint 同屏矛盾，agent 读到仍可能发起非法 cw design（illegal_transition 死锁）。
    */
   planReachable?: boolean;
 }): string {

@@ -261,7 +261,7 @@ export interface DesignSliceInput extends AbandonParentItemsInput {
  * feature design handler 输入（Plan 基类，只 split）。
  *
  * 与 slice 的 DesignSliceInput 完全不同：feature 不产技术方案，design 只拆 slice 清单。
- * spec 可选——传入时覆盖本层 spec（合并 clarify 语义，E1-20）。
+ * spec 可选——传入时覆盖本层 spec。
  * 原定义在 handlers/types.ts，搬入 core/plan.ts 保持类型归位一致性。
  */
 export interface DesignFeatureInput extends AbandonParentItemsInput {

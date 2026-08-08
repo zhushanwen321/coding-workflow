@@ -13,10 +13,10 @@
 | recursive-parallel-scheduling | recursive 并行优化：parallelTargets + scheduling + 并行段 + 递归指令载体（**2026-08-04 全回退**，仅保留跨 wave 文件冲突 gate，见 ADR-0011 回退章节） | 08-03 | 08-04 | `docs/adr/0011-recursive-parallel-scheduling.md`, `src/rules/gates/design-review.ts`（noSiblingWaveFileConflict）, `src/core/hierarchy.ts`（isDependencySatisfied） | archived |
 | cw-guidance-hardening | 契约级加固：15 项改进（guidance schema 取 nextAction / create 幂等+终态 / typebox input 校验 / flag 白名单+help / retrospect gate 报告 / execute commitHash 前置 / prefix 修复 / readonly 聚合+截断 / replan 一致） | 08-03 | 08-03 | `docs/adr/0012-contract-hardening.md`, `.xyz-harness/cw-guidance-hardening/`, `src/{cli-params,handlers/validate-input}.ts` 新增 + 10 文件修改 + 6 测试文件 | archived |
 | metrics-eval-waves | 评估指标体系 Wave 1-5：changedFiles 持久化 + retrospect 结构化 + 三层指标 + review 3-subagent 架构 + assess post-closeout | 07-14 | — | `docs/metrics-design.md`, `docs/metrics-usage.md`（已归档至 `.xyz-harness/deprecated-metrics/`） | deprecated（随 0.x `cw stats`/`cw assess` 一并删除，设计文档归档保留可追溯） |
-| issue-tracking-fix-loop | review_fix / test_fix loop：issue tracking + fix loop 闭环追踪（reviewIssues / testFixLog） | 07-14 | — | `.xyz-harness/issue-tracking-fix-loop/`, types.reviewIssues/testFixLog | in-progress |
-| clarify-adr-mechanism | clarify 阶段 + ADR 机制：create→plan 之间的需求/技术澄清 | 07-14 | — | `cw clarify` 动作, ADR 机制（非正式，见下表） | in-progress |
-| cw-mechanism-levers | CW mechanism levers 修复：4 个机制杠杆修复 + testRunner 持久化 + replan --test | 07-14 | — | `.xyz-harness/cw-engine-gate-hardening/`, gate/testRunner 改动 | in-progress |
-| cw-refactor-lite | lite 单轨重构：砍 tier/clarify/detail，lite-only 推倒重建 | 07-11 | — | `.xyz-harness/cw-refactor-lite/plan.md`, `e59e15a refactor: flatten src/ to lite-only` | in-progress |
+| issue-tracking-fix-loop | review_fix / test_fix loop：issue tracking + fix loop 闭环追踪（reviewIssues / testFixLog） | 07-14 | — | `.xyz-harness/issue-tracking-fix-loop/`, types.reviewIssues/testFixLog | archived（历史·已重构移除） |
+| clarify-adr-mechanism | 需求/技术澄清 + ADR 机制 | 07-14 | — | ADR 机制（非正式，见下表） | archived（已并入 design） |
+| cw-mechanism-levers | CW mechanism levers 修复：4 个机制杠杆修复 + testRunner 持久化 + replan --test | 07-14 | — | `.xyz-harness/cw-engine-gate-hardening/`, gate/testRunner 改动 | delivered |
+| cw-refactor-lite | lite 单轨重构：砍 tier/clarify/detail，lite-only 推倒重建 | 07-11 | — | `.xyz-harness/cw-refactor-lite/plan.md`, `e59e15a refactor: flatten src/ to lite-only` | delivered |
 | cw-cli-extract | cw-cli-extract：CW engine 从 pi 扩展抽离为独立 npm 包 + CLI 入口 | 07-10 | 07-10 | `ARCHITECTURE.md`, `CONTEXT.md`, `.xyz-harness/cw-cli-extract/{decisions,requirements,system-architecture,non-functional-design}.md` | archived |
 
 ## 状态语义

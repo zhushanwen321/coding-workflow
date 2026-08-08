@@ -74,7 +74,7 @@ describe("dispatch 完整 epic 生命周期", () => {
     // create 返回的 unit 是 epic
     expect((created as { unit?: { scope: string } }).unit?.scope).toBe("epic");
 
-    // 2. design（合并原 clarify+plan：Clarification append + Plan 基类 split）
+    // 2. design（Clarification append + Plan 基类 split）
     const design = dispatch(
       {
         action: "design",
@@ -456,7 +456,7 @@ describe("dispatch epic execute multi-split", () => {
       { action: "create", input: { slug: "e2e-multi", objective: "o", layer: "epic" } },
       env.deps,
     );
-    // design 合并原 clarify+plan：Clarification append + 2-split
+    // design：Clarification append + 2-split
     dispatch(
       {
         action: "design",

@@ -18,7 +18,7 @@
  * action-aware 出口（M10）：不同 action 的失败提示不同——
  *   - design/design-review/execute/test/exec-review/retrospect/closeout 失败：标准三出口
  *     （design / replan / abort 重选）
- *   - replan 失败：plan 反复改不动，建议 abort 跳出重建
+ *   - replan 失败：design 产出反复改不动，建议 abort 跳出重建
  *   - abort 失败：罕见，确认状态是否已转 aborted，流程结束
  *   - create 失败：检查参数合法性，建议重试或换更高层创建
  */
@@ -91,7 +91,7 @@ export function buildFailureHint(
  * 按 action 返回适配的出口集合（M10 action-aware）。
  *
  * 设计原则：每个 exit 必须对当前 action 语义自洽——
- *   - design 失败可以建议「回到 design 补充澄清」或「replan」（replan 是改 plan 的途径）
+ *   - design 失败可以建议「回到 design 补充澄清」或「replan」（replan 是改 unit.plan 的途径）
  *   - replan 失败时不该再建议「replan」（已经是修复手段本身）
  *   - abort 失败时不该建议「abort」（已经是出口本身）
  *
@@ -101,11 +101,11 @@ export function buildFailureHint(
  * @returns 出口文案数组（第 0 项是引导句，后续是具体出口）
  */
 function buildExits(action: WaveAction, unitId: string, slug: string): string[] {
-  // replan 失败：plan 反复改不动，建议 abort 跳出重建
+  // replan 失败：design 产出反复改不动，建议 abort 跳出重建
   if (action === "replan") {
     return [
       "连续失败已超过 1 次。考虑：",
-      `- plan 反复改不动 → 重新拆 layer（${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元重建）`,
+      `- design 产出反复改不动 → 重新拆 layer（${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 后在父单元重建）`,
       `- 当前单元无法推进 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 终止`,
     ];
   }
@@ -133,7 +133,7 @@ function buildExits(action: WaveAction, unitId: string, slug: string): string[] 
   return [
     "连续失败已超过 1 次。考虑：",
     `- 需求本身不明确 → 回到 design 补充澄清（${buildCommand("design", `--unitId ${unitId}`, `--input ${inputFilePath(slug, "design")}`)}）`,
-    `- plan 有根本问题 → replan（${buildCommand("replan", `--unitId ${unitId}`, "--abandonedIds '[...]'", '--note "..."')}）`,
+    `- design 产出有根本问题 → replan（${buildCommand("replan", `--unitId ${unitId}`, "--abandonedIds '[...]'", '--note "..."')}）`,
     `- 选错了层 → ${buildCommand("abort", `--unitId ${unitId}`, '--reason "..."')} 重选`,
   ];
 }

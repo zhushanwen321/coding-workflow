@@ -8,7 +8,7 @@
 
 ### S-1 stdin/文件 payload 上限 10MB
 
-- **约束**：所有经 stdin 或 `--input` 传入的 payload（推进 action 的 input JSON，如 `cw plan` 的 WavePlan/SlicePlan）必须 ≤ 10MB，超出直接拒绝并报错。
+- **约束**：所有经 stdin 或 `--input` 传入的 payload（推进 action 的 input JSON，如 `cw design` 的 WavePlan/SlicePlan）必须 ≤ 10MB，超出直接拒绝并报错。
 - **为什么**：CW 是面向 LLM agent 的 CLI，payload 过大通常是误传（如误传 node_modules 目录扫描结果），无界输入会撑爆内存/上下文窗口。10MB 上限是工程经验值，足够覆盖任何合理的 WorkUnit plan 结构化数据。
 - **验证**：`MAX_FILE_SIZE_BYTES`（src/cli.ts）
 - **例外**：无
@@ -81,7 +81,7 @@
 
 ### V-2 plan 经 `--input` 程序化消费
 
-- **约束**：推进类 action 的 input payload（如 `cw plan` 的 WavePlan/SlicePlan）通过 `--input @file.json`（读文件）或 `--input -`/无 flag（读 stdin）传入，engine 不从固定路径的 `plan.json` 文件读取。input 结构按当前 WorkUnit 四层模型校验（WavePlan/SlicePlan 等），不存在"旧版双字段 plan 自动提取"的兼容逻辑。
+- **约束**：推进类 action 的 input payload（如 `cw design` 的 WavePlan/SlicePlan）通过 `--input @file.json`（读文件）或 `--input -`/无 flag（读 stdin）传入，engine 不从固定路径的 `plan.json` 文件读取。input 结构按当前 WorkUnit 四层模型校验（WavePlan/SlicePlan 等），不存在"旧版双字段 plan 自动提取"的兼容逻辑。
 - **为什么**：plan 等阶段产物由人或 agent 生成，通过 stdin/file 程序化消费比"约定固定路径文件"更灵活（一个 workspace 可有多份 input 文件、可经管道传入）。input 结构由当前 schema 强校验，旧的双字段结构（`waves` + `testCases`）已随模型重构移除，不保留提取兼容。
 - **验证**：`readInput`（src/cli.ts，`--input @file` / `--input -` / stdin 三通道）；plan 类型校验见 src/core/plan.ts（WavePlan/SlicePlan/Plan 基类）
 - **例外**：无

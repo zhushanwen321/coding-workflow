@@ -335,7 +335,7 @@ export function advanceWaveToClosed(deps: CwDeps, waveId: string): void {
   const wave = deps.store.load(waveId) as unknown as ExecutionUnit;
   if (!wave) throw new Error(`wave not found: ${waveId}`);
 
-  // design（wave createWave 时 status=created，design 合并原 clarify+plan）
+  // design（wave createWave 时 status=created）
   handleDesign(
     wave,
     {

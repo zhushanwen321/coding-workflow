@@ -9,7 +9,7 @@
  *      build-guidance 负责把 templateText 和 schema/prefix/command 组装成最终 guidance。
  *
  * 设计原则（§3.2）：模板只放「agent 主动决策需要的」信息——agent 不看就会漏掉某个动作的信息
- *      （如 design 阶段必须告知「条目 execute 后冻结 + replan 是改 plan 的唯一途径」）。
+ *      （如 design 阶段必须告知「条目 execute 后冻结 + replan 是改 unit.plan 的唯一途径」）。
  *      cw 主动返回的信息（gate 结果等）由异常 guidance 在 fail 时给，不放这里。
  *
  * subagent 调度提示已抽离到 subagent-guidance.ts（按 action 性质分强制/建议/禁止三档，
@@ -42,8 +42,8 @@ export interface WaveStageTemplate {
 /**
  * design 阶段（写 WavePlan 4 类条目 + progressive clarifications）。
  *
- * design 合并了原 clarify 与 plan 两阶段：同时接收 clarifications（append-only 澄清）
- * 与 WavePlan 4 类条目，故吸收原 clarify 模板的 clarifications 约束。
+ * design 同时接收 clarifications（append-only 澄清）与技术方案
+ * 与 WavePlan 4 类条目，同时约束 clarifications（append-only 渐进追加）。
  * 关键约束（§4.1）：testCases 不能为空 + 冻结契约 + replan 选项存在。
  * 这是 §6 replan 三层渐进的「第 1 层：告知选项」——design 阶段必须告知 replan 存在，
  * 否则 agent 遇到 plan 问题时不知道能改。
@@ -64,7 +64,7 @@ export const WAVE_DESIGN_TEMPLATE: WaveStageTemplate = {
 
 /** design-review 阶段（7 gate + 写 designReviewJudgment）。 */
 export const WAVE_DESIGN_REVIEW_TEMPLATE: WaveStageTemplate = {
-  goal: "设计审查。对照 testCases 验 plan 是否必要、充分、MECE、有替代/取舍/风险。",
+  goal: "设计审查。对照 testCases 验 design 产出（unit.plan）是否必要、充分、MECE、有替代/取舍/风险。",
   constraint:
     "关键约束：designReviewJudgment 的每个字段都必须填（necessity/sufficiency/alternatives/tradeoffs/risks）；" +
     "tradeoffs 和 risks 的每个元素必须有 id 字段（string 类型，如 \"T1\"/\"R1\"），这个 id 会被后续 test/retrospect 阶段引用。",
@@ -80,9 +80,9 @@ export const WAVE_EXECUTE_TEMPLATE: WaveStageTemplate = {
   constraint:
     "关键约束：execute 是 plan 的冻结点——条目从此被冻结（append-only），修改只能走 replan；commitHash 必须真实存在（cw 会校验）；" +
     "如果你实际用了和 slice 原方案不同的技术实现（如 slice 选了 electron.net 但你发现不可行改用了全局 fetch），声明脱离 slice 的该条目，这样后续 slice replan 废弃该条目时 cw 不会误 abort 你：" +
-    "方式 1（推荐，plan 阶段就能用）：cw plan 的 input 里带 abandonParentItems: [\"<条目id>\"]（CLI: --abandonParentItems '[\"TC1\"]'）；" +
+    "方式 1（推荐，design 阶段就能用）：cw design 的 input 里带 abandonParentItems: [\"<条目id>\"]（CLI: --abandonParentItems '[\"TC1\"]'）；" +
     "方式 2（execute 时顺便）：git commit message 末尾加 trailer 行 `Cw-Abandon: <slice条目id>`（多个 id 逗号分隔）。" +
-    "推荐在 plan 阶段就用方式 1——设计阶段发现就该声明，不必等到 execute。不确定要不要标记时就不标记——宁可被 abort 后重建，也不要错误标记。",
+    "推荐在 design 阶段就用方式 1——设计阶段发现就该声明，不必等到 execute。不确定要不要标记时就不标记——宁可被 abort 后重建，也不要错误标记。",
 };
 
 /** test 阶段（跑测试 + 3 gate + 写 testJudgment）。 */
@@ -126,10 +126,10 @@ export const WAVE_CLOSEOUT_TEMPLATE: WaveStageTemplate = {
  */
 export const WAVE_REPLAN_TEMPLATE: WaveStageTemplate = {
   goal:
-    "replan 已废弃指定条目并计算影响面。重新编写 plan，把废弃条目的意图承接进新条目。",
+    "replan 已废弃指定条目并计算影响面。重新编写 design 方案（unit.plan），把废弃条目的意图承接进新条目。",
   constraint:
     "关键约束：replan 改完 plan 后必须重新 design-review（design → design-review → execute 完整重走），designReviewJudgment 要刷新匹配新 plan；废弃条目标 status=\"abandoned\" 保留（append-only，不可删不可复活）。" +
-    "纯 testCommand 补充（无 plan 条目变更，如 executing 状态补本 wave 测试命令）跳过「重做 design-review」——直接重跑 test 即可。",
+    "纯 testCommand 补充（无 unit.plan 条目变更，如 executing 状态补本 wave 测试命令）跳过「重做 design-review」——直接重跑 test 即可。",
 };
 
 // ═══════════════════════════════════════════════════════════════

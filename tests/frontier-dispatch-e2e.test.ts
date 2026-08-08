@@ -74,7 +74,7 @@ function setupSliceExecuting(
     { action: "create", input: { slug: sliceSlug, objective: "o", layer: "slice" } },
     env.deps,
   );
-  // design 合并原 clarify + plan
+  // design
   dispatch(
     {
       action: "design",

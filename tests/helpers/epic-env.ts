@@ -373,7 +373,7 @@ export type { Clarification };
  * slice 的 child wave 推进复用 slice-env.advanceWaveToClosed。
  */
 function advanceFeatureChildSliceToClosed(deps: CwDeps, sliceId: string): void {
-  // design 合并原 clarify + plan（用合法 SlicePlan，复用 slice-env 的 makeValidSlicePlan）
+  // design（用合法 SlicePlan，复用 slice-env 的 makeValidSlicePlan）
   dispatch(
     { action: "design", unitId: sliceId, input: makeValidSlicePlan() },
     deps,

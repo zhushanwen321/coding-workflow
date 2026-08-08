@@ -10,7 +10,7 @@
  * append-only 语义（model §5.6 / §4.4）：
  * - replan 废弃的条目 → status="abandoned"（不物理删除，保留演进历史）
  * - abandoned 条目的核心字段冻结（不可改）——改了就破坏历史一致性
- * - active 条目可正常修改（plan progressive / 新增条目）
+ * - active 条目可正常修改（design progressive / 新增条目）
  *
  * 不变量：rules 层零 IO。纯函数对比 before/after。
  */
@@ -132,7 +132,7 @@ function arrayEqual(a: string[], b: string[]): boolean {
  * 1. **被删除**（before 有 after 无）→ violation type="wave_deleted_abandoned"
  * 2. **核心字段被改**（如 testCase.expected / task.steps / file.path / contract.definition）
  *    → violation type="wave_modified_abandoned"
- * 3. status="active" 的条目可改（无 violation，plan progressive / 新增都允许）
+ * 3. status="active" 的条目可改（无 violation，design progressive / 新增都允许）
  *
  * @param before replan 前的 ExecutionUnit
  * @param after  replan 后的 ExecutionUnit
@@ -310,7 +310,7 @@ function sliceErrorSpecCoreChanged(
  * 1. **被删除**（before 有 after 无）→ violation type="slice_deleted_abandoned"
  * 2. **核心字段被改**（如 techChoice.choice / interface.signature / dataModel.definition / errorSpec.scenario+strategy）
  *    → violation type="slice_modified_abandoned"
- * 3. status="active" 的条目可改（无 violation，plan progressive / 新增都允许）
+ * 3. status="active" 的条目可改（无 violation，design progressive / 新增都允许）
  *
  * @param before replan 前的 Slice
  * @param after  replan 后的 Slice

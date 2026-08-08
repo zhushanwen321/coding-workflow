@@ -21,11 +21,11 @@ import {
 } from "./internal.js";
 import type { ActionResult, CreateInput,CwDeps } from "./types.js";
 
-/** testCommand 提示（create 时告知 plan 阶段要填 per-wave 测试命令）。 */
+/** testCommand 提示（create 时告知 design 阶段要填 per-wave 测试命令）。 */
 const TEST_RUNNER_HINT = `
 
-## plan 阶段必须填 testCommand
-本 wave 的测试执行命令（testCommand）在 **plan 阶段**填写——一个完整 shell 命令，能启动本 wave 的测试（如 \`npx vitest run src/quota/__tests__/index.test.ts\`）。
+## design 阶段必须填 testCommand
+本 wave 的测试执行命令（testCommand）在 **design 阶段**填写——一个完整 shell 命令，能启动本 wave 的测试（如 \`npx vitest run src/quota/__tests__/index.test.ts\`）。
 
 **不要跑全量回归**：只限定本 wave 改动相关的最小测试文件集合。test 阶段 cw 执行你填的 testCommand，gate 只认命令退出码——跑全量会被仓库里任意预存 flaky/failing test 卡住，为不该负责的问题买单。
 
