@@ -168,16 +168,16 @@ design 是写设计方案 + 追加需求澄清问答的 action（progressive，�
 | **wave**（DesignInput） | `testCases, tasks, files, contracts, testCommand`（无 split，wave 是叶子） | `clarifications?, abandonParentItems?` |
 | **slice**（DesignSliceInput） | `split, techChoices, interfaces, dataModels, errorSpecs` | `decisions?, clarifications?, abandonParentItems?` |
 | **feature**（DesignFeatureInput） | `split` | `clarifications?, spec?（覆盖本层需求规格）, abandonParentItems?` |
-| **epic**（DesignEpicInput） | `split` | `clarifications?, abandonParentItems?`（epic 不消费 spec） |
+| **epic**（DesignEpicInput） | `split` | `clarifications?, spec?, abandonParentItems?`（epic 不消费 spec，字段仅为与 feature 同步保留） |
 
 > `split` 是 plan.split 数据字段（拆出下层 unit 的清单）；`abandonParentItems` 声明脱离 parent 的哪些条目（append-only）；`clarifications` 是 progressive append 的澄清问答。
 >
-> guidance 的 schema block 会从 `handlers/types.ts` 的 Input 接口自动提取并内联展开完整字段结构，**直接照 schema block 写即可**，上表是快速参考。
+> guidance 的 schema block 会从 Input 接口自动提取并内联展开完整字段结构（**design 的 schema 源于 `src/core/plan.ts`**，其余 action 源于 `src/handlers/types.ts`），**直接照 schema block 写即可**，上表是快速参考。
 
 ### design 的 progressive 语义
 
 `design` / `design-review` / `replan` 都是 **progressive action**——可在当前 status 原地多次调用：
-- `design` 在 `created/designing/design-reviewed` 都能调，多次调用会 append `clarifications`（不会覆盖已写的 testCases/split 等）。需要补充澄清时直接再调一次 `cw design`，不必开新 unit。
+- `design` 在 `created/designing/design-reviewed` 都能调。其中 `clarifications` 是 append-only（多次调用累加澄清问答）；但 `plan` 本体（testCases/split/tasks/files/contracts）是**整体替换**——每次调用都用本次 input 覆盖之前的 plan。所以补充澄清时直接再调一次 `cw design` 没问题（不必开新 unit），但**必须带上完整的 plan 字段**，只补 clarifications 会把之前的 plan 清空。
 - `design-review` 在 `designing/design-reviewed` 都能调，多次审查 OK。
 - `replan` 是旁路（不改 status），在 `design-reviewed` 之后的多个 status 都能调。
 
@@ -270,10 +270,13 @@ cw handoff --unitId <id>         # 五段式 markdown，开干
 ### illegal_transition（跳阶段）
 调了状态机不允许的 action → CwEngineError（exit 1）。看 `cw status --unitId <id>` 确认当前 status，按 nextAction 重来。
 
-### design input 写错的延迟失败
-design 阶段**无 gate**，错误 input 不会立即报错——cw 会把它存入 store，到 design-review 才 crash。
+### design input 写错的两类失败
+design 阶段没有自己的 gate，但 input 仍会过 **strict schema 校验**（`additionalProperties: false`），按错误性质分两类：
 
-注意：design input 误用 `{design:{...}}` 多包了一层时，cw 不报错直接把 undefined 存入 store，到 design-review 才 crash。**design 阶段的错误 input 会在下游 gate 延迟失败**——写完后用 `cw status --unitId <id>` 确认字段正确存储了。
+- **结构错（立即失败）**：顶层多了/少了 key、字段名拼错（如误用 `{design:{...}}` 多包一层、`testCases` 拼成 `testcase`）→ cw **立即抛 CwError（exit 1）**，不会写入 store。这是机器层硬约束。
+- **语义不充分（延迟到 design-review gate 失败）**：结构合法但内容空洞（如 `testCases` 为空数组、`contracts` 缺关键接口）→ 写入 store 成功，到 `design-review` 的 gate 才报错。
+
+所以「立即失败 vs 延迟失败」取决于错误性质。写完后用 `cw status --unitId <id>` 确认字段正确存储（尤其排查语义层问题）。
 
 > 顶部包裹规则：design 是裸对象（无包裹，直接 `{testCases,...}` 或 `{split,...}`）；design-review/test/exec-review/retrospect 是 `{xxxJudgment:{...}}` / `{retrospectData:{...}}` 包裹；closeout 是 `{summary?, artifacts?}`；replan 是扁平 `{abandonedIds, note}`。guidance 的 schema block 会显示完整结构，照写即可。
 
