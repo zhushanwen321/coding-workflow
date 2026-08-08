@@ -58,7 +58,7 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 | 阶段 | subagent 类型 | 注入 skill / 维度 | 产出 |
 |------|--------------|------------------|------|
 | 1. 打开 PR | `general-purpose` | `pull-request` | PR URL |
-| 2. 多维 review | `general-purpose` × N（维度数并行 + 1 串行 aggregator） | `skill/review-agents/*.md` | `.review/run-<runId>/round-1/aggregated.md` |
+| 2. 多维 review | `general-purpose` × N（维度数并行 + 1 串行 aggregator） | `.agents/skills/code-review/review-agents/*.md` | `.review/run-<runId>/round-1/aggregated.md` |
 | 3. 修 must-fix + 验证 + 推 PR | `worker` × N + `general-purpose` × 2 | `cr-fix`（分组规则）/ `pull-request`（推） | fix commits + PR URL |
 
 **主 agent 始终不直接跑实现命令**：所有 bash 调用都在 subagent 内部完成。例外有两类：(a) 只读查询——`gh pr view`（查 PR 是否可查）、`git show <sha> --stat`（抽验 worker commit）、`git apply --stat <patch>`（预览 patch 核验 fixed_files）、`git status`（查本地与 origin 同步状态）；(b) **阶段 3a 路径 1 的 patch 合并**——worker 在隔离 worktree 内无法触及主工作区，patch 必须由主 agent 在主工作区 `git apply --cached` + `git commit` 拉回（见路径 1「合并」），这是路径 1 的结构性要求，不违背本约束。
@@ -83,7 +83,7 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；完成后按 schem
 #### 先跑 review-context.sh 确定维度集
 
 ```bash
-bash skill/review-agents/review-context.sh
+bash .agents/skills/code-review/review-agents/review-context.sh
 ```
 
 读输出的 `dimensions` 字段：
@@ -102,7 +102,7 @@ cw 最多 3 维，**第一批即可一次性并行**（不超 subagent 并行上
 ```text
 agent: "general-purpose"
 cwd:   <git 根>
-task:  "1. read skill/review-agents/<dimension>.md
+task:  "1. read .agents/skills/code-review/review-agents/<dimension>.md
         2. 完全按该维度的审查标准，审查 git diff main...HEAD 的变更
         3. 把报告写到 .review/run-<runId>/round-1/<dimension>.md
         4. 按 schema 返回 JSON { report_file, must_fix, suggestion, info }"
@@ -115,7 +115,7 @@ task:  "1. read skill/review-agents/<dimension>.md
 ```text
 agent: "general-purpose"
 cwd:   <git 根>
-task:  "read skill/review-agents/review-aggregator.md；按其步骤读取各维度报告
+task:  "read .agents/skills/code-review/review-agents/review-aggregator.md；按其步骤读取各维度报告
         （.review/run-<runId>/round-1/<dimension>.md，仅读 dimensions 字段列出的维度），
         去重后写到 .review/run-<runId>/round-1/aggregated.md；
         按 schema 返回 JSON { report_file, must_fix, suggestion, info }"
@@ -303,7 +303,7 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；
 |--------|------|
 | 主 agent 自己跑实现命令（`git push` / `npm test` / `gh pr create`） | 浪费主 agent 上下文；改派 subagent（只读查询除外） |
 | worker 用 monorepo 递归验证命令（如 pnpm 递归跑各子包的 typecheck）验证 | cw 是单包 npm，无多包递归语义，命令报错；用 `npm run check:all` |
-| 删/改 `skill/review-agents/*.md` 或维度文件 | 破坏 review 维度完整性 |
+| 删/改 `.agents/skills/code-review/review-agents/*.md` 或维度文件 | 破坏 review 维度完整性 |
 | 阶段 2 subagent 全并行超 5 | 超 subagent 并行上限；cw 最多 3 维不会超，但仍标注上限 5 |
 | runId 各 subagent 各自生成 | 路径不对齐，aggregator 找不到 reviewer 报告 |
 | 跳过 review-context.sh 直接写死维度 | 忽略了 standalone 模式该裁掉 plan-completeness |

@@ -18,7 +18,8 @@
   },
   "files": [
     "dist",
-    "skill",
+    "skills",
+    "agents",
     "scripts",
     "README.md",
     "LICENSE"

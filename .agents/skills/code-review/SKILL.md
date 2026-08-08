@@ -35,16 +35,16 @@ description: >-
 - **schema 是契约边界**：外部输入（`store.json` 等）必须经 schema 校验。schema 与内部
   类型不同步 = 契约破裂
 
-## 审查维度（维度文件在 `skill/review-agents/`）
+## 审查维度（维度文件在 `.agents/skills/code-review/review-agents/`）
 
 本 skill 不内嵌 checklist——各维度的判定标准已迁移到独立维度文件，编排器只负责按维度
 派发/自查。维度分工：
 
 | 维度 | 维度文件 | 关注点 |
 |------|---------|--------|
-| 项目约定（A） | `skill/review-agents/project-conventions.md` | CW 引擎特有约定：状态机正确性 / Gate 完备性 / 引擎类型边界 / CLI 契约 |
-| 通用质量（B） | `skill/review-agents/quality-criteria.md` | 跨语言通用范式：类型安全 / 错误处理 / 边界条件 / 测试有效性 |
-| plan 落地（C） | `skill/review-agents/plan-completeness.md` | 客观事实核对：plan 声明的 changes/files 有没有落地 + plan 设计正确性 |
+| 项目约定（A） | `.agents/skills/code-review/review-agents/project-conventions.md` | CW 引擎特有约定：状态机正确性 / Gate 完备性 / 引擎类型边界 / CLI 契约 |
+| 通用质量（B） | `.agents/skills/code-review/review-agents/quality-criteria.md` | 跨语言通用范式：类型安全 / 错误处理 / 边界条件 / 测试有效性 |
+| plan 落地（C） | `.agents/skills/code-review/review-agents/plan-completeness.md` | 客观事实核对：plan 声明的 changes/files 有没有落地 + plan 设计正确性 |
 
 维度 C（plan 落地）只在 **harness 模式**（cw 工作流目录下，有 store.json）启用；standalone
 模式裁掉，只跑 A + B。
@@ -52,7 +52,7 @@ description: >-
 ## Step 1：环境检测
 
 ```bash
-bash skill/review-agents/review-context.sh
+bash .agents/skills/code-review/review-agents/review-context.sh
 ```
 
 读取输出的 JSON，关注以下字段：
@@ -95,7 +95,7 @@ git log main..HEAD --oneline
 agent: "general-purpose"
 cwd:   <review-context.sh 输出的 git_root>
 task:
-  1. read skill/review-agents/<dimension>.md
+  1. read .agents/skills/code-review/review-agents/<dimension>.md
   2. 完全按该维度的审查标准，审查 git diff main...HEAD 的变更
   3. 把报告写到 .review/run-<runId>/<dimension>.md
      （runId = Date.now() 的秒数；若 .review/ 不便写则写到当前目录）
@@ -111,7 +111,7 @@ task:
 agent: "general-purpose"
 cwd:   <git_root>
 task:
-  1. read skill/review-agents/review-aggregator.md
+  1. read .agents/skills/code-review/review-agents/review-aggregator.md
   2. 按其步骤读取各维度报告（.review/run-<runId>/<dimension>.md），去重后
      写到 .review/run-<runId>/aggregated.md
   3. 返回 JSON：{ "report_file": "<绝对路径>", "must_fix": N, "suggestion": N, "info": N }
@@ -121,7 +121,7 @@ task:
 
 当 harness 不支持派 subagent 时，主 Agent 自己依次审查：
 
-1. 按 `dimensions` 列表顺序，主 Agent 依次 read 每个维度文件（`skill/review-agents/<dimension>.md`）
+1. 按 `dimensions` 列表顺序，主 Agent 依次 read 每个维度文件（`.agents/skills/code-review/review-agents/<dimension>.md`）
 2. 按该维度的 checklist 逐项审查 `git diff main...HEAD` 的变更
 3. 主 Agent 自己按 `review-aggregator.md` 的格式汇总成 `aggregated.md`（去重、计数、排序）
 
