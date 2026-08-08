@@ -305,6 +305,14 @@ bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 
 冲突处理：`sync-main` 的 ff-only 失败不阻塞清理（main 有独立 commit 的罕见情况），脚本只警告并继续。
 
+### 清理后注意事项 [HISTORICAL]
+
+**清理完成后，当前 agent 会话的 bash 工具会报 `Working directory does not exist: <被删 worktree 路径>`**——这是 worktree 目录被删除的正常结果（agent 会话的 cwd 锁死在启动目录，目录没了所有 bash 调用都会报此错）。
+
+- 看到此报错 = 清理成功信号：**立即停止所有 bash 操作**，不要 `mkdir` 重建目录、不要 `cd` 重试、不要用 write 工具创建锚点文件来恢复 cwd——这些是错误操作，目录删除是清理流程的正常结果，不是故障
+- 后续操作改用**绝对路径的 read / edit / write 工具**（不依赖会话 cwd），或在新会话 / 其他 worktree 继续
+- 2026-08-08 事故：merge v1.6.0 清理 feat-design-skill worktree 后，主 agent 见 bash 报错反复尝试恢复（mkdir / cd / write .keep 共 4 次），属于无效操作，应以停止收场
+
 ## 项目特点
 
 - **单包项目**：单一 `package.json`，`npm version` 直接 bump（无 changeset 独立版本）
