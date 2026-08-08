@@ -1,5 +1,14 @@
 # Changelog
 
+## [v1.5.2] - 2026-08-08
+
+### Bug Fixes
+- fix: review batch 1 round 1 — 2 must-fix (9852b3f)
+
+### Miscellaneous
+- docs(skill): align recursive-orchestration with cw-tool builtin agents+pi-cw (4b0dc16)
+- docs: align all docs/skill/src with E1 design action; purge legacy clarify/plan (ef83492)
+
 ## [v1.5.0] - 2026-08-07
 
 ### Refactoring
