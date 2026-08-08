@@ -19,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_SRC_ROOT="$(cd "$SCRIPT_DIR/../skills" && pwd)"
-AGENT_SRC_ROOT="$(cd "$SCRIPT_DIR/../agents" && pwd)"
+AGENT_SRC_ROOT="$SCRIPT_DIR/../agents"
 
 # 目标目录（与全局 AGENTS.md 的 skill/agent 安装规范一致）
 SKILL_TARGETS=(
@@ -38,11 +38,15 @@ is_agent_file() {
   [ -f "$1" ] && [ "$(head -1 "$1")" = "---" ]
 }
 
-# 无条件重建 symlink（rm -rf + ln -s）
+# 重建 symlink：只覆盖 symlink，保护非 symlink 的用户资产（与 uninstall 策略对称）
 install_link() {
   local src="$1" target="$2"
   mkdir -p "$(dirname "$target")"
-  rm -rf "$target"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    echo "⚠️  $target 不是 symlink（可能是用户手动创建），跳过"
+    return 0
+  fi
+  rm -f "$target"
   ln -s "$src" "$target"
   echo "✓ $target → $src"
 }

@@ -23,7 +23,7 @@ description: >-
 5. **[MANDATORY] scope = 当前层 → 紧邻下一层**，不跨 2 层设计
 6. **[MANDATORY] 涉及运行时/数据流/错误时**：运行时断言附探针、画物理数据流图、每个错误配恢复指引
 
-> 这 6 条是写作时的红线。完整 10 条准则（含减法优先、决策可追溯）见 `references/design-principles.md`。
+> 这 6 条是写作时的红线。完整 10 条准则见 `references/design-principles.md`。
 
 ## 意图路由
 

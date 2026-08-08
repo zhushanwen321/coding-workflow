@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_SRC_ROOT="$(cd "$SCRIPT_DIR/../skills" && pwd)"
-AGENT_SRC_ROOT="$(cd "$SCRIPT_DIR/../agents" && pwd)"
+AGENT_SRC_ROOT="$SCRIPT_DIR/../agents"
 
 SKILL_TARGETS=(
   "$HOME/.agents/skills"
