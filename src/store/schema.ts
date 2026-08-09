@@ -14,6 +14,8 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+import { detectCommonDir } from "../core/git.js";
+
 // ═══════════════════════════════════════════════════════════════
 // 存储格式
 // ═══════════════════════════════════════════════════════════════
@@ -125,8 +127,17 @@ export function getCwHome(): string {
 /**
  * 给定 cwd，返回对应的 store.json 路径。
  *
- * `<cwHome>/<encodedCwd>/store.json`，per-cwd 隔离。
+ * store-key 用 `git rev-parse --path-format=absolute --git-common-dir` 归一化（ADR-0014
+ * 决策 1/2）：同一 repo 所有 worktree（含 bare repo worktree / linked worktree）探测出
+ * 相同 common-dir → 共享同一 store；普通 repo 用 `<repo>/.git`、bare repo 用 `<bare>`。
+ * 归一化下沉到 cw-cli 内部，调用方（CwStore 构造）无感——bash 与 cw-tool 走同一路径。
+ *
+ * 非 git 目录（探测失败）→ fallback 原 cwd（per-cwd 降级，保持现状行为）。进程内 memoize
+ * 避免重复 git spawn（见 core/git.ts detectCommonDir）。
+ *
+ * `<cwHome>/<encodedCommonDir>/store.json`。
  */
 export function getCwJsonPath(cwd: string): string {
-  return join(getCwHome(), encodeCwd(cwd), "store.json");
+  const storeKey = detectCommonDir(cwd);
+  return join(getCwHome(), encodeCwd(storeKey), "store.json");
 }
