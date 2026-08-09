@@ -31,7 +31,9 @@ const TEST_RUNNER_HINT = `
 
 测试文件此时可不存在（execute 阶段才创建，TDD），但路径要按项目测试约定先定好。
 
-**monorepo 多包项目必须填 testCwd**：指定 testCommand 在哪个子包目录跑（如 \`packages/auth\`），否则 cw 会在仓库根执行 testCommand，跑错目录。单包项目可不填（缺省 = 仓库根）。`;
+**monorepo 多包项目必须填 testCwd**：指定 testCommand 在哪个子包目录跑（如 \`packages/auth\`），否则 cw 会在仓库根执行 testCommand，跑错目录。单包项目可不填（缺省 = 仓库根）。
+
+**testCwd 必须相对仓库根，禁止绝对路径**：跨 worktree 共享 store 后绝对路径会在其他 worktree 解析失败（ADR-0014 决策 4）。`;
 
 /**
  * 执行 create action。
