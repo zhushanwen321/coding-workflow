@@ -109,6 +109,10 @@ export function handleReplan(
   if (input.testCommand !== undefined) {
     unit.plan.testCommand = input.testCommand;
   }
+  // per-wave testCwd 旁路：同 testCommand，executing 状态在途 wave 补测试执行目录。
+  if (input.testCwd !== undefined) {
+    unit.plan.testCwd = input.testCwd;
+  }
 
   // ── replan 旁路：status 不变，但 append statusHistory（from=to=current, action="replan", note）──
   transitionStatus(unit, "replan", deps.clock.now(), input.note);

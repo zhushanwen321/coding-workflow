@@ -710,8 +710,8 @@ describe("templates/wave: 关键约束", () => {
     expect(WAVE_DESIGN_TEMPLATE.constraint).toContain("npx vitest run");
   });
 
-  it("replan 模板含纯 testCommand 补充旁路提示（§4.6）", () => {
-    expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("纯 testCommand 补充");
+  it("replan 模板含纯 testCommand/testCwd 补充旁路提示（§4.6）", () => {
+    expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("纯 testCommand/testCwd 补充");
     expect(WAVE_REPLAN_TEMPLATE.constraint).toContain("跳过「重做 design-review」");
   });
 });

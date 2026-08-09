@@ -145,6 +145,8 @@ export const DesignInputSchema = strict({
   contracts: Type.Array(WaveContractSchema),
   // testCommand 必填：新 design 提交必须带本 wave 测试执行命令（per-wave testCommand 改造 §4.1）。
   testCommand: Type.String(),
+  // testCwd 与 ReplanInput 对齐非空校验：纯空白 testCwd 会导致 spawnSync cwd 解析到不存在的目录。
+  testCwd: Type.Optional(Type.String({ minLength: 1, pattern: "^\\s*\\S" })),
   abandonParentItems: abandonParentItemsField,
 });
 
@@ -497,6 +499,8 @@ export const ReplanInputSchema = strict({
   // 且 replan 不改 status 不走 design-review，无 gate 兜底——schema 层直接拒绝。
   // pattern ^\s*\S 拒绝纯空白串（minLength 只拦空串，"   " 长度 3 ≥ 1 会放行）。
   testCommand: Type.Optional(Type.String({ minLength: 1, pattern: "^\\s*\\S" })),
+  // testCwd 与 testCommand 同属非空路径：空串/纯空白会覆盖清空已有合法 testCwd，复用 testCommand 的 pattern 对齐。
+  testCwd: Type.Optional(Type.String({ minLength: 1, pattern: "^\\s*\\S" })),
   addedSpecItems: Type.Optional(
     strict({
       functionalRequirements: Type.Optional(Type.Array(FunctionalRequirementSchema)),

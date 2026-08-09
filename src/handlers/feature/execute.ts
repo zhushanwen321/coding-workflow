@@ -95,12 +95,10 @@ export function handleExecuteFeature(
 
   saveFeature(deps, unit);
 
-  // ── crossLayer：下沉到第一个 child slice（serial 模式）──
-  // G5：recursive 模式（多 agent 并行 + steer 唤醒）不填 descend——父派 N 个 planning-agent
-  // 并行推进子层后空闲等唤醒，不自己 descend。serial 模式保持现状（下沉第一个 child）。
+  // ── crossLayer：下沉到第一个 child slice ──
   const firstChildId = unit.executeResult.childUnitIds[0];
   const crossLayer: CwNextAction["crossLayer"] | undefined =
-    deps.orchestration === "recursive" || firstChildId === undefined
+    firstChildId === undefined
       ? undefined
       : {
           kind: "descend",
@@ -116,7 +114,6 @@ export function handleExecuteFeature(
     children,
     nextAction: buildFeatureNextAction(unit, "execute", {
       crossLayer,
-      orchestration: deps.orchestration,
     }),
   };
 }

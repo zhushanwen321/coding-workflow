@@ -32,7 +32,7 @@ import { nextWaveStatus } from "../rules/state-machine.js";
 import type { CwStore } from "../store/cw-store.js";
 import type { WorkUnitRecord } from "../store/schema.js";
 import { buildCommand, inputFilePath } from "../utils/command.js";
-import type { ActionResult, CwDeps, CwNextAction, OrchestrationMode } from "./types.js";
+import type { ActionResult, CwDeps, CwNextAction } from "./types.js";
 
 /**
  * 流转 unit status：算 next → append StatusChange → 更新 unit.status。
@@ -263,11 +263,6 @@ export interface BuildNextActionOpts {
   schemaTextOverride?: string;
   /** 填 crossLayer（closeout 后回溯，由调用方调 computeCrossLayerAfterCloseout 算好传入）。 */
   crossLayer?: CwNextAction["crossLayer"];
-  /**
-   * 编排模式（G5）：recursive 时 subagent 调度段追加派发指导 + 续 turn 指导。
-   * 缺省 serial（与现状一致）。仅 closeout 等需要续 turn 语义的调用方传入。
-   */
-  orchestration?: OrchestrationMode;
 }
 
 /**
@@ -319,7 +314,7 @@ export function buildNextAction(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("wave", action, { orchestration: opts?.orchestration }),
+    commonGuidance: buildSubagentGuidance("wave", action),
   });
 
   return {
@@ -484,12 +479,10 @@ function buildWaveCurrentCommand(
  *
  * @param unit 待交接的 ExecutionUnit
  * @param action 接手 agent 现在该跑的 WaveAction（handoff 视角的当前步）
- * @param orchestration 编排模式（G5，recursive 时 subagent 调度段含续 turn 指导；缺省 serial）
  */
 export function buildWaveCurrentActionGuidance(
   unit: ExecutionUnit,
   action: WaveAction,
-  orchestration?: OrchestrationMode,
 ): string {
   const statusDisplay = STATUS_DISPLAY[unit.status] ?? unit.status;
   const prefix = buildPrefix({
@@ -518,7 +511,7 @@ export function buildWaveCurrentActionGuidance(
     command,
     schemaText,
     templateText,
-    commonGuidance: buildSubagentGuidance("wave", action, { orchestration }),
+    commonGuidance: buildSubagentGuidance("wave", action),
   });
 }
 

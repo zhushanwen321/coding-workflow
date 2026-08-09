@@ -189,6 +189,28 @@ describe("validateInput（#6 input shape 校验）", () => {
     ).not.toThrow();
   });
 
+  it("design 带 testCwd → 放行（per-wave testCwd 下沉，DesignInputSchema 接受可选 testCwd）", () => {
+    expect(() =>
+      validateInput("design", "wave", {
+        testCases: [makeValidTestCase()],
+        tasks: [],
+        files: [],
+        contracts: [],
+        testCommand: "npx vitest run",
+        testCwd: "packages/renderer",
+      }),
+    ).not.toThrow();
+  });
+
+  it("design 纯空白 testCwd → 拒绝（与 ReplanInput 对齐非空校验，防 spawnSync cwd 解析到不存在目录）", () => {
+    const base = { testCases: [makeValidTestCase()], tasks: [], files: [], contracts: [], testCommand: "npx vitest run" };
+    expect(() => validateInput("design", "wave", { ...base, testCwd: "   " })).toThrowError(CwError);
+    expect(() => validateInput("design", "wave", { ...base, testCwd: "" })).toThrowError(CwError);
+    // 合法值与缺省放行
+    expect(() => validateInput("design", "wave", { ...base, testCwd: "packages/auth" })).not.toThrow();
+    expect(() => validateInput("design", "wave", base)).not.toThrow();
+  });
+
   it("replan 纯空白 testCommand → 拒绝（trim 判空对齐 gate，防覆盖清空在途 wave 合法值）", () => {
     // replan 旁路不改 status 不走 design-review，testCommandNonEmpty gate 不会复验——
     // schema 是唯一防线：minLength 只拦空串，纯空白串（长度 ≥ 1）必须靠 pattern 拒绝。
@@ -198,6 +220,16 @@ describe("validateInput（#6 input shape 校验）", () => {
     expect(() => validateInput("replan", "wave", { ...base, testCommand: "\t\n" })).toThrowError(CwError);
     // 合法值放行；缺字段仍放行（testCommand 可选，纯 testCommandOnly replan 语义）
     expect(() => validateInput("replan", "wave", { ...base, testCommand: "npx vitest run" })).not.toThrow();
+    expect(() => validateInput("replan", "wave", base)).not.toThrow();
+  });
+
+  it("replan 纯空白 testCwd → 拒绝（复用 testCommand 的 trim 判空 pattern，防覆盖清空在途 wave 合法 testCwd）", () => {
+    const base = { abandonedIds: [], note: "x" };
+    expect(() => validateInput("replan", "wave", { ...base, testCwd: "   " })).toThrowError(CwError);
+    expect(() => validateInput("replan", "wave", { ...base, testCwd: "" })).toThrowError(CwError);
+    expect(() => validateInput("replan", "wave", { ...base, testCwd: "\t\n" })).toThrowError(CwError);
+    // 合法值放行；缺字段仍放行（testCwd 可选，纯 testCwd 补充 replan 语义）
+    expect(() => validateInput("replan", "wave", { ...base, testCwd: "packages/auth" })).not.toThrow();
     expect(() => validateInput("replan", "wave", base)).not.toThrow();
   });
 

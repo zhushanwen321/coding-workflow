@@ -121,7 +121,7 @@ export function waveLayerSpecificNonEmpty(
 /**
  * 跨 wave 文件冲突检查：当前 wave 的 plan.files 与兄弟 wave 的 plan.files path 交集。
  *
- * 来源：design §3.4（recursive 并行模式新增）。
+ * 来源：design §3.4（跨 wave 文件冲突防护）。
  *
  * 并行 wave execute 场景下，两个 wave 同时改同一文件会产生 git 冲突。
  * 本 gate 在 wave design-review 阶段检查：当前 wave 的 files[].path 与任一兄弟 wave

@@ -29,7 +29,9 @@ const TEST_RUNNER_HINT = `
 
 **不要跑全量回归**：只限定本 wave 改动相关的最小测试文件集合。test 阶段 cw 执行你填的 testCommand，gate 只认命令退出码——跑全量会被仓库里任意预存 flaky/failing test 卡住，为不该负责的问题买单。
 
-测试文件此时可不存在（execute 阶段才创建，TDD），但路径要按项目测试约定先定好。`;
+测试文件此时可不存在（execute 阶段才创建，TDD），但路径要按项目测试约定先定好。
+
+**monorepo 多包项目必须填 testCwd**：指定 testCommand 在哪个子包目录跑（如 \`packages/auth\`），否则 cw 会在仓库根执行 testCommand，跑错目录。单包项目可不填（缺省 = 仓库根）。`;
 
 /**
  * 执行 create action。

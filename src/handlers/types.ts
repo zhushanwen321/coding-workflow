@@ -46,21 +46,6 @@ import type { ReplanImpact } from "../rules/replan.js";
 import type { CwStore } from "../store/cw-store.js";
 
 // ═══════════════════════════════════════════════════════════════
-// 编排模式（G5：nextAction/crossLayer 适配多 agent）
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * 编排模式（cw.config.json orchestration 字段，缺省 serial）。
- *
- * - serial（默认，向后兼容）：单 agent 串行假设。planning execute 后 nextAction 带
- *   crossLayer.descend（下沉第一个 child），wave closeout 后带 crossLayer.sibling/ascend。
- * - recursive（v4 多 agent 并行 + steer 唤醒）：planning execute 后不填 descend
- *   （父派 subagent 空闲等唤醒，不自己 descend）；closeout 后不填 sibling/ascend
- *   （该结束让 steer 唤醒父，不自己 ascend）。guidance 相应给派发指导 + 续 turn 指导。
- */
-export type OrchestrationMode = "serial" | "recursive";
-
-// ═══════════════════════════════════════════════════════════════
 // CwDeps（handler 依赖注入接口）
 // ═══════════════════════════════════════════════════════════════
 
@@ -73,7 +58,6 @@ export type OrchestrationMode = "serial" | "recursive";
  * - fileExists：验 artifacts[].ref 指向的文件是否存在（closeout drift 检查用）
  * - clock：提供 ISO 8601 时间戳（statusHistory.at / evidence.generatedAt / frozenAt / abandonedAt）
  * - workspacePath：仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）
- * - orchestration：编排模式（G5），缺省 serial。可选——存量测试的 stub deps 不填，串行行为不变。
  */
 export interface CwDeps {
   store: CwStore;
@@ -85,8 +69,6 @@ export interface CwDeps {
   /** 仓库工作目录（execute handler 提取 changedFiles 时绑 git 子进程 cwd，§4.4）。 */
   workspacePath: string;
   clock: { now: () => string };
-  /** 编排模式（cw.config.json orchestration，缺省 serial）。handler 经此分支 descend/ascend 与派发指导。 */
-  orchestration?: OrchestrationMode;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -234,6 +216,8 @@ export interface DesignInput extends AbandonParentItemsInput {
   contracts: WaveContract[];
   /** 本 wave 测试执行命令。双份定义，与 core/plan.ts 同步。 */
   testCommand: string;
+  /** per-wave 测试执行目录。双份定义，与 core/plan.ts 同步。 */
+  testCwd?: string;
   /** 补充澄清（progressive append，design 阶段可继续追加）。 */
   clarifications?: Clarification[];
 }
@@ -295,6 +279,8 @@ export interface ReplanInput extends AbandonParentItemsInput {
    * replan guidance 重定向到当前 status 映射的 action（executing→test）。
    */
   testCommand?: string;
+  /** per-wave 测试执行目录（与 DesignInput.testCwd 同义，replan 旁路补写）。 */
+  testCwd?: string;
 }
 
 /** abort handler 输入。 */
