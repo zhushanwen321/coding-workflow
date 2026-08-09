@@ -22,8 +22,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
@@ -68,7 +68,7 @@ import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { getCwHome } from "./store/schema.js";
+import { encodeCwd, getCwHome } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
@@ -1009,6 +1009,50 @@ export function renderCliError(err: unknown): {
   return { exitCode, stderr: lines.join("\n") + "\n" };
 }
 
+// ── 启动弃用 warning（ADR-0014 决策 9 配套） ────────────────
+
+/**
+ * 启动弃用 warning（ADR-0014 决策 9 配套）。
+ *
+ * v2 起 store 改 repo 级（git-common-dir 键控，见 getCwJsonPath），不迁移升级前的
+ * 旧 per-cwd store（ADR-0014 决策 9）。本函数在 cw 启动时检测旧 store 是否残留，
+ * 残留则一次性提示用户存量任务需重建或手动捞，并写 marker 文件去重（每个 cwd
+ * 只 warn 一次）。
+ *
+ * 检测路径用 workspacePath 直接 encode（升级前的旧 per-cwd 布局），**不**走
+ * detectCommonDir 归一化——归一化后路径指向新 repo 级 store，而这里检测的是升级前的
+ * 旧布局。
+ *
+ * 纯检测 + IO，不抛错：弃用提示不阻断 cw 运行，文件操作异常一律吞掉（marker 写失败
+ * 最坏导致下次启动重复 warning，可接受）。marker 命名 `.deprecation-warned-<encoded>`
+ * 加 `.` 前缀，避开 readonly/index 的 store.json 目录扫描。
+ */
+export function warnDeprecatedStore(workspacePath: string): void {
+  try {
+    const cwHome = getCwHome();
+    const encoded = encodeCwd(workspacePath);
+    // 旧 per-cwd store 路径（升级前布局：cwd 直接 encode，不经 detectCommonDir 归一化）。
+    const oldStorePath = join(cwHome, encoded, "store.json");
+    if (!existsSync(oldStorePath)) {
+      return;
+    }
+    const markerPath = join(cwHome, `.deprecation-warned-${encoded}`);
+    if (existsSync(markerPath)) {
+      return;
+    }
+    process.stderr.write(
+      `[cw] v2 起 store 改 repo 级（git-common-dir 键控），旧 per-cwd store 已弃用；存量任务需重建或手动从 ${oldStorePath} 捞。新任务自动走 repo 级 store。\n`,
+    );
+    try {
+      writeFileSync(markerPath, "");
+    } catch {
+      // marker 写失败不阻断——最坏下次启动重复 warning。
+    }
+  } catch {
+    // 检测/编码异常不阻断 cw 运行（弃用提示是 best-effort）。
+  }
+}
+
 // ── main ─────────────────────────────────────────────────────
 
 async function main(argv: string[]): Promise<void> {
@@ -1074,6 +1118,9 @@ async function main(argv: string[]): Promise<void> {
   // cw 唯一入口：所有命令都走 `cw <action>`（Wave 3 起去掉 v1 前缀）。
   // ALL_ACTIONS = VALID_ACTIONS ∪ READONLY_QUERIES（create/推进 + tree/status/list/handoff）。
   if (ALL_ACTIONS.has(action)) {
+    // 启动弃用 warning：在 dispatch/只读查询前、workspacePath 解析后检测旧 per-cwd
+    // store 残留。best-effort，不阻断后续流程（warnDeprecatedStore 内部吞所有异常）。
+    warnDeprecatedStore(workspacePath);
     await runWithAction(argv, workspacePath, action);
     return;
   }
