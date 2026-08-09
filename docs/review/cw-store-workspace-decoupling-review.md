@@ -83,3 +83,16 @@
 - 所有事实核实基于当前 worktree（`fix-cw-cwd-worktree`）源码实际行号（grep -n/read 为准，非手数）
 - 运行时探针（git common-dir/show-toplevel/cat-file/普通 repo 相对返回）由审查者在本项目 worktree + `mktemp` 构造的普通 repo/linked worktree 独立复测，非引用文档结论
 - cw-tool 侧事实（dirname 逻辑、--workspace 透传、ADR-0045 内容）核实于 `~/Code/xyz-agent-workspace/main/`（跨项目只读）
+
+---
+
+## 补遗：cw-tool 侧对照审查（第二轮）
+
+第一轮（kimi）修订定稿后，cw-tool 侧（xyz-agent）对引擎层设计文档做对照审查，补充 2 条建议，均已 read 源码核实属实并采纳修订：
+
+| # | 建议 | 核实 | 采纳 |
+|---|---|---|---|
+| R2-1 | 存量相对 testCwd 的迁移 rebase 未覆盖——旧契约相对 testCwd 基准是「建任务时的 cwd」（非仓库根），旧 cwd 若是子目录，迁移后基准变 repo 根会漂移 | 属实。`plan.ts:74` 注释「相对 workspacePath 或绝对路径」+ `cli.ts:669` `resolve(workspacePath, testCwd)` 确认旧基准=workspacePath | ✅ 决策 4 补 ④ + 决策 7 合并规则补「存量 testCwd rebase」（相对按旧 cwd rebase 到相对 repo 根；绝对转换或标记人工）+ S3/V-migrate 补用例 |
+| R2-2 | 决策 7「同 id 同 status 自动去重」有 replan 死角——replan 是 from=to（status 不变）但 append statusHistory + 改 plan，同 status 单边 replan 会静默丢 plan | 属实。`status.ts:49,54-55` 确认 replan from=to | ✅ 决策 7 去重判据从「同 status」细化为「statusHistory 一致/前缀→合并取长者；分叉→即停」+ S3/V-migrate 同步 |
+
+两轮审查（kimi 第一轮 + cw-tool 侧第二轮）共 8 条 must-fix 级发现，全部采纳。文档当前状态：方案 A 方向 + 8 项修订后的实施规格完整。
