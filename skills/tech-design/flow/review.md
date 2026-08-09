@@ -25,7 +25,8 @@ task:
     2. read <文档绝对路径>
     3. read 目标项目 AGENTS.md / ARCHITECTURE.md（若存在）提取项目特定约定
     4. 逐项审查，找反例和攻击面（对抗式），声称事实错误前必须 read 源码核实
-    5. 报告写到 <output 绝对路径>
+    5. **重点审查验收章节**（rubric P0-13/14/15）：是否存在、是否真实场景（非单测/mock）、验收投入是否匹配改动大小
+    6. 报告写到 <output 绝对路径>
   验收：
     - 返回 structured-output { report_file, must_fix, suggestion }
     - report_file 指向的文件存在且含 Summary + Findings 表
