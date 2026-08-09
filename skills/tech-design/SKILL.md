@@ -22,7 +22,7 @@ description: >-
 3. **[MANDATORY] 使用者视角为主线 + 抽象锚定例子**：受众假设是"会用系统但不懂内部背景的开发者"，关键概念补背景 + 最小例子
 4. **[MANDATORY] 自包含 + 结论先行**：每版完整可独立读懂（不写 delta 链）；SCQA 开篇 + 每章首句结论
 5. **[MANDATORY] scope = 当前层 → 紧邻下一层**，不跨 2 层设计
-6. **[MANDATORY] 验收用真实场景**：不是单测、不是 mock，是实施后在真实场景验证功能符合预期；小改动可简化，大改动多场景。review 重点审查（见 `review/rubric-design-doc.md` P0-13/14/15）
+6. **[MANDATORY] 验收用真实场景**：不是单测、不是 mock，是实施后在真实场景验证功能符合预期；每个场景回溯 §1 目标、用具体业务例子而非抽象断言；小改动可简化，大改动多场景。review 重点审查（见 `review/rubric-design-doc.md` P0-13/14/15，业界依据见 `references/acceptance-practices.md`）
 7. **[MANDATORY] 涉及运行时/数据流/错误时**：运行时断言附探针、画物理数据流图、每个错误配恢复指引
 
 > 这 7 条是写作时的红线。完整 11 条准则见 `references/design-principles.md`。
@@ -37,6 +37,7 @@ description: >-
 | **审查设计文档**（"review 设计/review design/审一下这份设计文档"） | `flow/review.md` |
 | 问"设计文档该有什么结构/某段怎么写" | `references/doc-structure.md` |
 | 问"为什么这么要求/写作原则" | `references/design-principles.md` |
+| 问"验收的最佳实践/业界怎么做" | `references/acceptance-practices.md` |
 | 问"常见错误/反模式"或被 review 翻车 | `references/anti-patterns.md` |
 | **优化 agent↔用户的表达**（"我听不懂"/"换个说法"/"agent 说得太绕"）——借用易理解性方法论优化沟通，不走 review | `flow/express.md` |
 | 要文档骨架模板 | `resources/templates/design-doc-template.md` |
