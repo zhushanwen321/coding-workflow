@@ -226,15 +226,14 @@ $ cw status --unitId slice:provider
 | 失败场景 | 现象 | 恢复动作 |
 |---|---|---|
 | 非 git 目录调 cw | common-dir 探测失败 | cw 降级 per-cwd（保持现状），stderr 提示「cwd 非 git 目录，store 按 cwd 隔离；若需 repo 级共享，请在 git 工作树内调用」 |
-| store 路径迁移期 | 找不到历史 unit | `cw migrate-store`（§4.3）合并旧 store；或 `cw list --all` 确认 unit 在哪个 store |
-| 迁移遇同 id 状态冲突 | 迁移暂停，报告冲突 unit | 迁移**不自动仲裁**，输出冲突清单 + 两个状态副本，人工选择保留哪个后加 `--resolve <id>=<keep>` 重跑 |
+| 旧 per-cwd store 弃用 | 升级后找不到历史任务 | store-key 改 repo 级（common-dir），旧 `~/.cw/<旧cwd>/store.json` 不再被认；启动一次性 stderr warning 提示弃用 + 旧数据位置；**不迁移**，存量任务需重建或手动从旧 store 捞（决策 9） |
 | wave commit 未进 object store | gitValidator 校验失败 | 错误文案指向「commit `<sha>` 不在当前 repo object store，确认 wave worktree 已 commit 且 worktree 共享同一 bare repo」 |
 
 ### §3.2 多方案对比（设计准则 9，强制 ≥2）
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A. store 归一化下沉 cw-cli 内部** | ✅ 最干净：归一化回归引擎层（职责归位），bash/cw-tool 自动统一，cw-tool 退回纯封装，bare/普通 repo 统一无分支 | 中-高：cw-cli 改 `getCwJsonPath` + `constructCwDeps` + 全局 store 迁移（per-cwd → per-common-dir，**影响所有 cw-cli 用户含纯 bash 用户**） | 中：改默认 store 路径，迁移不可回退，须健壮迁移（自动+幂等+保守冲突） | ✅ 推荐 |
+| **A. store 归一化下沉 cw-cli 内部（不迁旧 store）** | ✅ 最干净：归一化回归引擎层（职责归位），bash/cw-tool 自动统一，cw-tool 退回纯封装，bare/普通 repo 统一无分支 | 低：cw-cli 改 `getCwJsonPath` + `constructCwDeps` + 弃用 warning；**无迁移**（旧 per-cwd store 弃用，决策 7/9） | 低-中：改默认 store 路径是 breaking（minor + 醒目 warning），但不做迁移所以无迁移 bug 面 | ✅ 推荐 |
 | **B. cw-cli 加 `--store-key` 参数** | ⚠️ 半解耦：归一化仍在调用方，**bash 不传则 per-cwd，bash/cw-tool 割裂结构性存在**（G2 不达成） | 低-中：cw-cli 加参数 + cw-tool 改探测 | 低：bash 行为不变 | ❌ 不彻底 |
 | **C. remoteUrl 做 store-key** | ✅ 语义最贴近「属于哪个项目」，跨 clone 也统一，人可读 | 中：无 remote/改 remote/格式归一化（https vs ssh vs .git 后缀）的 edge case 处理 | 中：纯本地 repo 无 remoteUrl → fallback；remote 改名分裂 | ❌ edge case 更麻烦 |
 | **D. 短期止血（仅改 cw-tool）** | ❌ 治标：cw-tool 把 `dirname(common-dir)` 改 `common-dir` 原值、workspace 改 `show-toplevel`，归一化仍在 cw-tool，bash 割裂仍在 | 最低：零 cw-cli 改动、零迁移 | 最低 | ❌ 仅作过渡 |
@@ -245,9 +244,9 @@ $ cw status --unitId slice:provider
 
 1. **职责归位（by construction）**：store 归一化是 cw-cli 的内部决策，放 cw-cli 最自然，结构性消除「调用方传错值」类 bug（dirname bug 不可能再发生）和「bash/cw-tool 割裂」（两者走同一 cw-cli 路径）。不是 clever mechanism，是结构正确。
 2. **bash/cw-tool 统一（G2）**：方案 B 的 `--store-key` 仍是调用方传参，bash 不传就 per-cwd，割裂结构性存在。只有 cw-cli 内部归一化才能让两条路径统一。
-3. **成本如实估算，无现成模式可复用**：方案 C 的 remoteUrl 是全新的 edge case 集合；方案 D 不彻底。方案 A 的主要成本是全局 store 迁移——但 cw-cli **没有 N→1 合并的成熟模式**：ADR-0008 只加 schemaVersion + repoMeta 字段（读侧不做版本校验，无迁移逻辑），历史仅有两次 1:1 路径 rename 迁移（`~/.v1`→`~/.cw`、`_v1.json`→`store.json`）且代码已移除，当前 `src/` 零迁移代码。本案 N→1 合并 + 跨 store 外键 + 冲突即停是**无先例的新工程**，成本按全新估算。
+3. **减法优先，不迁旧 store（准则 8）**：方案 C 的 remoteUrl 是全新的 edge case 集合；方案 D 不彻底。方案 A **不做迁移**——store-key 改 repo 级（common-dir），旧 per-cwd store 弃用（决策 7），配套弃用 warning（决策 9）。这砍掉了迁移（归属算法/并发互斥/冲突仲裁）的全部复杂度，代价是存量任务需重建（本项目单人使用，可接受）。
 
-**关于迁移成本/收益不对称的诚实说明**：方案 A 的全局 store 迁移影响所有 cw-cli 用户（含纯 bash 线性模式用户，他们本来不分裂、零收益付迁移成本）。若迁移风险暂时不可接受，**方案 D 可作为过渡**（立即修复 bare repo bug，零迁移），后续再执行 A 根治。本文档按方案 A 设计实施路径，但 S1 前可先用 D 止血。
+**关于不迁的代价（已确认接受）**：方案 A 不迁旧 store，意味着升级后存量 cw 任务（旧 per-cwd store 里）在新版不可写、写操作不可见，需重建或手动从 `~/.cw/<旧cwd>/store.json` 捞。本项目当前单人使用、bare repo worktree 刚采用、存量任务可弃，此代价可接受（决策 7）。若未来用户量增长需兼容，可再补迁移（届时按决策 7 历史版本的归属算法实现）。
 
 **若用方案 B，§3.1 终态会变成什么样**：cw-tool 路径能用了（store-key 修复），但 bash 和 cw-tool 仍访问不同 store——开发者在 bash 建的任务，cw-tool 看不到；反之亦然。G2 不达成，本次 bug 本质未根治，只是从「cw-tool 全坏」降级为「bash 和 cw-tool 各看各的」。
 
@@ -276,7 +275,7 @@ $ cw status --unitId slice:provider
 - 绝对路径（如 `/Users/x/coding-workflow-workspace/main/packages/auth`）存进 **repo 级共享 store** 后，`fix-xxx` worktree 读到它——**路径不存在**，解析错位。绝对路径与「跨 worktree 共享 store」直接矛盾。
 - 正解：testCwd 用相对仓库根的相对路径（如 `packages/auth`），运行时 `resolve(show-toplevel, "packages/auth")` 在每个 worktree 都解析到**该 worktree 的** `packages/auth`——跨 worktree 自动正确。
 - **现状契约并非已是「相对仓库根」，需收紧**：`src/core/plan.ts:73-74` 字段注释为「相对 workspacePath **或绝对路径**」，`src/cli.ts:669` 实现有 `isAbsolute` 分支**放行**绝对路径。即现状允许绝对路径 testCwd 合法存入 store——这些旧契约下存入的绝对 testCwd 在 repo 级共享 store 时代跨 worktree 必炸（正是本决策要防的 bug）。因此**不能只改 guidance 文案**，必须在 design/replan 入参校验层加机器检查拒绝绝对 testCwd（S1 改动清单见 §4.1）。
-- 选择：① 运行时 `resolve(show-toplevel, testCwd)` 解析基准换 show-toplevel；② design/replan 校验层拒绝绝对路径 testCwd（机器检查，非仅文案）；③ guidance 补「testCwd 必须相对仓库根，禁止绝对路径」；④ **存量 testCwd 迁移处理**——旧契约相对 testCwd 基准是「建任务时的 cwd（workspacePath）」而非仓库根（`src/core/plan.ts:74` 注释 + `src/cli.ts:669` 实现），旧 cwd 若是子目录（如 `/repo/packages/auth` 存 `./`），迁移后基准变 repo 根会漂移；S3 迁移须按旧 cwd 基准把存量 testCwd rebase 到相对仓库根（详见决策 7）
+- 选择：① 运行时 `resolve(show-toplevel, testCwd)` 解析基准换 show-toplevel；② design/replan 校验层拒绝绝对路径 testCwd（机器检查，非仅文案）；③ guidance 补「testCwd 必须相对仓库根，禁止绝对路径」
 - 被否：testCwd 改绝对路径——破坏跨 worktree 共享的前提
 - 证据：`src/core/plan.ts:73-74` 注释 + `src/cli.ts:669` isAbsolute 分支 + `src/guidance/templates/wave.ts:58` guidance 示例 + 探针 P-toplevel ✅
 
@@ -290,29 +289,26 @@ $ cw status --unitId slice:provider
 - 不加「猜测 repo」「跨进程持久缓存 common-dir」「自动迁移」等机制——每个跨进程 clever 机制都是新的运行时断言（准则 7）。by construction：探测到就归一化，探测不到就降级，结构上不可能错。
 - **进程内 memoize（非跨进程）允许**：单次 cw 写 action 至少 2 次 `new CwStore`（`src/cli.ts:647` constructCwDeps + `:791` getUnitScope）+ 1 次 show-toplevel probe = ≥3 次 git spawnSync（每次数 ms-数十 ms）。进程内一次性 memoize common-dir/show-toplevel 结果**不引入运行时断言**（同进程 cwd 不变，结果稳定），可消除重复 spawn 代价。这与「跨进程持久缓存」（有失效/一致性断言）性质不同，允许。
 
-**决策 7：store 迁移一次性、自动、幂等、保守冲突、repo 级互斥（不自动仲裁状态机）。**
+**决策 7：不迁移——旧 per-cwd store 弃用，新任务直接走 repo 级 store。**
 
-迁移分四步：**发现 → 归属 → 互斥合并 → 归档**。前两步是本设计新增规格（否则静默丢任务树，与 G1 冲突）。
+**减法优先（准则 8）**：迁移（per-cwd → per-common-dir 的 N→1 合并 + 归属算法 + 并发互斥 + 冲突仲裁 + 存量 testCwd rebase）是为「兼容历史任务」而设计的复杂度。本项目当前单人使用、bare repo worktree 刚采用、存量任务可弃，**不做迁移**。
 
-- **① 发现**：扫 `~/.cw/` 下所有 `store.json`（cross-cwd.ts 已有目录扫描模式），逐个读 repoMeta（`src/store/schema.ts:36`，可缺失）+ 反解 encodedCwd 得到旧 cwd 原值。
-- **② 归属（最关键的硬问题）**：判定每个旧 store 是否属于「当前 common-dir 对应的 repo」。归属线索优先级：
-  1. 旧 cwd 路径仍存在且可 probe git → 对比其 `git-common-dir`(absolute) 是否等于当前 common-dir；
-  2. 旧 cwd 路径已删（worktree 清理是常态，**无法 probe**）→ 回退 repoMeta.remoteUrl 比对（当前 repo 的 remoteUrl）；
-  3. remoteUrl 为空（纯本地 repo）或改过名 → **归属不确定，不静默合并**：输出到「无法归属 store 清单」，提供人工通道 `cw migrate-store --from <oldStoreDir>` 显式认领。
-  - **硬边界**：已删 worktree 目录无法 probe git，这是物理限制，归属只能靠 remoteUrl/人工，方案接受「无法自动归属的 store 需人工认领」而非猜测。
-- **③ 互斥合并**：持**新 store 的 lockPath**（`<newStoreDir>/store.json.migrate.lock`，复用 CwStore 现有锁机制）做 repo 级迁移互斥——锁内完成「读 N 个旧 store → 合并 → 写新 store → 归档」。**CwStore 现有锁是 per-file 的**（`src/store/cw-store.ts:88` lockPath 随 dbPath），N→1 跨文件合并不受单文件锁保护，必须用新 store 的锁做整次迁移互斥，否则多 wave-agent 并发首跑会交错合并（递归编排并发是常态）。幂等只覆盖串行重跑，不覆盖并发首跑——并发首跑靠此锁串行化。
-- **④ 归档**：合并完成的旧 store 改名为 `store.json.legacy`（**文件改名，非目录改名**）。`cw list --all` 的 `cross-cwd.ts:42` 是 `readdirSync(CW_HOME)` 目录扫描后逐目录找 `store.json`——归档成 `store.json.legacy` 后该目录无 `store.json`，list --all 自动跳过（不污染聚合显示），但目录保留可供回溯。
-- **bare repo 是 N→1 合并**：本项目实测 `~/.cw/` 下有 `fix-cw-config-json` worktree 的 store，方案 A 要合并到 1 个 `.bare` 级 store。合并规则：
-  - **跨 store parentUnitId 外键**：wave 在子 worktree store、parent slice 在父 worktree store——合并后外键自然可解析，但须保证 parent unit 不丢
-  - **存量 testCwd rebase（决策 4 ④）**：旧契约相对 testCwd 基准是旧 cwd（建任务时的 workspacePath），迁移后基准变 repo 根——必须 rebase：① 旧 cwd 从 encodedCwd 反解（`cross-cwd.ts:24`）或 RepoMeta.worktreePath 取；② 旧实际测试目录 = `resolve(旧cwd, 旧testCwd)`；③ 新 testCwd = `relative(repo根, 旧实际目录)`，若 = 旧值则 no-op（旧 cwd 本就是 repo 根的常见单包项目）。**绝对路径 testCwd**（旧契约也允许）转成相对 repo 根的相对路径，无法确定 repo 根则标记人工确认；无法确定旧 cwd 基准的相对 testCwd 同样标记人工确认。
-  - **同 id 去重：按 statusHistory 判据，不看裸 status**。replan 是旁路（`src/core/status.ts:49,54-55` from=to，status 不变但 append statusHistory + 改 plan）——两个副本 status 相同但其中一个做过 replan 时，statusHistory 长度/plan 已分叉。判据：**statusHistory 一致或一方为另一方前缀 → 合并取长者；statusHistory 分叉（含「同 status 单边 replan」「不同 status」）→ 即停人工裁决**，输出冲突清单 + 两个副本、人工 `--resolve <id>=<keep>` 后重跑。这比「同 status 自动去重」更严，覆盖 replan 死角，与「冲突即停」保守语义一致。
-  - **不同 id 全保留**
-- ⛔ 迁移正确性是实施期门槛（见 §4.3 V-migrate，含归属/并发/归档三类用例）
+- **新任务**：升级后所有 cw 调用走新 repo 级 store（common-dir 键控），bare repo 多 worktree 天然共享（G3 达成）。
+- **旧任务**：`~/.cw/<旧cwd>/store.json` 物理保留（cw 不删），但 cw 写操作不认（store-key 变了）。`cw list --all`（cross-cwd.ts 目录扫描）仍能扫到旧 store（只读可见，最后一道可见性，零额外代码），但 create/design/execute 等写操作只走新 store。
+- **不做的事**：无归属算法、无 N→1 合并、无并发互斥锁、无 statusHistory 冲突仲裁、无存量 testCwd rebase、无 `cw migrate-store` 命令。
+- **代价（已确认接受，决策 9 配套 warning）**：升级后进行中的 cw 任务在新版不可写、写操作不可见；需手动从旧 store JSON 重建。
 
 **决策 8：`--workspace` flag 的后向语义显式定义。** S1 后 bash 用户仍可传 `--workspace`，需明确其角色：
 - `--workspace` 值（缺省 `process.cwd()`）是 **probe 基准 + 执行位置基准**，**不是 store-key**。store-key 恒为「从该基准 probe 出的 common-dir」，非 git 目录时才 fallback 回该基准值（per-cwd 降级）。
 - 降级链：`--workspace`(或 cwd) → probe common-dir 成功 → store-key=common-dir，workspace=show-toplevel；probe 失败 → store-key=workspace 原值（per-cwd），workspace=原值。store-key 与 workspace 在降级时才合流，正常态分离——原「单一 --workspace 兼任两角色」的耦合 bug 以此显式拆解，不残留。
 - 被否：`--workspace` 继续兼任 store-key（旧语义）——正是本次要消除的耦合。
+
+**决策 9：弃用 warning + minor 版本（不迁旧 store 的配套）。**
+
+决策 7 不迁旧 store，需配套让用户感知这个 breaking change：
+- **启动弃用 warning**：cw-cli 启动时检测当前 repo 是否存在旧 per-cwd store（旧路径 `~/.cw/<encodeCwd(旧cwd)>/store.json` 仍存在），存在则**一次性** stderr warning：「v2 起 store 改 repo 级（git-common-dir 键控），旧 per-cwd store 已弃用；存量任务需重建或手动从 `~/.cw/<old>/store.json` 捞」。**不引导迁移命令**（无迁移功能）。用 marker 文件（`~/.cw/.deprecation-warned-<encoded>`）去重，避免每次启动刷屏。
+- **版本号 minor + 醒目 warning**：虽是 breaking（store 路径变 + testCwd 契约收紧），但不跳 major——靠启动 warning + CHANGELOG 集中传递。理由：单人/小众项目，major 跳号成本 > 收益；warning 已覆盖感知。
+- **list --all 不改**：cross-cwd.ts 目录扫描照常，旧 store 只读仍可见（决策 7）。
 
 **附带收益：只读 action 跨 worktree 自动统一。** 现状只读 action（status/list/tree/handoff，`src/cli.ts:747` runReadonly）也 `new CwStore(workspacePath)` → 走 cw-cli `process.cwd()` per-cwd store。方案 A 下沉后 cw-cli 内部 `getCwJsonPath` 统一归一化，只读 action 自动也走 common-dir store，跨 worktree 查询不再分叉——这是下沉带来的结构性收益，无需额外机制。
 
@@ -324,9 +320,8 @@ $ cw status --unitId slice:provider
 
 | 步骤 | 改动项目 | 内容 | 验证 |
 |---|---|---|---|
-| **S1** | coding-workflow（cw-cli） | ① `getCwJsonPath` 内部 `detectCommonDir` 归一化（common-dir 优先，fallback workspace）；② `constructCwDeps` 解耦（store 用归一化值，git/test/file 用 workspace=show-toplevel）；③ **design/replan 入参校验拒绝绝对路径 testCwd**（决策 4 机器检查）+ guidance 补「相对仓库根、禁止绝对路径」；④ 探测失败降级；⑤ 进程内 memoize common-dir/show-toplevel（决策 6） | 单测：common-dir 归一化、4 关注点分别用对的值、降级路径、testCwd 绝对路径被拒、相对根跨 worktree 解析 |
+| **S1** | coding-workflow（cw-cli） | ① `getCwJsonPath` 内部 `detectCommonDir` 归一化（common-dir 优先，fallback workspace）；② `constructCwDeps` 解耦（store 用归一化值，git/test/file 用 workspace=show-toplevel）；③ **design/replan 入参校验拒绝绝对路径 testCwd**（决策 4 机器检查）+ guidance 补「相对仓库根、禁止绝对路径」；④ 探测失败降级；⑤ 进程内 memoize common-dir/show-toplevel（决策 6）；⑥ **启动弃用 warning**（决策 9：检测旧 per-cwd store + 一次性 stderr + marker 去重） | 单测：common-dir 归一化、4 关注点分别用对的值、降级路径、testCwd 绝对路径被拒、相对根跨 worktree 解析、弃用 warning 触发与去重 |
 | **S2** | cw-tool（pi extension，跨项目协调） | 删除 `detectRepoWorkspace` + `--workspace` 透传逻辑；cw-tool 退回纯封装（只透传 action/unitId/input，workspace 由 cw-cli 自己探测） | 单测：cw-tool 不再传 --workspace，cw-cli 内部归一化生效 |
-| **S3**（依赖 S1：迁移目标「common-dir 级新路径」由 S1 归一化落地后才有） | coding-workflow（cw-cli） | store 迁移：**发现→归属→互斥合并→归档**（决策 7 四步）；per-cwd → per-common-dir，bare repo N→1 合并，**同 id 按 statusHistory 判据去重（分叉即停）**，跨 store 外键保持，**存量 testCwd 按旧 cwd 基准 rebase 到相对 repo 根（含绝对路径转换）**，无法归属 store 输出清单 + `--from` 人工认领；repo 级 `.migrate.lock` 并发互斥；旧 store 归档 `store.json.legacy`；自动 + 幂等 | 集成测：迁移前后 unit 可见性、幂等、回滚、N→1 合并、statusHistory 分叉即停、testCwd rebase 正确、归属（repoMeta 缺失/目录已删）、并发首跑串行化、list --all 跳过归档 |
 
 > **S1/S2 原子上线 + 版本契约（关键约束）**：「同一批次发布」是流程愿望不是机制——cw-tool（`@zhushanwen/pi-cw-tool`）与 cw-cli（`@zhushanwen/coding-workflow`）是两个独立 npm 包，用户可独立升级。**错配组合分析**：
 > - **旧 cw-tool（传 dirname(common-dir)）+ 新 cw-cli（S1）**：cw-cli 在容器探测 common-dir 失败 → fallback 容器 per-cwd → cw-tool 路径和现状一样坏（已论证）；
@@ -342,7 +337,7 @@ $ cw status --unitId slice:provider
 - `src/store/cw-store.ts` — `CwStore` 构造配合归一化后的 dbPath（迁移须尊重现有文件锁 `lockPath` + 原子写 `renameSync` 机制，`src/store/cw-store.ts:88,143,166`）
 - `src/guidance/templates/wave.ts` — testCwd guidance 补「相对仓库根、禁止绝对路径」
 - `src/handlers/validate-input.ts` — design/replan 入参校验加「拒绝绝对路径 testCwd」（决策 4 机器检查，非仅文案）
-- `src/store/migrate.ts`（新增）— 迁移逻辑四步：发现（扫 `~/.cw/`）→ 归属（probe/remoteUrl/人工 `--from`）→ 互斥合并（`.migrate.lock` repo 级锁）→ 归档（`store.json.legacy`）；含同 id 冲突即停
+- `src/cli.ts`（启动入口）— 新增弃用 warning：启动检测旧 per-cwd store 路径存在 + marker 去重（决策 9）；无 migrate.ts（不迁）
 - `tests/` — 新增 common-dir 归一化测试（bare repo `.bare` + 普通 repo `.git` + linked worktree + 非 git 目录 + 普通 repo 从子目录调用）+ migrate 测试（含冲突即停）
 
 **cw-tool（跨项目，`extensions/cw-tool/`，仅列协调需求）**：
@@ -358,7 +353,6 @@ $ cw status --unitId slice:provider
 |---|---|---|---|
 | V-normalize | cw-cli common-dir 归一化在 bare/普通 repo 都返回稳定**绝对** repo 标识；edge case（separate-git-dir / submodule）行为明确 | 构造 bare repo + 普通 repo + linked worktree + 普通 repo 从子目录调用 + separate-git-dir + submodule，对比 `getCwJsonPath` 输出（子目录与 repo 根一致验证 absolute；separate-git-dir 用 common-dir 原值稳定；submodule 按 `.git/modules/<name>` 独立 store） | S1 前 |
 | V-testcwd-relative | testCwd 相对仓库根 + workspace=show-toplevel 后，跨 worktree 解析到正确子包；含相对 testCwd 的 unit 测试在各 worktree 跑对地方 | 构造含相对 testCwd（如 `packages/auth`）的 unit，在 2 个 worktree 各跑 cw test，断言 cwd = 各自 worktree 的 `packages/auth` | S1 |
-| V-migrate | 迁移正确性：unit 不丢不重、幂等、可回滚、bare repo N→1 合并正确、**同 id statusHistory 分叉即停**、**存量 testCwd rebase 正确**、**归属（repoMeta 缺失/目录已删）正确**、**并发首跑串行化** | 构造同一 repo 3 个 worktree store（含 1 交叉 unit + 1 跨 store parentUnitId 外键 + 1 同 id 不同 status 冲突 + 1 同 id 同 status 单边 replan（statusHistory 分叉）+ 1 旧 cwd=子目录存相对 testCwd `./` + 1 存绝对 testCwd + 1 repoMeta 缺失 + 1 目录已删），跑迁移，断言：新 store 含全部可归属无冲突 unit、外键不断裂、statusHistory 分叉 unit 暂停待人工裁决、相对 testCwd rebase 到相对 repo 根（`./`→`packages/auth`）、绝对 testCwd 转相对或标记人工、repoMeta 缺失/目录已删 store 进「无法归属清单」、旧 store 归档 + 重跑幂等；另起两进程并发触发，断言靠 `.migrate.lock` 串行化 | S3 |
 | V-bash-unified | bash 调 cw 与 cw-tool 调 cw 访问同一 store（G2 达成） | bash `cw create` + cw-tool `cw status`，确认命中同一 store 的 unit | S2 后 |
 | V-bare-e2e | bare repo worktree 端到端：cw-tool 全 4 工具 + 递归编排 wave 跨 worktree | 本项目两 worktree（如 `fix-cw-config-json` + `fix-cw-cwd-worktree`）实跑 cw_planning create + cw_wave design | S2 后 |
 
@@ -375,12 +369,11 @@ $ cw status --unitId slice:provider
 | P-absolute | 裸 vs `--path-format=absolute` 差异（撞名风险） | 本项目 bare repo worktree 裸命令恰好返回绝对；普通 repo（`git init`）裸命令根返回相对 `.git`、子目录返回 `../../.git`、`--path-format=absolute` 全场景稳定绝对 | ✅ 已测（本项目 bare repo + 审查轮 mktemp 构造普通 repo/linked worktree 独立复测） |
 | V-normalize | cw-cli 内部归一化 bare/普通 repo 稳定 | 见 §4.3 | ⛔ S1 前 |
 | V-testcwd-relative | testCwd 相对根跨 worktree 正确 | 见 §4.3 | ⛔ S1 |
-| V-migrate | 迁移 N→1 + 冲突即停正确 | 见 §4.3 | ⛔ S3 |
 | V-bash-unified | bash 与 cw-tool store 统一 | 见 §4.3 | ⛔ S2 后 |
 
 ---
 
 ## 附录：与现有决策的关系
 
-- **ADR-0008（本项目，v1 schema + RepoMeta）**：ADR-0008 只加 schemaVersion + repoMeta 字段（读侧不做版本校验），**不含迁移逻辑**；RepoMeta 已采集 `remoteUrl/branch/worktreePath/headCommit`（`src/store/schema.ts:36`），本设计复用其中 `worktreePath` + `remoteUrl` 作为迁移期「同 repo 多 worktree」归属线索（决策 7 归属算法），但 store-key 用 common-dir 而非 remoteUrl（决策 2 + 方案 C 否决理由）。历史另有两次 1:1 路径 rename 迁移（代码已移除），与本案 N→1 合并不同类，不构成「成熟迁移模式」先例。
+- **ADR-0008（本项目，v1 schema + RepoMeta）**：ADR-0008 只加 schemaVersion + repoMeta 字段（读侧不做版本校验），**不含迁移逻辑**。本设计**不迁旧 store**（决策 7），故不复用 RepoMeta 做归属；store-key 用 common-dir 而非 remoteUrl（决策 2 + 方案 C 否决理由）。历史两次 1:1 路径 rename 迁移（代码已移除）与本案无关。
 - **ADR-0045（cw-tool 项目，cw-tool 附加 --workspace）**：本设计将其状态标记为 Superseded——核心洞察（store 应 repo 级共享、用 common-dir 做标识）完全成立并被继承，修正其实现错误（多余 dirname + 单一 --workspace 兼任两角色 + 归一化放错层）。cw-tool 项目需同步修订该 ADR。

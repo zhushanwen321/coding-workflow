@@ -95,4 +95,18 @@
 | R2-1 | 存量相对 testCwd 的迁移 rebase 未覆盖——旧契约相对 testCwd 基准是「建任务时的 cwd」（非仓库根），旧 cwd 若是子目录，迁移后基准变 repo 根会漂移 | 属实。`plan.ts:74` 注释「相对 workspacePath 或绝对路径」+ `cli.ts:669` `resolve(workspacePath, testCwd)` 确认旧基准=workspacePath | ✅ 决策 4 补 ④ + 决策 7 合并规则补「存量 testCwd rebase」（相对按旧 cwd rebase 到相对 repo 根；绝对转换或标记人工）+ S3/V-migrate 补用例 |
 | R2-2 | 决策 7「同 id 同 status 自动去重」有 replan 死角——replan 是 from=to（status 不变）但 append statusHistory + 改 plan，同 status 单边 replan 会静默丢 plan | 属实。`status.ts:49,54-55` 确认 replan from=to | ✅ 决策 7 去重判据从「同 status」细化为「statusHistory 一致/前缀→合并取长者；分叉→即停」+ S3/V-migrate 同步 |
 
-两轮审查（kimi 第一轮 + cw-tool 侧第二轮）共 8 条 must-fix 级发现，全部采纳。文档当前状态：方案 A 方向 + 8 项修订后的实施规格完整。
+两轮审查（kimi 第一轮 + cw-tool 侧第二轮）共 8 条 must-fix 级发现，前 6 条（第一轮）采纳，R2-1/R2-2（第二轮）**因第三轮减法决策而 moot**。
+
+---
+
+## 补遗 2：减法决策——不迁旧 store（第三轮）
+
+用户审查两轮修订后做减法决策：**不迁旧 store**（决策 7 改为「弃用，不迁移」）、版本 **minor + 弃用 warning**（决策 9）、**只做 cw-cli 侧**（S2 留 xyz-agent）。理由：单人项目、存量任务可弃，迁移（归属/并发/仲裁/rebase）是纯兼容复杂度，准则 8 减法优先。
+
+影响前轮发现：
+- **R2-1（存量 testCwd rebase）→ moot**：不迁就不 rebase，决策 4 ④ 已删。
+- **R2-2（statusHistory 去重判据）→ moot**：不合并 N→1 就没有去重场景。
+- 第一轮 MF-4（迁移归属算法）/MF-5（迁移并发互斥）→ moot：决策 7 不迁，归属/互斥规格删除。
+- 第一轮 MF-1（testCwd 机器校验）/MF-2（ADR-0008 如实）/MF-3（行号）/MF-6（S1/S2 版本契约）→ **仍适用**，保留。
+
+文档当前状态：方案 A（归一化下沉 cw-cli + workspace=show-toplevel + testCwd 收紧 + 弃用 warning），不迁，决策 1-9，S1（cw-cli）+ S2（cw-tool 协调需求）。
