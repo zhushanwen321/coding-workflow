@@ -191,3 +191,16 @@
 ### Miscellaneous
 - docs(skill): pr-cr-fix stage-2 direct env dispatch (fc39772)
 
+
+## [v1.6.1] - 2026-08-09
+
+### Bug Fixes
+- fix(config): preserve testCwd on progressive design replace (review must-fix) (6baebbd)
+- fix(wave2): remove dead dispatchGuidance field + correct ADR-0013 attribution (exec-review) (04dd9b7)
+- fix(wave1): correct test gate hint to reachable recovery path (exec-review) (d657cd0)
+
+### Refactoring
+- Merge pull request #14 from zhushanwen321/fix-cw-config-json (15b6840)
+- refactor(config): remove orchestration dead config + deprecate cw.config.json (wave 2) (fa67f3b)
+- refactor(config): sink testRunner.cwd to per-wave testCwd (wave 1) (3e29a00)
+
