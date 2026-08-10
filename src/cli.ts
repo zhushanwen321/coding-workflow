@@ -68,7 +68,7 @@ import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { encodeCwd, getCwHome } from "./store/schema.js";
+import { encodeCwd, getCwHome, getCwJsonPath } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
@@ -1025,7 +1025,8 @@ export function renderCliError(err: unknown): {
  *
  * 纯检测 + IO，不抛错：弃用提示不阻断 cw 运行，文件操作异常一律吞掉（marker 写失败
  * 最坏导致下次启动重复 warning，可接受）。marker 命名 `.deprecation-warned-<encoded>`
- * 加 `.` 前缀，避开 readonly/index 的 store.json 目录扫描。
+ * （`.` 前缀仅隐藏文件约定）；marker 不会被 readonly 的 store 扫描读取——
+ * `loadAllCwdsFromHome`（cross-cwd.ts）用 `isDirectory()` 过滤子目录，普通文件天然排除。
  */
 export function warnDeprecatedStore(workspacePath: string): void {
   try {
@@ -1033,6 +1034,12 @@ export function warnDeprecatedStore(workspacePath: string): void {
     const encoded = encodeCwd(workspacePath);
     // 旧 per-cwd store 路径（升级前布局：cwd 直接 encode，不经 detectCommonDir 归一化）。
     const oldStorePath = join(cwHome, encoded, "store.json");
+    // 非 git 目录：detectCommonDir fallback 回 workspacePath，当前活跃 store 路径
+    // （getCwJsonPath）与 oldStorePath 重合——此时 oldStorePath 就是当前 store 而非
+    // 弃用残留，跳过避免误报（ADR-0014：非 git per-cwd 是明确保留的支持模式）。
+    if (oldStorePath === getCwJsonPath(workspacePath)) {
+      return;
+    }
     if (!existsSync(oldStorePath)) {
       return;
     }

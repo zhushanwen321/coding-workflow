@@ -2,10 +2,11 @@
  * 启动弃用 warning 测试（TC1-TC4，ADR-0014 决策 9 配套）。
  *
  * 验证 warnDeprecatedStore：
- *   TC1: 旧 per-cwd store 存在 + 无 marker → stderr 弃用提示 + 建 marker（unit）
- *   TC2: marker 已存在 → 不重复 warning（unit，去重）
+ *   TC1: 旧 per-cwd store 存在 + 无 marker → stderr 弃用提示 + 建 marker（unit, git 目录）
+ *   TC2: marker 已存在 → 不重复 warning（unit，去重, git 目录）
  *   TC3: 无旧 store → 静默，不建 marker（unit）
- *   TC4: cw 命令子进程 stderr 含 warning + 第二次跨进程去重（e2e）
+ *   TC4: cw 命令子进程 stderr 含 warning + 第二次跨进程去重（e2e, git 目录）
+ *   TC5: 非 git 目录 + 当前活跃 store 存在 → 不误报（unit，修复非 git 误报核心保障）
  *
  * 零 mock 框架：CW_HOME 用 tmp 目录隔离（真实文件 IO），stderr 用手写 spy（包装
  * process.stderr.write 捕获输出）。CW_HOME 是进程级环境变量，靠 vitest 文件内
@@ -92,6 +93,20 @@ function makeIsolatedEnv(): IsolatedEnv {
   };
 }
 
+/**
+ * 造一个隔离 CW_HOME + cwd（git repo），cleanup() 删除临时目录。
+ *
+ * git init 后 detectCommonDir(cwd) 返回 <cwd>/.git（≠ cwd），getCwJsonPath(cwd) =
+ * encodeCwd(<cwd>/.git) ≠ oldStorePath=encodeCwd(cwd)，旧 per-cwd 残留检测生效。
+ * 与 makeIsolatedEnv（非 git）互补：TC1/TC2/TC4 验证「升级前 per-cwd 残留」warn 路径。
+ */
+function makeIsolatedGitEnv(): IsolatedEnv {
+  const env = makeIsolatedEnv();
+  // -q 静默 init 输出；测试不 commit，无需 user config
+  spawnSync("git", ["init", "-q"], { cwd: env.cwd, encoding: "utf-8" });
+  return env;
+}
+
 /** 在 cwHome 下造旧 per-cwd store（旧编码 = workspacePath 直接 encode），返回旧 store 路径。 */
 function seedOldStore(cwHome: string, workspacePath: string): string {
   const dir = join(cwHome, encodeCwd(workspacePath));
@@ -128,7 +143,7 @@ afterEach(() => {
 
 describe("TC1: 旧 per-cwd store 存在 → 首次打弃用 warning", () => {
   it("旧 store 存在 + 无 marker → stderr 弃用提示 + marker 创建", () => {
-    const env = makeIsolatedEnv();
+    const env = makeIsolatedGitEnv();
     try {
       process.env.CW_HOME = env.cwHome;
       const oldStorePath = seedOldStore(env.cwHome, env.cwd);
@@ -156,7 +171,7 @@ describe("TC1: 旧 per-cwd store 存在 → 首次打弃用 warning", () => {
 
 describe("TC2: marker 已存在 → 不重复 warning", () => {
   it("marker 预建 → 调用不打 warning", () => {
-    const env = makeIsolatedEnv();
+    const env = makeIsolatedGitEnv();
     try {
       process.env.CW_HOME = env.cwHome;
       seedOldStore(env.cwHome, env.cwd);
@@ -211,6 +226,8 @@ describe("TC4: cw 命令子进程触发弃用 warning（e2e）", () => {
     const workspaceDir = realpathSync(
       mkdtempSync(join(tmpdir(), "cw-deprec-ws-")),
     );
+    // git repo：使 detectCommonDir(workspaceDir) ≠ workspaceDir，旧布局检测生效
+    spawnSync("git", ["init", "-q"], { cwd: workspaceDir, encoding: "utf-8" });
     const cwHome = realpathSync(
       mkdtempSync(join(tmpdir(), "cw-deprec-home-")),
     );
@@ -246,6 +263,32 @@ describe("TC4: cw 命令子进程触发弃用 warning（e2e）", () => {
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
       rmSync(cwHome, { recursive: true, force: true });
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TC5: 非 git 目录 + 当前活跃 store 存在 → 不误报（修复非 git 误报核心保障）
+// ═══════════════════════════════════════════════════════════════
+
+describe("TC5: 非 git 目录 + 当前活跃 store 存在 → 不误报弃用", () => {
+  it("非 git cwd：oldStorePath === 当前活跃 store 路径 → 静默 + 不建 marker", () => {
+    const env = makeIsolatedEnv();
+    try {
+      process.env.CW_HOME = env.cwHome;
+      // 非 git：seedOldStore 造的路径与 getCwJsonPath 重合（detectCommonDir 回退到 cwd）
+      seedOldStore(env.cwHome, env.cwd);
+      const marker = markerPath(env.cwHome, env.cwd);
+
+      const spy = captureStderr();
+      warnDeprecatedStore(env.cwd);
+      spy.restore();
+
+      // 不误报：stderr 空 + 不建 marker（#1 修复核心）
+      expect(spy.captured).toBe("");
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      env.cleanup();
     }
   });
 });
