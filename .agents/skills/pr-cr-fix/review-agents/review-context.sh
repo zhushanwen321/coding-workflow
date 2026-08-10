@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# review-context.sh — 检测 cw 工作流上下文 + subagent 能力，输出 JSON 供 code-review/pr-cr-fix 决策
+# review-context.sh — 检测 cw 工作流上下文 + subagent 能力，输出 JSON 供 pr-cr-fix 决策
 #
 # 输出字段：
 #   harness_mode      "harness" | "standalone"（是否在 cw 工作流目录下）
@@ -46,7 +46,7 @@ else
 fi
 
 # ── 4. subagent_capable：脚本里固定 true ──
-#    真正的能力判断由调用方（code-review / pr-cr-fix 的 SKILL.md）根据 harness 类型决定，
+#    真正的能力判断由调用方（pr-cr-fix 的 SKILL.md）根据 harness 类型决定，
 #    脚本无法可靠检测当前是 zcode / pi / 其他 harness。
 SUBAGENT_CAPABLE="true"
 
@@ -56,7 +56,7 @@ PRIMARY_LANG="typescript"
 # ── 6. 输出 JSON ──
 # files 数组：用 jq -R 逐行读，正确转义特殊字符（空格、引号、反斜杠）
 # FILES_RAW 为空时 jq -R 不产出任何行 → files 为 []
-# jq 缺失时走 else 降级：手工构造等价 JSON，保证调用方（code-review Step 1）总能拿到输出
+# jq 缺失时走 else 降级：手工构造等价 JSON，保证调用方（pr-cr-fix 阶段 2）总能拿到输出
 if command -v jq >/dev/null 2>&1; then
   FILES_JSON="$(printf '%s' "$FILES_RAW" | grep -v '^$' | jq -R . 2>/dev/null | jq -s . 2>/dev/null || printf '[]')"
 

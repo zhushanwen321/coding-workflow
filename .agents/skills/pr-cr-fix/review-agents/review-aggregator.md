@@ -78,4 +78,4 @@ plan-completeness 的 must_fix / should_fix 由该维度自行映射为 MUST_FIX
 }
 ```
 
-调用方（code-review / pr-cr-fix 的 SKILL.md）按 `must_fix` 数量决策：`must_fix > 0` → 阻塞通过，引导修复；`must_fix == 0` → 通过。
+调用方（pr-cr-fix 的 SKILL.md）按 `must_fix` 数量决策：`must_fix > 0` → 阻塞通过，引导修复；`must_fix == 0` → 通过。
