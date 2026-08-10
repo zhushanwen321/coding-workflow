@@ -1052,9 +1052,11 @@ export function warnDeprecatedStore(workspacePath: string): void {
     );
     try {
       writeFileSync(markerPath, "");
+      // eslint-disable-next-line taste/no-silent-catch -- best-effort：marker 写失败最坏重复 warning，不阻断 cw
     } catch {
       // marker 写失败不阻断——最坏下次启动重复 warning。
     }
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort：弃用提示不阻断 cw 运行，异常一律吞
   } catch {
     // 检测/编码异常不阻断 cw 运行（弃用提示是 best-effort）。
   }

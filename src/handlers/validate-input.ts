@@ -614,6 +614,7 @@ export function validateInput(action: string, layer: HandlerLayer, input: unknow
   // 仅 DesignInput(wave) / ReplanInput(四层共用) 含 testCwd 字段，按 schema 引用精确匹配
   // （未来 schema 移除 testCwd 时引用比较自然失效，不误拦、不错配 action/layer 组合）。
   if (schema === DesignInputSchema || schema === ReplanInputSchema) {
+    // eslint-disable-next-line taste/no-unsafe-cast -- Value.Check(schema, input) 已通过，input 符合 schema，as 是安全 narrowing（非无校验断言）
     const testCwd = (input as { testCwd?: unknown }).testCwd;
     if (typeof testCwd === "string" && isAbsolute(testCwd)) {
       throw new CwError(

@@ -21,10 +21,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CwError } from "../src/core/errors.js";
-import { dispatch } from "../src/dispatch.js";
 import type { ExecutionUnit } from "../src/core/workunit.js";
+import { dispatch } from "../src/dispatch.js";
 import type { DesignInput } from "../src/handlers/types.js";
-import { validateInput, type HandlerLayer } from "../src/handlers/validate-input.js";
+import { type HandlerLayer,validateInput } from "../src/handlers/validate-input.js";
 import { createCwEnv, type CwEnv, makeValidTestCase } from "./helpers/env.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
