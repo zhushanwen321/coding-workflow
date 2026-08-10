@@ -63,7 +63,7 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 | 2. 多维 review | `general-purpose` × 1（加载 code-review） | `code-review`（内部按环境分流：pi→review-fix-loop / 否则→维度 subagent） | 路径A: review-fix-loop 闭环 / 路径B/C: `.review/run-<runId>/round-1/aggregated.md` |
 
 > 注：路径 B/C 的 `round-1` 前缀是 pr-cr-fix 流水线约定（本路径由调用方显式指定）；code-review skill 独立路径 B 的默认落点为 `.review/run-<runId>/aggregated.md`（无前缀），详见解「runId 约定」。
-| 3. 修 must-fix + 验证 + 推 PR | `worker` × N + `general-purpose` × 2 | `cr-fix`（分组规则）/ `pull-request`（推） | fix commits + PR URL |
+| 3. 修 must-fix + 验证 + 推 PR | `worker` × N + `general-purpose` × 2 | 分组规则（内联，见 3a）/ `pull-request`（推） | fix commits + PR URL |
 
 **主 agent 始终不直接跑实现命令**：所有 bash 调用都在 subagent 内部完成。例外有两类：(a) 只读查询——`gh pr view`（查 PR 是否可查）、`git show <sha> --stat`（抽验 worker commit）、`git apply --stat <patch>`（预览 patch 核验 fixed_files）、`git status`（查本地与 origin 同步状态）；(b) **阶段 3a 路径 1 的 patch 合并**——worker 在隔离 worktree 内无法触及主工作区，patch 必须由主 agent 在主工作区 `git apply --cached` + `git commit` 拉回（见路径 1「合并」），这是路径 1 的结构性要求，不违背本约束。
 
@@ -120,7 +120,7 @@ workflow: {
 
 | 选项 | 后续动作 |
 |------|----------|
-| **全部修**（推荐） | 按 cr-fix 分组规则派 worker 修全部 must-fix |
+| **全部修**（推荐） | 按阶段 3a 内联分组规则派 worker 修全部 must-fix |
 | **只修 top N** | 用户回复 N，主 agent 把 aggregated.md 截取 N 条再派 worker |
 | **跳过修复直接推 PR** | 显式 ack 风险后仍走阶段 3（跳过 3a 直接推） |
 
@@ -155,7 +155,7 @@ workflow: {
 
 #### 3a 修问题（按探测结果选路径，worker × N 并行）
 
-按 cr-fix 分组规则（文件归属 + 问题性质）派 worker × N（并行 ≤ 5）。分组规则同时是隔离的前提——**同文件/同模块归同一组**意味着不同 worker 修改不同文件，路径 1 的 patch apply 与路径 2 的并发 commit 都不会跨组打架。
+按阶段 3a 内联分组规则（文件归属 + 问题性质）派 worker × N（并行 ≤ 5）。分组规则同时是隔离的前提——**同文件/同模块归同一组**意味着不同 worker 修改不同文件，路径 1 的 patch apply 与路径 2 的并发 commit 都不会跨组打架。
 
 | 分组维度 | 规则 | 示例 |
 |---------|------|------|
@@ -318,7 +318,7 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；
 | Gate-3a npm 四件套失败 | 看 subagent 回执的 failed_step（check:all / lint / test / build），对应工种重派 worker 修复后重跑四件套 |
 | 阶段 3 push 冲突 | 跑 `git fetch && git rebase` 后重试 stage 3c 推 subagent |
 | 路径 1：worktree 创建被拒（主工作区脏） | 主 agent 先 stash 或 commit 保留现有改动，确认 `git status` clean 后重新派 worker |
-| 路径 1：`git apply <patch>` 冲突 | cr-fix 分组规则保证各 worker 改不同文件，理论上不冲突；若仍冲突，丢弃该 patch，按 fail 处理重派该组 worker |
+| 路径 1：`git apply <patch>` 冲突 | 3a 内联分组规则保证各 worker 改不同文件，理论上不冲突；若仍冲突，丢弃该 patch，按 fail 处理重派该组 worker |
 | 路径 2：`flock` 不可用（系统无 flock，如某些 macOS 环境无 `flock` 或 sandbox-exec 缺失） | 降级为「主 agent 统一 commit」：worker 不 commit，只改文件 + 静态自检，全部返回后主 agent `git add -A && git commit` |
 | 阶段 2 reviewer 失败 ≥ 1 个 | 重派单个失败 reviewer；aggregator 自动收集剩余 |
 
@@ -327,7 +327,7 @@ task:      "按 .agents/skills/pull-request/SKILL.md 完成；
 | skill | 本 skill 的使用 |
 |-------|----------------|
 | `pull-request` | 阶段 1 / 阶段 3c 通过 `skillPath` 注入复用，subagent 自读自跑。注意 pull-request 的 pre-merge 用 `npm run check`（仅 src），本 skill 的 3b 用 `npm run check:all`（含 tests 类型检查），两者口径不同是刻意的（见 3b） |
-| `cr-fix` | 阶段 3a worker 任务的分组规则来源（本 skill 不复述分组规则，路由过去；但 worker task 覆盖验证命令为 cw 的 `npm run` 四件套，非 cr-fix 默认的 monorepo 递归验证命令） |
+| `cr-fix`（已删除） | 原为阶段 3a 分组规则来源（全局 cr-fix 已删除，规则内联进本 skill 的 3a 分组原则；修复统一走本 skill） |
 | `code-review` | **正交**：code-review 是非 PR 的审查编排（产报告，不修不改 PR）；本 skill 是 PR 级 review→fix→push 流水线（含修复 + 验证 + 推 PR） |
 
 ---

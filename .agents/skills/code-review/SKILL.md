@@ -4,7 +4,7 @@ description: >-
   审查代码变更。触发词："review"、"审查代码"、"code review"、
   "帮我看看代码"。仅用于 coding-workflow 项目。按环境分流：pi + review-fix-loop
   可用 + 调用方要 review+fix 一体 → 走 review-fix-loop workflow（维度 agent 作 batchN）；
-  否则多 subagent 并行多维度审查，产出 aggregated.md 供 cr-fix 修复。
+  否则多 subagent 并行多维度审查，产出 aggregated.md 供修复阶段使用。
   非 PR 场景的审查用本 skill；PR 级 review→fix→push 流水线用 pr-cr-fix。
 ---
 
@@ -20,7 +20,7 @@ description: >-
    - **路径 A**（pi + review-fix-loop 可用 + 调用方要 review+fix 一体）：给出 review-fix-loop 调用配方（维度 agent 作 batchN），workflow 内 review+fix+重审闭环
    - **路径 B**（subagent 可用，只要 review 报告 / 或无 review-fix-loop）：并行派 reviewer + aggregator，产 `aggregated.md`
    - **路径 C**（无 subagent）：主 Agent 串行自查（降级）
-3. **衔接修复**：路径 A 由 workflow 闭环；路径 B/C 产报告建议 `cr-fix`
+3. **衔接修复**：路径 A 由 workflow 闭环；路径 B/C 只产报告，修复统一走 `pr-cr-fix` 流水线（或按报告人工修复）
 
 ## 项目特点
 
@@ -135,7 +135,7 @@ task:
 **路径 B/C**：
 - 报告落点：`.review/run-<runId>/aggregated.md`
 - 输出 Summary（must_fix/suggestion/info 计数 + 维度 + 去重数）+ 问题清单表（按 MUST_FIX > SUGGESTION > INFO 排序）
-- **[MANDATORY] 不自动修复**：即使 must-fix 明确，也只产报告 + 建议 `cr-fix`（审查与修复分离）
+- **[MANDATORY] 不自动修复**：即使 must-fix 明确，也只产报告（审查与修复分离；修复统一走 `pr-cr-fix` 流水线）
 
 ## Step 5（harness 模式可选）：更新 cw 工作流
 
