@@ -22,8 +22,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import minimist from "minimist";
@@ -36,6 +36,7 @@ import {
 import { CwError } from "./core/errors.js";
 import type { TestRunResult } from "./core/evidence.js";
 import { computeFrontier } from "./core/frontier.js";
+import { detectWorktreeRoot } from "./core/git.js";
 import type { ExecutionUnit } from "./core/workunit.js";
 import type {
   AbortInput,
@@ -67,7 +68,7 @@ import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
 } from "./readonly/index.js";
-import { getCwHome } from "./store/schema.js";
+import { encodeCwd, getCwHome, getCwJsonPath } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
@@ -633,7 +634,7 @@ export function guardTestCommand(cmd: string): TestRunResult | null {
 /**
  * constructCwDeps — 组装 dispatch 所需的 CwDeps。
  *
- *   - store：CwStore，绑定 cwd（getCwJsonPath 用 CW_HOME + encodeCwd(cwd) 定位 store.json）
+ *   - store：CwStore，绑定 cwd（getCwJsonPath 内部 detectCommonDir 归一化到 repo 级 common-dir，CW_HOME + encodeCwd(common-dir) 定位 store.json；ADR-0014）
  *   - gitValidator：用 git cat-file 验 commit hash 真实存在（绑定 workspacePath）
  *   - testRunner：跑测试子进程，聚合 exit code + stdout 解析 passed/failed
  *   - fileExists：fs.existsSync（artifacts[].ref drift 检查）
@@ -644,14 +645,21 @@ export function guardTestCommand(cmd: string): TestRunResult | null {
  */
 export function constructCwDeps(workspacePath: string): CwDeps {
   debugLog("constructCwDeps workspacePath", workspacePath);
+  // store 仍绑 workspacePath：CwStore 构造内部经 getCwJsonPath → detectCommonDir 归一化到
+  // repo 级 common-dir（ADR-0014 决策 1），bare/linked worktree 自动共享同一 store。
   const store = new CwStore(workspacePath);
+  // workspace（执行位置）= worktree 根（ADR-0014 决策 3/5），与 store-key（common-dir）解耦：
+  // gitValidator/testRunner/fileExists 绑 worktree 根（被测代码所在工作树），不绑子目录 cwd。
+  // agent 在 worktree 子目录调 cw 时，cwd≠worktree 根；探测 show-toplevel 拿到正确根。
+  // 非 git 目录探测失败 → fallback workspacePath（与原行为一致）。
+  const worktreeRoot = detectWorktreeRoot(workspacePath);
   const gitValidator = {
     exists: (hash: string): boolean => {
       // 与 0.x GitValidator 同语义：git cat-file -e <hash>^{commit} 成功即存在。
       // ENOENT（git 未装）抛错；其他失败（非 repo / hash 不存在）视为 false。
       try {
         const r = spawnSync("git", ["cat-file", "-e", `${hash}^{commit}`], {
-          cwd: workspacePath,
+          cwd: worktreeRoot,
           encoding: "utf8",
           stdio: "ignore",
         });
@@ -664,10 +672,11 @@ export function constructCwDeps(workspacePath: string): CwDeps {
   };
   const testRunner = {
     run: (unit: ExecutionUnit): TestRunResult => {
-      // per-wave testCwd：缺省 = workspacePath（单包项目）；monorepo 多包项目在 design/replan 阶段填子包目录。
+      // per-wave testCwd：缺省 = worktreeRoot（单包项目）；monorepo 多包项目在 design/replan 阶段填子包目录。
+      // 相对 testCwd 解析基准 = worktreeRoot（相对仓库根，跨 worktree 自动正确）；绝对路径保持原样。
       const resolvedCwd = unit.plan.testCwd
-        ? (isAbsolute(unit.plan.testCwd) ? unit.plan.testCwd : resolve(workspacePath, unit.plan.testCwd))
-        : workspacePath;
+        ? (isAbsolute(unit.plan.testCwd) ? unit.plan.testCwd : resolve(worktreeRoot, unit.plan.testCwd))
+        : worktreeRoot;
       debugLog("testRunner.run unit", unit.id, "cwd", resolvedCwd);
       // per-wave 守卫：testCommand 空（含纯空白）短路，不 spawn（逻辑见 guardTestCommand）。
       const guard = guardTestCommand(unit.plan.testCommand);
@@ -692,8 +701,9 @@ export function constructCwDeps(workspacePath: string): CwDeps {
   const fileExists = {
     exists: (ref: string): boolean => {
       // ref 可能是绝对路径 / 相对路径 / URL。本地路径用 existsSync，URL 一律视为存在（不阻塞 closeout）。
+      // 相对路径 resolve 基准 = worktreeRoot（代码工作目录根）。
       if (/^https?:\/\//i.test(ref)) return true;
-      return existsSync(isAbsolute(ref) ? ref : resolve(workspacePath, ref));
+      return existsSync(isAbsolute(ref) ? ref : resolve(worktreeRoot, ref));
     },
   };
   const clock = { now: (): string => new Date().toISOString() };
@@ -909,7 +919,7 @@ export async function runReadonly(
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : CW_LIST_DEFAULT_LIMIT;
   const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
-  // M4：--cwd 必须是绝对路径（CwStore 按 encodeCwd(cwd) 落盘，相对路径会与实际 cwd 错位）
+  // M4：--cwd 必须是绝对路径（detectCommonDir 需绝对路径做 git probe；归一化后按 encodeCwd(common-dir) 落盘，相对路径 probe 错位）
   if (cwdFlag !== undefined && !isAbsolute(cwdFlag)) {
     throw new CwError(`--cwd 需要绝对路径，当前值: ${cwdFlag}`);
   }
@@ -999,6 +1009,59 @@ export function renderCliError(err: unknown): {
   return { exitCode, stderr: lines.join("\n") + "\n" };
 }
 
+// ── 启动弃用 warning（ADR-0014 决策 9 配套） ────────────────
+
+/**
+ * 启动弃用 warning（ADR-0014 决策 9 配套）。
+ *
+ * v2 起 store 改 repo 级（git-common-dir 键控，见 getCwJsonPath），不迁移升级前的
+ * 旧 per-cwd store（ADR-0014 决策 9）。本函数在 cw 启动时检测旧 store 是否残留，
+ * 残留则一次性提示用户存量任务需重建或手动捞，并写 marker 文件去重（每个 cwd
+ * 只 warn 一次）。
+ *
+ * 检测路径用 workspacePath 直接 encode（升级前的旧 per-cwd 布局），**不**走
+ * detectCommonDir 归一化——归一化后路径指向新 repo 级 store，而这里检测的是升级前的
+ * 旧布局。
+ *
+ * 纯检测 + IO，不抛错：弃用提示不阻断 cw 运行，文件操作异常一律吞掉（marker 写失败
+ * 最坏导致下次启动重复 warning，可接受）。marker 命名 `.deprecation-warned-<encoded>`
+ * （`.` 前缀仅隐藏文件约定）；marker 不会被 readonly 的 store 扫描读取——
+ * `loadAllCwdsFromHome`（cross-cwd.ts）用 `isDirectory()` 过滤子目录，普通文件天然排除。
+ */
+export function warnDeprecatedStore(workspacePath: string): void {
+  try {
+    const cwHome = getCwHome();
+    const encoded = encodeCwd(workspacePath);
+    // 旧 per-cwd store 路径（升级前布局：cwd 直接 encode，不经 detectCommonDir 归一化）。
+    const oldStorePath = join(cwHome, encoded, "store.json");
+    // 非 git 目录：detectCommonDir fallback 回 workspacePath，当前活跃 store 路径
+    // （getCwJsonPath）与 oldStorePath 重合——此时 oldStorePath 就是当前 store 而非
+    // 弃用残留，跳过避免误报（ADR-0014：非 git per-cwd 是明确保留的支持模式）。
+    if (oldStorePath === getCwJsonPath(workspacePath)) {
+      return;
+    }
+    if (!existsSync(oldStorePath)) {
+      return;
+    }
+    const markerPath = join(cwHome, `.deprecation-warned-${encoded}`);
+    if (existsSync(markerPath)) {
+      return;
+    }
+    process.stderr.write(
+      `[cw] v2 起 store 改 repo 级（git-common-dir 键控），旧 per-cwd store 已弃用；存量任务需重建或手动从 ${oldStorePath} 捞。新任务自动走 repo 级 store。\n`,
+    );
+    try {
+      writeFileSync(markerPath, "");
+      // eslint-disable-next-line taste/no-silent-catch -- best-effort：marker 写失败最坏重复 warning，不阻断 cw
+    } catch {
+      // marker 写失败不阻断——最坏下次启动重复 warning。
+    }
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort：弃用提示不阻断 cw 运行，异常一律吞
+  } catch {
+    // 检测/编码异常不阻断 cw 运行（弃用提示是 best-effort）。
+  }
+}
+
 // ── main ─────────────────────────────────────────────────────
 
 async function main(argv: string[]): Promise<void> {
@@ -1064,6 +1127,9 @@ async function main(argv: string[]): Promise<void> {
   // cw 唯一入口：所有命令都走 `cw <action>`（Wave 3 起去掉 v1 前缀）。
   // ALL_ACTIONS = VALID_ACTIONS ∪ READONLY_QUERIES（create/推进 + tree/status/list/handoff）。
   if (ALL_ACTIONS.has(action)) {
+    // 启动弃用 warning：在 dispatch/只读查询前、workspacePath 解析后检测旧 per-cwd
+    // store 残留。best-effort，不阻断后续流程（warnDeprecatedStore 内部吞所有异常）。
+    warnDeprecatedStore(workspacePath);
     await runWithAction(argv, workspacePath, action);
     return;
   }

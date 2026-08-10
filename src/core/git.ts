@@ -184,6 +184,96 @@ export function collectRepoMeta(cwd: string): RepoMeta {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// workspace 探测（store 归一化 + worktree 根解析，ADR-0014）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 进程内 memoize 缓存：同一 workspacePath 的 common-dir / toplevel 探测结果。
+ *
+ * 来源：ADR-0014 决策 6。store 归一化下沉到 cw-cli 内部后，单次 cw 写 action 内多次
+ * `new CwStore`（getCwJsonPath 探测 common-dir）+ constructCwDeps（探测 toplevel）会
+ * 重复 spawn git；进程内一次性 memoize 消除重复开销。
+ *
+ * 与「跨进程持久缓存」的本质区别（决策 6 允许本 cache 的理由）：进程内同 cwd 不变，
+ * 探测结果稳定，不引入失效/一致性运行时断言；进程退出即失效（每次 cw 调用独立 cache）。
+ *
+ * 两函数共享一份 cache（按 workspacePath 索引），各字段懒填充：detectCommonDir 首次
+ * 调用只 probe common-dir（不 probe toplevel），反之亦然——故「两次 detectCommonDir(同 path)」
+ * 只 spawn 1 次（TC6）。
+ */
+interface WorkspaceDetection {
+  commonDir?: string;
+  toplevel?: string;
+}
+const detectedWorkspaceCache = new Map<string, WorkspaceDetection>();
+
+/**
+ * spawnSync git 只读探测：status===0 且 stdout 非空返回 trim 后字符串，否则返回 null。
+ *
+ * 与 collectRepoMeta 的 runGit 同判定逻辑（status===0 + 无 error + stdout 是 string），
+ * 失败返回 null 由调用方决定 fallback，保持探测与降级职责分离。
+ */
+function probeGit(workspacePath: string, args: string[]): string | null {
+  const result = spawnSync("git", args, { ...GIT_SPAWN_OPTS, cwd: workspacePath });
+  if (result.status !== 0 || result.error || typeof result.stdout !== "string") {
+    return null;
+  }
+  const trimmed = result.stdout.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * 探测 git common-dir 绝对路径——store-key 基准（ADR-0014 决策 1/2）。
+ *
+ * `git rev-parse --path-format=absolute --git-common-dir`：
+ *   - 普通 repo（.git 目录）：`<repo>/.git` 绝对路径
+ *   - bare repo worktree：`<bare>` 绝对路径（所有 worktree 相同 → store 共享）
+ *   - linked worktree：主 repo 的 `.git` 绝对路径（与主 worktree 共享同一 store）
+ *
+ * `--path-format=absolute` 是硬约束（决策 2）：裸命令在普通 repo 返回相对 `.git`，
+ * `encodeCwd('.git')` 无 `/` → 所有普通 repo store 全局撞名 `~/.cw/.git/`；子目录返回
+ * `../../.git` → 同 repo 不同深度目录 store 分叉。absolute 在全场景返回稳定绝对路径。
+ *
+ * 失败（非 git 目录 / git 未装）→ fallback workspacePath（per-cwd 降级，保持现状行为）。
+ * 进程内 memoize：同 workspacePath 第二次调用命中 cache，不重复 spawn。
+ */
+export function detectCommonDir(workspacePath: string): string {
+  const entry = detectedWorkspaceCache.get(workspacePath);
+  if (entry?.commonDir !== undefined) {
+    return entry.commonDir;
+  }
+  const commonDir =
+    probeGit(workspacePath, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]) ?? workspacePath;
+  detectedWorkspaceCache.set(workspacePath, { ...entry, commonDir });
+  return commonDir;
+}
+
+/**
+ * 探测 git worktree 根——workspace 执行位置基准（ADR-0014 决策 3）。
+ *
+ * `git rev-parse --show-toplevel`：当前工作树根。agent 常在 worktree 子目录调 cw
+ * （如 `src/`），cwd ≠ worktree 根；gitValidator/testRunner/fileExists 需绑 worktree 根，
+ * 否则 git 校验 / 测试 / 文件定位漂移到子目录。
+ *
+ * 失败（非 git 目录 / git 未装）→ fallback workspacePath。进程内 memoize。
+ */
+export function detectWorktreeRoot(workspacePath: string): string {
+  const entry = detectedWorkspaceCache.get(workspacePath);
+  if (entry?.toplevel !== undefined) {
+    return entry.toplevel;
+  }
+  const toplevel =
+    probeGit(workspacePath, ["rev-parse", "--show-toplevel"]) ??
+    workspacePath;
+  detectedWorkspaceCache.set(workspacePath, { ...entry, toplevel });
+  return toplevel;
+}
+
 /**
  * 从 commit 提取完整 commit message body。
  *

@@ -26,6 +26,8 @@
  * 显式声明注入字段（F-4）：DesignInput/ReplanInput 含 abandonParentItems?: string[]
  * （buildParams 在 readInput 之后注入，schema 必须显式声明否则 strict 模式误伤）。
  */
+import { isAbsolute } from "node:path";
+
 import { type TSchema,Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
@@ -593,16 +595,32 @@ export function validateInput(action: string, layer: HandlerLayer, input: unknow
     // 抛 CwError 而非静默跳过——静默 = 回到零校验状态，正是本 issue 要消除的。
     throw new CwError(`input 校验失败: 未登记 (${layer}, ${action}) 的 schema`);
   }
-  if (Value.Check(schema, input)) return;
-  const errors = Array.from(Value.Errors(schema, input));
-  const first = errors[0];
-  if (!first) {
-    // 防御性兜底：Value.Check=false 但 Errors 空迭代（typebox 边界），保持 exit 1 语义
-    // （校验失败 → CwError），而非让 first.path 抛 TypeError 被归为 exit 2 内部异常（S6）。
-    throw new CwError(
-      "input 校验失败: 未知错误（schema 校验未通过但无错误详情）",
-    );
+  if (!Value.Check(schema, input)) {
+    const errors = Array.from(Value.Errors(schema, input));
+    const first = errors[0];
+    if (!first) {
+      // 防御性兜底：Value.Check=false 但 Errors 空迭代（typebox 边界），保持 exit 1 语义
+      // （校验失败 → CwError），而非让 first.path 抛 TypeError 被归为 exit 2 内部异常（S6）。
+      throw new CwError(
+        "input 校验失败: 未知错误（schema 校验未通过但无错误详情）",
+      );
+    }
+    const field = first.path === "" ? "input" : first.path.replace(/^\//, "");
+    throw new CwError(`input.${field} 校验失败: ${first.message}`);
   }
-  const field = first.path === "" ? "input" : first.path.replace(/^\//, "");
-  throw new CwError(`input.${field} 校验失败: ${first.message}`);
+  // ── schema 结构校验通过后的运行时语义校验：testCwd 禁止绝对路径（ADR-0014 决策 4）──
+  // TypeBox schema 只能做结构校验（minLength/pattern），isAbsolute 是运行时语义约束——
+  // 跨 worktree 共享 store 后绝对路径 testCwd 在其他 worktree（仓库根路径不同）解析失败。
+  // 仅 DesignInput(wave) / ReplanInput(四层共用) 含 testCwd 字段，按 schema 引用精确匹配
+  // （未来 schema 移除 testCwd 时引用比较自然失效，不误拦、不错配 action/layer 组合）。
+  if (schema === DesignInputSchema || schema === ReplanInputSchema) {
+    // eslint-disable-next-line taste/no-unsafe-cast -- Value.Check(schema, input) 已通过，input 符合 schema，as 是安全 narrowing（非无校验断言）
+    const testCwd = (input as { testCwd?: unknown }).testCwd;
+    if (typeof testCwd === "string" && isAbsolute(testCwd)) {
+      throw new CwError(
+        `input.testCwd 校验失败: testCwd 必须相对仓库根，禁止绝对路径：${testCwd}。` +
+          "跨 worktree 共享 store 后绝对路径会在其他 worktree 解析失败（ADR-0014 决策 4）",
+      );
+    }
+  }
 }
