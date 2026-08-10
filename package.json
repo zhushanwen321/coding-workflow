@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/coding-workflow",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "packageManager": "npm@11.6.2",
   "description": "Agent-agnostic CLI for coding-workflow engine",
   "type": "module",

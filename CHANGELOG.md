@@ -1,5 +1,29 @@
 # Changelog
 
+## [v1.6.2] - 2026-08-10
+
+### Features
+- feat(store): normalize store-key to git-common-dir, decouple workspace (a90e8e8)
+- feat(validate): reject absolute testCwd in design/replan input (wave2) (63c48e3)
+- feat(cli): startup deprecation warning for legacy per-cwd store (wave3) (6d8e479)
+- feat(tech-design): add mandatory acceptance section + expression-optimization use case (58c76d3)
+- feat(tech-design): strengthen acceptance principle with industry best practices (9337f7a)
+
+### Bug Fixes
+- fix(cli): skip false deprecation warning for non-git workspaces (e7b16f7)
+- fix(skills): pr-cr-fix content review fixes (6 items) (3291ef0)
+
+### Refactoring
+- refactor(skills): consolidate code-review + pull-request into pr-cr-fix (8e97455)
+
+### Miscellaneous
+- docs: cw store/workspace decoupling design + adversarial review (aa4949b)
+- docs: fold cw-tool cross-review findings (R2-1/R2-2) into store design (eb182c9)
+- docs: drop store migration (deprecation-only), add ADR-0014 (ac3dc74)
+- chore(skills): remove project-level remove-worktree skill (4f983d0)
+- chore(skills): remove global cr-fix, self-contain grouping rules in pr-cr-fix (8840486)
+- chore: silence lint warnings with documented rationale (f3afb4f)
+
 ## [v1.5.2] - 2026-08-08
 
 ### Bug Fixes
