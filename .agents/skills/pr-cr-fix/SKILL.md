@@ -6,7 +6,8 @@ description: >-
   → 只跑审查不修不推；"修 review 问题/把问题修了"→ 审查+修复+验证不开 PR；
   "review 完开 PR/提交 PR/push/pr-cr-fix"→ 全流程。显式参数可叠加覆盖自动调档：
   no-pr（跳过开/推 PR，仍审查+修复+验证）、no-loop（审查走多 subagent 单轮，
-  不走 review-fix-loop 循环）。仅 coding-workflow worktree。
+  不走 review-fix-loop 循环）。仅 coding-workflow worktree；不用于非 worktree
+  场景、纯架构分析（无代码产出）、其他项目。
 ---
 
 # Pr-Cr-Fix — coding-workflow 代码交付流水线
@@ -146,10 +147,10 @@ gh pr list --head $(git branch --show-current) --state open --json number,title,
 
 | 条件 | 走 |
 |------|-----|
+| 无 subagent 能力（降级，优先级最高） | **路径 C** |
 | `no-loop=true`（显式要求不走循环） | **路径 B** |
 | `no-loop=false` 且 `available_workflows` 含 `review-fix-loop` | **路径 A** |
 | `no-loop=false` 且无 `review-fix-loop` | **路径 B** |
-| 无 subagent 能力（降级） | **路径 C** |
 
 #### 路径 A：review-fix-loop workflow（pi + `no-loop=false`）
 
@@ -164,7 +165,8 @@ workflow: {
     target:     "main...HEAD",
     batch1: ".agents/skills/pr-cr-fix/review-agents/project-conventions.md",
     batch2: ".agents/skills/pr-cr-fix/review-agents/quality-criteria.md",
-    batch3: ".agents/skills/pr-cr-fix/review-agents/plan-completeness.md"   # 仅 harness_mode=harness；standalone 删掉此行
+    batch3: ".agents/skills/pr-cr-fix/review-agents/plan-completeness.md",   # 仅 harness_mode=harness；standalone 删掉此行
+    fixAgent: "worker"
   }
 }
 ```
@@ -343,7 +345,7 @@ npm run check:all && npm run lint && npm test && npm run build
 
 `no-pr=true` 时整段跳过，Gate-3 的 PR 相关项跳过，流程在此结束（本地已完成 review + fix + 验证）。
 
-`no-pr=false` 时，按「PR 提交协议」执行（派 1 个 `general-purpose` subagent），push 用 `git push origin HEAD --force-with-lease`（`force_push=true` 时必加强制标记）。完成后返回 `{ pr_url, force_push }`。
+`no-pr=false` 时，按「PR 提交协议」执行（派 1 个 `general-purpose` subagent），但 **Step 1 pre-merge 跳过**——3b 刚对同一代码状态跑过四件套且全绿，不重复验证；从 Step 2（commit 若有）/ Step 4（push + 创建/更新 PR）起执行。push 用 `git push origin HEAD --force-with-lease`（`force_push=true` 时必加强制标记）。完成后返回 `{ pr_url, force_push }`。
 
 **Gate-3 双层判定**（`no-pr=true` 时硬 gate 退化为「仅 3b 四件套全绿 + worker 回执闭合」）：
 
@@ -352,7 +354,7 @@ npm run check:all && npm run lint && npm test && npm run build
 | **硬 gate** | (`no-pr=false`：PR 在 GitHub 可查 `gh pr view <num> --json state` 非 NOT_FOUND + 本地与 origin 同步 `git status` 无 ahead/behind) + 3b 四件套全绿 | `gh pr view --json` + `git status` + 3b 结果 |
 | **软 gate** | 阶段 3a 所有 worker 回执按实际路径闭合（路径 1：`patch_file` 非空，`git apply --stat <patch>` 命中 fixed_files；路径 2：`commit_sha` 非空，`git show <sha> --stat` 命中 fixed_files）+ `skipped` 为空 | 阶段 3a worker 回执 + 主 agent 抽验 |
 
-两层都满足 = Gate-3 通过。**注意 must_fix 数字不是 gate 硬条件**：「单轮不循环」下 aggregated.md 的 must_fix 是修复前快照，修复是否到位由 worker 回执（软 gate）保证，不由快照数字保证。
+两层都满足 = Gate-3 通过。**路径 A（review-fix-loop 闭环）时软 gate 不适用**——3a 被跳过无 worker 回执，收敛由 review-fix-loop 内部循环保证；软 gate 仅适用于路径 B/C。**注意 must_fix 数字不是 gate 硬条件**：「单轮不循环」下 aggregated.md 的 must_fix 是修复前快照，修复是否到位由 worker 回执（软 gate）保证，不由快照数字保证。
 
 ## 关键约束 [MANDATORY]
 
@@ -366,7 +368,7 @@ npm run check:all && npm run lint && npm test && npm run build
 8. **cw 是单包 npm，验证命令用 npm run**（非 monorepo 多包递归验证命令）；验证统一用 `check:all`（含 tests 类型检查）
 9. **多 worker 并行修复必须隔离**：派 3a worker 前先做能力探测——工具支持 worktree 隔离就走路径 1，否则走路径 2 flock 串行。**禁止多 worker 在共享工作区裸并行 commit**（无 worktree 无 flock），否则 `.git/index` 共享导致 commit 串味、破坏性命令跨 worker 丢文件（2026 事故根因）
 10. **破坏性 git 命令禁令**（仅适用于 3a 并发 worker）：worker 禁止 `git reset` / `git checkout -- <file>` / `git stash` / `git rebase` / `git commit --amend` / `git clean`。`index.lock` 只防 commit 撞车，不防这些命令。**注**：阶段 3c 推 PR 冲突时的 `git rebase` 由 push subagent 单线程执行（见失败恢复表），不在此禁令范围内
-11. **意图模糊先确认**：阶段 0 无法可靠判定档位时，主动向用户确认，不猜（规则 5：先说假设，有歧义就问）
+11. **意图模糊先确认**：阶段 0 无法可靠判定档位时，主动向用户确认，不猜
 
 ## 反模式
 
