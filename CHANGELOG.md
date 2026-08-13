@@ -228,3 +228,4 @@
 - refactor(config): remove orchestration dead config + deprecate cw.config.json (wave 2) (fa67f3b)
 - refactor(config): sink testRunner.cwd to per-wave testCwd (wave 1) (3e29a00)
 
+- quick-release skill for fast markdown-only publishing; tech-design problem-definition-first + review fact-severity grading (#16)
