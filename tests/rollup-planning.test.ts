@@ -298,3 +298,51 @@ describe("epic abort 级联跳过已 closed 的 child feature", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// tc: slice closeout commit artifact drift 校验（gitValidator，非 fileExists）
+// ═══════════════════════════════════════════════════════════════
+
+describe("slice closeout commit artifact 用 gitValidator 校验（bugfix: planning closeout drift 曾把 commit hash 当文件路径）", () => {
+  it("commit kind 走 gitValidator：false → drift 不冻结不流转；true → 通过 closed", () => {
+    const featureId = setupToFeatureExecuting(env.deps, "rollup-commit-drift");
+    const feature0 = loadFeature(featureId);
+    const childSliceId = feature0.executeResult.childUnitIds[0]!;
+
+    // 手动把 child slice 推到 retrospected（不走 dispatch，聚焦 closeout drift）
+    const child = loadSlice(childSliceId);
+    child.status = "retrospected";
+    child.evidence.summary = "";
+    env.store.save(child as unknown as import("../src/store/schema.js").WorkUnitRecord);
+
+    // gitValidator false + fileExists true → commit 仍 drift（证明走 gitValidator 而非 fileExists）
+    const badDeps = {
+      ...env.deps,
+      gitValidator: { exists: () => false },
+      fileExists: { exists: () => true },
+    };
+    const r1 = handleCloseoutSlice(
+      loadSlice(childSliceId),
+      { artifacts: [{ kind: "commit", ref: "abc123" }] },
+      badDeps,
+    );
+    expect(r1.ok).toBe(false);
+    expect(r1.gateResults?.[0]?.passed).toBe(false);
+    expect(loadSlice(childSliceId).status).toBe("retrospected"); // 未流转
+    expect(loadSlice(childSliceId).evidence.frozenAt).toBeUndefined(); // 未冻结
+
+    // gitValidator true + fileExists false → 通过（commit 不依赖文件存在）
+    const okDeps = {
+      ...env.deps,
+      gitValidator: { exists: () => true },
+      fileExists: { exists: () => false },
+    };
+    const r2 = handleCloseoutSlice(
+      loadSlice(childSliceId),
+      { artifacts: [{ kind: "commit", ref: "abc123" }] },
+      okDeps,
+    );
+    expect(r2.ok).toBe(true);
+    expect(loadSlice(childSliceId).status).toBe("closed");
+  });
+});
+

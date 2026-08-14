@@ -6,7 +6,8 @@
  *
  * 职责：
  * 1. 补 evidence 主观部分：summary（若有）+ artifacts（缺省保留原值）
- * 2. drift 检查：artifacts[].ref 非空且 deps.fileExists.exists(ref) 为 true，否则记 drift
+ * 2. drift 检查：artifacts[].ref 非空且指向真实存在（commit kind 用 gitValidator.exists 校验，
+ *    其他 kind 用 deps.fileExists.exists(ref) 校验）——否则记 drift
  *    —— 有 drift → 短路返回 ok=false（不冻结、不流转 status）
  * 3. 冻结 evidence：写 frozenAt = now（之后整个 evidence 不可再改，rollup 也会跳过已冻结 parent）
  * 4. status 流转（retrospected → closed）→ save
@@ -59,8 +60,16 @@ export function handleCloseoutFeature(
       driftReports.push(`artifact(kind=${art.kind}) ref 为空（drift：交付物引用缺失）`);
       continue;
     }
-    if (!deps.fileExists.exists(art.ref)) {
-      driftReports.push(`artifact(kind=${art.kind}) ref="${art.ref}" 不存在（drift：交付物引用悬空）`);
+    if (art.kind === "commit") {
+      if (!deps.gitValidator.exists(art.ref)) {
+        driftReports.push(
+          `artifact(kind=commit) hash="${art.ref}" 不存在（drift：commit 引用悬空）`,
+        );
+      }
+    } else {
+      if (!deps.fileExists.exists(art.ref)) {
+        driftReports.push(`artifact(kind=${art.kind}) ref="${art.ref}" 不存在（drift：交付物引用悬空）`);
+      }
     }
   }
 
