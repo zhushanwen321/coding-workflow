@@ -1,5 +1,22 @@
 # Changelog
 
+## [v1.6.4] - 2026-08-14
+
+### Features
+- feat(report): revive recursive WorkUnit tree HTML report (W1) (d0176bd)
+- feat(report): wire cw report CLI command (W2) (0af4ada)
+
+### Bug Fixes
+- fix(closeout): planning-layer closeout drift check treats commit artifacts as file paths (3bf1291)
+
+### Miscellaneous
+- docs(optimization): add 2026-08 optimization direction docs (A/C/B) (050e247)
+
+## [v1.6.3] - 2026-08-11
+
+### Features
+- feat(skill): add quick-release pipeline for markdown-only changes (09293a3)
+
 ## [v1.6.2] - 2026-08-10
 
 ### Features
