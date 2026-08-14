@@ -9,3 +9,5 @@ export type { LoadedCwd } from "./cross-cwd.js";
 export { loadAllCwdsFromHome } from "./cross-cwd.js";
 export type { AnnotatedUnit,ListOptions } from "./render.js";
 export { renderFrontier, renderHandoff, renderList,renderStatus, renderTree } from "./render.js";
+export type { ReportOptions,ReportStore } from "./report.js";
+export { collectDescendants,renderReport } from "./report.js";
