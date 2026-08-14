@@ -64,6 +64,7 @@ export const FLAG_WHITELIST: Readonly<Record<string, ReadonlySet<string>>> = {
   status: new Set(["full"]),
   handoff: new Set(["scope"]),
   frontier: new Set(["root"]),
+  report: new Set(["output", "open"]),
   list: new Set(["layer", "grep", "cwd", "all", "long", "limit", "offset"]),
 };
 

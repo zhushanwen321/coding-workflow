@@ -23,6 +23,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,9 +68,11 @@ import {
 import {
   type AnnotatedUnit,
   loadAllCwdsFromHome,
+  renderReport,
 } from "./readonly/index.js";
 import { encodeCwd, getCwHome, getCwJsonPath } from "./store/schema.js";
 import { buildCommand } from "./utils/command.js";
+import { openInDefaultApp } from "./utils/open.js";
 import { parseFailedTestNames, parseVitestCounts } from "./utils/parse-vitest-output.js";
 
 // ── 常量 ─────────────────────────────────────────────────────
@@ -164,7 +167,7 @@ const ADVANCE_ACTIONS = new Set([
 const VALID_ACTIONS = new Set(["create", ...ADVANCE_ACTIONS]);
 
 /** 只读查询命令（tree/status/list/handoff/frontier）——不经 dispatch、不写 store。 */
-const READONLY_QUERIES = new Set(["tree", "status", "list", "handoff", "frontier"]);
+const READONLY_QUERIES = new Set(["tree", "status", "list", "handoff", "frontier", "report"]);
 
 /** 全部合法 action（推进 + 只读），main 用此判断是否走 action 路由。 */
 const ALL_ACTIONS = new Set([...VALID_ACTIONS, ...READONLY_QUERIES]);
@@ -214,6 +217,10 @@ function readStdin(): Promise<string> {
 /** minimist 解析结果的结构子集（避免引入 @types/minimist 的 ParsedArgs 宽松 any）。 */
 export interface ParsedArgs {
   _: Array<string | number>;
+  /** cw report --output：指定 HTML 输出路径（缺省 tmp 目录带 slug+时间戳）。 */
+  output?: string;
+  /** cw report --open：用系统默认应用打开（--no-open 或 CW_NO_OPEN=1 关闭）。 */
+  open?: boolean;
   [key: string]: unknown;
 }
 
@@ -577,6 +584,7 @@ export function renderHelp(): string {
   status                  单 unit 完整 JSON
   handoff                 交接摘要（五段式 markdown）
   frontier                非终态节点 + 可推进性
+  report                  生成可视化 HTML 报告（递归 WorkUnit 树）
 
 其他：
   help                    显示本帮助
@@ -903,6 +911,29 @@ export async function runReadonly(
     }
     const result = computeFrontier(rootUnitId, store);
     process.stdout.write(renderFrontier(result));
+    return;
+  }
+
+  if (action === "report") {
+    // report：以某 unit 为根生成自包含 HTML 可视化报告（递归 WorkUnit 树）。
+    // 与 handoff/status 同样需要 --unitId + load + not found 判定，但输出是写盘 HTML。
+    // --output 指定路径（缺省 tmp 目录带 slug+时间戳）；--open 用系统默认应用打开。
+    const unitId = flag(parsed, "unitId");
+    if (!unitId) {
+      throw new CwError("report 需要 --unitId");
+    }
+    const unit = store.load(unitId);
+    if (unit === null) {
+      throw new CwError(`report 需要 --unitId 指向已存在的 unit（当前: ${unitId}）。用 cw list 定位`);
+    }
+    const html = renderReport(unit, store);
+    const output = flag(parsed, "output") ?? join(tmpdir(), `cw-report-${unit.slug ?? unit.id}-${Date.now()}.html`);
+    writeFileSync(output, html);
+    process.stdout.write(JSON.stringify({ reportPath: output }) + "\n");
+    const shouldOpen = parsed.open !== false && process.env.CW_NO_OPEN !== "1";
+    if (shouldOpen) {
+      openInDefaultApp(output);
+    }
     return;
   }
 
