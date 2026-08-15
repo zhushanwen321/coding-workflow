@@ -25,6 +25,16 @@ if (!existsSync(CLI_PATH)) {
   throw new Error(`tests/u5b-e2e 需要 ${CLI_PATH}（先 npm run build；npm test 的 pretest 已含）`);
 }
 
+/**
+ * u7 run.ts 改造的最小断言适配：--spawn human 不再直连 human-loop，改走
+ * runLoop + u6b humanAdapter（动态 import dist/runner/spawn/human.js）。u6b 合入前
+ * 该模块缺席，`cw run --spawn human` 按设计返回可操作错误（exit 1），本文件的两条
+ * 全链/中断断言在此期间以 it.todo 挂起（human 回归由 tests/u7-e2e.test.ts 的同条件
+ * 测试接棒）；u6b 合入并 build 后本文件自动恢复真实断言。
+ */
+const HUMAN_ADAPTER_DIST = fileURLToPath(new URL("../dist/runner/spawn/human.js", import.meta.url));
+const maybeIt = existsSync(HUMAN_ADAPTER_DIST) ? it : it.todo;
+
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u5b-e2e-"));
 const cwHome = join(tmpRoot, "cw-home");
 
@@ -45,12 +55,6 @@ afterAll(() => {
   }
   rmSync(tmpRoot, { recursive: true, force: true });
 });
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 /** 场景目录：独立 repo（物理路径，与子进程 process.cwd() 一致）+ runner 输出文件 */
 function makeScenario(name: string): { repoDir: string; outPath: string; errPath: string } {
@@ -111,31 +115,15 @@ function startRunner(
   return child;
 }
 
-/**
- * 等 runner stdout 落盘文件「新增内容」匹配正则（每轮打印的指令组会重复出现，
- * 只扫上次消费点之后的增量，避免把旧阶段指令误当新指令）。返回匹配时的新增块。
- */
-async function waitForNewOutput(path: string, re: RegExp, timeoutMs: number): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let scanned = existsSync(path) ? readFileSync(path, "utf-8").length : 0;
-  for (;;) {
-    const content = readFileSync(path, "utf-8");
-    const fresh = content.slice(scanned);
-    if (re.test(fresh)) {
-      return fresh;
-    }
-    scanned = content.length;
-    if (Date.now() > deadline) {
-      throw new Error(
-        `等待 runner 输出超时（${timeoutMs}ms，等 ${re}）。stdout 末尾：\n${content.slice(-600)}`,
-      );
-    }
-    await sleep(100);
-  }
-}
-
 function waitExit(child: ChildProcess, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
+    // 竞态防护（u7 实测 Node 行为：子进程退出后挂 "exit" 监听器不再触发）：
+    // run 切换到通用 loop（u7）后，人提交最后一步与 runner 的 300ms poll 赛跑，
+    // runner 先退时此处可能晚到——exitCode 已非 null 则直接结算
+    if (child.exitCode !== null) {
+      resolve(child.exitCode);
+      return;
+    }
     const timer = setTimeout(() => {
       reject(new Error(`runner 未在 ${timeoutMs}ms 内退出（stdout 末尾见断言输出）`));
     }, timeoutMs);
@@ -175,7 +163,14 @@ function specJson(split: ReadonlyArray<Record<string, unknown>> = []): string {
 }
 
 describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演人）", () => {
-  it("全链收敛：spec → create → 子 spec → build/verify → exec-review → root closed，runner exit 0", async () => {
+  /**
+   * u7 run.ts 改造的断言适配：原版「人解析 runner stdout 的 M0 指令组（待人工步骤=spec
+   * 等）再操作」改为「人按全链固定序列直线真实调 CLI」——新 loop 的输出形态是
+   * [runner] 派发行 + humanAdapter（u6b）的定点指令行，指令文本断言属 u6b 领地；
+   * 本回归的价值收敛为「human 后端经新 loop 全链收敛 exit 0」，runner 对账本推进
+   * 的消化由轮询（--poll-ms 300）保证，无需指令等待同步。
+   */
+  maybeIt("全链收敛：spec → create → 子 spec → build/verify → exec-review → root closed，runner exit 0", async () => {
     const { repoDir, outPath, errPath } = makeScenario("full-chain");
     initRepo(repoDir);
     writeFileSync(join(repoDir, "brief.md"), "# root 任务书\n");
@@ -183,28 +178,19 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
 
     const runner = startRunner(repoDir, "demo", outPath, errPath);
 
-    // 1) root 的 spec：runner 指令组含 brief 路径；人写 spec.json（split 声明子 unit impl）并提交 + 审查
-    const specBlock = await waitForNewOutput(outPath, /待人工步骤=spec/, WAIT_TIMEOUT_MS);
-    expect(specBlock).toContain("cat brief.md");
+    // 1) root 的 spec（split 声明子 unit impl）+ spec-review
     writeFileSync(join(repoDir, "spec-demo.json"), specJson([{ unitId: "impl", briefRef: "brief-impl.md", dependsOn: [] }]));
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "demo", "--file", "spec-demo.json"]).code).toBe(0);
     expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
 
-    // 2) create 子 unit：root spec-frozen 后循环先提示为 split 子 unit create
-    const createBlock = await waitForNewOutput(outPath, /待人工步骤=create/, WAIT_TIMEOUT_MS);
-    expect(createBlock).toContain("cw create --id impl --brief brief-impl.md --parent demo");
+    // 2) create 子 unit + 子 unit 的 spec
     writeFileSync(join(repoDir, "brief-impl.md"), "# impl 任务书\n");
     expect(runCli(repoDir, ["create", "--id", "impl", "--brief", "brief-impl.md", "--parent", "demo"]).code).toBe(0);
-
-    // 3) 子 unit 的 spec
-    await waitForNewOutput(outPath, /待人工步骤=spec/, WAIT_TIMEOUT_MS);
     writeFileSync(join(repoDir, "spec-impl.json"), specJson());
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "impl", "--file", "spec-impl.json"]).code).toBe(0);
     expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
 
-    // 4) 子 unit 的 build：实现 + commit + build 证据 + verify（干净重跑真实执行验收命令）
-    const implBuildBlock = await waitForNewOutput(outPath, /待人工步骤=build/, WAIT_TIMEOUT_MS);
-    expect(implBuildBlock).toContain("cw verify --unit impl");
+    // 3) 子 unit 的 build：实现 + commit + build 证据 + verify（干净重跑真实执行验收命令）
     writeFileSync(join(repoDir, "app.js"), 'console.log("A1 PASS");\n');
     gitRun(repoDir, ["add", "-A"]);
     gitRun(repoDir, ["commit", "-m", "impl: app.js"]);
@@ -213,19 +199,15 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     const verifyImpl = runCli(repoDir, ["verify", "--unit", "impl"]);
     expect(verifyImpl.code, `impl verify 应 pass（stdout: ${verifyImpl.stdout}，stderr: ${verifyImpl.stderr}）`).toBe(0);
 
-    // 5) 子 unit 的 exec-review → closed
-    await waitForNewOutput(outPath, /待人工步骤=exec-review/, WAIT_TIMEOUT_MS);
+    // 4) 子 unit 的 exec-review → closed
     expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "exec-review", "--verdict", "pass"]).code).toBe(0);
 
-    // 6) root 的 build：HEAD 已含全部实现，作为 root 的 build 证据 commit
-    const rootBuildBlock = await waitForNewOutput(outPath, /待人工步骤=build/, WAIT_TIMEOUT_MS);
-    expect(rootBuildBlock).toContain("cw verify --unit demo");
+    // 5) root 的 build：HEAD 已含全部实现，作为 root 的 build 证据 commit
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "demo", "--commit", head, "--run-id", "run-demo-1"]).code).toBe(0);
     const verifyDemo = runCli(repoDir, ["verify", "--unit", "demo"]);
     expect(verifyDemo.code, `demo verify 应 pass（stdout: ${verifyDemo.stdout}，stderr: ${verifyDemo.stderr}）`).toBe(0);
 
-    // 7) root 的 exec-review → closed → runner 收敛自然退出
-    await waitForNewOutput(outPath, /待人工步骤=exec-review/, WAIT_TIMEOUT_MS);
+    // 6) root 的 exec-review → closed → runner 收敛自然退出
     expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "exec-review", "--verdict", "pass"]).code).toBe(0);
 
     const code = await waitExit(runner, WAIT_TIMEOUT_MS);
@@ -242,7 +224,7 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     expect(status.stdout).toMatch(/demo\s+closed/);
   }, E2E_TIMEOUT_MS);
 
-  it("中断路径：--max-idle-ms 500 无人操作 → exit 1 且 stderr 含「无进展」", async () => {
+  maybeIt("中断路径：--max-idle-ms 500 无人操作 → exit 1 且 stderr 含空转提示", async () => {
     const { repoDir, outPath, errPath } = makeScenario("idle");
     initRepo(repoDir);
     writeFileSync(join(repoDir, "brief.md"), "# 任务书\n");
@@ -252,11 +234,12 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     const code = await waitExit(runner, 10_000);
     expect(code).toBe(1);
     const errText = readFileSync(errPath, "utf-8");
-    expect(errText).toContain("无进展");
+    // u7 通用 loop 的空转文案（面向 agent 后端）
+    expect(errText).toContain("无账本进展");
     expect(errText).toContain("恢复动作");
 
-    // 中断前打印过指令但账本未动：unit 仍 created（账本即状态，无进程内残留）
-    expect(readFileSync(outPath, "utf-8")).toContain("待人工步骤=spec");
+    // 中断前 humanAdapter 打印过 designer 定点指令但账本未动：unit 仍 created
+    expect(readFileSync(outPath, "utf-8")).toContain('designer 指令：unit "stall"');
     expect(runCli(repoDir, ["status"]).stdout).toMatch(/stall\s+created/);
   }, 20_000);
 });

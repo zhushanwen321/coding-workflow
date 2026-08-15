@@ -23,7 +23,7 @@
 | u6a | AgentSpawn 接口与生命周期 | committed | 78fa351 | 两任 builder（前任中断留实现，续任审查零修改保留 + 补 9 组测试）；verifier PASS（sha256 c1baff50…，报告 u6a-report.md，7/7 对抗抽查）。两处文档字面偏离实测证实唯一可行（fd 包装 stdio、ENOENT 预检）。观察：kill 发起方归因的固有窄窗口（TIMEOUT 误归因，10 次实测未触发） |
 | u6b | human 适配器 | committed | 9c6af01 | verifier PASS（sha256 62fa5542…，报告 u6b-report.md，7/7 独立探针对抗）。两裁量成立（指令变体三点差异属实+零 import 结构性必然；子进程 JSONL 与 EventLedger 逐字段一致）。minor：req.env.CW_HOME 跳过 isAbsolute 校验（留接线波次统一） |
 | u6c | pi 适配器（CW_AGENT_MODEL → --model） | committed | 9c6af01 | verifier PASS（sha256 594bf27a…，报告 u6c-report.md，4 条对抗抽查 + 真实 E2E 复跑 6.5s）。首次真实 harness 接入：mimo-v2.5-pro stdout 跟随 brief 变化（非缓存）。裁量两项合理（resolvePiModel 纯函数单点调用、extraArgs 默认参消解文档自矛盾）。minor：SPAWN_ERROR 态产物文件不存在（契约未规定） |
-| u7 | 调度循环 | pending | — | 依赖 u1b,u6a |
+| u7 | 调度循环 | committed | 9c6af01 | 首验 FAIL（killAll EPERM 冒出，10 连跑 2 败）→ 打回修 best-effort killAll + 确定性回归 → 复审 PASS（红性命中 killAll 栈、10/10 连跑、4 出口全覆盖）。其余首验即过：u5b 适配无弱化、双叶重叠 402ms、10 对抗全过 |
 
 ## M2 = L3（集成）+ 补齐
 
@@ -61,3 +61,5 @@
 - 2026-08-15 u6a committed（续作模式：前任用量中断留 lifecycle.ts，续任审查保留 + 补测；173 全绿）；verifier 7/7 对抗 PASS。第二波 u6b/u6c/u7 三并行派发（基线随本 commit）。
 - 2026-08-15 u6c committed：pi 适配器 + 真实微调用 E2E（mimo-v2.5-pro，9.5s 首跑 / 6.5s 复跑）；verifier 4 对抗 PASS（stdout 跟随 brief 证明非缓存）。u6b 验收中、u7 开发中。
 - 2026-08-15 u6b committed：human 适配器 + 6 测试；verifier 7/7 独立探针 PASS（kill 即时性 0ms、settle 幂等）。M1 进度 3/4，仅 u7 开发中。
+- 2026-08-15 u7 首验 FAIL（1 major）：收尾 killAll 的 EPERM 间歇崩溃（verifier 压测 10 连跑 2 败；builder 自报「间歇已修」仅测试侧）。打回修 loop.ts（best-effort killAll + 确定性回归测试）。机制第 2 次 FAIL 路径运转。
+- 2026-08-15 u7 committed（FAIL→修复→复审 PASS 闭环，全量 28 文件 196 测试绿）：M1 四 unit 全闭环（u6a/u6b/u6c/u7）。M1 gate 启动：真实 pi 微任务 + 并行 + 探针。

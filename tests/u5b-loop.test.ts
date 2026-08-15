@@ -276,17 +276,18 @@ describe("验收3：终止判定（dispatch 真实轮询）", () => {
     expect(res.stdout).toContain("已 closed");
     expect(res.stdout).toMatch(/u-done\s+closed\s+lastVerify:pass/);
     expect(res.stdout).toContain("cw report");
-    // 首轮快照行（待人工步骤=无）在汇总前
-    expect(res.stdout).toContain("待人工步骤=无");
+    // u7 起 run 走通用 loop（无 M0 快照行「待人工步骤=」）：以循环启动行验证进入循环
+    expect(res.stdout).toContain("[runner] 循环启动：root=u-done");
   });
 
-  it("无进展：--max-idle-ms 100 注入小值 + 无人操作 → exit 1，stderr 含「无进展」与恢复动作", async () => {
+  it("无进展：--max-idle-ms 100 注入小值 + 无人操作 → exit 1，stderr 含空转提示与恢复动作", async () => {
     appendCreated("u-stall");
     const res = await run(["run", "--root", "u-stall", "--poll-ms", "20", "--max-idle-ms", "100"]);
     expect(res.code).toBe(1);
-    expect(res.stderr).toContain("无进展");
+    // u7 通用 loop 的空转文案（面向 agent 后端）：「无账本进展」（M0 文案为「无进展」）
+    expect(res.stderr).toContain("无账本进展");
     expect(res.stderr).toContain("恢复动作");
-    // 中断前确实打印过 spec 指令组（人在场即可照做）
+    // 中断前确实打印过 designer 指令组（humanAdapter 派发定点指令，人在场即可照做）
     expect(res.stdout).toContain("cw evidence submit --kind spec --unit u-stall --file spec.json");
   });
 });
@@ -308,19 +309,19 @@ describe("cw run 参数校验与注册", () => {
     expect(res.stderr).toContain("cw status");
   });
 
-  it("--spawn pi → exit 1，stderr 提示 M0 仅支持 human", async () => {
+  it("--spawn 未知后端 → exit 1，stderr 提示可选值与恢复动作（u7 起 pi 为合法后端，不再以 pi 为反例）", async () => {
     appendCreated("u-spawn");
-    const res = await run(["run", "--root", "u-spawn", "--spawn", "pi"]);
+    const res = await run(["run", "--root", "u-spawn", "--spawn", "nosuch-backend"]);
     expect(res.code).toBe(1);
-    expect(res.stderr).toContain("--spawn \"pi\"");
-    expect(res.stderr).toContain("M0 仅支持 human");
+    expect(res.stderr).toContain('--spawn 后端 "nosuch-backend"');
+    expect(res.stderr).toContain("恢复动作");
   });
 
   it("--spawn human（显式）与缺省同义：通过校验进入循环（以无进展退出验证）", async () => {
     appendCreated("u-spawn2");
     const res = await run(["run", "--root", "u-spawn2", "--spawn", "human", "--poll-ms", "20", "--max-idle-ms", "60"]);
     expect(res.code).toBe(1); // 无进展退出 = 已进入循环（spawn 校验通过）
-    expect(res.stderr).toContain("无进展");
+    expect(res.stderr).toContain("无账本进展");
   });
 
   it("--poll-ms abc → exit 1，stderr 说明须为正整数", async () => {
