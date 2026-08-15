@@ -10,7 +10,7 @@
 | u1 | 事件模型 + 账本 + 投影 | pending | — | |
 | u1b | 只读命令（status/frontier/tree/report） | pending | — | 依赖 u1 |
 | u2 | 写命令（create/evidence submit/review submit） | pending | — | 依赖 u1 |
-| u3 | spec gate 五规则 | pending | — | 纯函数，无依赖 |
+| u3 | spec gate 五规则 | committed | 01fd577 | verifier PASS（sha256 91f460d…，报告 u3-report.md）；minor 观察：isResolvableOnPath 对目录 command 放行（which 不放行），退化边界，u4a verify 真跑时天然兜住 |
 | u4a | 干净重跑 + cw verify | pending | — | 依赖 u1,u2 |
 | u4b | 三道 gate（红阶段/名字比对/重跑判定） | pending | — | 依赖 u4a |
 | u5 | TestRun 缝 + vitest/e2e-sh 适配器 | pending | — | 依赖 u4 |
@@ -46,3 +46,4 @@
 - 2026-08-15 Phase 0 开始：git mv src/tests/docs + 6 个根级文档 → archive/；靶子 recursive-split-e2e 已存档 README 并清空重建；新脚手架就位。
 - 2026-08-15 Phase 0 完成：check:all + test（3 冒烟）+ lint 全绿；commit 88ce0a2（archive legacy implementation, scaffold rewrite）。
 - 2026-08-15 u1/u3 验收基线入 git：主 agent 建共享类型契约 src/events/types.ts（canon D2/D3 投影 + 两处显式补充注明）；u1（账本+投影）与 u3（spec 五规则）并行派发 builder。
+- 2026-08-15 u3 committed：builder 交付 spec-rules.ts + 13 条表驱动单测；verifier 防篡改/命令实跑/真实性抽查/8 条对抗抽查全 PASS；主 agent 复核 diff 为空 + sha256 一致后流转。
