@@ -39,6 +39,8 @@ export interface Contract {
   consumer: string;
   /** 签名文本（集成 verify 机器比对的 hash 对象） */
   signature: string;
+  /** 签名应存在的文件（相对仓库根路径）；缺省 = 集成时全树搜索（M2 口径，主 agent 2026-08-15 追加） */
+  file?: string;
   description?: string;
 }
 
