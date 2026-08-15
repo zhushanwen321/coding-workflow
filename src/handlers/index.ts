@@ -2,6 +2,7 @@ import type { CommandEntry } from "../dispatch.js";
 import { handleCreate } from "./create.js";
 import { handleEvidenceSubmit } from "./evidence-submit.js";
 import { handleReviewSubmit } from "./review-submit.js";
+import { handleVerify } from "./verify.js";
 
 /** 写命令域注册表（u2 交付：create / evidence submit / review submit；verify 属 u4a） */
 export const commands: CommandEntry[] = [
@@ -19,5 +20,10 @@ export const commands: CommandEntry[] = [
     name: "review submit",
     handler: handleReviewSubmit,
     summary: "提交审查结论（--verdict-kind spec-review|exec-review × --verdict pass|fail）",
+  },
+  {
+    name: "verify",
+    handler: handleVerify,
+    summary: "干净重跑验证（--unit <id> [--timeout-ms <n>]，checkout 冻结 commit 重跑验收）",
   },
 ];
