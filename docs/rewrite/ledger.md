@@ -38,8 +38,7 @@
 |------|------|------|
 | Phase 0 | 归档 + 脚手架 + 靶子清空 | done |
 | M0 gate | A1 人肉全流程 + A3 补录攻击 | done |
-| M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | pending |
-| M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | pending |
+| M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | done |
 | 终验 | markdown-reader 全流程无人干预 | pending |
 
 ## 事件
@@ -63,3 +62,4 @@
 - 2026-08-15 u6b committed：human 适配器 + 6 测试；verifier 7/7 独立探针 PASS（kill 即时性 0ms、settle 幂等）。M1 进度 3/4，仅 u7 开发中。
 - 2026-08-15 u7 首验 FAIL（1 major）：收尾 killAll 的 EPERM 间歇崩溃（verifier 压测 10 连跑 2 败；builder 自报「间歇已修」仅测试侧）。打回修 loop.ts（best-effort killAll + 确定性回归测试）。机制第 2 次 FAIL 路径运转。
 - 2026-08-15 u7 committed（FAIL→修复→复审 PASS 闭环，全量 28 文件 196 测试绿）：M1 四 unit 全闭环（u6a/u6b/u6c/u7）。M1 gate 启动：真实 pi 微任务 + 并行 + 探针。
+- 2026-08-15 M1 gate PASS：真实 pi 后端全流程首次运转（9 调用/零重派/无人干预）；微任务 2m39s、双叶重叠 6.3s、P3 零锁实证。M2 启动：u8（集成 verify）派发；u9（claude/codex/pytest 适配器）跳过——终验 pi 后端足够，py/go 无真实项目不写无真实验收的代码。
