@@ -8,8 +8,9 @@
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | u1 | 事件模型 + 账本 + 投影 | committed | 01fd577 | verifier PASS（sha256 117681da…，报告 u1-report.md，17 条对抗抽查）。观察项：① lockfile 创建-写入空窗口竞态（沿用旧实现既有机能，后续 unit 修：null 时等待而非 unlink）② E2E 交错断言低概率 flake ③ verified 判定未校验 VerifyRan 在最后 spec 之后（与验收文档字面一致，接线期收紧） |
+| u1b | 只读命令（status/frontier/tree/report） | building | 见 git log | 与 u2 并行；dispatch 契约层由主 agent 预建（注册表模式，领地不相交） |
 | u1b | 只读命令（status/frontier/tree/report） | pending | — | 依赖 u1 |
-| u2 | 写命令（create/evidence submit/review submit） | pending | — | 依赖 u1 |
+| u2 | 写命令（create/evidence submit/review submit） | building | 见 git log | 与 u1b 并行；spec/build 两形态与命令规格锁定在 u2-acceptance.md |
 | u3 | spec gate 五规则 | committed | 01fd577 | verifier PASS（sha256 91f460d…，报告 u3-report.md）；minor 观察：isResolvableOnPath 对目录 command 放行（which 不放行），退化边界，u4a verify 真跑时天然兜住 |
 | u4a | 干净重跑 + cw verify | pending | — | 依赖 u1,u2 |
 | u4b | 三道 gate（红阶段/名字比对/重跑判定） | pending | — | 依赖 u4a |
