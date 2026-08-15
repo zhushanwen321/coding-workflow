@@ -6,7 +6,7 @@
 
 | 角色 | 执行者 | 职责 | 禁止事项 |
 |------|--------|------|---------|
-| engine+runner（简化版） | 主 agent | 写验收标准文档并 commit 基线；派发；核对证据；流转状态；唯一 commit 执行者 | 不亲自写 unit 代码 |
+| engine+runner（简化版） | 主 agent | 写验收标准文档并 commit 基线；派发；核对证据；流转状态；唯一 commit 执行者 | 不亲自写/改任何 src、tests 文件（含契约层自身的修复——发现缺陷派 worker subagent 修，附验收标准） |
 | builder | subagent（worker） | 按 `docs/rewrite/acceptance/<unit>-acceptance.md` 实现 + 自测 | 不 commit；不改验收文档；不越界改其他 unit 文件 |
 | verifier | subagent（reviewer） | 对照验收文档逐项真实验收（跑命令、查产物），产出报告 | 不修代码；不改验收文档 |
 
