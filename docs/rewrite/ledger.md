@@ -9,7 +9,6 @@
 |------|------|------|----------------|------|
 | u1 | 事件模型 + 账本 + 投影 | committed | 01fd577 | verifier PASS（sha256 117681da…，报告 u1-report.md，17 条对抗抽查）。观察项：① lockfile 创建-写入空窗口竞态（沿用旧实现既有机能，后续 unit 修：null 时等待而非 unlink）② E2E 交错断言低概率 flake ③ verified 判定未校验 VerifyRan 在最后 spec 之后（与验收文档字面一致，接线期收紧） |
 | u1b | 只读命令（status/frontier/tree/report） | committed | 552ae90 | verifier PASS（sha256 23ce2763…，报告 u1b-report.md，17/17 对抗抽查）。O-1 裁决：--json 恒输出结构化空形态（收尾 polish 统一，status 空账本当前输出纯文本与 frontier 不一致） |
-| u1b | 只读命令（status/frontier/tree/report） | pending | — | 依赖 u1 |
 | u2 | 写命令（create/evidence submit/review submit） | committed | 552ae90 | verifier PASS（sha256 4ee6677e…，报告 u2-report.md，7 场景对抗零矛盾）。备案：spec 多余字段 typebox 放行、--evidence-refs "" 产生空数组键（payload 形状细微差异，报告 §5） |
 | u3 | spec gate 五规则 | committed | 01fd577 | verifier PASS（sha256 91f460d…，报告 u3-report.md）；minor 观察：isResolvableOnPath 对目录 command 放行（which 不放行），退化边界，u4a verify 真跑时天然兜住 |
 | u4a | 干净重跑 + cw verify | committed | 115e52c | 首验 FAIL 1 major（--timeout-ms 无有效传值形式）→ 打回修复（parseTimeoutMs 四分支、非法 exit 1 报错）→ 针对性复审 PASS（红性验证：缺陷注入恰 3 新测试红、字节级还原；行为对抗 abc/裸 flag/-5 全拒）。minor：错误消息称「正整数」但接受正小数（口径轻微出入） |
@@ -38,7 +37,8 @@
 | gate | 内容 | 状态 |
 |------|------|------|
 | Phase 0 | 归档 + 脚手架 + 靶子清空 | done |
-| M0 gate | A1 人肉全流程 + A3 补录攻击 | done | — | gate-executor 报告 m0-gate-report.md：A1 root closed 全链 6 事件完整；A3 六路径全拒/留痕零突破。语义边界备案：①弱 spec 重审后旧 pass VerifyRan 集合包含覆盖弱验收（守门人=reviewer，账本留痕）②历史证据产物 OS 级可改写（无 FS 沙箱，hash 链审计覆盖）。gate 任务书 A2 类型建议与规则⑤冲突由 executor 纠正（验收方笔误第 2 次，教训入 skill） |
+| M0 gate | A1 人肉全流程 + A3 补录攻击 | done |
+| M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | pending |
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | pending |
 | 终验 | markdown-reader 全流程无人干预 | pending |
 
