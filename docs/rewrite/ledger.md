@@ -40,7 +40,8 @@
 | Phase 0 | 归档 + 脚手架 + 靶子清空 | done |
 | M0 gate | A1 人肉全流程 + A3 补录攻击 | done |
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | done |
-| 终验 | markdown-reader 全流程无人干预 | failed→fixing | — | 报告 final-gate-report.md：54.4min（有效 9.3min 后 45min 空转 idle 兜底），root 停 spec-frozen。**产物全合格**（install/build/9 测试/渲染链路全过，pi 4 调用零重派 builder 单 spawn 内 4 轮自愈）；死锁 = R1 split 自引用未校验 + R2 重提 spec 落派发真空（verify 恢复文案误导）+ R3 marker 约定隐含。修复 unit fx-1 启动 |
+| 终验 | markdown-reader 全流程无人干预 | failed×3→fixing | — | 第 1 次 R1/R2/R3（产物全合格、分解层死锁）→ fx-1；第 2 次 R4 集成层（fx-1 全生效、两叶首次全 closed）→ fx-2；第 3 次 R5 建子缺位（45.5min 零派发空转、idle 有界退出零人工；fx-2 未触达现场欠账结转）。三次卡点逐次上游化（叶 spec → 集成 → 建子） |
+| fx-3 | 分解结构建立缺位 R5 修复 | building | 待基线 | 终验第 3 次 FAIL：pi designer print 模式把建子当询问点停（「需要继续创建叶子 unit 吗？」），三层缺位（gate 不查 split 子存在/派发无子未建出口/任务书无建子步骤）→ 45.5min 零派发空转（idle 有界退出，零人工）。工作流语义变更：先建子后提 spec |
 
 ## 事件
 
@@ -69,3 +70,4 @@
 - 2026-08-16 终验第 1 次 FAIL（产物全合格、状态机死锁）→ fx-1 committed（三根因修复，红绿影子工程复现）→ 靶子重置 → 终验第 2 次执行中。
 - 2026-08-16 终验第 2 次 FAIL（新死锁 R4 集成层）：fx-1 全部生效（R2 现场 105s 恢复、R3 零试错、R1 未复现；两叶首次全 closed、产物全绿、9 pi 调用）；R4a 契约 async 一字节漂移无恢复出口 + R4b 审计事件喂饱 idle 计数 31 轮死循环。fx-2 基线入 git 派发。
 - 2026-08-16 fx-2 committed（影子红绿 4/4 超时复现死锁现场；222 全绿）→ 靶子重置 → 终验第 3 次执行中。
+- 2026-08-16 终验第 3 次 FAIL（R5 建子缺位，更上游）：pi print 模式把建子当询问点，root spec-frozen 等不存在的子 45.5min 零派发空转（idle 有界退出、零人工——兜底语义现场成立）。fx-3 基线入 git（gate 收紧先建子后提 spec + 任务书第 0 步 + 派发兜底出口）。
