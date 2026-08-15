@@ -38,7 +38,7 @@
 | gate | 内容 | 状态 |
 |------|------|------|
 | Phase 0 | 归档 + 脚手架 + 靶子清空 | done |
-| M0 gate | A1 人肉全流程 + A3 补录攻击 | pending |
+| M0 gate | A1 人肉全流程 + A3 补录攻击 | done | — | gate-executor 报告 m0-gate-report.md：A1 root closed 全链 6 事件完整；A3 六路径全拒/留痕零突破。语义边界备案：①弱 spec 重审后旧 pass VerifyRan 集合包含覆盖弱验收（守门人=reviewer，账本留痕）②历史证据产物 OS 级可改写（无 FS 沙箱，hash 链审计覆盖）。gate 任务书 A2 类型建议与规则⑤冲突由 executor 纠正（验收方笔误第 2 次，教训入 skill） |
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | pending |
 | 终验 | markdown-reader 全流程无人干预 | pending |
 
@@ -57,3 +57,4 @@
 - 2026-08-15 u4a committed（FAIL→修复→复审 PASS 闭环）：parseTimeoutMs 本地解析 + 3 回归测试（红性验证有效）；全量 126 绿。第四波 u4b/u5b 基线入 git 后并行派发。
 - 2026-08-15 u5b committed：builder 交付 human-loop + run 命令 + 19 测试（E2E 测试进程扮演人全链收敛 root closed）；verifier 4 对抗抽查 PASS，3 偏差确认合理。u4b 验收中。
 - 2026-08-15 u4b committed：M0 八 unit 全闭环（u1/u1b/u2/u3/u4a/u4b/u5/u5b，全量 23 文件 164 测试绿）。verifier 5 组对抗抽查 PASS；裁量与 u4a 适配逐条确认。进入 M0 gate（A1 人肉全流程 + A3 补录攻击六路径）。
+- 2026-08-15 M0 gate PASS：A1 add-capitalize root closed（145 轮 73s 收敛，六事件链完整，verify 产物落盘）；A3 六路径全拒（谎报无命令/echo ok 双杀/sed 探针隔离/假产物不信/弱验收回退留痕/改码不影响重跑）。两条语义边界备案。M1 启动：契约层 spawn/types.ts + u6a 派发。
