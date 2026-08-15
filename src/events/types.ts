@@ -162,3 +162,36 @@ export interface Projection {
   units: Map<string, UnitProjection>;
   totalEvents: number;
 }
+
+// ---- fold 顺序视图与 gate 注入（u1 追加） ----
+
+/**
+ * 事件信封的判别联合视图：与 EventEnvelope<EventType> 同构，但 type 与 payload 联动，
+ * 消费者 switch (ev.type) 时 TypeScript 能正确窄化 payload（宽泛的泛型信封做不到）。
+ * 仅类型层视图，账本 JSONL 序列化格式不变。
+ */
+export type DiscriminatedEvent = {
+  [K in EventType]: EventEnvelope<K>;
+}[EventType];
+
+/** spec gate 注入签名（u3 的 checkSpecRules 是标准实现；deriveStatus 只依赖此签名） */
+export type SpecGate = (spec: SpecSubmittedPayload) => SpecRulesResult;
+
+/**
+ * deriveStatus「之后存在」语义所需的顺序锚点。
+ *
+ * 为什么需要：UnitProjection 的 specs / verdicts 是平行数组，折叠时丢失了跨数组的
+ * 账本顺序；「最后一条 spec 之后是否存在 spec-review pass verdict」（重新提交
+ * spec = 打回重审，旧 verdict 不计数）无法从平行数组判定，由 fold 折叠时补记 seq。
+ */
+export interface SequencedUnitProjection extends UnitProjection {
+  /** 最后一条 SpecSubmitted 的账本 seq；未提交过 spec 时为 null */
+  lastSpecSeq: number | null;
+  /** 各 VerdictSubmitted 的账本 seq，与 verdicts 一一对应（同为提交顺序） */
+  verdictSeqs: number[];
+}
+
+/** fold 的返回类型：units 是带顺序锚点的 unit 投影（UnitProjection 的超集） */
+export interface SequencedProjection extends Projection {
+  units: Map<string, SequencedUnitProjection>;
+}
