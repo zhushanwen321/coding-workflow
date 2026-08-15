@@ -29,10 +29,27 @@ import { commands as readonlyCommands } from "./readonly/index.js";
 
 export const ALL_COMMANDS: CommandEntry[] = [...handlerCommands, ...readonlyCommands];
 
-/** 精确匹配命令名（含子命令空格形式）；argv._ 为位置参数序列 */
+/** 子命令 token 数降序（最长前缀优先），防 "evidence submit" 被 "evidence" 类短名截断匹配 */
+const BY_NAME_LENGTH: CommandEntry[] = [...ALL_COMMANDS].sort(
+  (a, b) => b.name.split(" ").length - a.name.split(" ").length,
+);
+
+/**
+ * 按命令名 token 前缀匹配（flag 不参与匹配）：
+ * matchByPrefix(t, ["status", "--json"]) → "status"；["evidence","submit","--kind","spec"] → "evidence submit"
+ */
+export function matchByPrefix(
+  entries: readonly CommandEntry[],
+  args: readonly string[],
+): CommandEntry | undefined {
+  return entries.find((c) => {
+    const tokens = c.name.split(" ");
+    return tokens.every((t, i) => args[i] === t);
+  });
+}
+
 export function findCommand(args: readonly string[]): CommandEntry | undefined {
-  const rest = args.join(" ");
-  return ALL_COMMANDS.find((c) => c.name === rest);
+  return matchByPrefix(BY_NAME_LENGTH, args);
 }
 
 export async function dispatch(args: readonly string[], cwd: string): Promise<number> {
