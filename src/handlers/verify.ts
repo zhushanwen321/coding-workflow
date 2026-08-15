@@ -1,16 +1,24 @@
 /**
- * `cw verify --unit <id> [--timeout-ms <n>]`（u4a 验收文档锁定的 M0 规格）。
+ * `cw verify --unit <id> [--timeout-ms <n>] [--red-phase]`（u4a/u4b 验收文档锁定规格）。
  *
- * 干净重跑验证：取最后一条 spec（冻结验收）与最后一条 build evidence 的 commit，
- * cleanCheckout 到一次性工作区，逐条重跑非 manual 验收（manual 并入 acceptanceIds，
- * 免机器验证语义），产物落盘 evidence/<unitId>/<runId>/，VerifyRan 入账。
+ * 干净重跑验证（默认路径）：取最后一条 spec（冻结验收）与最后一条 build evidence
+ * 的 commit，cleanCheckout 到一次性工作区，逐条重跑非 manual 验收——u4b 起判定
+ * 不再是 exit code，而是适配器路由（type → u5 适配器）+ nameMatch 名字级比对；
+ * manual 并入 acceptanceIds（免机器验证语义），产物落盘 evidence/<unitId>/<runId>/，
+ * VerifyRan 入账。
+ *
+ * 红阶段 gate（--red-phase）：checkout build commit 的第一父（实现前基线树），
+ * 同一套验收逐条期望 fail（同一适配器路由）。全部有区分力 → exit 0；任一在旧树
+ * 也 pass / 命令成功但无有效用例产物 → exit 1（stderr 列 id，恢复动作指向「修
+ * 测试而非修 gate」）。红阶段不是验证结论，不写 VerifyRan，产物落 red-phase 专属
+ * runId 目录留审计。
  *
  * exit 语义（验收文档锁定）：
- *   - 全 pass → result=pass，exit 0
- *   - 任一 fail → result=fail，exit 1（stderr 列失败验收 id 与原因）；fail 也入账
- *     （打回依据，审计必需）
- *   - 环境错误（unit/spec/build 证据缺失、clone/checkout 失败、入账失败）→ exit 2，
- *     不入账
+ *   - 常规全 pass → result=pass，exit 0
+ *   - 常规任一 fail → result=fail，exit 1（stderr 列失败验收 id 与原因）；fail 也
+ *     入账（打回依据，审计必需）
+ *   - 环境错误（unit/spec/build 证据缺失、clone/checkout 失败、build commit 无父
+ *     可回退、入账失败）→ exit 2，不入账
  */
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -24,6 +32,7 @@ import type {
 } from "../events/types.js";
 import { evidenceDir, getCwHome } from "../store/project.js";
 import { cleanCheckout, cleanupCheckout } from "../verify/checkout.js";
+import { firstParentOf, judgeRedPhase } from "../verify/red-phase.js";
 import { runAcceptances, type RunOutcome } from "../verify/run.js";
 import {
   fail,
@@ -36,7 +45,7 @@ import {
 
 /** 单条验收命令默认超时：10min（canon §6.3 纪律④单测口径） */
 const DEFAULT_TIMEOUT_MS = 600_000;
-/** 环境错误 exit code（验收文档锁定：验证未发生、不入账） */
+/** 环境错误 exit code（验收文档锁定：验证未发生，不入账） */
 const ENV_ERROR_EXIT = 2;
 /** 总报告文件名（stdout 摘要里给出完整路径，便于人工复核产物） */
 const REPORT_FILE_NAME = "report.json";
@@ -45,13 +54,14 @@ export async function handleVerify(ctx: CommandContext): Promise<number> {
   const unitId = stringArg(ctx.argv, "unit");
   if (unitId === undefined) {
     return fail(
-      "cw verify: 缺少 --unit <id>。恢复动作：cw verify --unit <unitId> [--timeout-ms <毫秒数>]。",
+      "cw verify: 缺少 --unit <id>。恢复动作：cw verify --unit <unitId> [--timeout-ms <毫秒数>] [--red-phase]。",
     );
   }
   const timeout = parseTimeoutMs(ctx.argv["timeout-ms"]);
   if (!timeout.ok) {
     return fail(timeout.error);
   }
+  const redPhase = ctx.argv["red-phase"] === true;
 
   const ledger = ledgerForCwd(ctx.cwd);
   if (!unitCreatedFacts(ledger).has(unitId)) {
@@ -84,19 +94,32 @@ export async function handleVerify(ctx: CommandContext): Promise<number> {
     );
   }
 
-  const checkout = cleanCheckout(ctx.cwd, lastEvidence.commit);
+  return redPhase
+    ? runRedPhase(ctx.cwd, unitId, timeout.value, lastSpec, lastEvidence)
+    : runRegularVerify(ctx.cwd, unitId, timeout.value, lastSpec, lastEvidence);
+}
+
+/** 常规干净重跑：nameMatch 判定 → VerifyRan 入账 → stdout 摘要 / stderr 失败明细 */
+function runRegularVerify(
+  cwd: string,
+  unitId: string,
+  timeoutMs: number,
+  lastSpec: SpecSubmittedPayload,
+  lastEvidence: EvidenceSubmittedPayload,
+): number {
+  const checkout = cleanCheckout(cwd, lastEvidence.commit);
   if (!checkout.ok) {
     return envError(
-      `cw verify: 干净 checkout 失败（commit ${lastEvidence.commit}，仓库 "${ctx.cwd}"）：${checkout.error}。` +
+      `cw verify: 干净 checkout 失败（commit ${lastEvidence.commit}，仓库 "${cwd}"）：${checkout.error}。` +
         "恢复动作：确认 cwd 是目标 git 仓库、commit 真实存在（git cat-file -e '<commit>^{commit}'）后重试。",
     );
   }
 
   const runId = `verify-${randomUUID()}`;
-  const evidenceBase = evidenceDir(getCwHome(), ctx.cwd, unitId, runId);
+  const evidenceBase = evidenceDir(getCwHome(), cwd, unitId, runId);
   let outcome: RunOutcome;
   try {
-    outcome = runAcceptances(checkout.dir, lastSpec.acceptance, evidenceBase, timeout.value);
+    outcome = runAcceptances(checkout.dir, lastSpec.acceptance, evidenceBase, timeoutMs);
   } catch (e) {
     return envError(
       `cw verify: 验收执行框架失败（产物目录 ${evidenceBase}）：${e instanceof Error ? e.message : String(e)}。` +
@@ -121,6 +144,7 @@ export async function handleVerify(ctx: CommandContext): Promise<number> {
     result,
     acceptanceIds,
   };
+  const ledger = ledgerForCwd(cwd);
   const appended = tryAppend(ledger, "VerifyRan", payload);
   if (!appended.ok) {
     return envError(
@@ -145,6 +169,82 @@ export async function handleVerify(ctx: CommandContext): Promise<number> {
     return 1;
   }
   return 0;
+}
+
+/**
+ * 红阶段 gate：父 commit（第一父）树上重跑验收，逐条期望 fail。
+ * 产物落 red-phase 前缀的 runId 目录（不与常规 verify 产物混淆），不写 VerifyRan。
+ */
+function runRedPhase(
+  cwd: string,
+  unitId: string,
+  timeoutMs: number,
+  lastSpec: SpecSubmittedPayload,
+  lastEvidence: EvidenceSubmittedPayload,
+): number {
+  const parent = firstParentOf(cwd, lastEvidence.commit);
+  if (!parent.ok) {
+    return envError(
+      `cw verify --red-phase: 无法定位 unit "${unitId}" build commit ${lastEvidence.commit} 的父 commit：${parent.error}。` +
+        (parent.noParent
+          ? "红阶段需要「实现前」的基线树，初始 commit 之前没有历史。恢复动作：在含实现的 commit 之上再提交一次（或换以非初始 commit 为 build 锚点）后重跑。"
+          : "恢复动作：确认 cwd 是目标 git 仓库且 commit 真实存在后重试。"),
+    );
+  }
+
+  const checkout = cleanCheckout(cwd, parent.commit);
+  if (!checkout.ok) {
+    return envError(
+      `cw verify --red-phase: 干净 checkout 失败（父 commit ${parent.commit}，仓库 "${cwd}"）：${checkout.error}。` +
+        "恢复动作：确认 cwd 是目标 git 仓库、commit 真实存在（git cat-file -e '<commit>^{commit}'）后重试。",
+    );
+  }
+
+  const runId = `red-phase-${randomUUID()}`;
+  const evidenceBase = evidenceDir(getCwHome(), cwd, unitId, runId);
+  let outcome: RunOutcome;
+  try {
+    outcome = runAcceptances(checkout.dir, lastSpec.acceptance, evidenceBase, timeoutMs);
+  } catch (e) {
+    return envError(
+      `cw verify --red-phase: 验收执行框架失败（产物目录 ${evidenceBase}）：${e instanceof Error ? e.message : String(e)}。` +
+        "恢复动作：检查磁盘权限与 evidence 目录可写性后重试。",
+    );
+  } finally {
+    cleanupCheckout(checkout.dir);
+  }
+
+  if (outcome.results.length === 0) {
+    return envError(
+      `cw verify --red-phase: unit "${unitId}" 的 spec 无机器验收（全部 manual）——红阶段无从判定区分力。` +
+        "恢复动作：为 spec 补充可机器执行的验收（e2e-real/e2e-mock/unit/integration）后重跑。",
+    );
+  }
+
+  const verdicts = judgeRedPhase(outcome.results);
+  const nonDiscriminative = verdicts.filter((v) => !v.discriminative);
+  if (nonDiscriminative.length === 0) {
+    process.stdout.write(
+      [
+        ...verdicts.map((v) => `${v.id} 有区分力`),
+        `red-phase unit "${unitId}"：${verdicts.length}/${verdicts.length} 条机器验收在父 commit ${parent.commit} 上失败（有区分力）`,
+        `runId=${runId}`,
+        `report: ${join(evidenceBase, REPORT_FILE_NAME)}`,
+        "",
+      ].join("\n"),
+    );
+    return 0;
+  }
+  process.stderr.write(
+    [
+      `cw verify --red-phase: unit "${unitId}" 有 ${nonDiscriminative.length} 条验收无区分力（在父 commit ${parent.commit} 上也通过 / 命令成功但产物无有效用例）：`,
+      ...nonDiscriminative.map((v) => `  ${v.id}: ${v.reason}`),
+      `产物报告：${join(evidenceBase, REPORT_FILE_NAME)}`,
+      "恢复动作：修测试而非修 gate——让验收引用实现产物（命令在父 commit 上因文件缺失/接口不存在而失败，输出 ^A<id> (PASS|FAIL) 标记行或 vitest JSON），勿弱化判定绕过。",
+      "",
+    ].join("\n"),
+  );
+  return 1;
 }
 
 /**

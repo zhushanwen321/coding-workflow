@@ -1,25 +1,34 @@
 /**
- * 验收执行器（canon 子文档 2《design-child-testrun.md》§6.3 纪律③④⑤）。
+ * 验收执行器（canon 子文档 2《design-child-testrun.md》§6.3 纪律①③④⑤）。
  *
- * M0 简化口径（u4a 验收文档锁定）：不用 TestRunAdapter，直接 `spawnSync("bash",
- * ["-c", command])` 逐条执行 + exit code 判定；适配器接线属 u5 后续 unit。
+ * u4b 升级：执行不再用 exit code 直接判定，而是按验收 type 路由 u5 适配器
+ * （e2e-real/e2e-mock → e2e-sh；unit/integration → vitest），经 translate 改写
+ * 命令、parse 产物为 EvidenceReport，再由 nameMatch 做名字级判定：
+ *   - translate（e2e 缺 command）/ parse（产物无标记 / 非 vitest JSON）抛错 →
+ *     该条 fail，reason 透传适配器错误（vitest 型另附「须为 vitest 兼容命令」）；
+ *   - 判定事实 = nameMatch：验收 id 出现在 cases 的用例名中且全部 pass。
  *
- * 纪律落地：
+ * 纪律落地（u4a 起保持）：
  *   - ③ 产物落盘：每条验收 `<id>.stdout`/`.stderr`（超时另加 `.timeout` 标记）+
- *     总报告 report.json（EvidenceReport 结构，rawPath 指向自身）；
+ *     适配器折叠出的 `<id>.report.json`（nameMatch 的输入，审计可重放）+ 总报告
+ *     report.json（EvidenceReport 结构，rawPath 指向自身）；
  *   - ④ 超时与回收：每条命令独立 spawnSync timeout，超时 kill 该条进程并标 fail；
  *   - ① 环境隔离：验收子进程的 CW_HOME 指向一次性 mkdtemp 目录（PATH 继承），
  *     防止验收命令读写真实 ~/.cw 账本，跑完即清理。
  *
  * manual 用例在此跳过（免机器验证语义）——并入 acceptanceIds 由 handler 负责。
+ * AcceptanceRunResult 的 commandExit/parseError 是红阶段 gate 的判定输入（旧树
+ * 「命令效果上成功但产物无效」= 无区分力），常规 verify 路径不消费。
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AcceptanceItem } from "../events/types.js";
-import type { EvidenceReport } from "../testrun/types.js";
+import type { AcceptanceItem, AcceptanceType } from "../events/types.js";
+import { defaultRegistry } from "../testrun/registry.js";
+import type { AdapterRegistry, EvidenceReport } from "../testrun/types.js";
+import { nameMatch } from "./name-match.js";
 
 /** 总报告文件名（evidence 目录内） */
 const REPORT_FILE_NAME = "report.json";
@@ -33,8 +42,12 @@ export interface AcceptanceRunResult {
   stderrPath: string;
   /** 该条是否因超时被 kill */
   timeout: boolean;
-  /** fail 的人可读原因（exit code / 超时 / 缺 command），pass 时无此字段 */
+  /** fail 的人可读原因（nameMatch / parse / 超时 / 适配器拒绝），pass 时无此字段 */
   reason?: string;
+  /** 命令进程 exit code（判定之前的事实；未执行 / 超时 / spawn 失败为 null） */
+  commandExit: number | null;
+  /** 适配器 translate/parse 是否抛错（无法产出可判定的 EvidenceReport） */
+  parseError: boolean;
 }
 
 export interface RunOutcome {
@@ -57,6 +70,7 @@ export function runAcceptances(
   mkdirSync(evidenceBaseDir, { recursive: true });
   const isolatedCwHome = mkdtempSync(join(tmpdir(), "cw-verify-env-"));
   const env: NodeJS.ProcessEnv = { ...process.env, CW_HOME: isolatedCwHome };
+  const registry = defaultRegistry();
   const titles = new Map(acceptance.map((ac) => [ac.id, ac.title]));
 
   const results: AcceptanceRunResult[] = [];
@@ -65,7 +79,7 @@ export function runAcceptances(
       if (ac.type === "manual") {
         continue;
       }
-      results.push(runOne(ac, checkoutDir, evidenceBaseDir, env, timeoutMs));
+      results.push(runOne(ac, checkoutDir, evidenceBaseDir, env, timeoutMs, registry));
     }
   } finally {
     rmSync(isolatedCwHome, { recursive: true, force: true });
@@ -73,6 +87,7 @@ export function runAcceptances(
 
   const report: EvidenceReport = {
     exitCode: results.some((r) => r.status === "fail") ? 1 : 0,
+    // 总报告的 name 用验收 title（P2 稳定重跑比对口径）：用例级细节在 <id>.report.json
     cases: results.map((r) => ({ id: r.id, name: titles.get(r.id) ?? "", status: r.status })),
     rawPath: join(evidenceBaseDir, REPORT_FILE_NAME),
   };
@@ -81,24 +96,57 @@ export function runAcceptances(
   return { results, report, reportRaw };
 }
 
-/** 执行单条非 manual 验收：exit 0 = pass；非零 / 超时 / 不可执行 / 缺 command = fail。 */
+/** 验收 type → 适配器 type 路由（u4b 验收文档规格锁定 1） */
+function adapterTypeFor(type: AcceptanceType): string {
+  switch (type) {
+    case "unit":
+    case "integration":
+      return "vitest";
+    case "e2e-real":
+    case "e2e-mock":
+      return "e2e-sh";
+    case "manual":
+      // manual 在 runAcceptances 已跳过，不应路由；返回无对应适配器的 key，
+      // 漏跳时由 runOne 的「路由不到适配器」fail 分支显性暴露而非静默漏跑
+      return "manual";
+  }
+}
+
+/**
+ * 执行单条非 manual 验收：适配器 translate → bash 执行 → 适配器 parse →
+ * nameMatch 判定。任何一环失败都是该条 fail（verify 整体 exit 1 路径），
+ * 不中断其余验收。
+ */
 function runOne(
   ac: AcceptanceItem,
   checkoutDir: string,
   evidenceBaseDir: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
+  registry: AdapterRegistry,
 ): AcceptanceRunResult {
   const stem = fileStem(ac.id);
   const stdoutPath = join(evidenceBaseDir, `${stem}.stdout`);
   const stderrPath = join(evidenceBaseDir, `${stem}.stderr`);
 
-  const command = ac.command?.trim() ?? "";
-  if (command === "") {
-    const reason = `验收 ${ac.id} 缺 command`;
+  // registry 来自 defaultRegistry（M0 装配），adapterTypeFor 的返回值恒有对应项；
+  // 缺项 = 装配缺陷，按该条 fail 显性暴露而非抛异常中断整轮 verify
+  const adapter = registry.get(adapterTypeFor(ac.type));
+  if (adapter === undefined) {
+    const reason = `验收 ${ac.id}（type=${ac.type}）路由不到适配器`;
     writeFileSync(stdoutPath, "");
     writeFileSync(stderrPath, `${reason}\n`);
-    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason };
+    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: true };
+  }
+
+  let command: string;
+  try {
+    command = adapter.translate(ac);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    writeFileSync(stdoutPath, "");
+    writeFileSync(stderrPath, `${reason}\n`);
+    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: true };
   }
 
   const res = spawnSync("bash", ["-c", command], {
@@ -122,27 +170,70 @@ function runOne(
       stderrPath,
       timeout: true,
       reason: `超时（>${timeoutMs}ms）被 kill`,
+      commandExit: null,
+      parseError: false,
     };
   }
   if (res.error !== undefined) {
     const reason = `无法执行 bash -c：${res.error.message}`;
     writeFileSync(stderrPath, `${reason}\n`);
-    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason };
+    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: false };
   }
 
   writeFileSync(stderrPath, res.stderr ?? "");
-  if (res.status === 0) {
-    return { id: ac.id, status: "pass", stdoutPath, stderrPath, timeout: false };
+  const exitCode = res.status ?? -1;
+
+  let report: EvidenceReport;
+  try {
+    report = adapter.parse(stdoutPath, exitCode, ac);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    // vitest 型的 parse 失败多为「command 非 vitest 兼容」——按验收文档规格锁定 1
+    // 附恢复方向；e2e 型的适配器错误自带恢复动作文案，原样透传
+    const hint =
+      ac.type === "unit" || ac.type === "integration"
+        ? "。unit/integration 验收的 command 须为 vitest 兼容命令（如 npx vitest run --reporter=json，产出 vitest JSON reporter 产物）"
+        : "";
+    const reason = `验收 ${ac.id} 产物解析失败：${detail}${hint}`;
+    appendFile(stderrPath, `${reason}\n`);
+    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: exitCode, parseError: true };
   }
-  const signal = res.signal === null ? "" : ` signal ${res.signal}`;
+
+  // 适配器折叠出的 EvidenceReport 落盘留审计（nameMatch 的输入可重放）
+  writeFileSync(
+    join(evidenceBaseDir, `${stem}.report.json`),
+    `${JSON.stringify(report, null, REPORT_INDENT)}\n`,
+  );
+
+  const verdict = nameMatch(ac, report);
+  if (!verdict.pass) {
+    appendFile(stderrPath, `${verdict.reason}\n`);
+  }
   return {
     id: ac.id,
-    status: "fail",
+    status: verdict.pass ? "pass" : "fail",
     stdoutPath,
     stderrPath,
     timeout: false,
-    reason: `exit ${res.status ?? "null"}${signal === "" ? "" : `（${signal.trim()}）`}`,
+    reason: verdict.pass ? undefined : verdict.reason,
+    commandExit: exitCode,
+    parseError: false,
   };
+}
+
+/** 追加写（不覆盖适配器/子进程已落盘的 stderr 事实，判定原因接在其后） */
+function appendFile(path: string, text: string): void {
+  const prev = existingContent(path);
+  writeFileSync(path, `${prev}${text}`);
+}
+
+function existingContent(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    // parse 失败路径下 stderr 产物可能尚未写过（translate 抛错分支已写过）——空底
+    return "";
+  }
 }
 
 /**

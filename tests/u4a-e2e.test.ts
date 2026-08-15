@@ -10,6 +10,12 @@
  *   3. P2 同 commit 两次 verify → report.json 的 cases 与 exitCode 逐字段全等
  *      （runId/rawPath 目录不同不作比对）。
  *
+ * u4b 判定升级适配（验收文档 E2E 条款允许，理由逐条见各 spec 版本注释）：
+ *   - e2e 用例的「过/挂」改由标记行 ^A<id> (PASS|FAIL) 表达（exit code 不再是判定输入）；
+ *   - unit 型用例 v1 用非 vitest 兼容命令覆盖 parse 抛错路径（原「缺 command」
+ *     语义已迁移给 e2e-sh translate 防线），v2/v3 用本仓库 vitest bin 绝对路径
+ *     跑真实测试（干净 checkout 无 node_modules，npx 解析不确定）。
+ *
  * P7（checkout 干净性）在 verify 结束时已清理临时目录，按验收文档 fallback 转为
  * tests/u4a-verify.test.ts 验收1 的 porcelain 断言，本文件不重复。
  *
@@ -28,6 +34,9 @@ import { EventLedger } from "../src/store/events-log.js";
 import { evidenceDir, ledgerPath } from "../src/store/project.js";
 
 const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+/** 干净 checkout 无 node_modules：vitest 以绝对路径启动（u4b 探针已验证可跑） */
+const VITEST_BIN = join(REPO_ROOT, "node_modules", ".bin", "vitest");
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u4a-e2e-"));
 const cwHome = join(tmpRoot, "cw-home");
 // 子进程 process.cwd() 返回物理路径（macOS 上 /var 是 /private/var 的符号链接），
@@ -84,27 +93,49 @@ function reportOf(runId: string): ReportFact {
   return JSON.parse(readFileSync(join(evidenceDir(cwHome, repoDir, UNIT, runId), "report.json"), "utf-8")) as ReportFact;
 }
 
-/** 写 spec.json（v1 含真挂用例与缺 command 用例；v2 全过；v3 含 sleep 2 超时用例）并提交为一个新 commit */
+/** 写 spec.json（u4b 适配：v1 含真挂与 vitest 不兼容用例；v2 全过；v3 含 sleep 2 超时用例）并提交为一个新 commit */
 function writeSpec(version: 1 | 2 | 3): string {
   const acceptance =
     version === 1
       ? [
-          { id: "A1", core: true, title: "核心链路可用", type: "e2e-real", command: 'node -e "process.exit(0)"' },
-          { id: "A2", core: true, title: "核心链路挂掉时的表现", type: "e2e-real", command: 'node -e "process.exit(1)"' },
+          // 标记行 PASS = 过；FAIL + exit 1 = 真挂（u4b：exit code 不再是判定输入）
+          { id: "A1", core: true, title: "核心链路可用", type: "e2e-real", command: `node -e "console.log('A1 PASS')"` },
+          {
+            id: "A2",
+            core: true,
+            title: "核心链路挂掉时的表现",
+            type: "e2e-real",
+            command: `node -e "console.log('A2 FAIL'); process.exit(1)"`,
+          },
           { id: "M1", core: false, title: "人工抽检记录", type: "manual" },
-          { id: "A3", core: false, title: "单元行为", type: "unit" },
+          // 原「unit 缺 command」在 u4b 后走 vitest 默认全量命令（不可控），改用
+          // 非 vitest 兼容命令锁定「parse 抛错 → fail + 兼容命令提示」路径
+          { id: "A3", core: false, title: "单元行为", type: "unit", command: "echo no-json" },
         ]
       : version === 2
         ? [
-            { id: "A1", core: true, title: "核心链路可用", type: "e2e-real", command: 'node -e "process.exit(0)"' },
-            { id: "A2", core: true, title: "核心链路挂掉时的表现", type: "e2e-real", command: 'node -e "process.exit(0)"' },
+            { id: "A1", core: true, title: "核心链路可用", type: "e2e-real", command: `node -e "console.log('A1 PASS')"` },
+            { id: "A2", core: true, title: "核心链路挂掉时的表现", type: "e2e-real", command: `node -e "console.log('A2 PASS')"` },
             { id: "M1", core: false, title: "人工抽检记录", type: "manual" },
-            { id: "A3", core: false, title: "单元行为", type: "unit", command: 'node -e "process.exit(0)"' },
+            // unit 型要过新判定：command 产出 vitest JSON 且测试名含 A3（fixture 随首 commit 提交）
+            { id: "A3", core: false, title: "单元行为", type: "unit", command: `"${VITEST_BIN}" run` },
           ]
         : [
             // v3：sleep 2 在默认 10min 下会 pass、在 --timeout-ms 500 下必超时——锁死 CLI flag 真实生效
             { id: "A1", core: true, title: "超时回收链路", type: "e2e-real", command: "sleep 2" },
-            { id: "A3", core: false, title: "单元行为", type: "unit", command: 'node -e "process.exit(0)"' },
+            // u4b 适配：--timeout-ms 是整轮 verify 的全局超时，真 vitest 启动（秒级）
+            // 在 500ms 下必被 kill；改用静态 vitest JSON fixture 命令锁「pass 的条目
+            // 进 acceptanceIds」语义。JSON 值内嵌 "--reporter=json" 字符串——translate
+            // 的 includes 检查判「已含 flag」不追加（追加会污染 echo 输出破坏 JSON）
+            {
+              id: "A3",
+              core: false,
+              title: "单元行为",
+              type: "unit",
+              command:
+                'echo \'{"note":"--reporter=json","numTotalTests":1,' +
+                '"testResults":[{"assertionResults":[{"fullName":"A3 单元行为","status":"passed"}]}]}\'',
+            },
           ];
   writeFileSync(join(repoDir, "spec.json"), JSON.stringify({ acceptance, contracts: [], split: [] }));
   gitRun(["add", "-A"]);
@@ -113,11 +144,24 @@ function writeSpec(version: 1 | 2 | 3): string {
 }
 
 describe("E2E real：verify 全链（create → spec → build → review → verify → 修好 → verified → P2）", () => {
-  it("第一轮：含挂用例与缺 command 用例 → verify exit 1，VerifyRan(fail) 的 acceptanceIds 含 pass+manual、不含 fail", () => {
+  it("第一轮：含挂用例与 vitest 不兼容用例 → verify exit 1，VerifyRan(fail) 的 acceptanceIds 含 pass+manual、不含 fail", () => {
     gitRun(["init"]);
     gitRun(["config", "user.email", "cw-e2e@example.com"]);
     gitRun(["config", "user.name", "cw-e2e"]);
+    // 首个 commit：任务书 + unit 型用例 vitest 运行所需的最小项目（测试名含 A3，
+    // 供 v2/v3 的 A3 判定 pass；无 node_modules，vitest 从本仓库绝对路径启动）
     writeFileSync(join(repoDir, "brief.md"), "# 任务书\n");
+    writeFileSync(join(repoDir, "package.json"), '{ "name": "fixture", "private": true, "type": "module" }\n');
+    mkdirSync(join(repoDir, "tests"), { recursive: true });
+    writeFileSync(
+      join(repoDir, "tests", "acceptances.test.ts"),
+      'import { describe, expect, it } from "vitest";\n\n' +
+        'describe("验收", () => {\n' +
+        '  it("A3 单元行为", () => {\n    expect(1 + 1).toBe(2);\n  });\n' +
+        "});\n",
+    );
+    gitRun(["add", "-A"]);
+    gitRun(["commit", "-m", "baseline"]);
     const head1 = writeSpec(1);
     expect(head1).toMatch(/^[0-9a-f]{40}$/);
 
@@ -138,17 +182,17 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
     expect(verify.stdout).toContain("M1 manual");
     expect(verify.stdout).toContain("A3 fail");
     expect(verify.stdout).toContain("result=fail");
-    // stderr 列失败 id 与原因（A2 真挂 / A3 缺 command）
+    // stderr 列失败 id 与原因（A2 标记 FAIL / A3 非 vitest 兼容命令）
     expect(verify.stderr).toContain("A2");
     expect(verify.stderr).toContain("A3");
-    expect(verify.stderr).toContain("缺 command");
+    expect(verify.stderr).toContain("vitest 兼容命令");
 
     const runs = verifyRans();
     expect(runs).toHaveLength(1);
     expect(runs[0]?.result).toBe("fail");
     expect(runs[0]?.acceptanceIds).toEqual(["A1", "M1"]);
 
-    // 产物落盘：report.json + 失败条的 stderr 产物
+    // 产物落盘：report.json + 失败条的 stderr 产物（A3 的 parse 失败原因与恢复提示）
     const report = reportOf(runs[0]?.runId ?? "");
     expect(report.exitCode).toBe(1);
     expect(report.cases.map((c) => [c.id, c.status])).toEqual([
@@ -157,7 +201,7 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
       ["A3", "fail"],
     ]);
     expect(readFileSync(join(evidenceDir(cwHome, repoDir, UNIT, runs[0]?.runId ?? ""), "A3.stderr"), "utf-8")).toContain(
-      "验收 A3 缺 command",
+      "vitest 兼容命令",
     );
   });
 

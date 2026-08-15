@@ -107,25 +107,32 @@ describe("验收3：runAcceptances 三态判定与产物落盘", () => {
   it("真过 / 真挂 / sleep 超时（500ms 上限）→ pass/fail/timeout 判定正确、产物存在且非空", () => {
     const checkoutDir = mkdtempSync(join(tmpRoot, "co-3"));
     const evidenceBase = mkdtempSync(join(tmpRoot, "ev-3"));
+    // u4b 判定升级适配：exit code 不再是判定输入，改用 e2e-sh 标记行语义构造三态
+    // （A3 用 e2e-real 使 translate 原样返回 sleep 2——unit 型会被追加
+    // --reporter=json 参数导致 sleep 立即 usage error 而非超时）
     const outcome = runAcceptances(
       checkoutDir,
-      [ac("A1", "echo pass-out"), ac("A2", "echo boom >&2; exit 3"), ac("A3", "sleep 2")],
+      [
+        ac("A1", 'echo "A1 PASS"', "e2e-real"),
+        ac("A2", 'echo "A2 FAIL"; echo boom >&2; exit 3', "e2e-real"),
+        ac("A3", "sleep 2", "e2e-real"),
+      ],
       evidenceBase,
       500,
     );
 
-    // 判定：pass / fail(exit 3) / fail(timeout)
+    // 判定：pass / fail(标记 FAIL=执行失败) / fail(timeout)
     const [r1, r2, r3] = outcome.results;
     expect(r1?.status).toBe("pass");
     expect(r1?.timeout).toBe(false);
     expect(r2?.status).toBe("fail");
-    expect(r2?.reason).toContain("exit 3");
+    expect(r2?.reason).toContain("执行失败");
     expect(r3?.status).toBe("fail");
     expect(r3?.timeout).toBe(true);
     expect(r3?.reason).toContain("超时");
 
     // 产物：stdout 非空 / 挂的 stderr 有内容 / 超时有 .timeout 标记
-    expect(readFileSync(r1?.stdoutPath ?? "", "utf-8")).toContain("pass-out");
+    expect(readFileSync(r1?.stdoutPath ?? "", "utf-8")).toContain("A1 PASS");
     expect(readFileSync(r2?.stderrPath ?? "", "utf-8")).toContain("boom");
     const timeoutMarker = join(evidenceBase, "A3.timeout");
     expect(existsSync(timeoutMarker)).toBe(true);
@@ -146,16 +153,17 @@ describe("验收3：runAcceptances 三态判定与产物落盘", () => {
   });
 });
 
-describe("验收4：非 manual 无 command → 该条 fail", () => {
-  it("unit 用例缺 command → fail + 错误信息含「验收 X9 缺 command」", () => {
+describe("验收4：e2e 用例缺 command → 该条 fail（u4b 适配：unit 缺 command 走 vitest 默认全量命令）", () => {
+  it("e2e-real 用例缺 command → fail + 错误信息含「command 缺失」（e2e-sh translate 拒绝代拟）", () => {
     const checkoutDir = mkdtempSync(join(tmpRoot, "co-4"));
     const evidenceBase = mkdtempSync(join(tmpRoot, "ev-4"));
-    const outcome = runAcceptances(checkoutDir, [ac("X9", undefined)], evidenceBase, 1000);
+    const outcome = runAcceptances(checkoutDir, [ac("X9", undefined, "e2e-real")], evidenceBase, 1000);
 
     expect(outcome.results).toHaveLength(1);
     expect(outcome.results[0]?.status).toBe("fail");
-    expect(outcome.results[0]?.reason).toContain("验收 X9 缺 command");
-    expect(readFileSync(outcome.results[0]?.stderrPath ?? "", "utf-8")).toContain("验收 X9 缺 command");
+    expect(outcome.results[0]?.reason).toContain("X9");
+    expect(outcome.results[0]?.reason).toContain("command 缺失");
+    expect(readFileSync(outcome.results[0]?.stderrPath ?? "", "utf-8")).toContain("command 缺失");
   });
 });
 
@@ -252,7 +260,8 @@ describe("验收5：cw verify exit 语义（dispatch 层）", () => {
     makeVerifyFixture({
       withSpec: true,
       withEvidence: true,
-      acceptance: [{ ...ac("A1", 'node -e "process.exit(0)"', "e2e-real"), core: true }],
+      // u4b 适配：exit 0 无标记行会触发 e2e-sh 无区分力防线（fail），改输出标记行
+      acceptance: [{ ...ac("A1", `node -e "console.log('A1 PASS')"`, "e2e-real"), core: true }],
     });
 
     const res = await run(["verify", "--unit", "u-1"]);
@@ -277,8 +286,9 @@ describe("验收5：cw verify exit 语义（dispatch 层）", () => {
       withSpec: true,
       withEvidence: true,
       acceptance: [
-        { ...ac("A1", 'node -e "process.exit(0)"', "e2e-real"), core: true },
-        { ...ac("A2", 'node -e "process.exit(7)"', "e2e-real"), core: true },
+        { ...ac("A1", `node -e "console.log('A1 PASS')"`, "e2e-real"), core: true },
+        // u4b 适配：输出 A2 FAIL 标记（保留 exit 7 真挂事实），reason 语义为「执行失败」
+        { ...ac("A2", `node -e "console.log('A2 FAIL'); process.exit(7)"`, "e2e-real"), core: true },
         ac("M1", undefined, "manual"),
       ],
     });
@@ -286,7 +296,7 @@ describe("验收5：cw verify exit 语义（dispatch 层）", () => {
     const res = await run(["verify", "--unit", "u-1"]);
     expect(res.code).toBe(1);
     expect(res.stderr).toContain("A2");
-    expect(res.stderr).toContain("exit 7");
+    expect(res.stderr).toContain("执行失败");
     expect(res.stdout).toContain("M1 manual");
 
     const runs = verifyRans();
