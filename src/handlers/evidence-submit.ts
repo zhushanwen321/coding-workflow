@@ -3,7 +3,8 @@
  *
  * spec 形态：`--kind spec --unit <id> --file <spec.json>`
  *   校验链 unit 存在 → typebox schema → checkSpecRules（u3）→ 叶子 unit 不得声明
- *   split（fx-1 R1 handler 级防线）→ 全过才 append
+ *   split（fx-1 R1 handler 级防线）→ split 条目须已建且 parent 指向本 unit
+ *   （fx-3 R5.1：先建子后提 spec）→ 全过才 append
  *   SpecSubmitted{specHash = sha256(spec.json 原始字节), acceptance/contracts/split 原样}。
  *   gate 不过不入账（账本只记被接受的进展），stderr 逐条打印 u3 failures 原文。
  *
@@ -30,6 +31,7 @@ import {
   stringArrayArg,
   succeed,
   tryAppend,
+  type UnitCreatedFact,
   unitCreatedFacts,
 } from "./common.js";
 import { type SpecFile, validateSpecFile } from "./spec-schema.js";
@@ -63,7 +65,7 @@ export async function handleEvidenceSubmit(ctx: CommandContext): Promise<number>
     );
   }
   return kind === "spec"
-    ? submitSpec(ctx, ledger, unitId, createdFacts.get(unitId)?.parentId ?? null)
+    ? submitSpec(ctx, ledger, unitId, createdFacts.get(unitId)?.parentId ?? null, createdFacts)
     : submitBuild(ctx, ledger, unitId);
 }
 
@@ -72,6 +74,7 @@ function submitSpec(
   ledger: ReturnType<typeof ledgerForCwd>,
   unitId: string,
   parentId: string | null,
+  createdFacts: Map<string, UnitCreatedFact>,
 ): number {
   const file = stringArg(ctx.argv, "file");
   if (file === undefined) {
@@ -137,6 +140,42 @@ function submitSpec(
         `${spec.split.map((entry) => entry.unitId).join(", ")}）。` +
         "恢复动作：拆分子节点是根 unit spec 的职责，叶子 unit 的 spec.split 应为空数组；修正后重新提交。",
     );
+  }
+
+  // fx-3 R5.1 handler 级防线：split 声明的子 unit 必须①已存在于账本②其 parent
+  // 指向本 unit。工作流语义变更（designer 先建子、后提 spec）——文字约定
+  // （brief 里的「先 create 后提交」警告）对 print 模式 agent 不充分（终验第 3 次
+  // 现场：designer 把建子当决策点停下询问），升级为机器 gate 让错误在提交时点
+  // 最早暴露，修复窗口仍在同一 spawn 内（错误文案给出建子命令模板，建完重提）
+  if (spec.split.length > 0) {
+    const missing: string[] = [];
+    const mismatched: string[] = [];
+    for (const entry of spec.split) {
+      const fact = createdFacts.get(entry.unitId);
+      if (fact === undefined) {
+        missing.push(entry.unitId);
+      } else if (fact.parentId !== unitId) {
+        mismatched.push(entry.unitId);
+      }
+    }
+    if (missing.length > 0 || mismatched.length > 0) {
+      const details: string[] = [];
+      if (missing.length > 0) {
+        details.push(`  - 未创建（账本内无其 UnitCreated 事件）：${missing.join("、")}`);
+      }
+      if (mismatched.length > 0) {
+        details.push(
+          `  - parent 错配（其 parent 不是 "${unitId}"，不得引用别家子）：${mismatched.join("、")}`,
+        );
+      }
+      return fail(
+        [
+          `cw evidence submit --kind spec: spec.split 声明的子 unit 校验失败（unit "${unitId}"），不入账：`,
+          ...details,
+          `恢复动作：先 cw create --id <slug> --brief <文件> --parent ${unitId} 创建全部子 unit，再提交 spec。`,
+        ].join("\n"),
+      );
+    }
   }
 
   const result = tryAppend(ledger, "SpecSubmitted", payload);

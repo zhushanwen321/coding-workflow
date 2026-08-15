@@ -177,6 +177,11 @@ describe("fx-1 R1.2 handler 级：叶子 unit（深度上限 2）不得声明 sp
 
   it("根 unit（parentId 空）同形态 split 放行、叶子 split 空放行（既有行为不变）", async () => {
     await createRootAndLeaf();
+    // fx-3 R5.1 断言适配：split 条目 sub-unit 须先创建且 parent 指向 root
+    //（先建子后提 spec 的语义收紧）——放行语义本身不变：根 unit 不被叶子防线误伤
+    const brief = join(cwd, "brief.md");
+    const sub = await run(["create", "--id", "sub-unit", "--parent", "root", "--brief", brief]);
+    expect(sub.code, `前置 create sub-unit 失败：${sub.stderr}`).toBe(0);
     const specPath = writeSpecFile("spec-root-split.json", [{ unitId: "sub-unit", dependsOn: [] }]);
 
     const root = await run(["evidence", "submit", "--kind", "spec", "--unit", "root", "--file", specPath]);

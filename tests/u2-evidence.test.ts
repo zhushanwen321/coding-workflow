@@ -89,11 +89,15 @@ function validSpecJson(): string {
   });
 }
 
-/** 先经 dispatch 创建 unit（真实前置，非直写账本） */
-async function createUnit(unitId: string): Promise<void> {
+/** 先经 dispatch 创建 unit（真实前置，非直写账本）；fx-3 R5.1 后 split 子须真实预建 */
+async function createUnit(unitId: string, parent?: string): Promise<void> {
   const brief = join(cwd, "brief.md");
   writeFileSync(brief, "# 任务书\n");
-  const res = await run(["create", "--id", unitId, "--brief", brief]);
+  const args = ["create", "--id", unitId, "--brief", brief];
+  if (parent !== undefined) {
+    args.push("--parent", parent);
+  }
+  const res = await run(args);
   expect(res.code, `前置 create ${unitId} 应成功（stderr: ${res.stderr}）`).toBe(0);
 }
 
@@ -126,6 +130,9 @@ function initRepo(name: string): { repoDir: string; head: string } {
 describe("验收2：evidence submit --kind spec（dispatch 层）", () => {
   it("合法 spec → SpecSubmitted 入账，specHash 等于 spec.json 原始字节的 sha256，acceptance/contracts/split 原样", async () => {
     await createUnit("u-1");
+    // fx-3 R5.1 断言适配：spec.split 声明 u-1a，语义收紧后须先建子（parent 指向
+    // u-1）再提交——原 fixture 未预建，会被新校验拒绝
+    await createUnit("u-1a", "u-1");
     const specPath = join(cwd, "spec.json");
     writeFileSync(specPath, validSpecJson());
 
@@ -134,10 +141,11 @@ describe("验收2：evidence submit --kind spec（dispatch 层）", () => {
     expect(res.stdout).toContain("u-1");
 
     const events = ledger.readAll();
-    expect(events).toHaveLength(2);
-    expect(events[1]?.type).toBe("SpecSubmitted");
+    // fx-3 R5.1 适配后：u-1 与 u-1a 两条 UnitCreated + SpecSubmitted
+    expect(events).toHaveLength(3);
+    expect(events[2]?.type).toBe("SpecSubmitted");
     const expectedHash = createHash("sha256").update(readFileSync(specPath)).digest("hex");
-    expect(events[1]?.payload).toEqual({
+    expect(events[2]?.payload).toEqual({
       unitId: "u-1",
       specHash: expectedHash,
       acceptance: [

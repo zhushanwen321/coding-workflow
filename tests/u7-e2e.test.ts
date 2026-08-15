@@ -222,6 +222,25 @@ function performHumanStep(
       unitId === rootId
         ? [{ unitId: "impl", briefRef: "brief-impl.md", dependsOn: [] }]
         : [];
+    if (unitId === rootId && split.length > 0) {
+      // fx-3 R5.1 断言适配：先建子后提 spec（工作流语义变更）——原时序 root spec
+      // 先提交、create 步骤后建子，语义收紧后提交会被 split 子存在性校验拒绝
+      for (const entry of split) {
+        writeFileSync(join(repoDir, entry.briefRef ?? "brief-impl.md"), "# impl 任务书\n");
+        const res = runCli(repoDir, [
+          "create",
+          "--id",
+          entry.unitId,
+          "--brief",
+          entry.briefRef ?? "brief-impl.md",
+          "--parent",
+          rootId,
+        ]);
+        if (res.code !== 0) {
+          return res;
+        }
+      }
+    }
     writeFileSync(join(repoDir, `spec-${unitId}.json`), specJson(split));
     const submit = runCli(repoDir, [
       "evidence",

@@ -170,7 +170,7 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
    * 本回归的价值收敛为「human 后端经新 loop 全链收敛 exit 0」，runner 对账本推进
    * 的消化由轮询（--poll-ms 300）保证，无需指令等待同步。
    */
-  maybeIt("全链收敛：spec → create → 子 spec → build/verify → exec-review → root closed，runner exit 0", async () => {
+  maybeIt("全链收敛：建子 → root spec → 子 spec → build/verify → exec-review → root closed，runner exit 0", async () => {
     const { repoDir, outPath, errPath } = makeScenario("full-chain");
     initRepo(repoDir);
     writeFileSync(join(repoDir, "brief.md"), "# root 任务书\n");
@@ -178,14 +178,16 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
 
     const runner = startRunner(repoDir, "demo", outPath, errPath);
 
-    // 1) root 的 spec（split 声明子 unit impl）+ spec-review
+    // 1) 先建子 unit + root 的 spec（split 声明子 unit impl）+ spec-review
+    //    （fx-3 R5.1 断言适配：先建子后提 spec——工作流语义变更，原时序
+    //    root spec 先提交会被 split 子存在性校验拒绝）
+    writeFileSync(join(repoDir, "brief-impl.md"), "# impl 任务书\n");
+    expect(runCli(repoDir, ["create", "--id", "impl", "--brief", "brief-impl.md", "--parent", "demo"]).code).toBe(0);
     writeFileSync(join(repoDir, "spec-demo.json"), specJson([{ unitId: "impl", briefRef: "brief-impl.md", dependsOn: [] }]));
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "demo", "--file", "spec-demo.json"]).code).toBe(0);
     expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
 
-    // 2) create 子 unit + 子 unit 的 spec
-    writeFileSync(join(repoDir, "brief-impl.md"), "# impl 任务书\n");
-    expect(runCli(repoDir, ["create", "--id", "impl", "--brief", "brief-impl.md", "--parent", "demo"]).code).toBe(0);
+    // 2) 子 unit 的 spec
     writeFileSync(join(repoDir, "spec-impl.json"), specJson());
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "impl", "--file", "spec-impl.json"]).code).toBe(0);
     expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);

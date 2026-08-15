@@ -14,10 +14,14 @@
  * builder 重派同待遇）。
  *
  * 派发对象规则（每轮对投影重算，子树 BFS 序）：
- *   - created 且无 spec      → designer（一次完成 spec 提交 + spec-review）
+ *   - created 且无 spec      → designer（一次完成建子（root 无子时，fx-3 R5.2
+ *     任务书第 0 步）+ spec 提交 + spec-review）
  *   - created 且有 spec 且最后一条 SpecSubmitted 之后无 spec-review pass → designer
  *     （fx-1 R2 第四分支：重提 spec / 提交后未审 → 派 designer 补审——不依赖 agent
  *     记性去补 review 事件，消除「created + specs>0」派发真空导致的死区）
+ *   - spec-frozen 内部节点（split 非空且不含自身）且 split 声明的子有未 created
+ *     者 → designer（fx-3 R5.3 派发兜底：补建子任务书——处理 R5.1 gate 生效前
+ *     的历史账本/旁路数据；先于集成等待分支拦截，子不齐不集成）
  *   - spec-frozen 叶子（split 空）且（无子 ∨ 子全部 closed）→ builder agent
  *     （rootLast：子的产出是 root 验收的输入，root 的 build 等子树收尾）
  *   - spec-frozen 内部节点（split 非空且不含自身）且子全部 verified → 不派 agent，
@@ -35,7 +39,8 @@
  * exit 1。
  *
  * M1 简化（验收文档锁定）：workdir = cwd 本身（无独立 worktree，M2 集成时升级）；
- * 循环不处理 split 子 unit 的创建（fixture / designer 侧预置，create 派发属 M2）。
+ * 循环不亲自创建 split 子 unit（fx-3 后子创建职责归 designer：首派任务书第 0 步
+ * 指令化建子，spec gate 强制先建子后提 spec；循环仅在子未建时派 designer 兜底）。
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -196,6 +201,19 @@ function splitSelfReferences(unit: SequencedUnitProjection): boolean {
 }
 
 /**
+ * split 声明但尚未 created 的子 unitId 清单（fx-3 R5.3 派发兜底的判定输入）。
+ * 与 splitChildrenAllVerified 同口径以 split 为权威集合（非账本 parentId）。
+ */
+function splitChildrenNotCreated(
+  projection: SequencedProjection,
+  unit: SequencedUnitProjection,
+): string[] {
+  return splitOf(unit)
+    .filter((entry) => !projection.units.has(entry.unitId))
+    .map((entry) => entry.unitId);
+}
+
+/**
  * 最后一条 SpecSubmitted 之后是否存在 spec-review pass verdict。与 deriveStatus
  * 的「之后存在」语义同口径（fold.ts 禁改，此处按 SequencedUnitProjection 的顺序
  * 锚点重算）——fx-1 R2 第四分支的判定输入：重提 spec = 打回重审，旧 pass 不计数。
@@ -275,8 +293,15 @@ function computeDispatchTargets(
         );
       }
       if (!selfReferencing && splitOf(unit).length > 0) {
-        // 内部节点：子全 verified 即集成（u8 派发时机升级，不等子 closed）
-        if (splitChildrenAllVerified(projection, unit)) {
+        const missingChildren = splitChildrenNotCreated(projection, unit);
+        if (missingChildren.length > 0) {
+          // fx-3 R5.3 派发兜底出口：spec 声明了子但未创建（历史账本/旁路写入
+          // 绕过 fx-3 R5.1 gate 的数据）→ 派 designer 补建子。必须在集成等待
+          // 分支之前拦截——子不齐不集成，且 splitChildrenAllVerified 对未创建
+          // 子永 false = 派发真空（终验第 3 次空转 45 分钟的根因）
+          role = "designer";
+        } else if (splitChildrenAllVerified(projection, unit)) {
+          // 内部节点：子全 verified 即集成（u8 派发时机升级，不等子 closed）
           if ((consecutiveFails.get(unit.unitId) ?? 0) >= INTEGRATION_MAX_CONSECUTIVE_FAILS) {
             // fx-2 R4a：集成连续 fail 达上限——不再自动重派（fail 审计事件每轮
             // 喂活 idle 判定 = R4b 无限循环），改派 designer 处置契约漂移（brief
@@ -441,16 +466,7 @@ function sha256OfFile(path: string): string {
 
 // ---- brief 生成（循环六步之 2：unit 上下文 + role 任务书模板，file-based 传递） ----
 
-const ROLE_TASKS: Record<AgentRole, (unitId: string) => string> = {
-  designer: (unitId) => [
-    "## 你的任务（designer）",
-    `1. 撰写该 unit 的 spec.json。验收五规则（src/gates/spec-rules.ts）：验收非空；`,
-    "   核心 case 的 type 须为 e2e-real / e2e-mock 且带可执行 command；含 mock 须附",
-    "   mock 保真度说明；至少一条 unit 级用例。",
-    `2. 提交 spec：cw evidence submit --kind spec --unit ${unitId} --file spec.json`,
-    `3. 提交 spec 审查：cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass`,
-    "完成标志：unit 进入 spec-frozen（cw status 可查）。",
-  ].join("\n"),
+const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => string> = {
   builder: (unitId) => [
     "## 你的任务（builder）",
     "1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。",
@@ -465,6 +481,54 @@ const ROLE_TASKS: Record<AgentRole, (unitId: string) => string> = {
     "完成标志：verdict 为 pass 时 unit 进入 closed。",
   ].join("\n"),
 };
+
+/**
+ * designer 首派任务书（created 且 specs===0）。fx-3 R5.2：root 无子时追加第 0 步
+ * 建子指令——建子职责从 brief 实施建议的「建议」措辞（print 模式 agent 会停下
+ * 询问，终验第 3 次现场）升级为系统任务书的指令化步骤，与 fx-3 R5.1 gate
+ * （先建子后提 spec）口径对齐。条件收窄到 root 无子：已有子的 root 重派 /
+ * 叶子首派不重复教建子。
+ */
+function designerFirstTasks(unit: SequencedUnitProjection, projection: SequencedProjection): string {
+  const isRootWithoutChildren =
+    unit.parentId === null &&
+    ![...projection.units.values()].some((candidate) => candidate.parentId === unit.unitId);
+  const stepZero = isRootWithoutChildren
+    ? [
+        `0. 本 unit 是根节点且尚无子 unit——若任务书/brief 含拆分建议：先为每个子执行`,
+        `   cw create --id <slug> --brief <子brief文件> --parent ${unit.unitId}（子 brief 可为占位文件），`,
+        "   再进入第 1 步（spec.split 声明的子必须已创建，否则提交会被拒）。",
+      ]
+    : [];
+  return [
+    "## 你的任务（designer）",
+    ...stepZero,
+    `1. 撰写该 unit 的 spec.json。验收五规则（src/gates/spec-rules.ts）：验收非空；`,
+    "   核心 case 的 type 须为 e2e-real / e2e-mock 且带可执行 command；含 mock 须附",
+    "   mock 保真度说明；至少一条 unit 级用例。",
+    `2. 提交 spec：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
+    `3. 提交 spec 审查：cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass`,
+    "完成标志：unit 进入 spec-frozen（cw status 可查）。",
+  ].join("\n");
+}
+
+/**
+ * fx-3 R5.3 兜底出口的任务书（spec-frozen 且 split 子未建的 designer）：清单式
+ * 建子指令。designer 建完子即完成本任务书退出——子 unit 的 spec 由下轮首派的
+ * designer 撰写，本 unit 的冻结 spec 无需改动。
+ */
+function missingChildrenTasks(unit: SequencedUnitProjection, missing: readonly string[]): string {
+  return [
+    "## 你的任务（designer：补建 split 子 unit）",
+    "",
+    `unit "${unit.unitId}" 的冻结 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missing.length} 个未创建`,
+    "（子不齐则集成永不发生，分解树无法建立）——请先创建缺失子：",
+    ...missing.map((childId) => `  cw create --id ${childId} --brief <文件> --parent ${unit.unitId}`),
+    "",
+    "子 brief 可为占位文件；建完即完成本任务书，无需改动本 unit 的冻结 spec。",
+    `完成标志：cw status 中上述子 unit 均为 created。`,
+  ].join("\n");
+}
 
 /**
  * fx-1 R2 第四分支的任务书（spec 已提交待审时的 designer）：只审不重写——重新
@@ -542,22 +606,33 @@ function integrationDriftTasks(unit: SequencedUnitProjection, cwd: string): stri
   ].join("\n");
 }
 
-function renderBrief(unit: SequencedUnitProjection, role: AgentRole, cwd: string): string {
+function renderBrief(
+  projection: SequencedProjection,
+  unit: SequencedUnitProjection,
+  role: AgentRole,
+  cwd: string,
+): string {
   let briefContent: string;
   try {
     briefContent = readFileSync(unit.briefRef, "utf-8");
   } catch {
     briefContent = `(原始任务书文件不可读：${unit.briefRef})`;
   }
-  // 三类 designer 任务书按派发分支的入口状态区分（口径与 computeDispatchTargets
-  // 同一投影）：spec-frozen = fx-2 R4a 集成上限出口（契约漂移处置）；created 且
-  // specs>0 = fx-1 R2 第四分支（补审）；created 且 specs===0 = 首派（撰写 spec）
+  // 四类 designer 任务书按派发分支的入口状态区分（口径与 computeDispatchTargets
+  // 同一投影）：spec-frozen + split 子未建 = fx-3 R5.3 兜底出口（补建子）；其余
+  // spec-frozen = fx-2 R4a 集成上限出口（契约漂移处置）；created 且 specs>0 =
+  // fx-1 R2 第四分支（补审）；created 且 specs===0 = 首派（撰写 spec，root 无子
+  // 时含 fx-3 R5.2 第 0 步建子指令）
   const roleTasks =
     role === "designer" && unitStatus(unit) === "spec-frozen"
-      ? integrationDriftTasks(unit, cwd)
+      ? splitChildrenNotCreated(projection, unit).length > 0
+        ? missingChildrenTasks(unit, splitChildrenNotCreated(projection, unit))
+        : integrationDriftTasks(unit, cwd)
       : role === "designer" && unit.specs.length > 0
         ? reReviewTasks(unit.unitId)
-        : ROLE_TASKS[role](unit.unitId);
+        : role === "designer"
+          ? designerFirstTasks(unit, projection)
+          : ROLE_TASKS[role](unit.unitId);
   return [
     `# ${role} 任务书：unit "${unit.unitId}"`,
     "",
@@ -584,10 +659,11 @@ function writeBriefFile(
   cwd: string,
   target: DispatchTarget,
   unit: SequencedUnitProjection,
+  projection: SequencedProjection,
 ): string {
   const path = join(cwd, ".cw-spawn", `${target.unitId}.${target.role}.brief.md`);
   mkdirSync(join(cwd, ".cw-spawn"), { recursive: true });
-  writeFileSync(path, renderBrief(unit, target.role, cwd));
+  writeFileSync(path, renderBrief(projection, unit, target.role, cwd));
   return path;
 }
 
@@ -752,13 +828,22 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
         continue; // 不可达（target 来自同一投影）
       }
       if (target.role === "designer" && unitStatus(unit) === "spec-frozen") {
-        // fx-2 R4a 上限出口的可观测性：终验日志里明确「为何不跑集成」
-        emit([
-          `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
-            "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
-        ]);
+        // designer × spec-frozen 两个出口的可观测性（终验日志里明确「为何派 designer」）：
+        // fx-3 R5.3 兜底（split 子未建）优先于 fx-2 R4a 上限（集成连续 fail）判定
+        const missingChildren = splitChildrenNotCreated(projection, unit);
+        if (missingChildren.length > 0) {
+          emit([
+            `[runner] unit "${target.unitId}" 的 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missingChildren.length} 个未创建` +
+              `（${missingChildren.join("、")}）——派 designer 补建子（子不齐不集成）`,
+          ]);
+        } else {
+          emit([
+            `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
+              "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
+          ]);
+        }
       }
-      const briefPath = writeBriefFile(opts.cwd, target, unit);
+      const briefPath = writeBriefFile(opts.cwd, target, unit, projection);
       const handle = await opts.adapter.spawn({
         role: target.role,
         unitId: target.unitId,
