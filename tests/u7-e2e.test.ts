@@ -446,6 +446,9 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
   it("两 builder 工作区间重叠 ≥1 对（[EvidenceSubmitted, VerifyRan] 事件 ts），全链 root closed", async () => {
     const repoDir = makeScenario("parallel-leaves");
     writeFileSync(join(repoDir, "brief.md"), "# feat 任务书\n");
+    // u8 适配：root（split 非空）在两叶 verified 后由循环直跑子树集成——集成会在
+    // HEAD 上干净重跑全部受影响验收，app.js 须真实存在且输出 A1 标记行
+    writeFileSync(join(repoDir, "app.js"), 'console.log("A1 PASS");\n');
     gitRun(repoDir, ["add", "-A"]);
     gitRun(repoDir, ["commit", "-m", "fixture: brief"]);
     const head = gitRun(repoDir, ["rev-parse", "HEAD"]);
@@ -529,13 +532,28 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
     );
     expect(overlapMs, `两 builder 区间应重叠（leaf1:[${leaf1Start},${leaf1End}] leaf2:[${leaf2Start},${leaf2End}]）`).toBeGreaterThan(0);
 
-    // 顺序证据：root 的 build 派发晚于两叶 exec-review（rootLast 收尾语义）
-    const rootBuilderAt = spawned().find((r) => r.role === "builder" && r.unitId === "feat")?.at;
-    const lastLeafReviewerAt = [...spawned()]
-      .filter((r) => r.role === "reviewer" && r.unitId !== "feat")
-      .at(-1)?.at;
-    expect(rootBuilderAt).toBeDefined();
-    expect(lastLeafReviewerAt).toBeDefined();
-    expect(rootBuilderAt ?? 0).toBeGreaterThan(lastLeafReviewerAt ?? 0);
+    // 顺序证据（u8 派发时机升级适配：rootLast 从「子全 closed」升级为「子全
+    // verified」——root 的 build 不再派 agent worker，改由循环直跑子树集成并写
+    // VerifyRan，故改用账本 seq 断言时序）：
+    // a) root 的集成 VerifyRan 晚于两叶 VerifyRan（子证据齐是集成的物理前提——
+    //    本 fixture 两 builder 完成时刻有先后，这是唯一确定的顺序不变量；
+    //    「集成早于子 exec-review（不等 closed）」的确定性断言在 u8-e2e 的
+    //    预置 verified fixture 中覆盖）；
+    // b) root 无 builder spawn（内部节点不派 agent），其 VerifyRan 为集成产物。
+    const allEvents = ledgerForCwd(repoDir).readAll();
+    const seqOf = (unitId: string, type: string): number => {
+      const hit = allEvents.find((ev) => ev.type === type && ev.payload.unitId === unitId);
+      if (hit === undefined) {
+        throw new Error(`账本缺 ${unitId} 的 ${type} 事件（断言前置失败）`);
+      }
+      return hit.seq;
+    };
+    const rootIntegrateSeq = seqOf("feat", "VerifyRan");
+    expect(rootIntegrateSeq).toBeGreaterThan(Math.max(seqOf("leaf1", "VerifyRan"), seqOf("leaf2", "VerifyRan")));
+    const featUnit = loadLedger(repoDir).projection.units.get("feat");
+    const rootVerify = featUnit?.verifyRuns.at(-1);
+    expect(rootVerify?.runId).toMatch(/^integrate-/);
+    expect(rootVerify?.result).toBe("pass");
+    expect(spawned().some((r) => r.unitId === "feat" && r.role === "builder")).toBe(false);
   }, 60_000);
 });

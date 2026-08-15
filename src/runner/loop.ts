@@ -6,14 +6,21 @@
  *
  * 对 M0 human-loop（u5b）的泛化：后端无关——不感知适配器类型（human / pi /
  * 测试专用一视同仁，差异被 AgentSpawn 契约隔离在 types.ts）。循环自身只读账本
- * 投影 + 生成 brief + 派发 + 等待，绝不写任何账本事件；全部状态推进由被派发
- * agent（经适配器起的真实进程）完成——账本即状态，Ctrl-C 中断重跑即续。
+ * 投影 + 生成 brief + 派发 + 等待；全部 agent 阶段的状态推进由被派发 agent（经
+ * 适配器起的真实进程）写账本完成——账本即状态，Ctrl-C 中断重跑即续。唯一例外是
+ * u8 的内部节点集成（canon §3.3 D6「内部节点 build = runner merge 子树」）：集成
+ * 是确定性代码无智能，不派 agent，由本循环直接执行 runIntegrationVerify 并以其
+ * 结果写 root 的 VerifyRan（pass/fail 都入账；fail 留审计，下轮重派重试，与
+ * builder 重派同待遇）。
  *
  * 派发对象规则（每轮对投影重算，子树 BFS 序）：
- *   - created 且无 spec                    → designer（一次完成 spec 提交 + spec-review）
- *   - spec-frozen 且（无子 ∨ 子全部 closed）→ builder（rootLast 语义：子的产出是
- *     root 验收的输入，root 的 build 等子树收尾——与 human-loop rootLast 同源）
- *   - verified 且未 closed                  → reviewer（exec-review）
+ *   - created 且无 spec      → designer（一次完成 spec 提交 + spec-review）
+ *   - spec-frozen 叶子（split 空）且（无子 ∨ 子全部 closed）→ builder agent
+ *     （rootLast：子的产出是 root 验收的输入，root 的 build 等子树收尾）
+ *   - spec-frozen 内部节点（split 非空）且子全部 verified → 不派 agent，直接
+ *     runIntegrationVerify（u8 rootLast 升级：集成的物理前提是子证据齐——verified
+ *     即证据链闭合，不必等 exec-review 收尾 closed）
+ *   - verified 且未 closed   → reviewer（exec-review）
  *   - spec 已提交未过审 → 不重复派 designer（等 spec-review 事件；designer 半途
  *     退出则空转，由 maxIdleMs 兜底 exit 1）
  *
@@ -25,11 +32,20 @@
  * M1 简化（验收文档锁定）：workdir = cwd 本身（无独立 worktree，M2 集成时升级）；
  * 循环不处理 split 子 unit 的创建（fixture / designer 侧预置，create 派发属 M2）。
  */
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SequencedProjection, SequencedUnitProjection } from "../events/types.js";
+import type {
+  Contract,
+  SequencedProjection,
+  SequencedUnitProjection,
+  VerifyRanPayload,
+} from "../events/types.js";
 import { loadLedger, unitStatus } from "../readonly/load.js";
+import { EventLedger } from "../store/events-log.js";
+import { getCwHome, ledgerPath } from "../store/project.js";
+import { runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
   AgentSpawnAdapter,
@@ -45,6 +61,8 @@ export const DEFAULT_LOOP_MAX_IDLE_MS = 1_800_000;
 export const DEFAULT_LOOP_MAX_CONCURRENCY = 3;
 /** 单次 agent spawn 超时（验收文档循环逻辑 3：timeoutMs 固定 30min） */
 const AGENT_SPAWN_TIMEOUT_MS = 1_800_000;
+/** 集成重跑单条验收命令的超时（与 cw verify 的 DEFAULT_TIMEOUT_MS 同口径 10min） */
+const INTEGRATE_ACCEPTANCE_TIMEOUT_MS = 600_000;
 
 export interface RunLoopOptions {
   rootId: string;
@@ -65,6 +83,11 @@ interface InFlightSpawn {
 interface DispatchTarget {
   role: AgentRole;
   unitId: string;
+  /**
+   * u8（canon D6）：内部节点（spec.split 非空）的 builder 不派 agent，由循环直接
+   * 执行 runIntegrationVerify（确定性代码）。不占 in-flight 并发额度（不是 spawn）。
+   */
+  integration: boolean;
 }
 
 /** race 的产出：任一 spawn 退出时携带其 flight 与四态结果；poll 到点为 null */
@@ -116,7 +139,7 @@ function subtreeUnits(
   return units;
 }
 
-/** builder 的 rootLast 等待条件：该 unit 的全部子 unit（按账本 parentId）已 closed */
+/** builder 的 rootLast 等待条件（叶子路径）：该 unit 的全部子 unit（按账本 parentId）已 closed */
 function childrenAllClosed(
   subtree: readonly SequencedUnitProjection[],
   unit: SequencedUnitProjection,
@@ -124,6 +147,31 @@ function childrenAllClosed(
   return subtree.every(
     (candidate) => candidate.parentId !== unit.unitId || unitStatus(candidate) === "closed",
   );
+}
+
+/** 内部节点判定 = 最后一条冻结 spec 的 split 非空（canon D1：层级是数据不是代码） */
+function splitOf(unit: SequencedUnitProjection): SequencedUnitProjection["specs"][number]["split"] {
+  return unit.specs[unit.specs.length - 1]?.split ?? [];
+}
+
+/**
+ * 内部节点的集成等待条件（u8 rootLast 升级）：split 声明的全部子 unit 已 verified
+ * （closed 蕴含 verified，同样放行——证据链已闭合）。子以 split 为权威集合而非
+ * 账本 parentId：split 声明了但子尚未创建时，parentId 集合的「部分子全 verified」
+ * 会放行一次缺子集成（静默漏掉一个子树），split 口径下未创建 = 未 verified = 等待。
+ */
+function splitChildrenAllVerified(
+  projection: SequencedProjection,
+  unit: SequencedUnitProjection,
+): boolean {
+  return splitOf(unit).every((entry) => {
+    const child = projection.units.get(entry.unitId);
+    if (child === undefined) {
+      return false;
+    }
+    const status = unitStatus(child);
+    return status === "verified" || status === "closed";
+  });
 }
 
 /** 派发对象集合（纯函数；规则见模块头）。in-flight 的同 (unitId, role) 不重复派。 */
@@ -137,10 +185,20 @@ function computeDispatchTargets(
   for (const unit of subtree) {
     const status = unitStatus(unit);
     let role: AgentRole | undefined;
+    let integration = false;
     if (status === "created" && unit.specs.length === 0) {
       role = "designer";
-    } else if (status === "spec-frozen" && childrenAllClosed(subtree, unit)) {
-      role = "builder";
+    } else if (status === "spec-frozen") {
+      if (splitOf(unit).length > 0) {
+        // 内部节点：子全 verified 即集成（u8 派发时机升级，不等子 closed）
+        if (splitChildrenAllVerified(projection, unit)) {
+          role = "builder";
+          integration = true;
+        }
+      } else if (childrenAllClosed(subtree, unit)) {
+        // 叶子：现行 rootLast 不变（无子 ∨ 子全部 closed）
+        role = "builder";
+      }
     } else if (status === "verified") {
       role = "reviewer";
     }
@@ -153,9 +211,139 @@ function computeDispatchTargets(
     if (alreadyInFlight) {
       continue;
     }
-    targets.push({ role, unitId: unit.unitId });
+    targets.push({ role, unitId: unit.unitId, integration });
   }
   return targets;
+}
+
+// ---- 内部节点集成（u8 / canon D6：集成 = 内部节点的 verify，确定性代码不派 agent） ----
+
+/** 集成等待的一个子 build 锚点（unitId + 其最后一条 build 证据的 commit） */
+interface IntegrationChild {
+  unitId: string;
+  commit: string;
+}
+
+/**
+ * 集成契约集合：root spec 契约 ∪ 各子 spec 契约（跨节点承诺由 provider 的 spec
+ * 冻结——root 声明集成级契约，子声明自己提供的契约，两者都属「切分时冻结的
+ * 承诺」）。同 id 冲突以 root 为先（root 是集成契约的 owner；冲突本身是分解
+ * 缺陷，M2 不展开，报告里的比对结果会暴露不一致的那份）。
+ */
+function collectIntegrationContracts(
+  root: SequencedUnitProjection,
+  children: readonly SequencedUnitProjection[],
+): Contract[] {
+  const owners = [root, ...children];
+  const seen = new Set<string>();
+  const contracts: Contract[] = [];
+  for (const owner of owners) {
+    for (const contract of owner.specs[owner.specs.length - 1]?.contracts ?? []) {
+      if (seen.has(contract.id)) {
+        continue;
+      }
+      seen.add(contract.id);
+      contracts.push(contract);
+    }
+  }
+  return contracts;
+}
+
+/**
+ * 执行一次内部节点集成并写 root 的 VerifyRan（pass/fail 都入账——与 u4a verify
+ * 「fail 也是打回依据，审计必需」同语义）。失败不抛错：fail VerifyRan 留审计，
+ * unit 停在 spec-frozen，下轮重算自然重派集成（与 builder 重派同待遇）。
+ * 入账失败（锁竞争等）也只出声不炸循环——产物已落盘，下轮重试自愈。
+ */
+async function runIntegrationDispatch(
+  cwd: string,
+  projection: SequencedProjection,
+  unitId: string,
+): Promise<void> {
+  const unit = projection.units.get(unitId);
+  const spec = unit?.specs[unit.specs.length - 1];
+  if (unit === undefined || spec === undefined) {
+    return; // 不可达（target 来自同一投影且已过 spec-frozen 判定）
+  }
+
+  const children: IntegrationChild[] = [];
+  const childUnits: SequencedUnitProjection[] = [];
+  for (const entry of spec.split) {
+    const child = projection.units.get(entry.unitId);
+    const lastEvidence = child?.evidences[child.evidences.length - 1];
+    if (child === undefined || lastEvidence === undefined) {
+      emitErr(
+        `[runner] 集成前置不变式破坏：unit "${entry.unitId}"（"${unitId}" 的 split 子节点）` +
+          "无 build 证据——verified 状态不可能缺失 evidence，账本疑似被外部改动。" +
+          `恢复动作：cw status / cw report --unit "${entry.unitId}" 核对证据链。\n`,
+      );
+      return;
+    }
+    children.push({ unitId: entry.unitId, commit: lastEvidence.commit });
+    childUnits.push(child);
+  }
+
+  emit([
+    `[runner] ${new Date().toISOString()} 集成验证 unit "${unitId}"（内部节点 build = 子树集成，不派 agent）`,
+  ]);
+  const result = await runIntegrationVerify({
+    cwd,
+    rootId: unitId,
+    children,
+    rootAcceptance: spec.acceptance,
+    contracts: collectIntegrationContracts(unit, childUnits),
+    timeoutMs: INTEGRATE_ACCEPTANCE_TIMEOUT_MS,
+  });
+
+  // acceptanceIds：pass = 覆盖的验收 id（子 ∪ root，manual 免机器验证一并入）；
+  // fail = 仅 root manual（整轮集成未通过，机器判定 pass 集记空；逐条结果见
+  // integrate-report.json 与 stderr 失败清单）
+  const childIds = childUnits.flatMap(
+    (child) => child.specs[child.specs.length - 1]?.acceptance.map((ac) => ac.id) ?? [],
+  );
+  const rootIds = spec.acceptance.map((ac) => ac.id);
+  const acceptanceIds = result.ok
+    ? [...new Set([...childIds, ...rootIds])]
+    : spec.acceptance.filter((ac) => ac.type === "manual").map((ac) => ac.id);
+
+  const payload: VerifyRanPayload = {
+    unitId,
+    runId: result.runId,
+    reportHash: sha256OfFile(result.reportPath),
+    result: result.ok ? "pass" : "fail",
+    acceptanceIds,
+  };
+  const ledger = new EventLedger(ledgerPath(getCwHome(), cwd));
+  try {
+    ledger.append("VerifyRan", payload);
+  } catch (e) {
+    emitErr(
+      `[runner] 集成结果入账失败（unit "${unitId}"，产物保存在 ${result.reportPath}）：` +
+        `${e instanceof Error ? e.message : String(e)}。恢复动作：按上方账本错误处理（通常是锁竞争），` +
+        "下轮会重跑集成自愈。\n",
+    );
+    return;
+  }
+
+  if (result.ok) {
+    emit([
+      `[runner] 集成验证 unit "${unitId}" result=pass runId=${result.runId}`,
+      `[runner] report: ${result.reportPath}`,
+    ]);
+    return;
+  }
+  emitErr(
+    [
+      `[runner] 集成验证 unit "${unitId}" 失败（${result.failures.length} 项，已写 fail VerifyRan 留审计，下轮重派重试）：`,
+      ...result.failures.map((f) => `  ${f}`),
+      `[runner] report: ${result.reportPath}`,
+      "",
+    ].join("\n"),
+  );
+}
+
+function sha256OfFile(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 // ---- brief 生成（循环六步之 2：unit 上下文 + role 任务书模板，file-based 传递） ----
@@ -342,14 +530,34 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       return 1;
     }
     if (unitStatus(root) === "closed") {
-      // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
-      killAll(inFlight);
-      emitSummary(projection, opts.rootId);
-      return 0;
+      // u8：内部节点派发时机升级为「子全 verified」后，root 的 exec-review 可能
+      // 先于子的 exec-review 入账（u7 时代 root builder 等子全 closed，不可能）。
+      // 验收文档的 closed 公式 = root verified ∧ root exec-review ∧ 子全 closed，
+      // 而 deriveStatus（禁改的既有语义）不含最后一项——退出条件在这里补齐，
+      // 否则 root 先 closed 会在退出时 kill 未收尾的子 reviewer，子永远停在
+      // verified。u7 各场景两者天然同时成立（rootLast 排序），行为不变。
+      const subtreeAllClosed = subtreeUnits(projection, opts.rootId).every(
+        (unit) => unitStatus(unit) === "closed",
+      );
+      if (subtreeAllClosed) {
+        // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
+        killAll(inFlight);
+        emitSummary(projection, opts.rootId);
+        return 0;
+      }
+      // root closed 但子未收尾：子的 reviewer 仍可派发，等子树收齐再退（无进展
+      // 由 maxIdleMs 兜底，不会死等）
     }
 
-    // 派发（六步之 1-3）：frontier 重算 → brief 落盘 → spawn，同批 ≤ maxConcurrency
+    // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
+    // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
     for (const target of computeDispatchTargets(projection, opts.rootId, inFlight)) {
+      if (target.integration) {
+        // 集成在本轮同步完成（含 VerifyRan 入账）；后续 target 仍按本轮开头投影
+        // 派发，集成引起的状态跃迁由下一轮重算接手
+        await runIntegrationDispatch(opts.cwd, projection, target.unitId);
+        continue;
+      }
       if (inFlight.length >= maxConcurrency) {
         break;
       }

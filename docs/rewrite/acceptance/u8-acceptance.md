@@ -14,7 +14,7 @@
 
 ```ts
 export interface ContractMatchInput {
-  contracts: Contract[];          // root spec 冻结的契约
+  contracts: Contract[];          // root ∪ 各子 spec 冻结的契约集合（跨节点承诺由提供方 spec 冻结；2026-08-16 按 verifier 实证修订，原注释「root spec 冻结」与 E2E 条款矛盾）
   checkoutDir: string;            // 干净 checkout 树根
 }
 export interface ContractMatchResult {
