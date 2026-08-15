@@ -40,8 +40,8 @@
 | Phase 0 | 归档 + 脚手架 + 靶子清空 | done |
 | M0 gate | A1 人肉全流程 + A3 补录攻击 | done |
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | done |
-| 终验 | markdown-reader 全流程无人干预 | failed×3→fixing | — | 第 1 次 R1/R2/R3（产物全合格、分解层死锁）→ fx-1；第 2 次 R4 集成层（fx-1 全生效、两叶首次全 closed）→ fx-2；第 3 次 R5 建子缺位（45.5min 零派发空转、idle 有界退出零人工；fx-2 未触达现场欠账结转）。三次卡点逐次上游化（叶 spec → 集成 → 建子） |
-| fx-3 | 分解结构建立缺位 R5 修复 | building | 待基线 | 终验第 3 次 FAIL：pi designer print 模式把建子当询问点停（「需要继续创建叶子 unit 吗？」），三层缺位（gate 不查 split 子存在/派发无子未建出口/任务书无建子步骤）→ 45.5min 零派发空转（idle 有界退出，零人工）。工作流语义变更：先建子后提 spec |
+| 终验 | markdown-reader 全流程无人干预 | PASS | — | 第 4 次（commit 见 final-gate-4-report）：45.1min 自然完成零人工、全树 3 unit closed、7/7 机器验证 manual=0、10 spawn（1 TIMEOUT 重派——超时机制首次真实触发）、靶子全绿（install/build/vitest/渲染/HTTP 200）。fx-2 R4a 首次现场闭环（契约漂移→2 fail 封顶→designer 仲裁→65s 恢复）；fx-3 children-first 现场证据成立。四次卡点：分解层→集成层→建子→无 |
+| fx-3 | 分解结构建立缺位 R5 修复 | committed | 528e9ff | R5.1 gate 收紧（先建子后提 spec，missing/mismatched 分类清单）+ R5.2 designer 第 0 步 + R5.3 兜底出口（拦截在集成等待之前，优先于 R4a）；verifier 22/22 对抗 PASS、越界适配 2 处裁决语义等价。230 全绿 |
 
 ## 事件
 
@@ -71,3 +71,4 @@
 - 2026-08-16 终验第 2 次 FAIL（新死锁 R4 集成层）：fx-1 全部生效（R2 现场 105s 恢复、R3 零试错、R1 未复现；两叶首次全 closed、产物全绿、9 pi 调用）；R4a 契约 async 一字节漂移无恢复出口 + R4b 审计事件喂饱 idle 计数 31 轮死循环。fx-2 基线入 git 派发。
 - 2026-08-16 fx-2 committed（影子红绿 4/4 超时复现死锁现场；222 全绿）→ 靶子重置 → 终验第 3 次执行中。
 - 2026-08-16 终验第 3 次 FAIL（R5 建子缺位，更上游）：pi print 模式把建子当询问点，root spec-frozen 等不存在的子 45.5min 零派发空转（idle 有界退出、零人工——兜底语义现场成立）。fx-3 基线入 git（gate 收紧先建子后提 spec + 任务书第 0 步 + 派发兜底出口）。
+- 2026-08-16 fx-3 committed（verifier 22/22、230 全绿）→ 终验第 4 次 **PASS**：45.1min 零人工自然完成、7/7 机器验证 manual=0、全树 closed、靶子全绿；fx-2 R4a 恢复出口首次现场闭环（65s）；TIMEOUT 重派机制首次真实触发。重写主体完工，进入收尾（验收文档回收核查 / 文档重写 / 版本 2.0.0）。
