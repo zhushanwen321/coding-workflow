@@ -5,7 +5,9 @@
  * ① 验收非空；② core 用例自身 type 必须为 e2e-real/e2e-mock（M0 口径：核心 case
  * 逐条自检，而非集合模糊对应——canon 原文的集合口径无法机器判定，见验收文档）；
  * ③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 须附非空保真说明；
- * ⑤ 至少一条 unit 级用例。多缺口按规则序号升序全部列出，不短路。
+ * ⑤ 至少一条 unit 级用例；⑥ split 不得自引用（fx-1：终验 leaf-renderer 抄 root
+ * 模板未改，split 含自身 → loop 判内部节点 → 等自己 verified → 确定性死锁）。
+ * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
  * 不检查项目内文件（设计期尚不存在）；command 真正跑得通由 verify 期裁决。
@@ -25,8 +27,9 @@ function isE2eType(type: AcceptanceType): boolean {
 }
 
 /**
- * spec 提交时的机器前置五规则。确定性检查（对同一 spec + 同一 PATH 环境结果恒定），
- * 不做任何主观判断——「验收强不强」由独立 reviewer 审，不在本函数职责内。
+ * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加）。确定性检查（对
+ * 同一 spec + 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立
+ * reviewer 审，不在本函数职责内。
  */
 export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   const failures: string[] = [];
@@ -76,6 +79,15 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   // ⑤ 至少一条 unit 级用例
   if (!spec.acceptance.some((ac) => ac.type === "unit")) {
     failures.push("rule⑤: spec 无任何 unit 级用例");
+  }
+
+  // ⑥ split 不得自引用（fx-1 R1 第一道防线：gate 在提交时拒，账本 fold 同注入此
+  // 函数——自引用 spec 无法达到 spec-frozen，loop 的内部节点等待不会发生）
+  if (spec.split.some((entry) => entry.unitId === spec.unitId)) {
+    failures.push(
+      `规则⑥: split 自引用 ${spec.unitId}（拆分子节点不得包含自身；叶子 unit 的 split 应为空）。` +
+        `恢复动作：从 spec.split 移除 "${spec.unitId}" 条目（叶子 unit 置空数组）后重新提交。`,
+    );
   }
 
   return { ok: failures.length === 0, failures };

@@ -15,14 +15,17 @@
  *
  * 派发对象规则（每轮对投影重算，子树 BFS 序）：
  *   - created 且无 spec      → designer（一次完成 spec 提交 + spec-review）
+ *   - created 且有 spec 且最后一条 SpecSubmitted 之后无 spec-review pass → designer
+ *     （fx-1 R2 第四分支：重提 spec / 提交后未审 → 派 designer 补审——不依赖 agent
+ *     记性去补 review 事件，消除「created + specs>0」派发真空导致的死区）
  *   - spec-frozen 叶子（split 空）且（无子 ∨ 子全部 closed）→ builder agent
  *     （rootLast：子的产出是 root 验收的输入，root 的 build 等子树收尾）
- *   - spec-frozen 内部节点（split 非空）且子全部 verified → 不派 agent，直接
- *     runIntegrationVerify（u8 rootLast 升级：集成的物理前提是子证据齐——verified
- *     即证据链闭合，不必等 exec-review 收尾 closed）
+ *   - spec-frozen 内部节点（split 非空且不含自身）且子全部 verified → 不派 agent，
+ *     直接 runIntegrationVerify（u8 rootLast 升级：集成的物理前提是子证据齐——
+ *     verified 即证据链闭合，不必等 exec-review 收尾 closed）。split 含自身
+ *     unitId = 自引用（gate 规则⑥ fx-1 已拒新账本）→ 记 stderr 警告并按叶子语义
+ *     参与派发，绝不作为内部节点等待子树（fx-1 R1 loop 级防御）
  *   - verified 且未 closed   → reviewer（exec-review）
- *   - spec 已提交未过审 → 不重复派 designer（等 spec-review 事件；designer 半途
- *     退出则空转，由 maxIdleMs 兜底 exit 1）
  *
  * 等待期间零锁（canon D4：等待 spawn 期间持锁会饿死子进程的账本写入）。
  * 失败语义只看四态退出（types.ts）：exit≠0 / TIMEOUT / CRASH 可重派（下轮重算
@@ -174,6 +177,29 @@ function splitChildrenAllVerified(
   });
 }
 
+/** split 自引用判定（fx-1 R1）：任一条目 unitId === 自身 unitId */
+function splitSelfReferences(unit: SequencedUnitProjection): boolean {
+  return splitOf(unit).some((entry) => entry.unitId === unit.unitId);
+}
+
+/**
+ * 最后一条 SpecSubmitted 之后是否存在 spec-review pass verdict。与 deriveStatus
+ * 的「之后存在」语义同口径（fold.ts 禁改，此处按 SequencedUnitProjection 的顺序
+ * 锚点重算）——fx-1 R2 第四分支的判定输入：重提 spec = 打回重审，旧 pass 不计数。
+ */
+function hasSpecReviewPassAfterLastSpec(unit: SequencedUnitProjection): boolean {
+  const lastSpecSeq = unit.lastSpecSeq;
+  if (lastSpecSeq === null) {
+    return false;
+  }
+  return unit.verdicts.some(
+    (verdict, i) =>
+      unit.verdictSeqs[i] > lastSpecSeq &&
+      verdict.verdictKind === "spec-review" &&
+      verdict.verdict === "pass",
+  );
+}
+
 /** 派发对象集合（纯函数；规则见模块头）。in-flight 的同 (unitId, role) 不重复派。 */
 function computeDispatchTargets(
   projection: SequencedProjection,
@@ -188,8 +214,26 @@ function computeDispatchTargets(
     let integration = false;
     if (status === "created" && unit.specs.length === 0) {
       role = "designer";
+    } else if (
+      status === "created" &&
+      unit.specs.length > 0 &&
+      !hasSpecReviewPassAfterLastSpec(unit)
+    ) {
+      // fx-1 R2 第四分支：spec 已提交待审（builder 重提 spec / designer 半途退出）
+      // → 派 designer 补审（brief 见 renderBrief 的补审任务书），不再空转
+      role = "designer";
     } else if (status === "spec-frozen") {
-      if (splitOf(unit).length > 0) {
+      // fx-1 R1 loop 级防御：split 含自身 = 自引用（gate 规则⑥已拒新账本，此处为
+      // 纵深防御）→ 不按内部节点处理（等待「自己 verified」永不满足 = 死锁），
+      // 记一行 stderr 警告后按叶子语义参与派发
+      const selfReferencing = splitSelfReferences(unit);
+      if (selfReferencing) {
+        emitErr(
+          `[runner] 警告：unit "${unit.unitId}" 的 spec.split 含自身（自引用——gate 规则⑥应拒，` +
+            "账本可能建于该规则生效前或被旁路写入）——不作为内部节点等待子树，按叶子语义派发。\n",
+        );
+      }
+      if (!selfReferencing && splitOf(unit).length > 0) {
         // 内部节点：子全 verified 即集成（u8 派发时机升级，不等子 closed）
         if (splitChildrenAllVerified(projection, unit)) {
           role = "builder";
@@ -373,6 +417,18 @@ const ROLE_TASKS: Record<AgentRole, (unitId: string) => string> = {
   ].join("\n"),
 };
 
+/**
+ * fx-1 R2 第四分支的任务书（spec 已提交待审时的 designer）：只审不重写——重新
+ * 撰写并提交新 spec 会再次触发「新 spec 无过审」回到同态状态，补审才是出口。
+ */
+function reReviewTasks(unitId: string): string {
+  return [
+    "## 你的任务（designer：spec 补审）",
+    "spec 已提交待审——请审查该 spec 并执行 cw review submit --verdict-kind spec-review --verdict pass|fail",
+    `（审查对象：cw report --unit ${unitId} 中最后一条 SpecSubmitted；pass 后 unit 进入 spec-frozen，勿重新提交 spec）`,
+  ].join("\n");
+}
+
 function renderBrief(unit: SequencedUnitProjection, role: AgentRole, cwd: string): string {
   let briefContent: string;
   try {
@@ -380,6 +436,12 @@ function renderBrief(unit: SequencedUnitProjection, role: AgentRole, cwd: string
   } catch {
     briefContent = `(原始任务书文件不可读：${unit.briefRef})`;
   }
+  // 第四分支的 designer 目标必 specs>0（首分支 created 且 specs===0），以此区分
+  // 两类 designer 任务书；判定口径与 computeDispatchTargets 同一投影
+  const roleTasks =
+    role === "designer" && unit.specs.length > 0
+      ? reReviewTasks(unit.unitId)
+      : ROLE_TASKS[role](unit.unitId);
   return [
     `# ${role} 任务书：unit "${unit.unitId}"`,
     "",
@@ -392,7 +454,7 @@ function renderBrief(unit: SequencedUnitProjection, role: AgentRole, cwd: string
     "### 原始任务书内容",
     briefContent,
     "",
-    ROLE_TASKS[role](unit.unitId),
+    roleTasks,
     "",
     "## 环境约定",
     `- workdir: ${cwd}（M1 简化 = 仓库本身，无独立 worktree）`,

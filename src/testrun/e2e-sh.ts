@@ -21,6 +21,13 @@ import type { EvidenceReport, TestRunAdapter } from "./types.js";
 /** 标记行约定（验收文档锁定原文）：^A<id> PASS|FAIL，id 为字母数字连字符 */
 const MARKER_RE = /^A([A-Za-z0-9-]+) (PASS|FAIL)$/;
 const NO_MARKERS_NAME = "no-markers";
+/**
+ * fx-1 R3：marker 约定的显式格式说明，追加在两类 parse 错误的 message 里——
+ * 「A 前缀」只在适配器实现里隐含（折叠 key = "A" + 标记列文本，验收 id 须 A 开头
+ * 或与标记列完全一致），终验中 pi 试错 3 轮才悟出；错误信息直接给出约定本身。
+ */
+const MARKER_FORMAT_NOTE =
+  "e2e-sh 验收脚本须输出标记行 `A<验收id> PASS` 或 `A<验收id> FAIL`（A 前缀 + 验收 id + 空格 + 结果），脚本 exit code 与标记行一致。";
 
 /** 验收 → 可执行命令：原样返回；缺失抛错（e2e-sh 不自造命令） */
 function translate(acceptance: AcceptanceItem): string {
@@ -52,7 +59,7 @@ function parse(stdoutPath: string, exitCode: number, acceptance: AcceptanceItem)
     if (exitCode === 0) {
       throw new Error(
         `e2e-sh 适配器 parse 失败：${stdoutPath} 无标记行且 exitCode=0（无区分力，疑似 echo ok 类假命令）。` +
-          `脚本须输出 "^A<id> (PASS|FAIL)" 标记行（期望出现验收 ${acceptance.id} 的标记）`,
+          `脚本须输出 "^A<id> (PASS|FAIL)" 标记行（期望出现验收 ${acceptance.id} 的标记）。${MARKER_FORMAT_NOTE}`,
       );
     }
     return {
@@ -66,7 +73,7 @@ function parse(stdoutPath: string, exitCode: number, acceptance: AcceptanceItem)
     const seen = [...markers.keys()].join(", ");
     throw new Error(
       `e2e-sh 适配器 parse 失败：${stdoutPath} 标记 id 与验收 id 不符——出现 [${seen}]，期望 ${acceptance.id}。` +
-        "核对脚本标记的验收 id 与当前 verify 的验收条目",
+        `核对脚本标记的验收 id 与当前 verify 的验收条目。${MARKER_FORMAT_NOTE}`,
     );
   }
 

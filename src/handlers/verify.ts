@@ -162,7 +162,9 @@ function runRegularVerify(
         `cw verify: unit "${unitId}" 有 ${failed.length} 条验收失败：`,
         ...failed.map((r) => `  ${r.id}: ${r.reason ?? "未知原因"}`),
         `产物报告：${join(evidenceBase, REPORT_FILE_NAME)}`,
-        "恢复动作：修复后重新提交 spec + build 证据并重审，再 cw verify。",
+        // fx-1 R2：旧文案「重新提交 spec + build 证据并重审」会诱导 builder 重提
+        // spec → deriveStatus 判回 created → 派发真空死区。验收冻结不动是默认路径
+        `恢复动作：修复代码并 git commit 后，仅重新 cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <新id> 再 cw verify；spec 冻结不动（改验收走重新 spec 是另一路径，需重新过审）。`,
         "",
       ].join("\n"),
     );

@@ -30,7 +30,7 @@
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | u8 | 内部节点 verify（merge + 契约比对） | committed | 21da1e1 | 两任 builder（前任中断留五文件，续任保留+修 3 小处）；verifier PASS（sha256 d9254eda…，报告 u8-report.md，4 组 18 断言对抗）。契约集合 root∪子口径判定成立（验收文档注释已按实证修订）；u7-e2e 适配强度等价。观察：二进制嗅探 8KB 窗口、缺子 idle 出声（M2 口径内） |
-| u9 | 适配器补齐（claude/codex/pytest 可选） | pending | — | 可选 |
+| fx-1 | 终验死锁三根因修复 | committed | 99f5fca | R1 三防线（规则⑥/叶子 split 拒/loop 防御）+ R2 文案与第四分支（同口径时间语义）+ R3 marker 显式化；10 回归红绿经 verifier 影子工程独立复现（8/10 红一致）。218 全绿。观察：O1 旧坏账旁路场景（终验重置后不发生）、O2 fail 后补审循环张力 |
 
 ## 里程碑 gate
 
@@ -65,3 +65,4 @@
 - 2026-08-15 M1 gate PASS：真实 pi 后端全流程首次运转（9 调用/零重派/无人干预）；微任务 2m39s、双叶重叠 6.3s、P3 零锁实证。M2 启动：u8（集成 verify）派发；u9（claude/codex/pytest 适配器）跳过——终验 pi 后端足够，py/go 无真实项目不写无真实验收的代码。
 - 2026-08-16 u8 前任 builder 用量中断（五文件已落盘）；00:54 定时任务恢复后续作重派（第二次中断-续作，同 u6a 模式）。
 - 2026-08-16 u8 committed（两任接力，全量 31 文件 208 测试绿）：M2 收官（u9 跳过）。集成语义闭环：子全 verified → 确定性集成（commit 可达 + 全子树验收重跑 + 契约比对）→ root verified → exec-review → closed。进入终验：markdown-reader 全流程无人干预。
+- 2026-08-16 终验第 1 次 FAIL（产物全合格、状态机死锁）→ fx-1 committed（三根因修复，红绿影子工程复现）→ 靶子重置 → 终验第 2 次执行中。

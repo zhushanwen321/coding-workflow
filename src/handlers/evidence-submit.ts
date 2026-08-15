@@ -2,7 +2,8 @@
  * `cw evidence submit`（u2 验收文档锁定的 M0 规格，--kind 区分两种形态）。
  *
  * spec 形态：`--kind spec --unit <id> --file <spec.json>`
- *   校验链 unit 存在 → typebox schema → checkSpecRules（u3）→ 全过才 append
+ *   校验链 unit 存在 → typebox schema → checkSpecRules（u3）→ 叶子 unit 不得声明
+ *   split（fx-1 R1 handler 级防线）→ 全过才 append
  *   SpecSubmitted{specHash = sha256(spec.json 原始字节), acceptance/contracts/split 原样}。
  *   gate 不过不入账（账本只记被接受的进展），stderr 逐条打印 u3 failures 原文。
  *
@@ -54,16 +55,24 @@ export async function handleEvidenceSubmit(ctx: CommandContext): Promise<number>
     return fail("cw evidence submit: 缺少 --unit <id>。恢复动作：加 --unit <unitId> 指定目标 unit。");
   }
   const ledger = ledgerForCwd(ctx.cwd);
-  if (!unitCreatedFacts(ledger).has(unitId)) {
+  const createdFacts = unitCreatedFacts(ledger);
+  if (!createdFacts.has(unitId)) {
     return fail(
       `cw evidence submit: unit "${unitId}" 不存在（账本内无其 UnitCreated 事件）。` +
         `恢复动作：先创建该 unit（cw create --id ${unitId} --brief <路径>）再提交证据。`,
     );
   }
-  return kind === "spec" ? submitSpec(ctx, ledger, unitId) : submitBuild(ctx, ledger, unitId);
+  return kind === "spec"
+    ? submitSpec(ctx, ledger, unitId, createdFacts.get(unitId)?.parentId ?? null)
+    : submitBuild(ctx, ledger, unitId);
 }
 
-function submitSpec(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd>, unitId: string): number {
+function submitSpec(
+  ctx: CommandContext,
+  ledger: ReturnType<typeof ledgerForCwd>,
+  unitId: string,
+  parentId: string | null,
+): number {
   const file = stringArg(ctx.argv, "file");
   if (file === undefined) {
     return fail(
@@ -115,6 +124,18 @@ function submitSpec(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd>
         ...gate.failures.map((f) => `  ${f}`),
         "恢复动作：修复上述缺口后重新提交；规则口径见 docs/rewrite/acceptance/u3-acceptance.md。",
       ].join("\n"),
+    );
+  }
+
+  // fx-1 R1 handler 级防线：叶子 unit（parentId 非空，M0 深度上限 2 无更深分解）
+  // 不得声明 split——终验中叶子 designer 抄 root spec 模板未改 split 是死锁直接诱因；
+  // gate 规则⑥拦自引用，这里拦叶子的一切 split 声明（含引用其他 unit 的伪内部节点）
+  if (parentId !== null && spec.split.length > 0) {
+    return fail(
+      `cw evidence submit --kind spec: 叶子 unit（深度上限 2）不得声明 split` +
+        `（unit "${unitId}" 是 "${parentId}" 的子 unit，spec.split 却声明了 ${spec.split.length} 个条目：` +
+        `${spec.split.map((entry) => entry.unitId).join(", ")}）。` +
+        "恢复动作：拆分子节点是根 unit spec 的职责，叶子 unit 的 spec.split 应为空数组；修正后重新提交。",
     );
   }
 
