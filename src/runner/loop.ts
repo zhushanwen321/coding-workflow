@@ -22,7 +22,9 @@
  *     （rootLast：子的产出是 root 验收的输入，root 的 build 等子树收尾）
  *   - spec-frozen 内部节点（split 非空且不含自身）且子全部 verified → 不派 agent，
  *     直接 runIntegrationVerify（u8 rootLast 升级：集成的物理前提是子证据齐——
- *     verified 即证据链闭合，不必等 exec-review 收尾 closed）。split 含自身
+ *     verified 即证据链闭合，不必等 exec-review 收尾 closed）。连续 fail 达上限
+ *     （fx-2 R4a，2 次）→ 停止自动重派，改派 designer 处置契约漂移（brief 含失败
+ *     契约清单与二选一处置路径）。split 含自身
  *     unitId = 自引用（gate 规则⑥ fx-1 已拒新账本）→ 记 stderr 警告并按叶子语义
  *     参与派发，绝不作为内部节点等待子树（fx-1 R1 loop 级防御）
  *   - verified 且未 closed   → reviewer（exec-review）
@@ -39,8 +41,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { fold } from "../core/fold.js";
 import type {
   Contract,
+  DiscriminatedEvent,
+  LedgerEvent,
   SequencedProjection,
   SequencedUnitProjection,
   VerifyRanPayload,
@@ -48,7 +53,7 @@ import type {
 import { loadLedger, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
 import { getCwHome, ledgerPath } from "../store/project.js";
-import { runIntegrationVerify } from "./integrate.js";
+import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
   AgentSpawnAdapter,
@@ -66,6 +71,14 @@ export const DEFAULT_LOOP_MAX_CONCURRENCY = 3;
 const AGENT_SPAWN_TIMEOUT_MS = 1_800_000;
 /** 集成重跑单条验收命令的超时（与 cw verify 的 DEFAULT_TIMEOUT_MS 同口径 10min） */
 const INTEGRATE_ACCEPTANCE_TIMEOUT_MS = 600_000;
+/**
+ * 同一内部节点集成的连续 fail 重派上限（fx-2 R4a，验收文档锁定 2 次）：达到后
+ * 不再自动重派集成，改派 designer 处置契约漂移。R4b 的修复即此上限本身——集成
+ * fail 的 VerifyRan 审计事件会持续喂活 idle 进展判定（totalEvents 每轮 +1），
+ * 无上限时 maxIdleMs 永不触发 = 无限循环烧 CPU；有上限后账本不再自我喂食，
+ * designer 若也无进展，maxIdleMs 正常触发 exit 1（回归「有界空转」语义）。
+ */
+const INTEGRATION_MAX_CONSECUTIVE_FAILS = 2;
 
 export interface RunLoopOptions {
   rootId: string;
@@ -200,11 +213,39 @@ function hasSpecReviewPassAfterLastSpec(unit: SequencedUnitProjection): boolean 
   );
 }
 
-/** 派发对象集合（纯函数；规则见模块头）。in-flight 的同 (unitId, role) 不重复派。 */
+/**
+ * 各 unit 的连续 VerifyRan fail 计数（fx-2 R4a 重派上限的判定输入）：自该 unit
+ * 上一条 SpecSubmitted / result=pass 的 VerifyRan 之后连续 fail 的次数（任何
+ * pass / 新 spec 提交清零——验收文档锁定的口径）。SpecSubmitted 与 VerifyRan
+ * 的相对顺序在 fold 投影里已丢失（平行数组），须从原始事件流重放；与
+ * hasSpecReviewPassAfterLastSpec 的「之后存在」语义同族。
+ */
+function consecutiveIntegrationFails(events: readonly LedgerEvent[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (event.type === "SpecSubmitted") {
+      counts.set(event.payload.unitId, 0);
+    } else if (event.type === "VerifyRan") {
+      const previous = counts.get(event.payload.unitId) ?? 0;
+      counts.set(
+        event.payload.unitId,
+        event.payload.result === "fail" ? previous + 1 : 0,
+      );
+    }
+  }
+  return counts;
+}
+
+/**
+ * 派发对象集合（纯函数；规则见模块头）。in-flight 的同 (unitId, role) 不重复派。
+ * consecutiveFails = 各 unit 连续 VerifyRan fail 计数（fx-2 R4a 上限判定输入）。
+ */
 function computeDispatchTargets(
   projection: SequencedProjection,
   rootId: string,
   inFlight: readonly InFlightSpawn[],
+  consecutiveFails: ReadonlyMap<string, number>,
 ): DispatchTarget[] {
   const subtree = subtreeUnits(projection, rootId);
   const targets: DispatchTarget[] = [];
@@ -236,8 +277,15 @@ function computeDispatchTargets(
       if (!selfReferencing && splitOf(unit).length > 0) {
         // 内部节点：子全 verified 即集成（u8 派发时机升级，不等子 closed）
         if (splitChildrenAllVerified(projection, unit)) {
-          role = "builder";
-          integration = true;
+          if ((consecutiveFails.get(unit.unitId) ?? 0) >= INTEGRATION_MAX_CONSECUTIVE_FAILS) {
+            // fx-2 R4a：集成连续 fail 达上限——不再自动重派（fail 审计事件每轮
+            // 喂活 idle 判定 = R4b 无限循环），改派 designer 处置契约漂移（brief
+            // = integrationDriftTasks：失败事实清单 + 二选一处置路径）
+            role = "designer";
+          } else {
+            role = "builder";
+            integration = true;
+          }
         }
       } else if (childrenAllClosed(subtree, unit)) {
         // 叶子：现行 rootLast 不变（无子 ∨ 子全部 closed）
@@ -378,7 +426,8 @@ async function runIntegrationDispatch(
   }
   emitErr(
     [
-      `[runner] 集成验证 unit "${unitId}" 失败（${result.failures.length} 项，已写 fail VerifyRan 留审计，下轮重派重试）：`,
+      `[runner] 集成验证 unit "${unitId}" 失败（${result.failures.length} 项，已写 fail VerifyRan 留审计，` +
+        `下轮重派重试——连续 fail 达 ${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次后停止自动重派、转派 designer 处置）：`,
       ...result.failures.map((f) => `  ${f}`),
       `[runner] report: ${result.reportPath}`,
       "",
@@ -429,6 +478,70 @@ function reReviewTasks(unitId: string): string {
   ].join("\n");
 }
 
+/**
+ * fx-2 R4a 上限出口的任务书（集成连续 fail 达上限后的 designer）：内嵌最近一次
+ * 集成报告的失败事实（契约清单 + 失败验收 id）与二选一处置指引——契约漂移的
+ * 归属（改 spec 契约还是修 provider 实现）需要语义判断，是 designer 的职责而非
+ * runner 的（canon D4：runner 无智能）。报告不可读时降级为冻结 spec 的契约全集
+ * + 指向查证命令（错误可操作闭环）。
+ */
+function integrationDriftTasks(unit: SequencedUnitProjection, cwd: string): string {
+  const lastFailRun = [...unit.verifyRuns]
+    .reverse()
+    .find((run) => run.result === "fail" && run.runId.startsWith("integrate-"));
+  const read =
+    lastFailRun === undefined
+      ? null
+      : readIntegrateReport(cwd, unit.unitId, lastFailRun.runId);
+
+  const factLines: string[] = [];
+  if (read === null) {
+    const contracts = unit.specs[unit.specs.length - 1]?.contracts ?? [];
+    factLines.push(
+      `- 最近一次集成报告不可读——失败明细见 cw report --unit ${unit.unitId}；当前冻结 spec 的契约全集：`,
+      ...(contracts.length === 0
+        ? ["  （无契约——fail 来自验收红或 commit 可达性，见失败明细）"]
+        : contracts.map(
+            (c) => `  - ${c.id}: signature "${c.signature}" 期望文件 ${c.file ?? "（全树搜索）"}`,
+          )),
+    );
+  } else {
+    const contractFailures = read.report.contracts.failures;
+    factLines.push(
+      ...(contractFailures.length === 0
+        ? ["- 契约比对无失败项（fail 来自验收红或 commit 可达性，见失败明细）"]
+        : [
+            "- 契约比对失败清单（机器判定原文，含 id + signature + 期望文件）：",
+            ...contractFailures.map((f) => `  - ${f}`),
+          ]),
+    );
+    const failedAcceptances = read.report.acceptanceBatches.flatMap((batch) =>
+      batch.results
+        .filter((r) => r.status === "fail")
+        .map((r) => `${r.id}（unit ${batch.unitId}）`),
+    );
+    factLines.push(
+      failedAcceptances.length === 0
+        ? "- 失败验收：无（验收批次全绿，fail 全部来自契约比对）"
+        : `- 失败验收：${failedAcceptances.join("、")}`,
+    );
+    factLines.push(`- 完整报告：${read.reportPath}`);
+  }
+
+  return [
+    "## 你的任务（designer：集成契约漂移处置）",
+    "",
+    `unit "${unit.unitId}" 的集成已连续 fail ${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次（重派上限），`,
+    "runner 已停止自动重派集成——契约漂移的归属需要语义判断，由你按下述指引处置。",
+    "",
+    "### 集成失败事实（最近一次集成报告）",
+    ...factLines,
+    "",
+    "### 处置指引（二选一）",
+    integrationRecoveryGuidance(unit.unitId),
+  ].join("\n");
+}
+
 function renderBrief(unit: SequencedUnitProjection, role: AgentRole, cwd: string): string {
   let briefContent: string;
   try {
@@ -436,12 +549,15 @@ function renderBrief(unit: SequencedUnitProjection, role: AgentRole, cwd: string
   } catch {
     briefContent = `(原始任务书文件不可读：${unit.briefRef})`;
   }
-  // 第四分支的 designer 目标必 specs>0（首分支 created 且 specs===0），以此区分
-  // 两类 designer 任务书；判定口径与 computeDispatchTargets 同一投影
+  // 三类 designer 任务书按派发分支的入口状态区分（口径与 computeDispatchTargets
+  // 同一投影）：spec-frozen = fx-2 R4a 集成上限出口（契约漂移处置）；created 且
+  // specs>0 = fx-1 R2 第四分支（补审）；created 且 specs===0 = 首派（撰写 spec）
   const roleTasks =
-    role === "designer" && unit.specs.length > 0
-      ? reReviewTasks(unit.unitId)
-      : ROLE_TASKS[role](unit.unitId);
+    role === "designer" && unitStatus(unit) === "spec-frozen"
+      ? integrationDriftTasks(unit, cwd)
+      : role === "designer" && unit.specs.length > 0
+        ? reReviewTasks(unit.unitId)
+        : ROLE_TASKS[role](unit.unitId);
   return [
     `# ${role} 任务书：unit "${unit.unitId}"`,
     "",
@@ -579,8 +695,11 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   let lastProgressAt = Date.now();
 
   while (true) {
-    // 每轮重读投影（子进程 agent 与本循环并发写账本，投影必须重新装载）
-    const { projection } = loadLedger(opts.cwd);
+    // 每轮重读投影（子进程 agent 与本循环并发写账本，投影必须重新装载）。保留
+    // 原始事件流：fx-2 R4a 的连续集成 fail 计数需要 SpecSubmitted 与 VerifyRan
+    // 的跨类型账本顺序（fold 投影是平行数组，相对顺序已丢失），从事件重放
+    const events = new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll();
+    const projection = fold(events);
     const root = projection.units.get(opts.rootId);
     if (root === undefined) {
       // append-only 账本里 UnitCreated 不会消失；走到这里说明账本被外部改动
@@ -613,7 +732,12 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
 
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
     // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
-    for (const target of computeDispatchTargets(projection, opts.rootId, inFlight)) {
+    for (const target of computeDispatchTargets(
+      projection,
+      opts.rootId,
+      inFlight,
+      consecutiveIntegrationFails(events),
+    )) {
       if (target.integration) {
         // 集成在本轮同步完成（含 VerifyRan 入账）；后续 target 仍按本轮开头投影
         // 派发，集成引起的状态跃迁由下一轮重算接手
@@ -626,6 +750,13 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       const unit = projection.units.get(target.unitId);
       if (unit === undefined) {
         continue; // 不可达（target 来自同一投影）
+      }
+      if (target.role === "designer" && unitStatus(unit) === "spec-frozen") {
+        // fx-2 R4a 上限出口的可观测性：终验日志里明确「为何不跑集成」
+        emit([
+          `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
+            "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
+        ]);
       }
       const briefPath = writeBriefFile(opts.cwd, target, unit);
       const handle = await opts.adapter.spawn({

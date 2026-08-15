@@ -25,7 +25,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { AcceptanceItem, Contract } from "../events/types.js";
@@ -62,7 +62,7 @@ interface AcceptanceBatchResult {
 }
 
 /** integrate-report.json 的结构（报告落盘 = 审计事实，字段名即对外契约） */
-interface IntegrateReport {
+export interface IntegrateReport {
   kind: "integrate";
   rootId: string;
   runId: string;
@@ -171,8 +171,12 @@ export async function runIntegrationVerify(opts: {
     batchesReport.push(...batches.map((b) => ({ unitId: b.unitId, results: [] })));
   }
 
-  // 步骤 5：汇总 + 报告落盘
+  // 步骤 5：汇总 + 报告落盘（fx-2 R4a：失败汇总追加二选一恢复路径说明——契约
+  // 漂移的归属判断与 loop 派 designer 处置任务书同口径，单一出处）
   const ok = failures.length === 0;
+  if (!ok) {
+    failures.push(integrationRecoveryGuidance(opts.rootId));
+  }
   const report: IntegrateReport = {
     kind: "integrate",
     rootId: opts.rootId,
@@ -186,6 +190,72 @@ export async function runIntegrationVerify(opts: {
   };
   writeFileSync(reportPath, `${JSON.stringify(report, null, REPORT_INDENT)}\n`, "utf-8");
   return { ok, failures, runId, reportPath };
+}
+
+/**
+ * 集成失败的恢复路径说明（fx-2 R4a，验收文档 fx-2-acceptance.md 锁定的二选一
+ * 文案）：① 契约与实现语义等价但文本不等 → 修 spec 走重新过审链（fx-1 R2 第
+ * 四分支已打通补审出口）；② 契约正确而实现跑偏 → 需 provider 修复，但 closed
+ * 的 provider 无自动回退通道（状态机不重开 closed unit——已知边界，如实告知需
+ * 人工介入）。loop 的 designer 处置任务书（integrationDriftTasks）引用同一出处。
+ */
+export function integrationRecoveryGuidance(unitId: string): string {
+  return [
+    "集成失败恢复路径（二选一）：",
+    "① 实现与契约语义等价但文本不等（如 async 修饰差异）→ 修正 spec 的契约签名后重新提交并过审：",
+    `   cw evidence submit --kind spec --unit ${unitId} --file spec.json`,
+    `   cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass`,
+    "   （走既有重新过审链：过审后集成按正常路径重跑，连续 fail 计数随新 spec 提交清零）",
+    "② 契约本身正确而实现跑偏 → 需 provider 修复——closed 的 provider 无自动回退通道",
+    "   （状态机不重开 closed unit，已知边界），需人工介入，不要试图绕过状态机改实现。",
+  ].join("\n");
+}
+
+/**
+ * 读取已落盘的集成报告（fx-2：loop 达到重派上限后派 designer 的处置任务书需要
+ * 最近一次失败事实——契约清单与失败验收 id）。不可读 / 形状不符返回 null（调用
+ * 方兜底降级，不炸循环）。
+ */
+export function readIntegrateReport(
+  cwd: string,
+  rootId: string,
+  runId: string,
+): { report: IntegrateReport; reportPath: string } | null {
+  const reportPath = join(evidenceDir(getCwHome(), cwd, rootId, runId), REPORT_FILE_NAME);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
+  } catch {
+    return null;
+  }
+  return isIntegrateReport(parsed) ? { report: parsed, reportPath } : null;
+}
+
+/** JSON.parse 产物的形状守卫（unknown → IntegrateReport；只校验消费端触及的字段） */
+function isIntegrateReport(value: unknown): value is IntegrateReport {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  const contracts = v.contracts as Record<string, unknown> | undefined;
+  return (
+    v.kind === "integrate" &&
+    typeof v.rootId === "string" &&
+    Array.isArray(v.children) &&
+    Array.isArray(v.acceptanceBatches) &&
+    v.acceptanceBatches.every(
+      (b) =>
+        typeof b === "object" &&
+        b !== null &&
+        typeof (b as Record<string, unknown>).unitId === "string" &&
+        Array.isArray((b as Record<string, unknown>).results),
+    ) &&
+    typeof contracts === "object" &&
+    contracts !== null &&
+    Array.isArray(contracts.failures) &&
+    typeof v.ok === "boolean" &&
+    Array.isArray(v.failures)
+  );
 }
 
 /** 从账本读取各子的最后一条冻结 spec 验收；无 spec 的子计 failure 并跳过该批 */
