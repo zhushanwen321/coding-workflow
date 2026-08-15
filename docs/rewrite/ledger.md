@@ -39,7 +39,7 @@
 | Phase 0 | 归档 + 脚手架 + 靶子清空 | done |
 | M0 gate | A1 人肉全流程 + A3 补录攻击 | done |
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | done |
-| 终验 | markdown-reader 全流程无人干预 | pending |
+| 终验 | markdown-reader 全流程无人干预 | failed→fixing | — | 报告 final-gate-report.md：54.4min（有效 9.3min 后 45min 空转 idle 兜底），root 停 spec-frozen。**产物全合格**（install/build/9 测试/渲染链路全过，pi 4 调用零重派 builder 单 spawn 内 4 轮自愈）；死锁 = R1 split 自引用未校验 + R2 重提 spec 落派发真空（verify 恢复文案误导）+ R3 marker 约定隐含。修复 unit fx-1 启动 |
 
 ## 事件
 
