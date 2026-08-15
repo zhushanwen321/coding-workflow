@@ -22,7 +22,7 @@
 |------|------|------|----------------|------|
 | u6a | AgentSpawn 接口与生命周期 | committed | 78fa351 | 两任 builder（前任中断留实现，续任审查零修改保留 + 补 9 组测试）；verifier PASS（sha256 c1baff50…，报告 u6a-report.md，7/7 对抗抽查）。两处文档字面偏离实测证实唯一可行（fd 包装 stdio、ENOENT 预检）。观察：kill 发起方归因的固有窄窗口（TIMEOUT 误归因，10 次实测未触发） |
 | u6b | human 适配器 | pending | — | 依赖 u6a |
-| u6c | pi 适配器（CW_AGENT_MODEL → --model） | pending | — | 依赖 u6a |
+| u6c | pi 适配器（CW_AGENT_MODEL → --model） | committed | 9c6af01 | verifier PASS（sha256 594bf27a…，报告 u6c-report.md，4 条对抗抽查 + 真实 E2E 复跑 6.5s）。首次真实 harness 接入：mimo-v2.5-pro stdout 跟随 brief 变化（非缓存）。裁量两项合理（resolvePiModel 纯函数单点调用、extraArgs 默认参消解文档自矛盾）。minor：SPAWN_ERROR 态产物文件不存在（契约未规定） |
 | u7 | 调度循环 | pending | — | 依赖 u1b,u6a |
 
 ## M2 = L3（集成）+ 补齐
@@ -59,3 +59,4 @@
 - 2026-08-15 u4b committed：M0 八 unit 全闭环（u1/u1b/u2/u3/u4a/u4b/u5/u5b，全量 23 文件 164 测试绿）。verifier 5 组对抗抽查 PASS；裁量与 u4a 适配逐条确认。进入 M0 gate（A1 人肉全流程 + A3 补录攻击六路径）。
 - 2026-08-15 M0 gate PASS：A1 add-capitalize root closed（145 轮 73s 收敛，六事件链完整，verify 产物落盘）；A3 六路径全拒（谎报无命令/echo ok 双杀/sed 探针隔离/假产物不信/弱验收回退留痕/改码不影响重跑）。两条语义边界备案。M1 启动：契约层 spawn/types.ts + u6a 派发。
 - 2026-08-15 u6a committed（续作模式：前任用量中断留 lifecycle.ts，续任审查保留 + 补测；173 全绿）；verifier 7/7 对抗 PASS。第二波 u6b/u6c/u7 三并行派发（基线随本 commit）。
+- 2026-08-15 u6c committed：pi 适配器 + 真实微调用 E2E（mimo-v2.5-pro，9.5s 首跑 / 6.5s 复跑）；verifier 4 对抗 PASS（stdout 跟随 brief 证明非缓存）。u6b 验收中、u7 开发中。
