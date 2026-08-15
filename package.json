@@ -37,11 +37,12 @@
     "url": "https://github.com/zhushanwen321/coding-workflow/issues"
   },
   "scripts": {
-    "build": "tsc && node scripts/generate-schemas.js",
+    "build": "tsc",
     "check": "tsc --noEmit",
     "check:tests": "tsc --noEmit -p tsconfig.test.json",
     "check:all": "npm run check && npm run check:tests",
     "lint": "eslint src/ tests/",
+    "pretest": "npm run build",
     "test": "vitest run",
     "postinstall": "bash scripts/install-skill.sh",
     "preuninstall": "bash scripts/uninstall-skill.sh"

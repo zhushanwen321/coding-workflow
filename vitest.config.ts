@@ -2,8 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // 排除设计阶段骨架（.xyz-harness/）的 NotImplementedError stub 测试
-    exclude: ["**/.xyz-harness/**", "**/node_modules/**", "**/dist/**"],
+    // 排除设计阶段骨架（.xyz-harness/）与归档旧实现（archive/）
+    exclude: ["**/.xyz-harness/**", "**/node_modules/**", "**/dist/**", "**/archive/**"],
     include: ["tests/**/*.test.ts"],
     // e2e 测试用 spawnSync 真实子进程跑 dist/cli.js（含 git init / 多次 cw 调用）。
     // spawnSync 同步阻塞 worker 事件循环：默认 threads 池（worker_threads）+ 默认 5s/10s
