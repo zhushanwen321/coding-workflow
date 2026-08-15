@@ -1,0 +1,262 @@
+/**
+ * u5b E2E（M0 A1「人肉全流程」场景雏形；真实子进程 + tmp git 仓库 + 隔离 CW_HOME，零 mock）。
+ *
+ * 对应 docs/rewrite/acceptance/u5b-acceptance.md「E2E real」两条：
+ *   1. 全链收敛：测试进程 spawn runner 子进程（node dist/cli.js run --spawn human
+ *      --poll-ms 300，stdout/stderr 重定向落盘），随后扮演「人」——轮询 runner
+ *      stdout 文件识别指令类型，依次真实调 CLI（root spec → create 子 unit →
+ *      子 unit spec → build+verify → exec-review → root build+verify → root
+ *      exec-review），断言 runner 自然退出 exit 0、输出含汇总行、账本 root closed；
+ *   2. 中断路径：无人操作 + --max-idle-ms 500 → exit 1 且 stderr 含「无进展」。
+ *
+ * 注意：直接 `npx vitest run tests/u5b-e2e.test.ts` 不触发 pretest，需先 `npm run build`
+ * （`npm test` 的 pretest 已含 build）。
+ */
+import { type ChildProcess,spawn, spawnSync } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterAll, describe, expect, it } from "vitest";
+
+const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+if (!existsSync(CLI_PATH)) {
+  throw new Error(`tests/u5b-e2e 需要 ${CLI_PATH}（先 npm run build；npm test 的 pretest 已含）`);
+}
+
+const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u5b-e2e-"));
+const cwHome = join(tmpRoot, "cw-home");
+
+/** runner 轮询间隔与各等待的统一超时上限 */
+const RUNNER_POLL_MS = 300;
+const WAIT_TIMEOUT_MS = 30_000;
+/** 全链单测超时（真实 verify 含本地 git clone，留足余量） */
+const E2E_TIMEOUT_MS = 120_000;
+
+/** 断言中途失败时防 runner 子进程泄漏 */
+const liveRunners = new Set<ChildProcess>();
+
+afterAll(() => {
+  for (const child of liveRunners) {
+    if (child.exitCode === null) {
+      child.kill("SIGTERM");
+    }
+  }
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** 场景目录：独立 repo（物理路径，与子进程 process.cwd() 一致）+ runner 输出文件 */
+function makeScenario(name: string): { repoDir: string; outPath: string; errPath: string } {
+  const base = join(tmpRoot, name);
+  mkdirSync(join(base, "repo"), { recursive: true });
+  return {
+    repoDir: realpathSync(join(base, "repo")),
+    outPath: join(base, "runner.stdout"),
+    errPath: join(base, "runner.stderr"),
+  };
+}
+
+function gitRun(repoDir: string, args: readonly string[]): string {
+  const res = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf-8" });
+  if (res.status !== 0) {
+    throw new Error(`git ${args.join(" ")} 失败: ${res.stderr}`);
+  }
+  return (res.stdout ?? "").trim();
+}
+
+function initRepo(repoDir: string): void {
+  gitRun(repoDir, ["init"]);
+  gitRun(repoDir, ["config", "user.email", "cw-e2e@example.com"]);
+  gitRun(repoDir, ["config", "user.name", "cw-e2e"]);
+}
+
+/** 「人」真实调 CLI（同步子进程，与 runner 共享 cwd + CW_HOME 账本） */
+function runCli(repoDir: string, args: readonly string[]): { code: number; stdout: string; stderr: string } {
+  const res = spawnSync(process.execPath, [CLI_PATH, ...args], {
+    cwd: repoDir,
+    encoding: "utf-8",
+    env: { ...process.env, CW_HOME: cwHome },
+  });
+  return { code: res.status ?? -1, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+}
+
+/** 后台启动 runner 子进程（stdout/stderr 落盘，测试进程轮询读文件识别人该做什么） */
+function startRunner(
+  repoDir: string,
+  rootId: string,
+  outPath: string,
+  errPath: string,
+  extraArgs: readonly string[] = [],
+): ChildProcess {
+  const outFd = openSync(outPath, "a");
+  const errFd = openSync(errPath, "a");
+  const child = spawn(
+    process.execPath,
+    [CLI_PATH, "run", "--root", rootId, "--spawn", "human", "--poll-ms", String(RUNNER_POLL_MS), ...extraArgs],
+    { cwd: repoDir, env: { ...process.env, CW_HOME: cwHome }, stdio: ["ignore", outFd, errFd] },
+  );
+  closeSync(outFd);
+  closeSync(errFd);
+  liveRunners.add(child);
+  child.on("exit", () => {
+    liveRunners.delete(child);
+  });
+  return child;
+}
+
+/**
+ * 等 runner stdout 落盘文件「新增内容」匹配正则（每轮打印的指令组会重复出现，
+ * 只扫上次消费点之后的增量，避免把旧阶段指令误当新指令）。返回匹配时的新增块。
+ */
+async function waitForNewOutput(path: string, re: RegExp, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let scanned = existsSync(path) ? readFileSync(path, "utf-8").length : 0;
+  for (;;) {
+    const content = readFileSync(path, "utf-8");
+    const fresh = content.slice(scanned);
+    if (re.test(fresh)) {
+      return fresh;
+    }
+    scanned = content.length;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `等待 runner 输出超时（${timeoutMs}ms，等 ${re}）。stdout 末尾：\n${content.slice(-600)}`,
+      );
+    }
+    await sleep(100);
+  }
+}
+
+function waitExit(child: ChildProcess, timeoutMs: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`runner 未在 ${timeoutMs}ms 内退出（stdout 末尾见断言输出）`));
+    }, timeoutMs);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code ?? -1);
+    });
+  });
+}
+
+/**
+ * spec.json 的验收 fixture（适配 u4b 起的 verify 判定协议：type → 适配器 + nameMatch）：
+ *   - A1（e2e-real）：`node app.js` 输出 "^A1 PASS$" 标记行（e2e-sh parse 契约）；
+ *   - A2（unit）：command 输出 vitest JSON reporter 形状产物（vitest parse 契约），
+ *     断言名含验收 id（nameMatch 词边界命中）。E2E 被测物是 human 循环与状态机
+ *     收敛，不是 vitest 本身（u4b/u5 领地测试覆盖之）——真 vitest 环境对 tmp repo
+ *     不可得（无 node_modules，npx 触发网络），故 unit 用例以真实 node 进程产出
+ *     合规 JSON 产物。
+ */
+const ACCEPTANCE_FIXTURE: ReadonlyArray<Record<string, unknown>> = [
+  { id: "A1", core: true, title: "应用可运行", type: "e2e-real", command: "node app.js" },
+  {
+    id: "A2",
+    core: false,
+    title: "单元级冒烟",
+    type: "unit",
+    command:
+      // 尾部显式含 --reporter=json（vitest translate 的 includes 检查命中，不再追加）；
+    // `--` 分隔使其作为 node 的 script argv 而非 node 自身选项（否则 bad option）
+      "node -e \"console.log(JSON.stringify({testResults:[{assertionResults:[{fullName:'A2 unit smoke',status:'passed'}]}]}))\" -- --reporter=json",
+  },
+];
+
+/** spec.json 内容（split 为分解声明；root 传子 unit 条目，叶 unit 传空） */
+function specJson(split: ReadonlyArray<Record<string, unknown>> = []): string {
+  return `${JSON.stringify({ acceptance: ACCEPTANCE_FIXTURE, contracts: [], split }, null, 2)}\n`;
+}
+
+describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演人）", () => {
+  it("全链收敛：spec → create → 子 spec → build/verify → exec-review → root closed，runner exit 0", async () => {
+    const { repoDir, outPath, errPath } = makeScenario("full-chain");
+    initRepo(repoDir);
+    writeFileSync(join(repoDir, "brief.md"), "# root 任务书\n");
+    expect(runCli(repoDir, ["create", "--id", "demo", "--brief", "brief.md"]).code).toBe(0);
+
+    const runner = startRunner(repoDir, "demo", outPath, errPath);
+
+    // 1) root 的 spec：runner 指令组含 brief 路径；人写 spec.json（split 声明子 unit impl）并提交 + 审查
+    const specBlock = await waitForNewOutput(outPath, /待人工步骤=spec/, WAIT_TIMEOUT_MS);
+    expect(specBlock).toContain("cat brief.md");
+    writeFileSync(join(repoDir, "spec-demo.json"), specJson([{ unitId: "impl", briefRef: "brief-impl.md", dependsOn: [] }]));
+    expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "demo", "--file", "spec-demo.json"]).code).toBe(0);
+    expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
+
+    // 2) create 子 unit：root spec-frozen 后循环先提示为 split 子 unit create
+    const createBlock = await waitForNewOutput(outPath, /待人工步骤=create/, WAIT_TIMEOUT_MS);
+    expect(createBlock).toContain("cw create --id impl --brief brief-impl.md --parent demo");
+    writeFileSync(join(repoDir, "brief-impl.md"), "# impl 任务书\n");
+    expect(runCli(repoDir, ["create", "--id", "impl", "--brief", "brief-impl.md", "--parent", "demo"]).code).toBe(0);
+
+    // 3) 子 unit 的 spec
+    await waitForNewOutput(outPath, /待人工步骤=spec/, WAIT_TIMEOUT_MS);
+    writeFileSync(join(repoDir, "spec-impl.json"), specJson());
+    expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "impl", "--file", "spec-impl.json"]).code).toBe(0);
+    expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
+
+    // 4) 子 unit 的 build：实现 + commit + build 证据 + verify（干净重跑真实执行验收命令）
+    const implBuildBlock = await waitForNewOutput(outPath, /待人工步骤=build/, WAIT_TIMEOUT_MS);
+    expect(implBuildBlock).toContain("cw verify --unit impl");
+    writeFileSync(join(repoDir, "app.js"), 'console.log("A1 PASS");\n');
+    gitRun(repoDir, ["add", "-A"]);
+    gitRun(repoDir, ["commit", "-m", "impl: app.js"]);
+    const head = gitRun(repoDir, ["rev-parse", "HEAD"]);
+    expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "impl", "--commit", head, "--run-id", "run-impl-1", "--file", "app.js"]).code).toBe(0);
+    const verifyImpl = runCli(repoDir, ["verify", "--unit", "impl"]);
+    expect(verifyImpl.code, `impl verify 应 pass（stdout: ${verifyImpl.stdout}，stderr: ${verifyImpl.stderr}）`).toBe(0);
+
+    // 5) 子 unit 的 exec-review → closed
+    await waitForNewOutput(outPath, /待人工步骤=exec-review/, WAIT_TIMEOUT_MS);
+    expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "exec-review", "--verdict", "pass"]).code).toBe(0);
+
+    // 6) root 的 build：HEAD 已含全部实现，作为 root 的 build 证据 commit
+    const rootBuildBlock = await waitForNewOutput(outPath, /待人工步骤=build/, WAIT_TIMEOUT_MS);
+    expect(rootBuildBlock).toContain("cw verify --unit demo");
+    expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "demo", "--commit", head, "--run-id", "run-demo-1"]).code).toBe(0);
+    const verifyDemo = runCli(repoDir, ["verify", "--unit", "demo"]);
+    expect(verifyDemo.code, `demo verify 应 pass（stdout: ${verifyDemo.stdout}，stderr: ${verifyDemo.stderr}）`).toBe(0);
+
+    // 7) root 的 exec-review → closed → runner 收敛自然退出
+    await waitForNewOutput(outPath, /待人工步骤=exec-review/, WAIT_TIMEOUT_MS);
+    expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "exec-review", "--verdict", "pass"]).code).toBe(0);
+
+    const code = await waitExit(runner, WAIT_TIMEOUT_MS);
+    expect(code).toBe(0);
+    const stdoutText = readFileSync(outPath, "utf-8");
+    expect(stdoutText).toContain("已 closed");
+    expect(stdoutText).toMatch(/demo\s+closed\s+lastVerify:pass/);
+    expect(stdoutText).toMatch(/impl\s+closed\s+lastVerify:pass/);
+    expect(stdoutText).toContain("cw report");
+
+    // 账本终态：root closed（真实子进程 cw status 复核）
+    const status = runCli(repoDir, ["status"]);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toMatch(/demo\s+closed/);
+  }, E2E_TIMEOUT_MS);
+
+  it("中断路径：--max-idle-ms 500 无人操作 → exit 1 且 stderr 含「无进展」", async () => {
+    const { repoDir, outPath, errPath } = makeScenario("idle");
+    initRepo(repoDir);
+    writeFileSync(join(repoDir, "brief.md"), "# 任务书\n");
+    expect(runCli(repoDir, ["create", "--id", "stall", "--brief", "brief.md"]).code).toBe(0);
+
+    const runner = startRunner(repoDir, "stall", outPath, errPath, ["--max-idle-ms", "500"]);
+    const code = await waitExit(runner, 10_000);
+    expect(code).toBe(1);
+    const errText = readFileSync(errPath, "utf-8");
+    expect(errText).toContain("无进展");
+    expect(errText).toContain("恢复动作");
+
+    // 中断前打印过指令但账本未动：unit 仍 created（账本即状态，无进程内残留）
+    expect(readFileSync(outPath, "utf-8")).toContain("待人工步骤=spec");
+    expect(runCli(repoDir, ["status"]).stdout).toMatch(/stall\s+created/);
+  }, 20_000);
+});

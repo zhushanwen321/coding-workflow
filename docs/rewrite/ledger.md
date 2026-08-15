@@ -15,7 +15,7 @@
 | u4a | 干净重跑 + cw verify | committed | 115e52c | 首验 FAIL 1 major（--timeout-ms 无有效传值形式）→ 打回修复（parseTimeoutMs 四分支、非法 exit 1 报错）→ 针对性复审 PASS（红性验证：缺陷注入恰 3 新测试红、字节级还原；行为对抗 abc/裸 flag/-5 全拒）。minor：错误消息称「正整数」但接受正小数（口径轻微出入） |
 | u4b | 三道 gate（红阶段/名字比对/重跑判定） | pending | — | 依赖 u4a |
 | u5 | TestRun 缝 + vitest/e2e-sh 适配器 | committed | 115e52c | verifier PASS（sha256 fe93e5b2…，报告 u5-report.md，17/17 对抗抽查）。两处规格裁决经 verifier 确认与条款自洽（e2e-sh 多 id 命中读法、A 前缀拼回）。观察：vitest includes 子串匹配理论前缀边界、非 A 前缀标记行静默忽略（有防线兜底） |
-| u5b | human 模式 | pending | — | 依赖 u2,u4 |
+| u5b | human 模式 | committed | 5183fb2 | verifier PASS（sha256 bb8583f1…，报告 u5b-report.md，4 条对抗抽查）。3 偏差全确认合理（spec review 无 runId 系验收文档笔误、kind 枚举补 create/spec-review、E2E unit fixture 折衷由 u5 真 fixture 兜底）。观察：同账本持续无关事件可推迟 max-idle（M0 全局粒度）；index.ts 注释行微调（必要无害） |
 
 ## M1 = L2（并行 runner）
 
@@ -55,3 +55,4 @@
 - 2026-08-15 u5 committed：builder 交付两适配器 + registry + 14 测试（fixture 全真实生成）；verifier 17/17 对抗抽查 PASS，两处规格裁决确认自洽。
 - 2026-08-15 u4a 首验 FAIL（1 major）：--timeout-ms 数值 flag 经 dispatch 全链失效（stringArg 类型门 + 静默回退默认），测试盲区=未测 CLI 层数值传递。打回修复中；u4b/u5b 验收文档已备待 u4a committed 后派发。
 - 2026-08-15 u4a committed（FAIL→修复→复审 PASS 闭环）：parseTimeoutMs 本地解析 + 3 回归测试（红性验证有效）；全量 126 绿。第四波 u4b/u5b 基线入 git 后并行派发。
+- 2026-08-15 u5b committed：builder 交付 human-loop + run 命令 + 19 测试（E2E 测试进程扮演人全链收敛 root closed）；verifier 4 对抗抽查 PASS，3 偏差确认合理。u4b 验收中。
