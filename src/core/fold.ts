@@ -18,13 +18,14 @@
  *                   VerdictSubmitted 且其 seq 晚于当前 spec（审的必须是当前 spec；
  *                   「closed 不可逆」的时序半边）
  *
- * 树感知口径（deriveStatusInTree / deriveStatuses，唯一权威）：canon D2 的 closed
- * 公式为「verified ∧ exec-review pass ∧（内部节点追加：子节点全 closed ∧ 集成
- * verify 通过）」。「集成 verify 通过」半边已并入 verified——集成通过即本 unit 有
- * 一条覆盖全部验收 id 的 pass VerifyRan，正是 verified 的判定输入，不重复设条件；
- * 「子节点全 closed」半边是单 unit 投影物理上够不到的树结构信息，由
- * deriveStatusInTree 追加：closed 额外要求全部直接子节点（账本 parentId 口径）
- * 状态为 closed。叶子/无子 unit 两口径同构（deriveStatus 向后兼容保留）。
+ * 树感知口径（deriveStatusInTree 是唯一语义出处，deriveStatuses 只提供批量
+ * 传播机制）：canon D2 的 closed 公式为「verified ∧ exec-review pass ∧（内部
+ * 节点追加：子节点全 closed ∧ 集成 verify 通过）」。「集成 verify 通过」半边已
+ * 并入 verified——集成通过即本 unit 有一条覆盖全部验收 id 的 pass VerifyRan，
+ * 正是 verified 的判定输入，不重复设条件；「子节点全 closed」半边是单 unit
+ * 投影物理上够不到的树结构信息，由 deriveStatusInTree 追加：closed 额外要求
+ * 全部直接子节点（账本 parentId 口径）状态为 closed。叶子/无子 unit 两口径
+ * 同构（deriveStatus 向后兼容保留）。
  *
  * specGate 为注入依赖（u3 的五规则实现）；fold/deriveStatus 不实现规则本身。
  */
@@ -178,6 +179,9 @@ export function deriveStatus(
  * 原样返回——子条件只会把 closed 拉低到 verified，不会抬高。「集成 verify 通过」
  * 半边已并入 verified（见模块头），此处不重复设条件。孤儿 unit（parentId 指向
  * 不存在的 unit）不构成任何 unit 的子边，按根节点口径对待（无「作为子」的条件）。
+ *
+ * 接线：deriveStatuses 的初值与不动点每步重求值都经过本谓词（孩子传当前状态），
+ * 树感知 closed 判定全库只此一处，无平行实现。
  */
 export function deriveStatusInTree(
   unit: SequencedUnitProjection,
@@ -195,12 +199,13 @@ export function deriveStatusInTree(
  * 全投影的树感知状态集合（deriveStatusInTree 的批量形态，readonly 四命令与
  * runner 退出状态的唯一权威入口）。
  *
- * 实现：初值 = 各 unit 的单 unit 口径状态，再按「closed 需全部直接子节点 closed」
- * 不动点传播。传播只降不升（closed → verified），必然终止；parentId 环（外部
- * 手改账本的产物，正常流程不可能——create 只允许指向已存在 unit）不崩溃不死
- * 循环：环上节点互相确认，收敛到自洽不动点（如双方均 closed 时保持 closed，
- * 一方未 closed 时另一方被拉回 verified）。自底向上逐层求值与非环不动点结果
- * 一致（每轮至少沉淀一个「子已定」的节点）。
+ * 语义单一出处：closed 的树感知判定全在 deriveStatusInTree，本函数只提供传播
+ * 机制——初值 = 各 unit 的空孩子（叶子口径）状态，再按「以孩子当前状态重求值
+ * 谓词」不动点迭代。传播只降不升（closed → verified，孩子状态一旦非 closed
+ * 永不回升），必然终止；parentId 环（外部手改账本的产物，正常流程不可能——
+ * create 只允许指向已存在 unit）不崩溃不死循环：环上节点互相确认，收敛到自洽
+ * 不动点（如双方均 closed 时保持 closed，一方未 closed 时另一方被拉回 verified）。
+ * 自底向上逐层求值与非环不动点结果一致（每轮至少沉淀一个「子已定」的节点）。
  */
 export function deriveStatuses(
   units: ReadonlyMap<string, SequencedUnitProjection>,
@@ -224,16 +229,19 @@ export function deriveStatuses(
   while (changed) {
     changed = false;
     for (const unit of units.values()) {
-      if (statuses.get(unit.unitId) !== "closed") {
+      const current = statuses.get(unit.unitId);
+      if (current !== "closed") {
+        // 传播只降不升：谓词对非 closed 原样返回，重求值必得原值，剪枝跳过
         continue;
       }
-      const children = childIds.get(unit.unitId);
-      if (children === undefined) {
-        continue;
-      }
-      const allClosed = children.every((id) => statuses.get(id) === "closed");
-      if (!allClosed) {
-        statuses.set(unit.unitId, "verified");
+      // 孩子 id 恒来自 units（childIds 由 units 收集），初值已填且从不删除，
+      // statuses.get 恒有值；断言只收窄类型，不掩盖运行时可空
+      const childStatuses = (childIds.get(unit.unitId) ?? []).map(
+        (id) => statuses.get(id) as UnitStatus,
+      );
+      const next = deriveStatusInTree(unit, childStatuses, specGate);
+      if (next !== current) {
+        statuses.set(unit.unitId, next);
         changed = true;
       }
     }
