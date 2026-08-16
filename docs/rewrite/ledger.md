@@ -33,6 +33,18 @@
 | fx-1 | 终验死锁三根因修复 | committed | 99f5fca | R1 三防线（规则⑥/叶子 split 拒/loop 防御）+ R2 文案与第四分支（同口径时间语义）+ R3 marker 显式化；10 回归红绿经 verifier 影子工程独立复现（8/10 红一致）。218 全绿。观察：O1 旧坏账旁路场景（终验重置后不发生）、O2 fail 后补审循环张力 |
 | fx-2 | 集成层死锁 R4 修复 | committed | ddc5a84 | 上限计数（事件流重放、逐 unit、无 off-by-one）+ designer 契约漂移出口（guidance 单一出处双出口）+ 上限切断审计喂 idle 回路；4 回归影子工程 4/4 红全超时（R4b 死锁现场直接复现）。222 全绿。minor：失败汇总 N 虚高 1（观感）；上限后 designer 重派至 idle 有界（与 u7 语义一致） |
 
+## M3 = L2-F3（每 unit 独立 worktree 升级）
+
+> 依据设计文档 `docs/rewrite/design-worktree-isolation.md`（其标题「M2」沿用 handoff 旧编号，实际排期 M3——M2 = L3 集成已收官）。波次 W1-W5 对应 unit wt-1~wt-5；依赖链 wt-1 → wt-2 → wt-3 → wt-4 → wt-5（W3/W4 设计上只依赖 W2，但领地相交于 loop.ts，按并行规则串行执行）。
+
+| unit | 模块 | 状态 | 验收基线 commit | 备注 |
+|------|------|------|----------------|------|
+| wt-1 | W1 worktree 基建（runner/worktree.ts + getCwWorktreeHome/worktreePath/resolveProjectDir + cli CW_PROJECT_DIR） | pending | 本 commit | 纯增量、不接调用方、零行为变更 |
+| wt-2 | W2 spawn 链路拆分（projectCwd 双传 + pi env 注入 + human 账本锚定 + brief/escalation 文案） | pending | — | 依赖 wt-1；行为切换点 |
+| wt-3 | W3 reset 语义替换（删 checkWorkspaceForDispatch → worktree reset --hard + clean -fd） | pending | — | 依赖 wt-2 |
+| wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify checkout root 分支 HEAD；回收清单输出） | pending | — | 依赖 wt-2；与 wt-3 领地相交（loop.ts）串行 |
+| wt-5 | W5 测试迁移与终验（39 处 .cw-spawn 断言迁移 + 并发污染对抗测试 + canon P7 勾验 + 终验靶子重跑） | pending | — | 收口；依赖 wt-3 + wt-4 |
+
 ## 里程碑 gate
 
 | gate | 内容 | 状态 |
@@ -72,6 +84,7 @@
 - 2026-08-16 fx-2 committed（影子红绿 4/4 超时复现死锁现场；222 全绿）→ 靶子重置 → 终验第 3 次执行中。
 - 2026-08-16 终验第 3 次 FAIL（R5 建子缺位，更上游）：pi print 模式把建子当询问点，root spec-frozen 等不存在的子 45.5min 零派发空转（idle 有界退出、零人工——兜底语义现场成立）。fx-3 基线入 git（gate 收紧先建子后提 spec + 任务书第 0 步 + 派发兜底出口）。
 - 2026-08-16 fx-3 committed（verifier 22/22、230 全绿）→ 终验第 4 次 **PASS**：45.1min 零人工自然完成、7/7 机器验证 manual=0、全树 closed、靶子全绿；fx-2 R4a 恢复出口首次现场闭环（65s）；TIMEOUT 重派机制首次真实触发。重写主体完工，进入收尾（验收文档回收核查 / 文档重写 / 版本 2.0.0）。
+- 2026-08-16 L2-F3 worktree 隔离升级启动（定时任务触发，cw-orchestrator 流程）：技术方案 design-worktree-isolation.md 入库（探针 P-wt1~P-wt6 已实测 ✅；D2 分支 base = root spec 冻结 commit 按推荐方案设计）；ledger 开 M3 段（wt-1~wt-5）；wt-1 验收基线入 git，builder 派发。
 
 ## 对抗审查修复（2026-08-16）
 
