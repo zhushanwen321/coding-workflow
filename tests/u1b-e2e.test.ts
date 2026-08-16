@@ -218,4 +218,16 @@ describe("E2E real：空账本目录", () => {
     // 只读零副作用：空账本项目目录下不产生任何账本文件
     expect(existsSync(ledgerPath(cwHome, emptyProjDir))).toBe(false);
   });
+
+  it("空账本 --json：status / frontier 输出结构化空形态（机器消费方可解析，非纯文本）", async () => {
+    const s = await runCli(["status", "--json"], emptyProjDir);
+    expect(s.code).toBe(0);
+    expect(JSON.parse(s.stdout)).toEqual(
+      expect.objectContaining({ units: [], totalEvents: 0 }),
+    );
+
+    const f = await runCli(["frontier", "--json"], emptyProjDir);
+    expect(f.code).toBe(0);
+    expect(JSON.parse(f.stdout)).toEqual({ specReady: [], buildReady: [] });
+  });
 });

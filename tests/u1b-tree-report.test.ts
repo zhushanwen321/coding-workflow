@@ -17,7 +17,7 @@ import type {
   SequencedUnitProjection,
   SpecSubmittedPayload,
 } from "../src/events/types.js";
-import { renderReport, renderReportUnit } from "../src/readonly/report.js";
+import { renderReport, renderReportSubtree, renderReportUnit } from "../src/readonly/report.js";
 import { renderTree } from "../src/readonly/tree.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { ledgerPath } from "../src/store/project.js";
@@ -136,12 +136,14 @@ describe("report（验收#4）", () => {
     });
 
     const out = renderReportUnit(getUnit(fold(ledger.readAll()), "r-full"));
-    // spec hash 前 12 位（"r-full-spec-hash" → "r-full-spec-")
+    // spec hash 前 12 位（"r-full-spec-hash" → "r-full-spec-"）
     expect(out).toContain("unit: r-full (spec-frozen)");
     expect(out).toContain("spec: r-full-spec-");
     // 覆盖标记：A1 被 pass run 覆盖 → ✓；A2 未覆盖 → ✗
     expect(out).toContain("A1 e2e-real [core] ✓");
     expect(out).toContain("A2 unit ✗");
+    // 验收行含可复跑命令（command 存在时展示；A2 无 command 不追加）
+    expect(out).toContain("A1 e2e-real [core] ✓ node -v");
     // evidence：runId / commit / 每文件 sha256 前 12 位
     expect(out).toContain("runId=run-r-1 commit=f00d");
     expect(out).toContain("report.json sha256=aa");
@@ -186,5 +188,74 @@ describe("report（验收#4）", () => {
     const empty = makeProject("p-report-empty");
     expect(await dispatch(["report"], empty.cwd)).toBe(0);
     expect(existsSync(ledgerPath(cwHome, empty.cwd))).toBe(false);
+  });
+});
+
+// ---- report --root：子树汇总 ----
+
+describe("report --root 子树（验收#4 扩展）", () => {
+  /** 三层账本：root{left{leaf-a, leaf-b}, right, outsider（树外根）；name 隔离防跨 it 事件累积 */
+  function makeSubtreeProject(name: string): { cwd: string; ledger: EventLedger } {
+    const proj = makeProject(name);
+    const { ledger } = proj;
+    ledger.append("UnitCreated", { unitId: "sub-root", parentId: null, briefRef: "b-root.md" });
+    ledger.append("UnitCreated", { unitId: "sub-left", parentId: "sub-root", briefRef: "b-left.md" });
+    ledger.append("UnitCreated", { unitId: "sub-right", parentId: "sub-root", briefRef: "b-right.md" });
+    ledger.append("UnitCreated", { unitId: "sub-leaf-a", parentId: "sub-left", briefRef: "b-la.md" });
+    ledger.append("UnitCreated", { unitId: "sub-leaf-b", parentId: "sub-left", briefRef: "b-lb.md" });
+    ledger.append("UnitCreated", { unitId: "sub-outsider", parentId: null, briefRef: "b-out.md" });
+    // sub-root 提交带 command 的 spec：验收行应含可复跑命令
+    ledger.append("SpecSubmitted", strongSpec("sub-root"));
+    ledger.append("VerdictSubmitted", {
+      unitId: "sub-root",
+      verdictKind: "spec-review",
+      verdict: "pass",
+    });
+    return proj;
+  }
+
+  it("以 root 为根的多级子树：先根后子、同层账本序、树外 unit 不出现、验收行含 command", () => {
+    const { ledger } = makeSubtreeProject("p-report-root-render");
+    const out = renderReportSubtree(fold(ledger.readAll()), "sub-root");
+    expect(out).toBeDefined();
+
+    const unitLines = out?.split("\n").filter((l) => l.startsWith("unit: ")) ?? [];
+    expect(unitLines).toEqual([
+      "unit: sub-root (spec-frozen)",
+      "unit: sub-left (created)",
+      "unit: sub-leaf-a (created)",
+      "unit: sub-leaf-b (created)",
+      "unit: sub-right (created)",
+    ]);
+    // 树外根不进子树输出
+    expect(out).not.toContain("sub-outsider");
+    // 每节点带完整证据链块（spec / acceptance / evidences / verifyRuns 段）
+    expect(out).toContain("spec: sub-root-spe"); // spec hash 前 12 位（sub-root-spec-hash）
+    // 验收行含可复跑命令（本 fixture 无 verify run → ✗；command 展示不依赖覆盖标记）
+    expect(out).toContain("A1 e2e-real [core] ✗ node -v");
+  });
+
+  it("叶作根：仅该 unit 单块；root 不存在：返回 undefined", () => {
+    const { ledger } = makeSubtreeProject("p-report-root-leaf");
+    const proj = fold(ledger.readAll());
+
+    const leafOut = renderReportSubtree(proj, "sub-right");
+    expect(leafOut?.split("\n").filter((l) => l.startsWith("unit: "))).toEqual([
+      "unit: sub-right (created)",
+    ]);
+
+    expect(renderReportSubtree(proj, "no-such")).toBeUndefined();
+  });
+
+  it("dispatch 级：--root 命中 exit 0 只读；不存在 exit 1；缺值 exit 1；与 --unit 互斥 exit 1", async () => {
+    const { cwd, ledger } = makeSubtreeProject("p-report-root-dispatch");
+
+    const before = ledger.readAll();
+    expect(await dispatch(["report", "--root", "sub-left"], cwd)).toBe(0);
+    expect(ledger.readAll()).toEqual(before);
+
+    expect(await dispatch(["report", "--root", "no-such"], cwd)).toBe(1);
+    expect(await dispatch(["report", "--root"], cwd)).toBe(1);
+    expect(await dispatch(["report", "--unit", "sub-root", "--root", "sub-root"], cwd)).toBe(1);
   });
 });

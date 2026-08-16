@@ -163,7 +163,9 @@ export const humanAdapter: AgentSpawnAdapter = {
         return;
       }
       settled = true;
-      resolveResult({ exitCode, stdoutPath, stderrPath, pid: process.pid });
+      // human 无子进程，pid 无处可指：-1 = 不适用（与 lifecycle/pi 适配器的占位语义
+      // 一致）。不用 process.pid——那是 runner 自身 pid，会把诊断指向 runner 自己
+      resolveResult({ exitCode, stdoutPath, stderrPath, pid: -1 });
     }
 
     // 轮询协程：进展事件 → exitCode 0；到 timeoutMs → TIMEOUT。

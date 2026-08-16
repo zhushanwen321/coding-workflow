@@ -58,6 +58,7 @@ import type {
 import { loadLedger, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
 import { getCwHome, ledgerPath } from "../store/project.js";
+import { timeoutForAcceptance } from "../verify/run.js";
 import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
@@ -74,8 +75,6 @@ export const DEFAULT_LOOP_MAX_IDLE_MS = 1_800_000;
 export const DEFAULT_LOOP_MAX_CONCURRENCY = 3;
 /** 单次 agent spawn 超时（验收文档循环逻辑 3：timeoutMs 固定 30min） */
 const AGENT_SPAWN_TIMEOUT_MS = 1_800_000;
-/** 集成重跑单条验收命令的超时（与 cw verify 的 DEFAULT_TIMEOUT_MS 同口径 10min） */
-const INTEGRATE_ACCEPTANCE_TIMEOUT_MS = 600_000;
 /**
  * 同一内部节点集成的连续 fail 重派上限（fx-2 R4a，验收文档锁定 2 次）：达到后
  * 不再自动重派集成，改派 designer 处置契约漂移。R4b 的修复即此上限本身——集成
@@ -409,7 +408,10 @@ async function runIntegrationDispatch(
     children,
     rootAcceptance: spec.acceptance,
     contracts: collectIntegrationContracts(unit, childUnits),
-    timeoutMs: INTEGRATE_ACCEPTANCE_TIMEOUT_MS,
+    // 集成批次混装各 type 验收而 runIntegrationVerify 只收单一 timeoutMs（必填
+    // number，src/runner/integrate.ts 非本任务领地），取分档上限（e2e 30min）防
+    // 最慢档被误杀；其参数可选化后此处改传 undefined 即恢复逐条分档
+    timeoutMs: timeoutForAcceptance("e2e-real"),
   });
 
   // acceptanceIds：pass = 覆盖的验收 id（子 ∪ root，manual 免机器验证一并入）；

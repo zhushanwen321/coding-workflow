@@ -38,6 +38,8 @@ export const ContractSchema = Type.Object({
   provider: Type.String(),
   consumer: Type.String(),
   signature: Type.String(),
+  /** 签名应存在的文件（相对仓库根路径）；缺省 = 集成时全树搜索（对齐领域类型 Contract.file） */
+  file: Type.Optional(Type.String()),
   description: Type.Optional(Type.String()),
 });
 

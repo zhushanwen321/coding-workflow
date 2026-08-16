@@ -168,7 +168,7 @@ describe("u6b human 适配器", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdoutPath).toBe(artifactPath(scenario, "dw", "designer", "stdout"));
     expect(result.stderrPath).toBe(artifactPath(scenario, "dw", "designer", "stderr"));
-    expect(result.pid).toBe(process.pid); // human 无子进程，pid = 当前进程
+    expect(result.pid).toBe(-1); // human 无子进程，-1 = 不适用（与 lifecycle/pi 一致）
   });
 
   it("验收#3 builder wait() 事件按 role 过滤：新 SpecSubmitted 不触发，EvidenceSubmitted 才触发", async () => {
@@ -199,7 +199,7 @@ describe("u6b human 适配器", () => {
     const handle = await humanAdapter.spawn(spawnRequest(scenario, "to", "builder", 800));
     const result = await handle.wait();
     expect(result.exitCode).toBe("TIMEOUT");
-    expect(result.pid).toBe(process.pid);
+    expect(result.pid).toBe(-1); // human 无子进程，-1 = 不适用
     // 不早于 timeoutMs（spawn 前 t0 为下界）；不显著晚于（轮询间隔 min(1000, 800/10)=80ms）
     const elapsed = Date.now() - startedAt;
     expect(elapsed).toBeGreaterThanOrEqual(800);
@@ -215,7 +215,7 @@ describe("u6b human 适配器", () => {
     expect(first.exitCode).toBe("CRASH");
     expect(first.stdoutPath).toBe(artifactPath(scenario, "kl", "reviewer", "stdout"));
     expect(first.stderrPath).toBe(artifactPath(scenario, "kl", "reviewer", "stderr"));
-    expect(first.pid).toBe(process.pid);
+    expect(first.pid).toBe(-1); // human 无子进程，-1 = 不适用
     const again = await handle.wait();
     expect(again).toBe(first); // wait() 可重复调用同结果（waitPromise 缓存）
   });

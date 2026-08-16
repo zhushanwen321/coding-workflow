@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { dispatch } from "../src/dispatch.js";
+import type { SpecSubmittedPayload } from "../src/events/types.js";
+import { ContractSchema, validateSpecFile } from "../src/handlers/spec-schema.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { ledgerPath } from "../src/store/project.js";
 
@@ -247,6 +249,76 @@ describe("验收2：evidence submit --kind spec（dispatch 层）", () => {
     const res = await run(["evidence", "submit", "--kind", "report", "--unit", "u-1"]);
     expect(res.code).toBe(1);
     expect(res.stderr).toContain("spec | build");
+  });
+
+  it("contract 带 file 字段（集成 verify contract-match 消费）→ schema 校验 ok 且入账 payload 原样保留", async () => {
+    await createUnit("u-1");
+    const specPath = join(cwd, "spec-contract-file.json");
+    writeFileSync(
+      specPath,
+      JSON.stringify({
+        acceptance: [
+          { id: "A1", core: true, title: "核心链路可用", type: "e2e-real", command: "node -v" },
+          { id: "A2", core: false, title: "单元行为正确", type: "unit" },
+        ],
+        contracts: [
+          {
+            id: "C1",
+            kind: "api",
+            provider: "u-1",
+            consumer: "u-2",
+            signature: "GET /api/x",
+            file: "src/api/x.ts",
+          },
+        ],
+        split: [],
+      }),
+    );
+
+    const res = await run(["evidence", "submit", "--kind", "spec", "--unit", "u-1", "--file", specPath]);
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+
+    const events = ledger.readAll();
+    const spec = events[events.length - 1];
+    if (spec?.type !== "SpecSubmitted") {
+      throw new Error(`前置失败：最后事件应为 SpecSubmitted，实际 ${spec?.type ?? "无事件"}`);
+    }
+    // readAll 返回宽泛信封（type 与 payload 不联动），按上面已验证的 type 收窄读取
+    const payload = spec.payload as SpecSubmittedPayload;
+    expect(payload.contracts).toEqual([
+      {
+        id: "C1",
+        kind: "api",
+        provider: "u-1",
+        consumer: "u-2",
+        signature: "GET /api/x",
+        file: "src/api/x.ts",
+      },
+    ]);
+  });
+});
+
+describe("ContractSchema 与领域类型 Contract 同步（file 字段显式声明）", () => {
+  it("schema properties 显式含 file（Type.Optional(Type.String())），非依赖 additionalProperties 透传", () => {
+    expect(Object.keys(ContractSchema.properties)).toContain("file");
+    // mod 可选性：file 缺省时 schema 依然放行
+    expect(
+      validateSpecFile({
+        acceptance: [],
+        contracts: [{ id: "C1", kind: "api", provider: "u1", consumer: "u2", signature: "s" }],
+        split: [],
+      }).errors,
+    ).toEqual([]);
+  });
+
+  it("file 类型错（number）→ schema 校验失败并列出 /contracts/0/file", () => {
+    const result = validateSpecFile({
+      acceptance: [],
+      contracts: [{ id: "C1", kind: "api", provider: "u1", consumer: "u2", signature: "s", file: 123 }],
+      split: [],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.startsWith("/contracts/0/file"))).toBe(true);
   });
 });
 

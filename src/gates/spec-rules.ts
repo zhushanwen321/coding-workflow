@@ -12,7 +12,7 @@
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
  * 不检查项目内文件（设计期尚不存在）；command 真正跑得通由 verify 期裁决。
  */
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { delimiter as pathDelimiter, join } from "node:path";
 
 import type {
@@ -95,7 +95,8 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
 
 /**
  * `which` 等价检查：含路径分隔符时直接验证该文件可执行，否则遍历 PATH
- * 各目录查找可执行文件。目录也会通过（与 which 行为一致）；Windows 的
+ * 各目录查找可执行文件。目录不通过（实测 macOS `which /private/tmp` 返回
+ * not found——目录对 X_OK 恒真，故必须叠加 isFile 检查）；Windows 的
  * PATHEXT 扩展查找不支持（本项目运行环境为类 Unix）。
  */
 function isResolvableOnPath(bin: string): boolean {
@@ -108,10 +109,16 @@ function isResolvableOnPath(bin: string): boolean {
 
 function isExecutable(candidate: string): boolean {
   try {
+    // 目录对 accessSync(X_OK) 恒真（目录天然可遍历），须叠加 isFile 才与 which
+    // 行为一致——首 token 是目录（如 /tmp）不是可执行 command
+    if (!statSync(candidate).isFile()) {
+      return false;
+    }
     accessSync(candidate, fsConstants.X_OK);
     return true;
   } catch {
-    // accessSync 抛错即「不可执行/不存在」，这正是要返回的结果而非需传播的错误
+    // statSync/accessSync 抛错即「非普通文件/不可执行/不存在」，这正是要返回的
+    // 结果而非需传播的错误
     return false;
   }
 }

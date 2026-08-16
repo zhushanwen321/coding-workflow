@@ -11,8 +11,15 @@
  * 纪律落地（u4a 起保持）：
  *   - ③ 产物落盘：每条验收 `<id>.stdout`/`.stderr`（超时另加 `.timeout` 标记）+
  *     适配器折叠出的 `<id>.report.json`（nameMatch 的输入，审计可重放）+ 总报告
- *     report.json（EvidenceReport 结构，rawPath 指向自身）；
- *   - ④ 超时与回收：每条命令独立 spawnSync timeout，超时 kill 该条进程并标 fail；
+ *     report.json（EvidenceReport 结构 + 逐产物 sha256 的 artifacts 数组，
+ *     rawPath 指向自身——VerifyRan.reportHash 由此间接锁定全部产物内容：两次
+ *     重跑 reportHash 一致 ⟹ 产物内容一致）；
+ *   - ④ 超时与回收：每条验收独立进程组执行（detached spawn，pgid = pid）+
+ *     按 type 分档的超时（timeoutForAcceptance：单测 10min / e2e 30min；显式
+ *     timeoutMs 覆盖分档）。到点 kill(-pgid) 整树终止（含孙进程）——旧
+ *     spawnSync 只 SIGTERM 直接子进程，dev server / test worker 等孙进程会成
+ *     孤儿存活，残留 dev server 让后续 e2e 验收假绿；正常完成也回收同组余党
+ *     （命令退出但后台进程仍挂的场景同理）；
  *   - ① 环境隔离：验收子进程的 CW_HOME 指向一次性 mkdtemp 目录（PATH 继承），
  *     防止验收命令读写真实 ~/.cw 账本，跑完即清理。
  *
@@ -20,10 +27,23 @@
  * AcceptanceRunResult 的 commandExit/parseError 是红阶段 gate 的判定输入（旧树
  * 「命令效果上成功但产物无效」= 无区分力），常规 verify 路径不消费。
  */
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import type { AcceptanceItem, AcceptanceType } from "../events/types.js";
 import { defaultRegistry } from "../testrun/registry.js";
@@ -34,6 +54,27 @@ import { nameMatch } from "./name-match.js";
 const REPORT_FILE_NAME = "report.json";
 /** report.json 缩进宽度（2 空格，与只读命令 --json 输出一致） */
 const REPORT_INDENT = 2;
+
+/** 单条验收命令默认超时——单测口径 10min（canon §6.3 纪律④） */
+export const UNIT_ACCEPTANCE_TIMEOUT_MS = 600_000;
+/** 单条验收命令默认超时——e2e 口径 30min（canon §6.3 纪律④双档） */
+export const E2E_ACCEPTANCE_TIMEOUT_MS = 1_800_000;
+
+/**
+ * 验收 type → 默认超时分档：unit/integration 10min、e2e-real/e2e-mock 30min。
+ * manual 不经机器执行（runAcceptances 跳过），取单测口径仅保持穷尽（值无意义）。
+ */
+export function timeoutForAcceptance(type: AcceptanceType): number {
+  switch (type) {
+    case "unit":
+    case "integration":
+    case "manual":
+      return UNIT_ACCEPTANCE_TIMEOUT_MS;
+    case "e2e-real":
+    case "e2e-mock":
+      return E2E_ACCEPTANCE_TIMEOUT_MS;
+  }
+}
 
 export interface AcceptanceRunResult {
   id: string;
@@ -50,9 +91,20 @@ export interface AcceptanceRunResult {
   parseError: boolean;
 }
 
+/**
+ * report.json 的落盘形态：EvidenceReport 契约（u5 testrun 缝，不得改其 schema）+
+ * 逐产物 sha256 扩展。VerifyRan.reportHash 的计算输入是整个 report.json 字节，
+ * artifacts 入 report ⟹ reportHash 间接锁定全部产物内容 hash（两次重跑
+ * reportHash 一致 ⟹ 产物内容一致）——不改 VerifyRan 事件 payload schema。
+ */
+interface VerifyReport extends EvidenceReport {
+  /** 逐条验收产物内容 hash（超时条目的 stderr 含超时标记，同样入 hash） */
+  artifacts: Array<{ id: string; stdoutSha256: string; stderrSha256: string }>;
+}
+
 export interface RunOutcome {
   results: AcceptanceRunResult[];
-  report: EvidenceReport;
+  report: VerifyReport;
   /** report.json 落盘原始字节（VerifyRan.reportHash 的计算输入，避免二次读取） */
   reportRaw: Buffer;
 }
@@ -60,12 +112,15 @@ export interface RunOutcome {
 /**
  * 在干净 checkout 工作区逐条执行验收（跳过 manual），产物落盘 evidenceBaseDir，
  * 返回逐条结果与总报告。文件系统故障（不可写等）直接上抛，由调用方归入环境错误。
+ *
+ * timeoutMs 省略时按验收 type 分档（timeoutForAcceptance：单测 10min / e2e 30min）；
+ * 显式传入（--timeout-ms 逃生口）则覆盖分档，整轮统一用该值。
  */
 export function runAcceptances(
   checkoutDir: string,
   acceptance: readonly AcceptanceItem[],
   evidenceBaseDir: string,
-  timeoutMs: number,
+  timeoutMs?: number,
 ): RunOutcome {
   mkdirSync(evidenceBaseDir, { recursive: true });
   const isolatedCwHome = mkdtempSync(join(tmpdir(), "cw-verify-env-"));
@@ -79,16 +134,25 @@ export function runAcceptances(
       if (ac.type === "manual") {
         continue;
       }
-      results.push(runOne(ac, checkoutDir, evidenceBaseDir, env, timeoutMs, registry));
+      results.push(
+        runOne(ac, checkoutDir, evidenceBaseDir, env, isolatedCwHome, timeoutMs ?? timeoutForAcceptance(ac.type), registry),
+      );
     }
   } finally {
     rmSync(isolatedCwHome, { recursive: true, force: true });
   }
 
-  const report: EvidenceReport = {
+  // 逐产物 sha256（在 runOne 全部落盘后计算——含 parse 失败追加到 stderr 的判定原因）
+  const artifacts = results.map((r) => ({
+    id: r.id,
+    stdoutSha256: sha256OfFile(r.stdoutPath),
+    stderrSha256: sha256OfFile(r.stderrPath),
+  }));
+  const report: VerifyReport = {
     exitCode: results.some((r) => r.status === "fail") ? 1 : 0,
     // 总报告的 name 用验收 title（P2 稳定重跑比对口径）：用例级细节在 <id>.report.json
     cases: results.map((r) => ({ id: r.id, name: titles.get(r.id) ?? "", status: r.status })),
+    artifacts,
     rawPath: join(evidenceBaseDir, REPORT_FILE_NAME),
   };
   const reportRaw = Buffer.from(`${JSON.stringify(report, null, REPORT_INDENT)}\n`, "utf-8");
@@ -122,6 +186,8 @@ function runOne(
   checkoutDir: string,
   evidenceBaseDir: string,
   env: NodeJS.ProcessEnv,
+  /** 哨兵文件目录（一次性 CW_HOME 隔离目录）：命令退出码经哨兵文件传出 */
+  sentinelDir: string,
   timeoutMs: number,
   registry: AdapterRegistry,
 ): AcceptanceRunResult {
@@ -149,19 +215,26 @@ function runOne(
     return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: true };
   }
 
-  const res = spawnSync("bash", ["-c", command], {
-    cwd: checkoutDir,
+  const exec = execBashTree(
+    command,
+    checkoutDir,
     env,
-    timeout: timeoutMs,
-    encoding: "utf-8",
-  });
-  writeFileSync(stdoutPath, res.stdout ?? "");
+    stdoutPath,
+    stderrPath,
+    join(sentinelDir, `${stem}.exit`),
+    timeoutMs,
+  );
 
-  // spawnSync timeout 触发时子进程已被 kill：error.code = ETIMEDOUT，status = null
-  const timedOut = res.error !== undefined && (res.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
-  if (timedOut) {
+  if (exec.kind === "spawn-error") {
+    const reason = `无法执行 bash -c：${exec.message}`;
+    appendFile(stderrPath, `${reason}\n`);
+    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: false };
+  }
+
+  // 超时路径：进程组已被整树 SIGKILL，stdout/stderr 文件里是子进程死前的部分输出
+  if (exec.kind === "timeout") {
     const timeoutNote = `command timed out after ${timeoutMs} ms, killed`;
-    writeFileSync(stderrPath, `${timeoutNote}\n`);
+    appendFile(stderrPath, `${timeoutNote}\n`);
     writeFileSync(join(evidenceBaseDir, `${stem}.timeout`), `${timeoutNote}\n`);
     return {
       id: ac.id,
@@ -174,14 +247,8 @@ function runOne(
       parseError: false,
     };
   }
-  if (res.error !== undefined) {
-    const reason = `无法执行 bash -c：${res.error.message}`;
-    writeFileSync(stderrPath, `${reason}\n`);
-    return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: false };
-  }
 
-  writeFileSync(stderrPath, res.stderr ?? "");
-  const exitCode = res.status ?? -1;
+  const exitCode = exec.exitCode;
 
   let report: EvidenceReport;
   try {
@@ -243,4 +310,157 @@ function existingContent(path: string): string {
  */
 function fileStem(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+// ── bash 执行引擎（进程组隔离 + 自管超时 + 整树回收） ─────────
+// 参考本仓库已实测的同模式实现 src/runner/spawn/lifecycle.ts（detached + pgid
+// 树 kill）。与旧 spawnSync 的关键差异：spawnSync 的 timeout 只对直接子进程
+// （bash）发 SIGTERM，孙进程（dev server、vitest worker、`sleep &` 后台进程）
+// 不在打击面内——超时后成孤儿存活（ppid=1），残留 dev server 让后续 e2e 验收
+// 假绿。本引擎：detached spawn（子进程自成进程组组长，pgid === pid）+ 哨兵
+// 文件传出退出码 + 整树 kill(-pgid, SIGKILL)。
+//
+// 保持同步语义（调用方命令行内联等待）：runAcceptances 是同步函数且被
+// src/runner/integrate.ts 同步调用。同步等待下 Node 事件循环被阻塞，子进程的
+// exit/stdout 事件永不投递——退出事实只能经文件系统观测（哨兵文件），产物
+// 只能让子进程直写文件 fd（OS 层写入，与进程存活解耦，同 lifecycle.ts）。
+// 等待本身用 spawnSync 起一个「轮询哨兵存在性」的辅助 bash（其 timeout 语义
+// 与本文件旧用法一致：到点 ETIMEDOUT）。已知边界：命令内部自行 setsid 脱离
+// 进程组的进程（守护进程化）无法被组 kill 追杀——与 lifecycle.ts 同限。
+
+/** bash 执行结果：超时（整树已 kill）/ 正常完成（退出码来自哨兵，同组余党已回收）/ 无法启动 */
+type BashExecOutcome =
+  | { kind: "timeout" }
+  | { kind: "done"; exitCode: number }
+  | { kind: "spawn-error"; message: string };
+
+function execBashTree(
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  stdoutPath: string,
+  stderrPath: string,
+  sentinelPath: string,
+  timeoutMs: number,
+): BashExecOutcome {
+  rmSync(sentinelPath, { force: true });
+  if (!bashResolvable(env)) {
+    return { kind: "spawn-error", message: "bash 不存在或不可执行（按子进程 PATH 逐段解析失败）" };
+  }
+
+  // 产物 fd 直开直写：子进程 stdout/stderr 接到文件 fd，无用户态缓冲、无
+  // maxBuffer 上限（旧 spawnSync 1MB maxBuffer 会让大 vitest JSON 产物假失败）
+  const stdoutFd = openSync(stdoutPath, "w");
+  let stderrFd: number;
+  try {
+    stderrFd = openSync(stderrPath, "w");
+  } catch (err) {
+    closeSync(stdoutFd);
+    throw err;
+  }
+  try {
+    const sentinel = shellQuote(sentinelPath);
+    // 命令本体包进子 shell：command 用 exec 自替换时哨兵仍会落盘（exec 只替换子 shell）
+    const wrapped =
+      `( ${command} )\n` +
+      `__cw_verify_ec=$?; printf '%s\\n' "$__cw_verify_ec" > ${sentinel}; exit "$__cw_verify_ec"`;
+
+    let child: ChildProcess;
+    try {
+      child = spawn("bash", ["-c", wrapped], {
+        cwd,
+        env,
+        stdio: ["ignore", stdoutFd, stderrFd],
+        // 进程组隔离：组长 pid === pgid，kill(-pgid) 整树终止（含孙进程）
+        detached: true,
+      });
+    } catch (e) {
+      return { kind: "spawn-error", message: e instanceof Error ? e.message : String(e) };
+    }
+    const pgid = child.pid;
+    if (pgid === undefined) {
+      return { kind: "spawn-error", message: "子进程未启动（pid 缺失）" };
+    }
+
+    const wait = spawnSync("bash", ["-c", `while [ ! -f ${sentinel} ]; do sleep 0.05; done`], {
+      timeout: timeoutMs,
+    });
+
+    // 哨兵优先于 ETIMEDOUT 判定：与 deadline 撞车时命令可能已完成，退出码是事实
+    if (existsSync(sentinelPath)) {
+      reclaimGroup(pgid);
+      return { kind: "done", exitCode: readSentinel(sentinelPath) };
+    }
+    const timedOut = wait.error !== undefined && (wait.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+    if (timedOut) {
+      reclaimGroup(pgid);
+      return { kind: "timeout" };
+    }
+    // 轮询辅助进程自身故障（哨兵也没落盘）：罕见，按同路径回收后显性报错
+    reclaimGroup(pgid);
+    return {
+      kind: "spawn-error",
+      message: `等待子进程完成失败：${wait.error?.message ?? `辅助进程 exit ${wait.status ?? -1}`}`,
+    };
+  } finally {
+    closeSync(stdoutFd);
+    closeSync(stderrFd);
+  }
+}
+
+/**
+ * 整组回收：kill(-pgid, SIGKILL) 覆盖超时与正常完成两条路径——正常完成时直接
+ * 子进程（bash）已死，但同组孙进程（`dev-server &` 余党）可能仍活，残留进程会
+ * 污染后续验收。ESRCH（组已消亡）/ EPERM（macOS 对组 kill 的权限边界）静默；
+ * 信号已发出时小睡等待调度落地，保证返回后同组无存活进程（SIGKILL 不可捕获
+ * 阻塞，唯一延迟来自调度）。
+ */
+function reclaimGroup(pgid: number): void {
+  let signaled = false;
+  try {
+    process.kill(-pgid, "SIGKILL");
+    signaled = true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw e;
+    }
+  }
+  if (signaled) {
+    spawnSync("bash", ["-c", "sleep 0.05"], { timeout: 2_000 });
+  }
+}
+
+/** 哨兵内容（命令退出码）→ 数值；损坏内容按 -1（与旧 res.status ?? -1 同兜底） */
+function readSentinel(path: string): number {
+  const code = Number.parseInt(readFileSync(path, "utf-8").trim(), 10);
+  return Number.isFinite(code) ? code : -1;
+}
+
+/** 路径嵌入 bash 命令串的单引号包裹（内含单引号时以 '\'' 转义） */
+function shellQuote(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/** bash 是否可按子进程 env 的 PATH 解析为可执行普通文件（ENOENT 预检；无 PATH 放行走系统默认） */
+function bashResolvable(env: NodeJS.ProcessEnv): boolean {
+  const path = env.PATH;
+  if (path === undefined) {
+    return true;
+  }
+  return path.split(delimiter).some((dir) => isExecutableFile(join(dir, "bash")));
+}
+
+/** 是否为「存在的可执行普通文件」（statSync 跟随 symlink，与 execvp 解析一致） */
+function isExecutableFile(path: string): boolean {
+  try {
+    return statSync(path).isFile() && accessSync(path, constants.X_OK) === undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** 文件内容 sha256（hex）——report.json 的逐产物 hash 来源 */
+function sha256OfFile(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }

@@ -1,6 +1,11 @@
 /**
- * `cw report [--unit <id>]`：每 unit 证据链汇总（人可读，无 --json——规格锁定仅
- * status / frontier 提供 --json）。
+ * `cw report [--unit <id>] [--root <id>]`：每 unit 证据链汇总（人可读，无 --json
+ * ——规格锁定仅 status / frontier 提供 --json）。
+ *
+ * 选择器：--unit 单 unit 详情；--root 以该 unit 为根的子树汇总（先根后子、同层按
+ * 账本序，canon《report 命令》的子树视图）；两者互斥；均未提供 = 全账本。
+ * 验收行含可复跑命令（acceptance.command 存在时展示——人可读模式下证据链的可
+ * 复跑入口；--json 消费方走 status --json，其 specs.acceptance 已含 command 字段）。
  *
  * 覆盖标记语义（验收文档 u1b「单测验收 4」）：验收 id 出现在任一 result=pass 的
  * VerifyRan.acceptanceIds 中 → ✓，否则 ✗。与 deriveStatus 的 verified 判定同向
@@ -43,7 +48,9 @@ export function renderReportUnit(unit: SequencedUnitProjection): string {
   } else {
     for (const ac of spec.acceptance) {
       const core = ac.core ? " [core]" : "";
-      lines.push(`    ${ac.id} ${ac.type}${core} ${isCovered(unit, ac.id) ? "✓" : "✗"}`);
+      // 可复跑命令：command 为可选字段（e2e-real / e2e-mock 必填，unit / manual 无）
+      const command = ac.command === undefined ? "" : ` ${ac.command}`;
+      lines.push(`    ${ac.id} ${ac.type}${core} ${isCovered(unit, ac.id) ? "✓" : "✗"}${command}`);
     }
   }
 
@@ -80,10 +87,73 @@ export function renderReport(projection: SequencedProjection): string {
   return `${blocks.join("\n\n")}\n`;
 }
 
+/** parentId → 直接子 unit（保持账本顺序；--root 子树遍历的索引） */
+function childrenOf(projection: SequencedProjection): Map<string, SequencedUnitProjection[]> {
+  const children = new Map<string, SequencedUnitProjection[]>();
+  for (const unit of projection.units.values()) {
+    if (unit.parentId === null) {
+      continue;
+    }
+    const siblings = children.get(unit.parentId) ?? [];
+    siblings.push(unit);
+    children.set(unit.parentId, siblings);
+  }
+  return children;
+}
+
+/**
+ * 子树报告（纯函数）：以 rootId 为根，先根后子、同层按账本序遍历，逐节点输出
+ * 证据链块（块间空行分隔，与全账本报告同格式）。rootId 不在投影中 → undefined
+ * （由 handler 转 exit 1 + 可操作错误）。
+ */
+export function renderReportSubtree(
+  projection: SequencedProjection,
+  rootId: string,
+): string | undefined {
+  const root = projection.units.get(rootId);
+  if (root === undefined) {
+    return undefined;
+  }
+  const children = childrenOf(projection);
+  const blocks: string[] = [];
+  const walk = (unit: SequencedUnitProjection): void => {
+    blocks.push(renderReportUnit(unit));
+    for (const child of children.get(unit.unitId) ?? []) {
+      walk(child);
+    }
+  };
+  walk(root);
+  return `${blocks.join("\n\n")}\n`;
+}
+
+/** --root 参数非法时的可操作错误（对齐 load.ts 的 --unit 错误风格） */
+function rootArgUsageError(): string {
+  return (
+    "report: --root 需要一个 unitId 参数（如 cw report --root u1）。" +
+    "恢复动作：补上 unitId，或去掉 --root 查看全部 unit。\n"
+  );
+}
+
+/** --unit 与 --root 同时提供时的可操作错误（单一选择器原则） */
+function mixedSelectorError(): string {
+  return (
+    "report: --unit 与 --root 互斥，只能提供一个。" +
+    "恢复动作：单 unit 详情用 --unit <id>，子树汇总用 --root <id>。\n"
+  );
+}
+
 export async function reportHandler(ctx: CommandContext): Promise<number> {
+  // 选择器解析：--unit 与 --root 同规则（未提供 / 合法非空串 / 非法），互斥
   const unitArg = parseUnitArg(ctx.argv.unit);
-  if (unitArg.kind === "invalid") {
-    process.stderr.write(unitArgUsageError("report"));
+  const rootArg = parseUnitArg(ctx.argv.root);
+  if (unitArg.kind === "invalid" || rootArg.kind === "invalid") {
+    process.stderr.write(
+      unitArg.kind === "invalid" ? unitArgUsageError("report") : rootArgUsageError(),
+    );
+    return 1;
+  }
+  if (unitArg.kind === "ok" && rootArg.kind === "ok") {
+    process.stderr.write(mixedSelectorError());
     return 1;
   }
 
@@ -96,6 +166,16 @@ export async function reportHandler(ctx: CommandContext): Promise<number> {
       return 1;
     }
     process.stdout.write(`${renderReportUnit(unit)}\n`);
+    return 0;
+  }
+
+  if (rootArg.kind === "ok") {
+    const subtree = renderReportSubtree(projection, rootArg.unitId);
+    if (subtree === undefined) {
+      process.stderr.write(unitNotFoundError("report", rootArg.unitId));
+      return 1;
+    }
+    process.stdout.write(subtree);
     return 0;
   }
 

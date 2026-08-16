@@ -6,6 +6,11 @@
  * 实现里隐含（标记 "L2 PASS" 折叠 key "AL2" 与验收 id "L2" 永不相等），终验中
  * pi 试错 3 轮才悟出；错误信息直接给出约定本身。
  *
+ * 对抗审查修订：旧文案「A 前缀 + 验收 id」按字面执行会产出 `AA1 PASS` 被拒——
+ * 错误信息把 agent 引向错误写法。新约定：标记行第一列 = 验收 id 全文（旧脚本
+ * 写 `A1 PASS` 且 id=A1 时原样匹配，天然向后兼容），本文件锁定新文案不含
+ * 歧义的 A 前缀指引。
+ *
  * 真实环境零 mock：tmp 写真实 sh 脚本，chmod 后真实子进程执行，stdout 落盘再
  * 交 parse（u5 同款 fixture 形态）。
  */
@@ -24,8 +29,8 @@ let scriptSeq = 0;
 
 /** 验收文档锁定的格式说明全文（fx-1 R3 追加到两类 parse 错误的 message 里） */
 const MARKER_FORMAT_NOTE =
-  "e2e-sh 验收脚本须输出标记行 `A<验收id> PASS` 或 `A<验收id> FAIL`" +
-  "（A 前缀 + 验收 id + 空格 + 结果），脚本 exit code 与标记行一致。";
+  "e2e-sh 验收脚本须为每条验收输出标记行 `<验收id原文> PASS` 或 `<验收id原文> FAIL`" +
+  "（验收 id + 空格 + 结果），脚本 exit code 须与标记行一致。";
 
 function acc(id: string): AcceptanceItem {
   return { id, core: true, title: "fx1 R3 marker 格式说明", type: "e2e-real", command: "bash e2e/run.sh" };
@@ -71,5 +76,16 @@ describe("fx-1 R3：e2e-sh parse 错误信息含 marker 格式说明全文", () 
     const message = parseErrorMessage(out, status, acc("A1"));
     expect(message).toContain("A9");
     expect(message).toContain(MARKER_FORMAT_NOTE);
+  });
+
+  it("新文案不再含歧义的 A 前缀指引（按文案字面执行不再产出 AA1 类被拒形态）", () => {
+    const { out, status } = runScript('echo "all good"\nexit 0');
+    expect(status).toBe(0);
+    const message = parseErrorMessage(out, status, acc("A1"));
+    // 旧文案的误导点：「A 前缀 + 验收 id」会让 agent 写出 `AA1 PASS`（id=A1 时）
+    expect(message).not.toContain("A 前缀");
+    expect(message).not.toContain("A<验收id>");
+    // 新文案锚点：验收 id 原文即标记行第一列
+    expect(message).toContain("<验收id原文>");
   });
 });

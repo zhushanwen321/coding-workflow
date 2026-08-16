@@ -5,7 +5,8 @@
  *   1. 全链 create → spec（e2e-sh 型验收 + 真实脚本文件随 build commit 提交；
  *      unit 型验收 command 指向本仓库 vitest bin，测试文件同样随 c2 引入）→
  *      build → review → verify → exit 0 且 VerifyRan 入账；再 verify --red-phase →
- *      exit 0（脚本与测试文件在父 commit 不存在 = 有区分力）；
+ *      exit 0（红阶段 patch 语义把脚本/测试带进父树，真测试在基线树上因实现
+ *      产物缺失而挂 = 有区分力；fixture 须写真测试——旧恒真形态会被正确拒绝）；
  *   2. 假命令防线全链：e2e 验收 command=echo ok → 常规 verify 的 parse 抛错路径 →
  *      exit 1；--red-phase 同样 exit 1（无区分力）。
  *
@@ -107,25 +108,39 @@ function verifyRans(dir: string, unitId: string): Array<{ result: string; accept
 
 describe("E2E 1：适配器判定全链（create → spec → build → review → verify → --red-phase）", () => {
   it(
-    "常规 verify exit 0 + VerifyRan 入账；--red-phase exit 0（实现产物在父 commit 不存在）",
+    "常规 verify exit 0 + VerifyRan 入账；--red-phase exit 0（真测试 patch 到父树后因实现缺失而挂）",
     { timeout: 180_000 },
     () => {
       const repo = join(tmpRoot, "repo-full");
       const UNIT = "u-full";
-      // c1：实现前基线（无 e2e 脚本、无测试文件）；c2：实现产物。
-      // build 锚必须是 c2 而非「spec.json 单独 commit」——红阶段回退的是 build 锚的
-      // 父，spec 若自成 commit 会让父树仍含实现产物，红阶段全数误判无区分力
+      // c1：实现前基线（无实现产物、无 e2e 脚本、无测试文件）；c2：实现产物
+      // impl.js + 引用它的真测试（e2e 脚本 grep 实现内容、vitest 断言实现行为）。
+      // 红阶段会把 e2e/run.sh patch 进父树（command 引用它），真测试在 c1 树上
+      // 因 impl.js 缺失而挂 → 有区分力。build 锚必须是 c2 而非「spec.json 单独
+      // commit」——红阶段回退的是 build 锚的父，spec 若自成 commit 会让父树仍含
+      // 实现产物，红阶段全数误判无区分力
       const [, implCommit] = makeGitRepo(repo, [
         {
           "brief.md": "# 任务书\n",
           "package.json": '{ "name": "fixture", "private": true, "type": "module" }\n',
         },
         {
-          "e2e/run.sh": '#!/bin/sh\necho "A1 PASS"\necho "A2 PASS"\n',
+          "impl.js": "export function add(a, b) {\n  return a + b;\n}\n",
+          "e2e/run.sh":
+            '#!/bin/sh\n' +
+            'if grep -q "return a + b" impl.js; then\n' +
+            '  echo "A1 PASS"\n' +
+            '  echo "A2 PASS"\n' +
+            "else\n" +
+            '  echo "A1 FAIL"\n' +
+            '  echo "A2 FAIL"\n' +
+            "  exit 1\n" +
+            "fi\n",
           "tests/acceptances.test.ts":
             'import { describe, expect, it } from "vitest";\n\n' +
+            'import { add } from "../impl.js";\n\n' +
             'describe("验收", () => {\n' +
-            '  it("A3 单元行为", () => {\n    expect(1 + 1).toBe(2);\n  });\n' +
+            '  it("A3 单元行为", () => {\n    expect(add(1, 1)).toBe(2);\n  });\n' +
             "});\n",
         },
       ]);
@@ -199,7 +214,9 @@ describe("E2E 1：适配器判定全链（create → spec → build → review �
       expect(runs[0]?.result).toBe("pass");
       expect(runs[0]?.acceptanceIds).toEqual(["A1", "A2", "A3", "M1"]);
 
-      // 红阶段：父 commit（c1）无 e2e/run.sh 也无 tests/ → 两条机器验收必挂 → 有区分力
+      // 红阶段：A1/A2 的 e2e/run.sh 被 patch 进父树（command 引用它），真测试
+      // 因 c1 无 impl.js 而挂；A3 的 vitest 全量跑不引用具体测试文件（无可 patch），
+      // c1 无 tests/ → no test files → exit 1——三条机器验收都有区分力
       const red = runCli(repo, ["verify", "--unit", UNIT, "--red-phase"]);
       expect(red.code, `红阶段应 exit 0（stdout: ${red.stdout}\nstderr: ${red.stderr}）`).toBe(0);
       expect(red.stdout).toContain("A1 有区分力");

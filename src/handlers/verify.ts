@@ -32,8 +32,17 @@ import type {
 } from "../events/types.js";
 import { evidenceDir, getCwHome } from "../store/project.js";
 import { cleanCheckout, cleanupCheckout } from "../verify/checkout.js";
-import { firstParentOf, judgeRedPhase } from "../verify/red-phase.js";
-import { runAcceptances, type RunOutcome } from "../verify/run.js";
+import {
+  firstParentOf,
+  judgeRedPhase,
+  patchAcceptanceFilesForRedPhase,
+} from "../verify/red-phase.js";
+import {
+  E2E_ACCEPTANCE_TIMEOUT_MS,
+  runAcceptances,
+  type RunOutcome,
+  UNIT_ACCEPTANCE_TIMEOUT_MS,
+} from "../verify/run.js";
 import {
   fail,
   ledgerForCwd,
@@ -43,8 +52,6 @@ import {
   unitCreatedFacts,
 } from "./common.js";
 
-/** 单条验收命令默认超时：10min（canon §6.3 纪律④单测口径） */
-const DEFAULT_TIMEOUT_MS = 600_000;
 /** 环境错误 exit code（验收文档锁定：验证未发生，不入账） */
 const ENV_ERROR_EXIT = 2;
 /** 总报告文件名（stdout 摘要里给出完整路径，便于人工复核产物） */
@@ -103,7 +110,7 @@ export async function handleVerify(ctx: CommandContext): Promise<number> {
 function runRegularVerify(
   cwd: string,
   unitId: string,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
   lastSpec: SpecSubmittedPayload,
   lastEvidence: EvidenceSubmittedPayload,
 ): number {
@@ -174,13 +181,15 @@ function runRegularVerify(
 }
 
 /**
- * 红阶段 gate：父 commit（第一父）树上重跑验收，逐条期望 fail。
+ * 红阶段 gate：父 commit（第一父）树上重跑验收，逐条期望 fail。跑之前先把
+ * 「验收 command 引用的变更文件」（新测试入口）patch 进父树——恒真测试在
+ * 基线代码树上也绿，应判无区分力（详见 src/verify/red-phase.ts 头注释）。
  * 产物落 red-phase 前缀的 runId 目录（不与常规 verify 产物混淆），不写 VerifyRan。
  */
 function runRedPhase(
   cwd: string,
   unitId: string,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
   lastSpec: SpecSubmittedPayload,
   lastEvidence: EvidenceSubmittedPayload,
 ): number {
@@ -205,7 +214,24 @@ function runRedPhase(
   const runId = `red-phase-${randomUUID()}`;
   const evidenceBase = evidenceDir(getCwHome(), cwd, unitId, runId);
   let outcome: RunOutcome;
+  let patchedFiles: string[] = [];
   try {
+    // patch 语义（红阶段区分力前提）：验收 command 引用的变更文件（新测试入口）
+    // 从 build commit 带进父树再跑——否则恒真测试放进新文件即可让父树命令因
+    // 文件缺失 fail 被误判有区分力；无可 patch 文件时父树原样跑（现状口径）
+    const patch = patchAcceptanceFilesForRedPhase(
+      checkout.dir,
+      parent.commit,
+      lastEvidence.commit,
+      lastSpec.acceptance,
+    );
+    if (!patch.ok) {
+      return envError(
+        `cw verify --red-phase: 新测试 patch 到父树失败（父 ${parent.commit} / build ${lastEvidence.commit}，工作区 ${checkout.dir}）：${patch.error}。` +
+          "恢复动作：确认两 commit 在仓库中真实可达（git cat-file -e '<commit>^{commit}'）后重跑。",
+      );
+    }
+    patchedFiles = patch.files;
     outcome = runAcceptances(checkout.dir, lastSpec.acceptance, evidenceBase, timeoutMs);
   } catch (e) {
     return envError(
@@ -223,13 +249,15 @@ function runRedPhase(
     );
   }
 
-  const verdicts = judgeRedPhase(outcome.results);
+  const verdicts = judgeRedPhase(outcome.results, { patchedFiles });
   const nonDiscriminative = verdicts.filter((v) => !v.discriminative);
+  const patchNote =
+    patchedFiles.length > 0 ? ` + patch 测试文件 [${patchedFiles.join(", ")}]` : "";
   if (nonDiscriminative.length === 0) {
     process.stdout.write(
       [
         ...verdicts.map((v) => `${v.id} 有区分力`),
-        `red-phase unit "${unitId}"：${verdicts.length}/${verdicts.length} 条机器验收在父 commit ${parent.commit} 上失败（有区分力）`,
+        `red-phase unit "${unitId}"：${verdicts.length}/${verdicts.length} 条机器验收在父 commit ${parent.commit}${patchNote} 上失败（有区分力）`,
         `runId=${runId}`,
         `report: ${join(evidenceBase, REPORT_FILE_NAME)}`,
         "",
@@ -239,10 +267,10 @@ function runRedPhase(
   }
   process.stderr.write(
     [
-      `cw verify --red-phase: unit "${unitId}" 有 ${nonDiscriminative.length} 条验收无区分力（在父 commit ${parent.commit} 上也通过 / 命令成功但产物无有效用例）：`,
+      `cw verify --red-phase: unit "${unitId}" 有 ${nonDiscriminative.length} 条验收无区分力（在父 commit ${parent.commit}${patchNote} 上也通过 / 命令成功但产物无有效用例）：`,
       ...nonDiscriminative.map((v) => `  ${v.id}: ${v.reason}`),
       `产物报告：${join(evidenceBase, REPORT_FILE_NAME)}`,
-      "恢复动作：修测试而非修 gate——让验收引用实现产物（命令在父 commit 上因文件缺失/接口不存在而失败，输出 ^A<id> (PASS|FAIL) 标记行或 vitest JSON），勿弱化判定绕过。",
+      "恢复动作：修测试而非修 gate——让验收引用实现产物（命令在父 commit 上因文件缺失/接口不存在而失败，输出 <验收id> (PASS|FAIL) 标记行或 vitest JSON），勿弱化判定绕过。",
       "",
     ].join("\n"),
   );
@@ -254,13 +282,16 @@ function runRedPhase(
  * common.ts 的 stringArg 只认 string 会静默丢值回退默认——因此本命令在本地按原始
  * unknown 解析（common.ts 属 u2 已验收领地，不为其扩接口）：
  *   - number（有限且 > 0）直接用；string 匹配 /^\d+$/ 且 > 0 → Number()
- *   - undefined（未提供）→ 默认 10min
+ *   - undefined（未提供）→ undefined 透传，runAcceptances 按验收 type 分档
+ *     （timeoutForAcceptance：单测 10min / e2e 30min）
  *   - 其余（含裸 --timeout-ms 的 boolean true、非数字 string、≤ 0）一律报错：
- *     静默回退 600000ms 会把显式输入变成 10min 挂死，比报错更糟
+ *     显式输入静默变形比报错更糟
  */
-function parseTimeoutMs(raw: unknown): { ok: true; value: number } | { ok: false; error: string } {
+function parseTimeoutMs(
+  raw: unknown,
+): { ok: true; value: number | undefined } | { ok: false; error: string } {
   if (raw === undefined) {
-    return { ok: true, value: DEFAULT_TIMEOUT_MS };
+    return { ok: true, value: undefined };
   }
   const value =
     typeof raw === "number"
@@ -275,7 +306,8 @@ function parseTimeoutMs(raw: unknown): { ok: true; value: number } | { ok: false
     ok: false,
     error:
       `cw verify: 非法 --timeout-ms "${String(raw)}"：须为正整数（毫秒）。` +
-      `恢复动作：如 --timeout-ms 300000；省略则用默认 ${DEFAULT_TIMEOUT_MS}ms（10min）。`,
+      `恢复动作：如 --timeout-ms 300000；省略则按验收 type 分档默认` +
+      `（unit/integration ${UNIT_ACCEPTANCE_TIMEOUT_MS}ms、e2e-real/e2e-mock ${E2E_ACCEPTANCE_TIMEOUT_MS}ms）。`,
   };
 }
 

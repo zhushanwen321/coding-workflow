@@ -161,6 +161,18 @@ const CASES: readonly RuleCase[] = [
     ],
     expectOk: true,
   },
+  {
+    // 目录对 accessSync(X_OK) 恒真（天然可遍历），实现须叠加 isFile 检查才与
+    // `which` 行为一致（实测 macOS which <目录> 返回 not found）
+    name: "边界#5 command 首 token 是目录（绝对路径）→ 规则③拒绝",
+    acceptance: [
+      item("A1", { core: true, type: "e2e-real", command: `${process.cwd()} -foo` }),
+      item("A2"),
+    ],
+    expectOk: false,
+    mustContain: ["rule③", "A1", "在 PATH 不可解析"],
+    mustNotContain: ["缺可执行 command"],
+  },
 ];
 
 describe("checkSpecRules（u3 spec gate 五规则）", () => {

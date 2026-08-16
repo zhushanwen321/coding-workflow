@@ -134,7 +134,13 @@ export async function statusHandler(ctx: CommandContext): Promise<number> {
   }
 
   if (empty) {
-    process.stdout.write(EMPTY_LEDGER_HINT);
+    // --json 空账本输出结构化空形态（units: []），与非空 --json 同 schema——机器
+    // 消费方无需为空账本单独处理纯文本分支（对齐 frontier --json 的空形态行为）
+    if (wantJson) {
+      process.stdout.write(statusJson(projection));
+    } else {
+      process.stdout.write(EMPTY_LEDGER_HINT);
+    }
     return 0;
   }
   process.stdout.write(wantJson ? statusJson(projection) : renderStatusList(projection));

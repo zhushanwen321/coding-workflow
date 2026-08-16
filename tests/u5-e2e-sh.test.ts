@@ -1,7 +1,7 @@
 /**
  * u5 e2e-sh 适配器单测（docs/rewrite/acceptance/u5-acceptance.md「单测验收」5-8 条）。
  *
- * fixture 全部真实生成（零 mock）：tmp 写真实 sh 脚本（自写 `A<id> PASS/FAIL`
+ * fixture 全部真实生成（零 mock）：tmp 写真实 sh 脚本（自写 `<验收id> PASS/FAIL`
  * 标记行 + exit code），chmod 后真实子进程执行，stdout 落盘再交 parse——
  * 与 e2e-real 验收脚本的最终形态一致。
  */
@@ -60,6 +60,19 @@ describe("e2e-sh 适配器 parse（真实脚本 fixture）", () => {
       { id: "A1", name: "A1 PASS", status: "pass" },
       { id: "A2", name: "A2 FAIL", status: "fail" },
     ]);
+  });
+
+  it("marker 新约定：验收 id 不以 A 开头（TC1）→ 标记行 `TC1 PASS` 正常通过（id 全文 = 第一列）", () => {
+    const { out, status } = runScript('echo "TC1 PASS"\nexit 0');
+    expect(status).toBe(0);
+    const report = e2eShAdapter.parse(out, status, acc("TC1"));
+    expect(report.cases).toEqual([{ id: "TC1", name: "TC1 PASS", status: "pass" }]);
+  });
+
+  it("marker 新约定：id=A1 时旧文案形态 `AA1 PASS` 被拒（标记 id 须与验收 id 完全一致，无前缀拼接）", () => {
+    const { out, status } = runScript('echo "AA1 PASS"\nexit 0');
+    expect(status).toBe(0);
+    expect(() => e2eShAdapter.parse(out, status, acc("A1"))).toThrow(/AA1.*A1|A1.*AA1/);
   });
 
   it("验收#6a 标记缺失 + exit 0 → 抛错（无区分力防线）", () => {

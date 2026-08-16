@@ -1,9 +1,10 @@
 /**
  * `cw tree`：按 parentId 缩进渲染分解树，每节点 `<unitId> (<status>)`。
  *
- * 孤儿 unit（parentId 指向不存在的 unit）以根层级展示并标 `!?`——账本 append 侧
- * 不校验 parentId 存在性（分解树可先建叶后建根），孤儿是合法账本状态而非损坏。
- * 同层顺序 = 账本内 UnitCreated 顺序（Map 迭代序），渲染确定性可 replay。
+ * 孤儿 unit（parentId 指向不存在的 unit）以根层级展示并标 `!?`——CLI 侧 `cw create`
+ * 对不存在的 --parent 明确拒绝（见 handlers/create），正常流程不产生孤儿；孤儿只能
+ * 来自外部手改账本（账本 append 侧不校验 parentId 存在性），此处按防御性渲染归到
+ * 根层而非崩溃。同层顺序 = 账本内 UnitCreated 顺序（Map 迭代序），渲染确定性可 replay。
  */
 import type { CommandContext } from "../dispatch.js";
 import type { SequencedProjection, SequencedUnitProjection } from "../events/types.js";

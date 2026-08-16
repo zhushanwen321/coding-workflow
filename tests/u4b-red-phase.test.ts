@@ -2,11 +2,19 @@
  * u4b 单测：红阶段 gate（u4b 验收文档「单测验收」5/6，dispatch 层完整路径，
  * 真实 git 子进程 + tmp 目录 + 隔离 CW_HOME，零 mock）。
  *
- *   - 验收5a 两 commit（c1 无测试脚本、c2 有脚本 + 验收命令）→ --red-phase 在
- *     c1 树上命令必挂（文件缺失）→ 有区分力 exit 0，stdout 逐条「有区分力」，
- *     不写 VerifyRan，产物落 red-phase 前缀目录；
- *   - 验收5b 验收命令换成 echo ok（两树都过）→ 无区分力 exit 1 且 stderr 列 id，
- *     恢复动作指向「修测试而非修 gate」；
+ * patch 语义（对抗审查修订）：红阶段先把「验收 command 引用的变更文件」（新
+ * 测试入口）从 build commit patch 进父树再跑——只回退不 patch 时，恒真测试
+ * （无条件 PASS）放进新文件即可让父树命令因文件缺失 fail 被误判有区分力。
+ *
+ *   - 验收5a（真测试）c2 新增脚本引用 c2 实现产物 → patch 到 c1 树跑必挂 →
+ *     有区分力 exit 0，stdout 逐条「有区分力」，不写 VerifyRan，产物落
+ *     red-phase 前缀目录；
+ *   - 验收5b（假命令）验收 command=echo ok 不引用任何变更文件 → 无可 patch，
+ *     父树原样跑两树都过 → 无区分力 exit 1 且 stderr 列 id，恢复动作指向
+ *     「修测试而非修 gate」；
+ *   - 验收5c（恒真测试穿透防线）c2 新增无条件 PASS 脚本 + 验收 command 引用
+ *     它 → patch 到 c1 树后旧树也绿 → 拒绝 exit 1，stderr 指明「新测试在基线
+ *     代码树上也通过」；
  *   - 验收6 初始 commit（无父）→ exit 2 附说明。
  */
 import { spawnSync } from "node:child_process";
@@ -20,7 +28,12 @@ import { dispatch } from "../src/dispatch.js";
 import type { AcceptanceItem } from "../src/events/types.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { evidenceDir, ledgerPath } from "../src/store/project.js";
-import { firstParentOf, judgeRedPhase } from "../src/verify/red-phase.js";
+import {
+  changedFilesBetween,
+  firstParentOf,
+  judgeRedPhase,
+  testFilesToPatch,
+} from "../src/verify/red-phase.js";
 import type { AcceptanceRunResult } from "../src/verify/run.js";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u4b-red-"));
@@ -106,12 +119,8 @@ async function run(args: readonly string[]): Promise<Captured> {
   }
 }
 
-/** 建两 commit 仓库 + 入账 spec（build 锚 = c2） */
-function makeRedPhaseFixture(command: string): void {
-  makeGitRepo(cwd, [
-    { "seed.txt": "baseline" },
-    { "run-tests.sh": '#!/bin/sh\necho "A1 PASS"\n' },
-  ]);
+/** 入账 spec + build 证据（build 锚 = 当前 HEAD，即 makeGitRepo 的最后一个 commit） */
+function submitSpecAndBuild(command: string): void {
   ledger.append("UnitCreated", { unitId: "u-1", parentId: null, briefRef: "brief.md" });
   ledger.append("SpecSubmitted", {
     unitId: "u-1",
@@ -128,6 +137,35 @@ function makeRedPhaseFixture(command: string): void {
     sha256: [],
     exitCode: 0,
   });
+}
+
+/**
+ * 恒真测试形态：c1 基线无测试文件，c2 新增无条件 `A1 PASS` 的脚本。
+ * 旧口径（只回退不 patch）下父树因文件缺失 fail 被误判有区分力——patch 语义
+ * 要堵的穿透路径。
+ */
+function makeTrueTestFixture(command: string): void {
+  makeGitRepo(cwd, [
+    { "seed.txt": "baseline" },
+    { "run-tests.sh": '#!/bin/sh\necho "A1 PASS"\n' },
+  ]);
+  submitSpecAndBuild(command);
+}
+
+/**
+ * 真测试形态：c2 同时新增实现产物（impl.txt，不进 command）与引用它的脚本。
+ * patch 把 run-tests.sh 带进 c1 树后，impl.txt 仍缺失 → 命令必挂 → 有区分力。
+ */
+function makeRealTestFixture(command: string): void {
+  makeGitRepo(cwd, [
+    { "seed.txt": "baseline" },
+    {
+      "impl.txt": "feature payload\n",
+      "run-tests.sh":
+        '#!/bin/sh\nif [ ! -f impl.txt ]; then\n  echo "impl.txt missing"\n  exit 1\nfi\necho "A1 PASS"\n',
+    },
+  ]);
+  submitSpecAndBuild(command);
 }
 
 describe("firstParentOf / judgeRedPhase 纯单元（真实 git 子进程）", () => {
@@ -158,16 +196,67 @@ describe("firstParentOf / judgeRedPhase 纯单元（真实 git 子进程）", ()
     expect(byId.get("P4")).toBe(true); // 标记 FAIL / 执行失败 → 有区分力
     expect(byId.get("P5")).toBe(true); // 旧树超时挂死 → 有区分力
   });
+
+  it("judgeRedPhase：patch 树上 pass → 无区分力且 reason 指明恒真测试穿透；未 patch 保持原文案", () => {
+    const results: AcceptanceRunResult[] = [
+      { id: "P1", status: "pass", stdoutPath: "", stderrPath: "", timeout: false, commandExit: 0, parseError: false },
+    ];
+    const [patched] = judgeRedPhase(results, { patchedFiles: ["run-tests.sh"] });
+    expect(patched?.discriminative).toBe(false);
+    expect(patched?.reason).toContain("新测试在基线代码树");
+    expect(patched?.reason).toContain("恒真测试");
+    const [plain] = judgeRedPhase(results);
+    expect(plain?.discriminative).toBe(false);
+    expect(plain?.reason).toContain("旧树（父 commit）上即 pass");
+  });
 });
 
-describe("验收5：--red-phase 区分力判定（dispatch 层）", () => {
-  it("c1 无脚本 → 命令必挂 → 有区分力 exit 0；不写 VerifyRan；产物落 red-phase 目录", async () => {
-    makeRedPhaseFixture("bash run-tests.sh");
+describe("patch 语义纯单元（真实 git 子进程）", () => {
+  it("changedFilesBetween：变更集含新增/修改；删除文件被排除（build commit 中不存在，patch 无从取）", () => {
+    const repo = join(tmpRoot, "diff-repo");
+    const [c1] = makeGitRepo(repo, [{ "a.txt": "1", "b.txt": "2" }]);
+    writeFileSync(join(repo, "a.txt"), "one");
+    writeFileSync(join(repo, "c.txt"), "3");
+    rmSync(join(repo, "b.txt"));
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-m", "commit-2"]);
+    const c2 = (spawnSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf-8" }).stdout ?? "").trim();
+    expect(changedFilesBetween(repo, c1, c2)).toEqual({ ok: true, files: ["a.txt", "c.txt"] });
+  });
+
+  it("testFilesToPatch：相对路径与 basename 两种形态命中；未被任何 command 引用 → 不 patch", () => {
+    const changed = ["tests/a.test.ts", "src/impl.ts", "e2e/run.sh"];
+    const acceptance = [
+      ac("A1", "npx vitest run tests/a.test.ts"),
+      ac("A2", "bash e2e/run.sh"),
+      ac("A3", "echo unrelated"),
+    ];
+    expect(testFilesToPatch(changed, acceptance)).toEqual(["tests/a.test.ts", "e2e/run.sh"]);
+  });
+
+  it("testFilesToPatch：command 只写 basename（不带目录）也能命中带路径的变更文件", () => {
+    expect(testFilesToPatch(["e2e/run.sh"], [ac("A1", "bash run.sh")])).toEqual(["e2e/run.sh"]);
+  });
+
+  it("testFilesToPatch：无 command 的验收（manual/e2e 缺 command）不参与匹配", () => {
+    const acceptance: AcceptanceItem[] = [
+      { id: "M1", core: false, title: "手测", type: "manual" },
+      { id: "E1", core: true, title: "缺 command 的 e2e", type: "e2e-real" },
+    ];
+    expect(testFilesToPatch(["run.sh"], acceptance)).toEqual([]);
+  });
+});
+
+describe("验收5：--red-phase 区分力判定（dispatch 层，含 patch 语义）", () => {
+  it("验收5a 真测试：c2 脚本引用 c2 实现产物 → patch 到 c1 树跑必挂 → 有区分力 exit 0；不写 VerifyRan；产物落 red-phase 目录", async () => {
+    makeRealTestFixture("bash run-tests.sh");
 
     const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
     expect(res.code, `stderr: ${res.stderr}`).toBe(0);
     expect(res.stdout).toContain("A1 有区分力");
     expect(res.stdout).toMatch(/red-phase unit "u-1"：1\/1 条机器验收/);
+    // patch 语境在成功摘要中透明呈现
+    expect(res.stdout).toContain("patch 测试文件 [run-tests.sh]");
 
     // 红阶段不是验证结论：绝不写 VerifyRan
     expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
@@ -177,16 +266,30 @@ describe("验收5：--red-phase 区分力判定（dispatch 层）", () => {
     const redPhaseDirs = readdirSync(unitDir).filter((n) => n.startsWith("red-phase-"));
     expect(redPhaseDirs).toHaveLength(1);
     const reportPath = join(unitDir, redPhaseDirs[0] ?? "", "report.json");
-    expect(readFileSync(reportPath, "utf-8")).toContain('"A1"');
+    expect(readFileSync(reportPath, "utf8")).toContain('"A1"');
   });
 
-  it("验收命令 echo ok（两树都过）→ 无区分力 exit 1 且 stderr 列 id + 修测试指引", async () => {
-    makeRedPhaseFixture("echo ok");
+  it("验收5b 假命令：echo ok 不引用任何变更文件 → 无可 patch，父树原样跑也过 → 无区分力 exit 1 且 stderr 列 id + 修测试指引", async () => {
+    makeTrueTestFixture("echo ok");
 
     const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
     expect(res.code).toBe(1);
     expect(res.stderr).toContain("A1");
     expect(res.stderr).toContain("无区分力");
+    expect(res.stderr).toContain("修测试而非修 gate");
+    expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
+  });
+
+  it("验收5c 恒真测试穿透防线：c2 新增无条件 PASS 脚本 + 验收 command 引用它 → patch 后旧树也绿 → 拒绝 exit 1，stderr 指明新测试在基线代码树上也通过", async () => {
+    makeTrueTestFixture("bash run-tests.sh");
+
+    const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
+    expect(res.code, `stdout: ${res.stdout}`).toBe(1);
+    expect(res.stderr).toContain("A1");
+    expect(res.stderr).toContain("无区分力");
+    // 恒真穿透的专属拒绝文案（judgeRedPhase 的 patched 语境 reason）
+    expect(res.stderr).toContain("新测试在基线代码树");
+    expect(res.stderr).toContain("恒真测试");
     expect(res.stderr).toContain("修测试而非修 gate");
     expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
   });

@@ -18,7 +18,7 @@ import type { AcceptanceItem } from "../src/events/types.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { evidenceDir, ledgerPath } from "../src/store/project.js";
 import { cleanCheckout, cleanupCheckout } from "../src/verify/checkout.js";
-import { runAcceptances } from "../src/verify/run.js";
+import { runAcceptances, timeoutForAcceptance } from "../src/verify/run.js";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u4a-"));
 const cwHome = join(tmpRoot, "home");
@@ -166,6 +166,108 @@ describe("验收4：e2e 用例缺 command → 该条 fail（u4b 适配：unit �
     expect(readFileSync(outcome.results[0]?.stderrPath ?? "", "utf-8")).toContain("command 缺失");
   });
 });
+
+// ── 超时分档 / 进程树回收 / 逐产物 hash（对抗审查修复回归） ──────
+
+describe("超时分档：timeoutForAcceptance 与 runAcceptances 默认/覆盖", () => {
+  it("timeoutForAcceptance：e2e 双型 30min，unit/integration/manual 10min", () => {
+    expect(timeoutForAcceptance("e2e-real")).toBe(1_800_000);
+    expect(timeoutForAcceptance("e2e-mock")).toBe(1_800_000);
+    expect(timeoutForAcceptance("unit")).toBe(600_000);
+    expect(timeoutForAcceptance("integration")).toBe(600_000);
+    // manual 不经机器执行，取单测口径仅保持穷尽（值无意义但锁定不漂移）
+    expect(timeoutForAcceptance("manual")).toBe(600_000);
+  });
+
+  it("runAcceptances 省略 timeoutMs → 分档默认路径可用（e2e-real 快命令正常 pass）", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-d1"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-d1"));
+    const outcome = runAcceptances(checkoutDir, [ac("D1", 'echo "D1 PASS"', "e2e-real")], evidenceBase);
+
+    expect(outcome.results[0]?.status).toBe("pass");
+  });
+
+  // 显式 timeoutMs 覆盖分档默认的传参路径由「验收3」的 A3 锁定（e2e-real 分档
+  // 默认 30min，显式 500ms 仍超时 fail = 覆盖优先于分档），不另设重复用例
+});
+
+describe("进程树回收：超时与正常完成都不留孙进程", () => {
+  it("超时路径：前台 wait + 后台孙进程 → 1s 整树 SIGKILL，TIMEOUT fail 且 pgrep 无残留", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-k1"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-k1"));
+    // 307 为独特参数便于 pgrep 精确定位；前台 wait 让直接子进程（bash）活到超时点
+    const outcome = runAcceptances(
+      checkoutDir,
+      [ac("K1", "sleep 307 & echo started; wait", "e2e-real")],
+      evidenceBase,
+      1_000,
+    );
+
+    const r = outcome.results[0];
+    expect(r?.status).toBe("fail");
+    expect(r?.timeout).toBe(true);
+    expect(r?.reason).toContain("超时");
+    // 子进程死前的部分输出仍落盘（整树 kill 不吞产物）
+    expect(readFileSync(r?.stdoutPath ?? "", "utf-8")).toContain("started");
+    expect(existsSync(join(evidenceBase, "K1.timeout"))).toBe(true);
+    // 安全性核心断言：孙进程（sleep）随进程组同灭，进程表无残留
+    expect(noResidualProcess("sleep 307")).toBe(true);
+  });
+
+  it("正常完成路径：命令退出但后台孙进程存活 → 完成后整组回收，pgrep 无残留", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-k2"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-k2"));
+    // 无前台 wait：直接子进程立即退出（commandExit 0），后台 sleep 307 成同组
+    // 余党——「残留 dev server 让后续 e2e 验收假绿」的正是此形态
+    const outcome = runAcceptances(
+      checkoutDir,
+      [ac("K2", "sleep 307 & echo started", "e2e-real")],
+      evidenceBase,
+      60_000,
+    );
+
+    const r = outcome.results[0];
+    expect(r?.timeout).toBe(false);
+    expect(r?.commandExit).toBe(0);
+    // stdout 无 ^A 标记行 → e2e-sh parse 抛错 → fail（判定结果与回收语义无关）
+    expect(r?.status).toBe("fail");
+    expect(noResidualProcess("sleep 307")).toBe(true);
+  });
+});
+
+describe("report.json 逐产物 sha256（重跑产物可比较性）", () => {
+  it("artifacts 逐条记录 stdout/stderr 的 sha256，与独立重算一致", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-h1"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-h1"));
+    const outcome = runAcceptances(
+      checkoutDir,
+      [ac("H1", 'echo "H1 PASS"', "e2e-real"), ac("H2", 'echo "H2 FAIL"; exit 1', "e2e-real")],
+      evidenceBase,
+      5_000,
+    );
+    expect(outcome.report.cases.map((c) => c.id)).toEqual(["H1", "H2"]);
+
+    const onDisk = JSON.parse(readFileSync(join(evidenceBase, "report.json"), "utf-8")) as {
+      artifacts: Array<{ id: string; stdoutSha256: string; stderrSha256: string }>;
+    };
+    // reportHash 的计算输入是整个 report.json → artifacts 入 report 即随 reportHash 入账
+    expect(onDisk.artifacts.map((a) => a.id)).toEqual(["H1", "H2"]);
+    for (const a of onDisk.artifacts) {
+      expect(a.stdoutSha256).toBe(
+        createHash("sha256").update(readFileSync(join(evidenceBase, `${a.id}.stdout`))).digest("hex"),
+      );
+      expect(a.stderrSha256).toBe(
+        createHash("sha256").update(readFileSync(join(evidenceBase, `${a.id}.stderr`))).digest("hex"),
+      );
+    }
+  });
+});
+
+/** pgrep -f：exit 1 = 无匹配进程（无残留）。零 mock，真实进程表查询 */
+function noResidualProcess(pattern: string): boolean {
+  const res = spawnSync("pgrep", ["-f", pattern], { encoding: "utf-8" });
+  return res.status === 1;
+}
 
 // ── 验收5：cw verify exit 语义（dispatch 层） ─────────────────
 
