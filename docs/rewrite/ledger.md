@@ -72,3 +72,13 @@
 - 2026-08-16 fx-2 committed（影子红绿 4/4 超时复现死锁现场；222 全绿）→ 靶子重置 → 终验第 3 次执行中。
 - 2026-08-16 终验第 3 次 FAIL（R5 建子缺位，更上游）：pi print 模式把建子当询问点，root spec-frozen 等不存在的子 45.5min 零派发空转（idle 有界退出、零人工——兜底语义现场成立）。fx-3 基线入 git（gate 收紧先建子后提 spec + 任务书第 0 步 + 派发兜底出口）。
 - 2026-08-16 fx-3 committed（verifier 22/22、230 全绿）→ 终验第 4 次 **PASS**：45.1min 零人工自然完成、7/7 机器验证 manual=0、全树 closed、靶子全绿；fx-2 R4a 恢复出口首次现场闭环（65s）；TIMEOUT 重派机制首次真实触发。重写主体完工，进入收尾（验收文档回收核查 / 文档重写 / 版本 2.0.0）。
+
+## 对抗审查修复（2026-08-16）
+
+- 来源：3 reviewer 对「实现 vs 设计」对抗审查，35 条发现（12 A / 18 B / 5 C）+ 1 缺失项；用户裁决全部修复（L2-F3 例外走 handoff）。
+- 波次 1（`1fc5e8c`，CLI/只读 + verify-exec + gate/适配器）：shebang、encodeCwd 碰撞、树感知 closed、closed 不可逆、孙进程 kill（detached + pgid 杀整树）、e2e-sh marker（第一列 = 验收 id 原文，废 A 前缀锚）、spec-rules isFile、red-phase patch 语义、verify 超时分档（单测 10min / e2e-real 30min）、human pid 等。
+- 波次 2（`f24782d`，账本/投影语义）：verified 时序收紧（pass 的 VerifyRan 须晚于最后 spec）、锁 empty 等待（u1 观察项①收口：null 时等待而非 unlink）、submitSpec 拒 closed、幂等。
+- 波次 3（`8a1f846`，runner 循环语义）：连续 2 次 TIMEOUT 转人工（单进程内存计数 + 无可派发 exit 1 汇总清单）、派发前 tracked reset --hard 近似（untracked 不动、--no-optional-locks）、wait 完成信号、frontier 单一出处（loop 消费 readonly/frontier.ts 的 computeFrontier，DISPATCH_SHAPE 映射派发形态）、退出输出落盘屏障。
+- 例外：L2-F3 独立 worktree 未修——升级路线交接 `handoff-worktree-isolation.md`（本目录），用户单独处理。
+- 缺失项处置：u5 JSON 配置模板兜底适配器未实现（M1 仅 TS 接口形态 human/pi）——与 u9 跳过同理，无真实需求不立项；canon 已标注待立项。
+- 测试基线：273 → 282 全绿（41 文件）。
