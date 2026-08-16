@@ -206,10 +206,23 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     //    里干活 commit——子分支上的产出 commit 即集成的汇聚现场；旧「项目 cwd 直
     //    commit」形态的产出不在 root 分支汇聚路径上，集成无处可 merge）
     const implWt = worktreePath(process.env.CW_WORKTREE_HOME ?? "", repoDir, "impl");
+    // 同步屏障：等 runner 打出 builder(impl) 派发行再动手写现场（与真实 human
+    // 的行为契约对齐——人看到 builder 指令才进 worktree 干活）。只等目录存在
+    // 不安全：impl 目录由 designer(impl)（spec 待审的 reReview 派发）提前建立，
+    // 而随后 builder(impl) 派发前 ensureUnitWorktree 会 reset --hard + clean
+    // -fd -e .cw-spawn——在该 clean 窗口内写入的 untracked app.js 会被卷走，
+    // add -A 只 stage 到幸存的 .cw-spawn 产物，commit「成功」但树无 app.js，
+    // evidence --file 读不到 → 红（M3 gate 报告 §5.4 的间歇红根因）。派发行在
+    // ensure 与 spawn 之后 emit：看到本行 = 本轮 clean 已完成且 builder(impl)
+    // 已入 inFlight（下次 reset 要等 VerifyRan(impl) 后的 reviewer 派发，那时
+    // app.js 已 commit，tracked 对 reset/clean 免疫）
+    const BUILDER_IMPL_DISPATCH_LINE = '派发 builder → unit "impl"';
     const wtDeadline = Date.now() + 10_000;
-    while (!existsSync(implWt)) {
+    while (!readFileSync(outPath, "utf-8").includes(BUILDER_IMPL_DISPATCH_LINE)) {
       if (Date.now() > wtDeadline) {
-        throw new Error("impl worktree 未在 10s 内建立（runner 未派发 designer(impl)？）");
+        throw new Error(
+          `builder(impl) 派发行未在 10s 内出现（runner 未派发？stdout 末尾：${readFileSync(outPath, "utf-8").slice(-400)}`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
