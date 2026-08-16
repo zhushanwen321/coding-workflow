@@ -31,7 +31,7 @@ npm run build       # tsc 编译到 dist/
 ## 测试规范
 
 - 零 mock：真实 CwStore + tmp 目录 + 真实 git 子进程
-- e2e 测试用子进程跑真实 `cw` CLI 命令；拆分到 `tests/e2e-*.test.ts` 系列，共享基建在 `tests/helpers/e2e.ts`（`runCli`/`setupToDeveloped` 等阶段 helper）。编写指南见 [TEST-STRATEGY.md](./TEST-STRATEGY.md)「E2E 测试编写指南」
+- e2e 测试用子进程跑真实 `cw` CLI 命令（`tests/cli.test.ts` / `tests/e2e-handoff.test.ts` 内联 `runCwCli`/`createCwCliEnv`/`parseStdout`）；拆分到 `tests/e2e-*.test.ts` 系列，共享基建在 `tests/helpers/`（env/git 等）。编写指南见 [TEST-STRATEGY.md](./TEST-STRATEGY.md)「E2E 测试编写指南」
 - 每个 handler 都有 dispatch 层测试（不直接调 handler，走完整 dispatch 路径）
 - `[BUG-HUNT]` 前缀的测试标记已确认但未修复的 bug，故意保持红色直到 bug 修复。修复后测试转绿，保留 `[BUG-HUNT]` 前缀作为历史标记
 
