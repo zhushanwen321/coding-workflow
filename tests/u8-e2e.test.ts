@@ -108,18 +108,29 @@ const FIXTURE_FILES: Record<string, string> = {
   "scripts/check-root.js": [
     "// u8 e2e fixture：root 集成验收 AR1。import 失败 = 契约违背（capitalize 缺位）——",
     "// fixture 受控修复（验收文档「集成 fail → 重派一轮后修复（fixture 可控）」）：把",
-    "// 正确实现补进 origin 仓库并提交；本轮仍 FAIL，集成下轮重试时 checkout 的就是",
-    "// 修复后的 HEAD。",
+    "// 正确实现补进 root worktree（分支 cw-root/feat）并提交；本轮仍 FAIL，集成下轮",
+    "// 重试时锚定的 root 分支 HEAD 已含修复（wt-4 起 integrate 三处 HEAD 锚 root 分支，",
+    "// 修项目 cwd HEAD 不再影响集成——修复必须落到 cw-root/feat 检出的 worktree 上）。",
     'const CORRECT = "export function capitalize(s) {\\n  return s.charAt(0).toUpperCase() + s.slice(1);\\n}\\n";',
     "async function healOrigin() {",
     '  const { execSync } = await import("node:child_process");',
     '  const { writeFileSync } = await import("node:fs");',
     '  const { join } = await import("node:path");',
     '  const origin = execSync("git remote get-url origin", { encoding: "utf8" }).trim();',
-    '  writeFileSync(join(origin, "src", "capitalize.js"), CORRECT);',
+    "  // 定位 cw-root/feat 检出的 worktree（porcelain 列表按 branch 精确匹配）",
+    '  const porcelain = execSync("git worktree list --porcelain", { cwd: origin, encoding: "utf8" });',
+    "  let rootWt = null;",
+    "  for (const block of porcelain.split(\"\\n\\n\")) {",
+    "    const lines = block.split(\"\\n\");",
+    "    if (lines.some((l) => l === \"branch refs/heads/cw-root/feat\")) {",
+    "      rootWt = (lines.find((l) => l.startsWith(\"worktree \")) || \"\").slice(\"worktree \".length) || null;",
+    "    }",
+    "  }",
+    "  if (rootWt === null) throw new Error(\"u8 fixture: 未找到 cw-root/feat 的 worktree（受控修复无处落地）\");",
+    '  writeFileSync(join(rootWt, "src", "capitalize.js"), CORRECT);',
     "  try {",
-    '    execSync("git add -A", { cwd: origin });',
-    '    execSync(\'git commit -m "fix: restore capitalize contract C1"\', { cwd: origin });',
+    '    execSync("git add -A", { cwd: rootWt });',
+    '    execSync(\'git commit -m "fix: restore capitalize contract C1"\', { cwd: rootWt });',
     "  } catch {",
     "    // 无变更可提交（已修复）——幂等",
     "  }",
@@ -127,7 +138,7 @@ const FIXTURE_FILES: Record<string, string> = {
     "try {",
     '  const { capitalize } = await import("../src/capitalize.js");',
     '  const { sluggify } = await import("../src/sluggify.js");',
-    '  const ok = capitalize("hello") === "Hello" && sluggify("Hello There") === "hello-there";',
+    "  const ok = capitalize(\"hello\") === \"Hello\" && sluggify(\"Hello There\") === \"hello-there\";",
     "  console.log(`AR1 ${ok ? \"PASS\" : \"FAIL\"}`);",
     "  process.exit(ok ? 0 : 1);",
     "} catch {",
@@ -473,9 +484,10 @@ describe("E2E real：契约违背路径（capitalize → capitalise → 集成 f
     expect(captured.err).toContain("C1");
     expect(captured.err).toContain("src/capitalize.js");
 
-    // 受控修复真实发生：origin 仓库 HEAD 前进了（heal commit），且最终集成在修复树上通过
+    // 受控修复真实发生：root 分支 HEAD 前进了（heal commit 落在 cw-root/feat 的
+    // worktree 里），且最终集成在修复后的 root 分支树上通过（wt-4：集成锚 root 分支）
     expect(existsSync(join(repoDir, "src", "capitalize.js"))).toBe(true);
-    const commitCount = Number(gitRun(repoDir, ["rev-list", "--count", "HEAD"]));
+    const commitCount = Number(gitRun(repoDir, ["rev-list", "--count", "cw-root/feat"]));
     expect(commitCount).toBeGreaterThanOrEqual(4); // 3 个 fixture commit + 1 个 heal commit
 
     // 两次集成的产物目录都在（fail 轮留审计，pass 轮是 closed 依据）

@@ -51,10 +51,14 @@
  * base = run 启动时项目 HEAD 快照）里干活；账本与仓库操作锚定项目 cwd（D3 双路径）。循环不亲自创建 split 子 unit（fx-3 后子创建职责归
  * designer：首派任务书第 0 步指令化建子，spec gate 强制先建子后提 spec；循环仅
  * 在子未建时派 designer 兜底）。
+ * worktree 生命周期闭环（wt-4，D5/D6）：closed 子 unit 的 worktree 延迟一轮回收
+ * （pendingReclaim）+ 启动孤儿清扫（跨 run 兜底），root 自身的永不回收（回流
+ * 载体）；子产出经 runIntegrationVerify 内聚的 merge 汇聚到 root 分支，root
+ * closed 汇总输出回收清单与 git merge 回流指引（G5）。
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import { fold } from "../core/fold.js";
@@ -91,7 +95,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "./spawn/types.js";
-import { ensureUnitWorktree, unitBranchName } from "./worktree.js";
+import { ensureUnitWorktree, listUnitWorktreeIds, removeWorktree, unitBranchName } from "./worktree.js";
 
 /** 账本轮询间隔默认值（--poll-ms；验收文档：默认 1000） */
 export const DEFAULT_LOOP_POLL_MS = 1_000;
@@ -666,8 +670,16 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
   }
 }
 
-/** root closed 的汇总文本（验收文档循环逻辑 5：每 unit 状态行，树感知口径） */
-function summaryText(projection: SequencedProjection, rootId: string): string {
+/** summaryText 的 worktree 回收统计（wt-4 J3/J4：run 生命周期内的回收清单） */
+interface ReclaimSummary {
+  /** 本 run 实际回收成功的 unit worktree id（启动孤儿清扫 + 循环延迟回收 + 退出清尾） */
+  reclaimed: readonly string[];
+  /** run 结束时仍存在的本 root 子树 unit worktree id（root 自身 = 回流载体必在其列） */
+  kept: readonly string[];
+}
+
+/** root closed 的汇总文本（验收文档循环逻辑 5：每 unit 状态行，树感知口径；wt-4 G5 回流指引） */
+function summaryText(projection: SequencedProjection, rootId: string, reclaim: ReclaimSummary): string {
   const units = subtreeUnits(projection, rootId);
   const statuses = treeStatuses(projection);
   const rows = units.map((unit) => {
@@ -675,12 +687,69 @@ function summaryText(projection: SequencedProjection, rootId: string): string {
       unit.verifyRuns.length > 0 ? unit.verifyRuns[unit.verifyRuns.length - 1].result : "-";
     return `[runner]   ${unit.unitId}  ${statuses.get(unit.unitId)}  lastVerify:${lastVerify}`;
   });
+  const list = (ids: readonly string[]): string => (ids.length === 0 ? "" : `（${ids.join("、")}）`);
+  const rootBranch = unitBranchName(rootId, rootId);
   return [
     `[runner] root "${rootId}" 已 closed——调度循环结束（exit 0）。汇总（root 子树 ${units.length} 个 unit）：`,
     ...rows,
+    `[runner] 已回收 worktree × ${reclaim.reclaimed.length}${list(reclaim.reclaimed)}；` +
+      `保留 × ${reclaim.kept.length}${list(reclaim.kept)}`,
+    `[runner] 成果分支：${rootBranch}（含全部已集成子产出）`,
+    `[runner] 回流主分支：git merge ${rootBranch}`,
     `[runner] 证据链详情：cw report（全量）或 cw report --unit ${rootId}`,
     "",
   ].join("\n");
+}
+
+// ---- worktree 回收（wt-4 J3 启动孤儿清扫 / J4 延迟回收，design D5） ----
+
+/**
+ * 回收动作（J3/J4 共用）：removeWorktree best-effort——成功计入本 run 回收清单；
+ * 失败出声（error 原文含恢复指引）后继续，不炸循环。返回实际回收成功的 id。
+ */
+function reclaimUnitWorktrees(cwd: string, unitIds: Iterable<string>): string[] {
+  const home = getCwWorktreeHome();
+  const reclaimed: string[] = [];
+  for (const unitId of unitIds) {
+    const res = removeWorktree(cwd, worktreePath(home, cwd, unitId));
+    if (res.ok) {
+      reclaimed.push(unitId);
+      continue;
+    }
+    emitErr(`[runner] unit "${unitId}" 的 worktree 回收失败——${res.error}\n`);
+  }
+  return reclaimed;
+}
+
+/**
+ * J3 启动孤儿清扫（D5 跨 run 兜底）：「上一轮 closed」的内存态判断跨 run 不可靠
+ * （Ctrl-C 反复中断会堆积目录），启动时按目录扫描 + 全账本树感知状态判定——
+ * 已 closed 或账本内不存在（旁路残留）→ 回收；未 closed（含其他 root 的 unit——
+ * 判定查全账本而非本 root 子树）→ 保留。本 run 的 root worktree 永不回收
+ * （回流载体，J4）。同步执行（量级 = 目录数，不阻塞主循环）。
+ */
+function sweepOrphanWorktrees(cwd: string, rootId: string): string[] {
+  const home = getCwWorktreeHome();
+  const ids = listUnitWorktreeIds(home, cwd);
+  if (ids.length === 0) {
+    return [];
+  }
+  const statuses = treeStatuses(loadLedger(cwd).projection);
+  const orphans = ids.filter((unitId) => {
+    if (unitId === rootId) {
+      return false;
+    }
+    const status = statuses.get(unitId);
+    return status === undefined || status === "closed";
+  });
+  const reclaimed = reclaimUnitWorktrees(cwd, orphans);
+  if (reclaimed.length > 0) {
+    emit([
+      `[runner] 启动孤儿清扫：回收 ${reclaimed.length} 个已 closed/无主 unit worktree` +
+        `（${reclaimed.join("、")}）`,
+    ]);
+  }
+  return reclaimed;
 }
 
 function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number, cwd: string): string {
@@ -833,6 +902,10 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   // R1：base 快照在 root 存在性检查之后、首个派发之前一次性取得（全部 unit 同 base）
   const baseCommit = snapshotHeadCommit(opts.cwd);
 
+  // wt-4 J3：启动孤儿清扫（HEAD 快照之后、首次派发之前）——跨 run 兜底回收
+  // 已 closed / 账本不存在的 unit worktree；本 run root 的永不回收（回流载体）
+  const reclaimedIds: string[] = [...sweepOrphanWorktrees(opts.cwd, opts.rootId)];
+
   emit([
     `[runner] 循环启动：root=${opts.rootId} adapter=${opts.adapter.name} ` +
       `poll=${pollMs}ms max-idle=${maxIdleMs}ms max-concurrency=${maxConcurrency}`,
@@ -847,6 +920,11 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   const timeoutStreaks = new Map<string, TimeoutStreak>();
   const escalated = new Map<string, AgentRole>();
   let lastUnitSeqs = new Map<string, number>();
+  // wt-4 J4 延迟回收：pendingReclaim = 本轮发现的 closed 子 unit（下轮开头回收，
+  // debug 翻看现场留一轮窗口）；reclaimTried = 已尝试回收的（成败均不再重试——
+  // closed 是持续状态，不防重会每轮重复 remove 已亡目录）
+  const pendingReclaim = new Set<string>();
+  const reclaimTried = new Set<string>(reclaimedIds);
 
   while (true) {
     // 每轮重读投影（子进程 agent 与本循环并发写账本，投影必须重新装载）。保留
@@ -865,7 +943,28 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       );
       return 1;
     }
-    if (treeStatuses(projection).get(opts.rootId) === "closed") {
+    // wt-4 J4 延迟回收（D5）：每轮循环开头回收「上一轮收集的 closed 子 unit
+    // worktree」（root 自身永不入列——回流载体，run 结束保留）；再收集本轮新
+    // closed 的（下轮开头回收）。放在 root closed 检查之前：退出前 pending 已清空
+    reclaimedIds.push(...reclaimUnitWorktrees(opts.cwd, pendingReclaim));
+    for (const unitId of pendingReclaim) {
+      reclaimTried.add(unitId);
+    }
+    pendingReclaim.clear();
+    const statuses = treeStatuses(projection);
+    for (const unit of subtreeUnits(projection, opts.rootId)) {
+      if (unit.unitId === opts.rootId || reclaimTried.has(unit.unitId)) {
+        continue;
+      }
+      if (
+        statuses.get(unit.unitId) === "closed" &&
+        existsSync(worktreePath(getCwWorktreeHome(), opts.cwd, unit.unitId))
+      ) {
+        pendingReclaim.add(unit.unitId);
+      }
+    }
+
+    if (statuses.get(opts.rootId) === "closed") {
       // 退出条件 = 树感知 closed（canon D2 完整公式：root verified ∧ exec-review
       // pass ∧ 全部直接子节点 closed），与 readonly 四命令同一投影口径。u8 时代
       // 「子全 closed」是本循环的补偿逻辑（当时 deriveStatus 够不到子节点），已
@@ -873,7 +972,19 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       // reviewer 继续派发，无进展由 maxIdleMs 兜底
       // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
       killAll(inFlight);
-      await emitExitOutput(summaryText(projection, opts.rootId), process.stdout);
+      // 退出清尾：run 已结束，本轮刚收集的 closed 子现场一并回收（延迟窗口语义
+      // 已过点——产出已 merge 进 root 分支且证据链闭合，D5：现场无保留价值）
+      reclaimedIds.push(...reclaimUnitWorktrees(opts.cwd, pendingReclaim));
+      pendingReclaim.clear();
+      // 保留清单 = 本 root 子树在 run 结束时仍存在的 worktree（root 自身 = 回流载体）
+      const subtreeIds = new Set(subtreeUnits(projection, opts.rootId).map((u) => u.unitId));
+      const kept = listUnitWorktreeIds(getCwWorktreeHome(), opts.cwd).filter((id) =>
+        subtreeIds.has(id),
+      );
+      await emitExitOutput(
+        summaryText(projection, opts.rootId, { reclaimed: reclaimedIds, kept }),
+        process.stdout,
+      );
       return 0;
     }
 

@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import { worktreePath } from "../dist/store/project.js";
+
 const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 if (!existsSync(CLI_PATH)) {
   throw new Error(`tests/u5b-e2e 需要 ${CLI_PATH}（先 npm run build；npm test 的 pretest 已含）`);
@@ -200,11 +202,22 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
 
     // 3) 子 unit 的 build：实现 + commit + build 证据 + verify（干净重跑真实执行验收命令）
-    writeFileSync(join(repoDir, "app.js"), 'console.log("A1 PASS");\n');
-    gitRun(repoDir, ["add", "-A"]);
-    gitRun(repoDir, ["commit", "-m", "impl: app.js"]);
-    const head = gitRun(repoDir, ["rev-parse", "HEAD"]);
-    expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "impl", "--commit", head, "--run-id", "run-impl-1", "--file", "app.js"]).code).toBe(0);
+    //    （wt-4 迁移：人按 human 指引在 impl 的 unit worktree（分支 cw/demo/impl）
+    //    里干活 commit——子分支上的产出 commit 即集成的汇聚现场；旧「项目 cwd 直
+    //    commit」形态的产出不在 root 分支汇聚路径上，集成无处可 merge）
+    const implWt = worktreePath(process.env.CW_WORKTREE_HOME ?? "", repoDir, "impl");
+    const wtDeadline = Date.now() + 10_000;
+    while (!existsSync(implWt)) {
+      if (Date.now() > wtDeadline) {
+        throw new Error("impl worktree 未在 10s 内建立（runner 未派发 designer(impl)？）");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    writeFileSync(join(implWt, "app.js"), 'console.log("A1 PASS");\n');
+    gitRun(implWt, ["add", "-A"]);
+    gitRun(implWt, ["commit", "-m", "impl: app.js"]);
+    const head = gitRun(implWt, ["rev-parse", "HEAD"]);
+    expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "impl", "--commit", head, "--run-id", "run-impl-1", "--file", join(implWt, "app.js")]).code).toBe(0);
     const verifyImpl = runCli(repoDir, ["verify", "--unit", "impl"]);
     expect(verifyImpl.code, `impl verify 应 pass（stdout: ${verifyImpl.stdout}，stderr: ${verifyImpl.stderr}）`).toBe(0);
 

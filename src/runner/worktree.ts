@@ -12,8 +12,10 @@
  * 失败 error 含 git 原始输出与恢复动作指引。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+import { encodeCwd } from "../store/project.js";
 
 /** 单步 git 操作超时（本地 worktree 操作通常毫秒级；上限仅防外部仓库挂死 runner） */
 const GIT_STEP_TIMEOUT_MS = 120_000;
@@ -213,6 +215,23 @@ export function removeWorktree(repoDir: string, worktreeDir: string): WorktreeOu
     };
   }
   return { ok: true };
+}
+
+/**
+ * 扫描项目 worktree 根 <cwWorktreeHome>/<encodeCwd(projectCwd)>/ 下的全部 unit
+ * 目录名（wt-4 J3：runLoop 启动孤儿清扫的输入）。非目录项忽略；不判定状态——
+ * closed / 账本存在性判定由调用方查账本（worktree 目录名只承载 unitId，状态是
+ * 账本的事实）。排序保证扫描顺序确定性（回收日志可复现）。
+ */
+export function listUnitWorktreeIds(cwWorktreeHome: string, projectCwd: string): string[] {
+  const root = join(cwWorktreeHome, encodeCwd(projectCwd));
+  if (!existsSync(root)) {
+    return [];
+  }
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
 }
 
 /**

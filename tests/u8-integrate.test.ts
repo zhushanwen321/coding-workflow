@@ -28,10 +28,14 @@ import { type IntegrateResult, runIntegrationVerify } from "../src/runner/integr
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u8-int-"));
 const cwHome = join(tmpRoot, "cw-home");
 process.env.CW_HOME = cwHome;
+// wt-4 迁移：runIntegrationVerify 步骤 0 会建 root worktree，隔离 worktree 根
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 function git(dir: string, args: readonly string[]): string {

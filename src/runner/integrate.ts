@@ -3,9 +3,13 @@
  * 节点的 verify」；u8 验收文档 docs/rewrite/acceptance/u8-acceptance.md 规格锁定 2）。
  *
  * 叶子的 verify = 干净重跑自己的验收；内部节点的 verify = 子树集成：
- *   1. commit 可达性——每个子 build commit 在当前分支可达（merge 物理前提）；
- *   2. 干净 checkout——HEAD（集成时刻的最终树，子产出已并入）到一次性工作区
- *      （复用 u4a cleanCheckout 语义）；
+ *   0. merge 汇聚（wt-4 J1/D6）——ensure root worktree，逐子把 cw/<rootId>/<unitId>
+ *      merge --no-edit 进 root 分支 cw-root/<rootId>（已达则跳过，幂等；冲突
+ *      abort 清现场收 failures 后继续）；
+ *   1. commit 可达性——每个子 build commit 在 root 分支可达（wt-4 J2 三处 HEAD
+ *      锚定之一：可达性判定对 root 分支 ref，与项目 cwd HEAD 解耦）；
+ *   2. 干净 checkout——root 分支 HEAD（集成时刻的最终树，子产出已并入）到一次性
+ *      工作区（复用 u4a cleanCheckout 语义，checkout 目标传解析后 hash）；
  *   3. 受影响验收重跑——M2 保守口径：全部子节点验收 ∪ root 自身验收，逐 unit 批次
  *      复用 runAcceptances（适配器路由 + nameMatch 判定原样生效，不另造执行路径）。
  *      诚实标注：这是「全量重跑」保守版（漏跑率 0，代价多跑）；「变更文件→验收
@@ -30,10 +34,11 @@ import { join } from "node:path";
 
 import type { AcceptanceItem, Contract } from "../events/types.js";
 import { loadLedger } from "../readonly/load.js";
-import { evidenceDir, getCwHome } from "../store/project.js";
+import { evidenceDir, getCwHome, getCwWorktreeHome, worktreePath } from "../store/project.js";
 import { cleanCheckout, cleanupCheckout } from "../verify/checkout.js";
 import { type ContractMatchResult, matchContracts } from "../verify/contract-match.js";
 import { type AcceptanceRunResult, runAcceptances, type RunOutcome } from "../verify/run.js";
+import { ensureUnitWorktree, unitBranchName } from "./worktree.js";
 
 /** 单步 git 操作超时（与 checkout.ts 同口径：本地操作毫秒级，上限防挂死） */
 const GIT_STEP_TIMEOUT_MS = 120_000;
@@ -66,6 +71,7 @@ export interface IntegrateReport {
   kind: "integrate";
   rootId: string;
   runId: string;
+  /** root 分支 cw-root/<rootId> 的 HEAD（wt-4 J2：集成锚点，非项目 cwd HEAD） */
   head: string;
   children: ChildReachability[];
   acceptanceBatches: AcceptanceBatchResult[];
@@ -97,15 +103,38 @@ export async function runIntegrationVerify(opts: {
   const failures: string[] = [];
   const childrenReachability: ChildReachability[] = [];
 
-  // 步骤 1：子 commit 可达性（HEAD 解析失败 = 全部不可达，逐条报恢复动作）
-  const head = revParseHead(opts.cwd);
+  // 步骤 0：merge 汇聚（wt-4 J1/D6）——子产出经显式 merge 汇入 root 分支
+  // cw-root/<rootId>，集成语义从「隐式共享项目 HEAD」升级为「只信 root 分支」。
+  // 内聚在本函数而非 loop：merge 失败也要落一份 integrate-report.json（VerifyRan
+  // 的 reportHash 必填约束才有文件可指），复用既有连续失败上限通道
+  const rootBranch = unitBranchName(opts.rootId, opts.rootId);
+  const rootWorktreeDir = worktreePath(getCwWorktreeHome(), opts.cwd, opts.rootId);
+  const base = revParseHead(opts.cwd);
+  if (base === null) {
+    failures.push(
+      `无法解析项目 HEAD（仓库 "${opts.cwd}"）：merge 汇聚缺 base commit。` +
+        "恢复动作：确认 cwd 是目标 git 仓库且有提交（git rev-parse HEAD 应输出 hash）后重试。",
+    );
+  } else {
+    const ensured = ensureUnitWorktree(opts.cwd, rootWorktreeDir, opts.rootId, opts.rootId, base);
+    if (!ensured.ok) {
+      failures.push(`root worktree 就绪失败（unit "${opts.rootId}"）：${ensured.error}`);
+    } else {
+      mergeChildrenIntoRoot(opts, rootWorktreeDir, rootBranch, failures);
+    }
+  }
+
+  // 步骤 1：子 commit 可达性（wt-4 J2：锚 root 分支引用——子 commit 只在 root
+  // 分支可达，对项目 cwd HEAD（用户自己的分支）永不可达，锚错则可达性检查全灭）
+  const head = revParseRef(opts.cwd, rootBranch);
   for (const child of opts.children) {
-    const reachable = head !== null && isAncestor(opts.cwd, child.commit);
+    const reachable = head !== null && isAncestorOf(opts.cwd, child.commit, rootBranch);
     childrenReachability.push({ unitId: child.unitId, commit: child.commit, reachable });
     if (!reachable) {
       failures.push(
-        `子节点 ${child.unitId} 的 build commit ${child.commit} 在 HEAD 不可达（集成树未包含其产出）。` +
-          "恢复动作：merge 该子分支（git merge）或在其 unit 重新提交 build 证据，使 HEAD 包含其产出后集成重试。",
+        `子节点 ${child.unitId} 的 build commit ${child.commit} 在 root 分支 ${rootBranch} 不可达（集成树未包含其产出）。` +
+          `恢复动作：在 root worktree（cd "${rootWorktreeDir}"）merge 该子分支，或在其 unit 重新提交 build 证据，` +
+          `使 ${rootBranch} 包含其产出后集成重试。`,
       );
     }
   }
@@ -119,19 +148,20 @@ export async function runIntegrationVerify(opts: {
   const batchesReport: AcceptanceBatchResult[] = [];
   let contracts: ContractMatchResult = { ok: true, failures: [] };
 
-  // 步骤 2：干净 checkout（HEAD = 集成时刻最终树）
+  // 步骤 2：干净 checkout（root 分支 HEAD = 集成时刻最终树；J2：传解析后 hash——
+  // 分支名在 clone 内不存在，clone 只携带 remote-tracking refs）
   let checkout: { ok: true; dir: string } | { ok: false; error: string } | null = null;
   if (head === null) {
     failures.push(
-      `无法解析 HEAD（仓库 "${opts.cwd}"）：集成验证的检出锚点缺失。` +
-        "恢复动作：确认 cwd 是目标 git 仓库且有提交（git rev-parse HEAD 应输出 hash）后重试。",
+      `无法解析 root 分支 ${rootBranch}（仓库 "${opts.cwd}"）：集成验证的检出锚点缺失。` +
+        `恢复动作：git -C "${opts.cwd}" branch ${rootBranch} <commit> 重建集成锚点分支后集成重试。`,
     );
   } else {
     checkout = cleanCheckout(opts.cwd, head);
     if (!checkout.ok) {
       failures.push(
-        `干净 checkout 失败（HEAD ${head}，仓库 "${opts.cwd}"）：${checkout.error}。` +
-          "恢复动作：确认 cwd 是目标 git 仓库、工作区提交完整（git status）后集成重试。",
+        `干净 checkout 失败（${rootBranch} HEAD ${head}，仓库 "${opts.cwd}"）：${checkout.error}。` +
+          "恢复动作：确认 cwd 是目标 git 仓库、root 分支提交完整（git -C <cwd> status）后集成重试。",
       );
     }
   }
@@ -303,11 +333,95 @@ function revParseHead(cwd: string): string | null {
   return (res.stdout ?? "").trim();
 }
 
-/** commit 是否在 HEAD 可达（merge-base --is-ancestor；自含 commit 即 HEAD 也算可达） */
-function isAncestor(cwd: string, commit: string): boolean {
-  const res = spawnSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, "HEAD"], {
+/** 解析 ref（root 分支等）指向的 commit hash；失败 = 集成锚点缺失（J2） */
+function revParseRef(cwd: string, ref: string): string | null {
+  const res = spawnSync("git", ["-C", cwd, "rev-parse", ref], {
+    encoding: "utf-8",
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
+  if (res.error !== undefined || res.status !== 0) {
+    return null;
+  }
+  return (res.stdout ?? "").trim();
+}
+
+/** commit 是否经 ref 可达（merge-base --is-ancestor；自含 commit 即 ref HEAD 也算可达） */
+function isAncestorOf(cwd: string, commit: string, ref: string): boolean {
+  const res = spawnSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, ref], {
     encoding: "utf-8",
     timeout: GIT_STEP_TIMEOUT_MS,
   });
   return res.error === undefined && res.status === 0;
+}
+
+/** 分支 ref 是否存在（--quiet 静默不存在时的 fatal 输出） */
+function branchRefExists(cwd: string, branch: string): boolean {
+  const res = spawnSync("git", ["-C", cwd, "rev-parse", "--verify", "--quiet", branch], {
+    encoding: "utf-8",
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
+  return res.error === undefined && res.status === 0;
+}
+
+/**
+ * 跑一条 git 命令：成功返回 null，失败返回人可读原因（error message / exit code + stderr）。
+ * 分支名经 unitBranchName 双空间拼接（slug 白名单），spawnSync 不经 shell，无注入面。
+ */
+function gitStep(cwd: string, args: readonly string[]): string | null {
+  const res = spawnSync("git", ["-C", cwd, ...args], {
+    encoding: "utf-8",
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
+  if (res.error === undefined && res.status === 0) {
+    return null;
+  }
+  if (res.error !== undefined) {
+    return res.error.message;
+  }
+  const errText = (res.stderr ?? "").trim();
+  return `exit ${res.status ?? "null"}${errText === "" ? "" : ` — ${errText}`}`;
+}
+
+/**
+ * 步骤 0 的逐子汇聚（J1）：已达则跳过（幂等重跑天然成立——集成 pass 后子分支已
+ * 删，可达性对 root 分支成立，不会再次触 merge）；否则在 root worktree 执行
+ * merge --no-edit，成功后 best-effort 静默删子分支（P-wt5：commit 经 root 分支
+ * 可达，GC 安全）；冲突则 merge --abort 清现场 + 收 failure（含 root worktree
+ * 路径与 CW_PROJECT_DIR 内联前缀的恢复指引——与 human 指引口径一致）。
+ */
+function mergeChildrenIntoRoot(
+  opts: { cwd: string; rootId: string; children: readonly { unitId: string; commit: string }[] },
+  rootWorktreeDir: string,
+  rootBranch: string,
+  failures: string[],
+): void {
+  for (const child of opts.children) {
+    if (isAncestorOf(opts.cwd, child.commit, rootBranch)) {
+      continue;
+    }
+    const childBranch = unitBranchName(opts.rootId, child.unitId);
+    if (!branchRefExists(opts.cwd, childBranch)) {
+      failures.push(
+        `子节点 ${child.unitId} 的 build commit ${child.commit} 不在 root 分支 ${rootBranch} 可达，` +
+          `且子分支 ${childBranch} 不存在——产出无处可汇聚。恢复动作：git -C "${opts.cwd}" branch ${childBranch} ${child.commit} ` +
+          `重建子分支后集成重试（若子产出已失效，在其 unit 重新提交 build 证据）。`,
+      );
+      continue;
+    }
+    const mergeErr = gitStep(rootWorktreeDir, ["merge", "--no-edit", childBranch]);
+    if (mergeErr === null) {
+      // best-effort 静默：子 commit 已 merge 进 root 分支，分支删除失败（如被
+      // 其他 worktree 占用）不构成集成失败，残留分支无害
+      gitStep(opts.cwd, ["branch", "-D", childBranch]);
+      continue;
+    }
+    // 清冲突现场（best-effort：merge 未真正启动时 abort 报错，忽略）
+    gitStep(rootWorktreeDir, ["merge", "--abort"]);
+    failures.push(
+      `子 ${child.unitId} merge 冲突（${rootBranch} ← ${childBranch}）：${mergeErr}。` +
+        `恢复动作：cd "${rootWorktreeDir}" 人工解决冲突后 git commit，再以 ` +
+        `CW_PROJECT_DIR="${opts.cwd}" cw evidence submit --kind build --unit ${opts.rootId} ` +
+        `--commit <hash> --run-id <runId> 提交推进，集成将按新证据重试。`,
+    );
+  }
 }

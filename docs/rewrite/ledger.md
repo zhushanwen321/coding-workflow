@@ -42,7 +42,7 @@
 | wt-1 | W1 worktree 基建（runner/worktree.ts + getCwWorktreeHome/worktreePath/resolveProjectDir + cli CW_PROJECT_DIR） | committed | c0f9f29 | verifier PASS（sha256 aa425af6…，报告 wt1-report.md，9/9 对抗抽查 + 真实性 4 点无空洞断言）。2 偏差裁决合理（B7 worktree list 用分支名断言——/var vs /private/var symlink 实测、语义等价；B4 加强文案断言）。297 全绿（282 既有 + 15 新增）。观察：git 2.52 worktree list 输出 [cw/<branch>] 注释形态依赖 |
 | wt-2 | W2 spawn 链路拆分（projectCwd 双传 + pi env 注入 + human 账本锚定 + brief/escalation 文案） | committed | 075c1e9 | 两轮交付（首版 + v2 审查返工 R-1~R-6）verifier 完整验收 PASS（sha256 de624b80…，报告 wt2-report.md：防篡改/四命令 310 全绿/真实性 5 点/对抗 6 条含空格路径全链路、双 unit 并行、在/亡格循环级）。3 披露全裁决通过（fx3 同锚适配、dist 竞态 3 连跑、reattach 无条件 prune 零字符串匹配）。分支双空间 + clean -e .cw-spawn + 四格矩阵 + 内联前缀 + 解析锚分离（R-5）落地。观察：ensure 失败 error 每轮重复输出（W3+ 去重）；T8/T9 未直测 reviewer role 前缀（cwCommand 统一，风险低） |
 | wt-3 | W3 reset 语义替换（删 checkWorkspaceForDispatch → worktree reset --hard + clean -fd） | committed | e1a8b8f | verifier PASS（sha256 781430ae…，报告 wt3-report.md：纯删除证明 +2/-87 零逻辑新增、313 全绿、对抗 20/20 含项目 cwd tracked+untracked 跨 24 轮重派原样保留、SPAWN_ERROR 出口脏保留）。行为变化锁定：项目 cwd 不再被 runner 触碰（A1 防近似复活） |
-| wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify checkout root 分支 HEAD；回收清单输出） | pending | — | 依赖 wt-2；与 wt-3 领地相交（loop.ts）串行 |
+| wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify 三处锚 root 分支；孤儿清扫 + 延迟回收 + 回流指引） | committed | 917ac1e | verifier PASS（sha256 7bc77414…，报告 wt4-report.md：防篡改/321 全绿/M1-M8 真实性 5 点/对抗 8 条含冲突恢复闭环、跨 root 清扫、真实 home 零污染）。4 披露全接受（退出清尾回收、J3 排除本 rootId、branch -D 占用静默、u5b 形态适配经 A7 反证必要）。观察：真实链路首次集成分支残留常态（可达跳过 merge 即跳过 -D，无害设计权衡内） |
 | wt-5 | W5 测试迁移与终验（39 处 .cw-spawn 断言迁移 + 并发污染对抗测试 + canon P7 勾验 + 终验靶子重跑） | pending | — | 收口；依赖 wt-3 + wt-4 |
 
 ## 里程碑 gate
@@ -93,6 +93,7 @@
 - 2026-08-16 wt-3 验收基线入 git（纯删除波：删 checkWorkspaceForDispatch 近似链 + 项目 cwd 不再被 reset 的行为锁定），builder 派发。
 - 2026-08-16 wt-3 committed（313 全绿）：loop.ts 纯删除 +2/-87（四件套 + 注释段，零逻辑新增）；verifier PASS（对抗 20/20）。项目 cwd 与 agent 工作区彻底解耦。wt-4 验收基线备料。
 - 2026-08-16 wt-4 验收基线入 git（J1 merge 内聚幂等 / J2 三处锚 root 分支 / J3 孤儿清扫查全账本 / J4 延迟回收；M1-M8 条款），builder 派发。
+- 2026-08-16 wt-4 committed（321 全绿 = 313+8）：步骤 0 merge 汇聚（已达跳过幂等 + 冲突 abort 收 failures 含内联前缀指引 + best-effort branch -D）+ 三处 HEAD 锚 cw-root/<rootId> + 启动孤儿清扫（全账本口径、排除本 rootId）+ 每轮延迟回收（pendingReclaim + 退出清尾）+ summary 回收清单与回流指引；u8-integrate/u8-e2e/u5b-e2e 三文件适配。verifier PASS（对抗 8 条：冲突人工解决后重跑 pass 闭环、他 root 跨 run 清扫、项目 cwd 不被触碰不回归）。wt-5 验收基线备料。
 
 ## 对抗审查修复（2026-08-16）
 
