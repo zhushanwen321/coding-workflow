@@ -87,6 +87,7 @@
 - 2026-08-16 L2-F3 worktree 隔离升级启动（定时任务触发，cw-orchestrator 流程）：技术方案 design-worktree-isolation.md 入库（探针 P-wt1~P-wt6 已实测 ✅；D2 分支 base = root spec 冻结 commit 按推荐方案设计）；ledger 开 M3 段（wt-1~wt-5）；wt-1 验收基线入 git，builder 派发。
 - 2026-08-16 wt-1 committed：builder 交付 worktree.ts（add/reset/remove + unitBranchName，Outcome 模式）+ project.ts 三函数 + cli.ts CW_PROJECT_DIR 接线 + 15 测试（A1-A4/B1-B9/C1-C2 全覆盖）；verifier PASS（防篡改/四命令/真实性 4 点/对抗 9 条含假 baseCommit 零残留、路径逃逸拒绝、相对 env 报错可操作）。297 全绿。wt-2 验收基线备料。
 - 2026-08-16 wt-2 基线前勘误：设计文档 D2 引用的 SpecSubmitted.commit 字段实测不存在（types.ts:90-91 是 EvidenceSubmittedPayload.commit，时序也晚于 designer 派发）——base 口径修正为「runLoop 启动时项目 cwd HEAD 快照（run 内单次缓存）」，设计文档 D2/P-wt6/§5 已改；非 git 项目 runLoop 启动 fail-fast。波内边界调整：受影响既有断言随 W2 迁移（W5 只余对抗测试与终验）。wt-2 验收基线入 git，builder 派发。
+- 2026-08-16 设计 v2 对抗审查（tech-design rubric，报告 /tmp/design-review-worktree-v2.md）：方案本体成立；6 must-fix + 7 suggestion。主 agent 裁决：MF-1 文件解析锚定分离（CW_PROJECT_DIR 只锚账本与 git 操作，--file/--brief 解析锚 process.cwd——长期方案；模板改绝对路径为短期补丁弃用）；S3 aborted 终态不采纳（产品状态机无 aborted，系两层状态混淆）；其余 S 采纳。wt-2 交付按旧口径实现需返工（R-1~R-6，wt2-acceptance.md §11），验收基线重置随本 commit；设计 v3 修复与代码返工并行派发。
 
 ## 对抗审查修复（2026-08-16）
 

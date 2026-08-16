@@ -112,3 +112,26 @@ npm test                                            # 全量绿（297 基线 + �
 
 - 全部通过 → 汇报文件清单 + 各命令输出尾部 + §7 条款对照表 + **§6 迁移清单**（文件 × 改动性质 × 处数）。
 - 任一未达成 → 如实列出；实现与本文档冲突时披露冲突点与处理理由，不静默偏离。
+
+## 11. 返工规格（v2 基线，2026-08-16 设计 v2 对抗审查后追加；与 §1-10 冲突处以本节为准）
+
+背景：设计文档 v2（分支双空间 / clean 排除产物 / human 内联前缀 / D5 四格矩阵 / 文件解析锚定分离）经对抗审查定案。首版 wt-2 交付（工作区未验收）按旧口径实现，按本节返工。审查报告：/tmp/design-review-worktree-v2.md（must-fix 6 条中 4 条落在 wt-2 交付面）。
+
+**R-1 分支命名双空间**（worktree.ts）：`unitBranchName` 签名改 `(rootId: string, unitId: string): string`——`unitId === rootId` 返回 `cw-root/${rootId}`，否则 `cw/${rootId}/${unitId}`。loop.ts 调用点传 `opts.rootId`；涉及测试断言（wt1 B1/B3、wt2 T2/T4）同步。
+
+**R-2 reset 排除产物**（worktree.ts）：`resetWorktree` 的 clean 改 `clean -fd -e .cw-spawn`（探针 P-wt8）。测试补断言：换角色重派后上一角色 stdout/stderr/brief 仍在（wt1 B5 补 untracked 目录排除断言——预置 `.cw-spawn/x` 与普通 untracked，前者留后者删）。
+
+**R-3 ensureUnitWorktree 四格矩阵**（worktree.ts，替换首版两态近似——禁 `error.includes("already exists")` 字符串匹配）：签名 `(repoDir, worktreeDir, rootId, unitId, baseCommit)`。分支检测用 `git -C repoDir rev-parse --verify --quiet <branch>`，目录检测用 `existsSync`：
+- 目录在 + 分支在 → `resetWorktree` 复用；
+- 目录亡 + 分支在 → `git -C repoDir worktree add <path> <branch>`（无 `-b`）；若因 stale worktree 注册失败，先 `git -C repoDir worktree prune` 重试一次，仍败 → error；
+- 目录在 + 分支亡 → `{ok:false}`，error 指引 `git worktree remove --force <path>` 后重跑（env error 语义，loop 跳过该 unit 本轮派发，沿用 R3 首版跳过行为）；
+- 目录亡 + 分支亡 → `add -b` 新建。
+测试四格逐格构造（wt2 T4 改造为「亡/在」格的正测 + 新增「在/亡」格 error 测）。
+
+**R-4 human 指令内联前缀 + 引号规则**（human.ts）：删首版的 `export CW_PROJECT_DIR=…` 行；`roleStepLines` 每条 cw 命令渲染为 `CW_PROJECT_DIR="<projectCwd>" cw …`；`cd "<workdir>"` 加双引号。路径渲染规则：一律双引号包裹（POSIX/macOS 路径含 `"` 非法，不另设转义）。wt2 T8 断言从 export 行改为：指令中每条 cw 命令含内联前缀、cd 含引号。
+
+**R-5 文件路径解析锚定分离**（src/handlers/common.ts + 调用点）：`resolveAgainstCwd` 的锚从 `ctx.cwd` 改为 `process.cwd()`——`CW_PROJECT_DIR` 只锚账本定位与 git 仓库操作，文件路径参数（`--file`/`--brief`）相对执行者所在目录解析。先 grep 全部调用点统一改。新增测试：设 `CW_PROJECT_DIR=<项目A>`、进程 cwd 在目录 B、B 下有 spec.json 而 A 下无 → `cw evidence submit --kind spec --file spec.json` 读到 B/spec.json（解析跟随进程 cwd）；账本事件仍写 A 的账本（锚定不跟随）。既有非 worktree 测试行为不变（两锚同值）。
+
+**R-6 测试迁移同步**：R-1/R-3/R-4 引起的既有断言（wt1/wt2 及首版迁移的 11 文件中涉分支名/矩阵行为/指令形态处）同步更新；语义等价，不放宽。
+
+**通过命令**：同 §8（check:all / 本 unit vitest / eslint 领地 + src/handlers / npm test 全量绿）。汇报要求同 §10 + R-1~R-6 逐项对照。
