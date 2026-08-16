@@ -167,7 +167,7 @@ gate/verify：cleanCheckout（clone 项目仓库 → checkout 账本 commit）�
 
 **D1 布局：`~/.cw-worktrees/<encoded-cwd>/<unitId>`，env 可覆盖。** worktree 根目录由 `getCwWorktreeHome()` 产出（默认 `~/.cw-worktrees`，测试用 `CW_WORKTREE_HOME` 指到 tmp——与 `getCwHome`/`CW_HOME` 同构）；下一层 `<encoded-cwd>` 复用 `encodeCwd` 产出，与账本目录同 key，归属排查时一眼对应。被否备选「放项目仓库内子目录」：agent 的 `git add -A` 会把 worktree 目录吞进 commit，物理上不可行。
 
-**D2 分支策略：每 unit 一分支，base = root spec 冻结 commit。** 分支名由 unitId 派生（slug 规则 `^[a-z][a-z0-9-]*$` 是 git 分支名的严格子集，by construction 合法，无需转义）。base 取 root unit 的 `SpecSubmitted.commit`（`src/events/types.ts:90-91`，既有事件字段，**零账本 schema 变更**）——语义是「全部子的设计基于同一份冻结 spec + 代码快照」，兄弟并行、集成兜底一致性。被否备选「base = 派发时刻 HEAD」：root 分支 HEAD 会被已集成兄弟的 merge 推动，后派发的子隐式包含先行兄弟的产出——spec 与代码错位（spec 未含兄弟产出），且引入派发时序依赖，不可复现。**本决策是 handoff 指定的用户拍板项，本文按推荐方案设计；若拍板改为派发时刻 HEAD，§3.1 输出样例与 §4 场景 1 的 base 描述需同步调整，其余不变。**
+**D2 分支策略：每 unit 一分支，base = run 启动时项目 HEAD 快照。** 分支名由 unitId 派生（slug 规则 `^[a-z][a-z0-9-]*$` 是 git 分支名的严格子集，by construction 合法，无需转义）。base 取 runLoop 启动时项目 cwd 的 `git rev-parse HEAD`（单次快照，run 内复用，全部 unit 同 base）——语义是「本轮 run 的全部设计与实现基于同一份代码快照」，兄弟并行、集成兜底一致性。**勘误（2026-08-16，实施期核实）**：本节初稿写「base 取 root unit 的 `SpecSubmitted.commit`（types.ts:90-91 既有事件字段）」——该字段不存在：`SpecSubmittedPayload` 只有 specHash/acceptance/contracts/split，types.ts:90-91 的 commit 属 `EvidenceSubmittedPayload`（build 证据的产物 hash，时序上晚于 designer 派发，不可作 base）。HEAD 快照与原目标（全部子 base 相同 + spec 与代码快照对齐 + 可复现）等价成立：run 期间项目 cwd 无人 commit（agent 全在 worktree），快照恒定。非 git 项目在 runLoop 启动即失败（git 是证据链硬依赖，fail-fast 优于空转到 idle 超时）。被否备选「base = 派发时刻 HEAD」：root 分支 HEAD 会被已集成兄弟的 merge 推动，后派发的子隐式包含先行兄弟的产出——spec 与代码错位（spec 未含兄弟产出），且引入派发时序依赖，不可复现。
 
 **D3 workdir 角色拆分：账本/仓库锚定项目 cwd，工作区/产物去 worktree。** `AgentSpawnRequest` 新增 `projectCwd` 字段；`workdir` 字段语义不变（agent 工作区，`types.ts:15-16` 注释已按终态口径书写），值从项目 cwd 变为 worktree 路径。具体拆分：
 
@@ -196,7 +196,7 @@ gate/verify：cleanCheckout（clone 项目仓库 → checkout 账本 commit）�
 | P-wt3 | 本地 `git clone` 携带全部分支 refs（含 cw/*），clone 内可 checkout unit commit | 实测：clone 后 `origin/cw/unit-1` 存在，`git cat-file -t` → `commit` | ✅（D6 cleanCheckout 兼容的基石） |
 | P-wt4 | 含 untracked/脏文件的 worktree，`remove` 拒绝（exit 128）、`remove --force` 成功 | 实测：两种行为均符合 | ✅（D5 回收用 --force 的依据） |
 | P-wt5 | 子分支 merge 进 root 后删分支，commit 仍可达（不被 GC） | 实测：`merge` → `branch -D` → `git log` 可见该 commit | ✅（D5 分支清理的依据） |
-| P-wt6 | unitId slug（`^[a-z][a-z0-9-]*$`）是 git 分支名严格子集；`SpecSubmitted.commit` 可作 baseCommit 源 | 读码核实：`create.ts:29-31` slug 校验；`events/types.ts:90-91` commit 字段 | ✅（零转义逻辑、零账本变更） |
+| P-wt6 | unitId slug（`^[a-z][a-z0-9-]*$`）是 git 分支名严格子集；run 启动 HEAD 快照可作 baseCommit 源 | 读码核实：`create.ts:29-31` slug 校验；`git rev-parse HEAD`（D2 勘误后口径——`SpecSubmitted` 无 commit 字段，见 D2） | ✅（零转义逻辑、零账本变更） |
 
 ## 4. 验收（真实场景，非单测非 mock）
 
@@ -217,7 +217,7 @@ gate/verify：cleanCheckout（clone 项目仓库 → checkout 账本 commit）�
 | 波次 | 内容 | justification | 独立验收 |
 |---|---|---|---|
 | **W1 worktree 基建** | 新增 `src/runner/worktree.ts`（add/reset/remove 封装）；`store/project.ts` 加 `getCwWorktreeHome()` + worktreePath 拼接；cli.ts 支持 `CW_PROJECT_DIR` | 纯增量、不接调用方，零行为变更，可先行 | 单元层验证封装函数对真实 tmp 仓库的 add/reset/remove |
-| **W2 spawn 链路拆分** | `types.ts` 加 `projectCwd`；loop.ts:982 派发点接 worktree 创建 + workdir/projectCwd 双传；pi.ts env 注入；human.ts:122 改锚；brief 文案（612-613）更新；escalationMessage（730-731）路径跟随 | D3 的完整落地，是行为切换点；依赖 W1 的封装 | 场景 4（human 接管）先在此波验收 |
+| **W2 spawn 链路拆分** | `types.ts` 加 `projectCwd`；loop.ts:982 派发点接 worktree 创建 + workdir/projectCwd 双传；pi.ts env 注入；human.ts:122 改锚；brief 文案（612-613）更新；escalationMessage（730-731）路径跟随。**实施注记（2026-08-16）：受影响的既有测试断言随本波迁移**（行为切换即迁，否则本波不可独立验收、W3-W4 期间回归防护真空），W5 只余新增对抗测试与终验 | D3 的完整落地，是行为切换点；依赖 W1 的封装 | 场景 4（human 接管）先在此波验收 |
 | **W3 reset 语义替换** | 删 `checkWorkspaceForDispatch`（loop.ts:799-826 + 960 调用点），派发前改调 worktree reset+clean | D4；必须在 W2 之后（worktree 存在才有 reset 对象） | 场景 2（半成品清理） |
 | **W4 集成汇聚与回流** | 子 closed → root worktree merge；集成 verify checkout root 分支 HEAD；root closed 汇总输出（回收清单 + `git merge cw/<rootId>` 指引） | D5 回收 + D6；依赖 W2 的 worktree 存在性 | 场景 1（并发对抗）+ 场景 3（cwd 防脏回归） |
 | **W5 测试迁移与终验** | tests/ 10 文件 39 处 `.cw-spawn` 断言迁到 worktree 路径（`CW_WORKTREE_HOME` 隔离）；新增并发污染对抗测试；canon P7 探针勾验；终验靶子重跑 | 收口波；39 处分布已清点（u7-loop 8、fx3 7、u6c 5、fx1 4、u7b/u6a/fx2 各 3、u8/u7/u6b 各 2） | 场景 5（终验靶子）+ 全量绿 |

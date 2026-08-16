@@ -86,6 +86,7 @@
 - 2026-08-16 fx-3 committed（verifier 22/22、230 全绿）→ 终验第 4 次 **PASS**：45.1min 零人工自然完成、7/7 机器验证 manual=0、全树 closed、靶子全绿；fx-2 R4a 恢复出口首次现场闭环（65s）；TIMEOUT 重派机制首次真实触发。重写主体完工，进入收尾（验收文档回收核查 / 文档重写 / 版本 2.0.0）。
 - 2026-08-16 L2-F3 worktree 隔离升级启动（定时任务触发，cw-orchestrator 流程）：技术方案 design-worktree-isolation.md 入库（探针 P-wt1~P-wt6 已实测 ✅；D2 分支 base = root spec 冻结 commit 按推荐方案设计）；ledger 开 M3 段（wt-1~wt-5）；wt-1 验收基线入 git，builder 派发。
 - 2026-08-16 wt-1 committed：builder 交付 worktree.ts（add/reset/remove + unitBranchName，Outcome 模式）+ project.ts 三函数 + cli.ts CW_PROJECT_DIR 接线 + 15 测试（A1-A4/B1-B9/C1-C2 全覆盖）；verifier PASS（防篡改/四命令/真实性 4 点/对抗 9 条含假 baseCommit 零残留、路径逃逸拒绝、相对 env 报错可操作）。297 全绿。wt-2 验收基线备料。
+- 2026-08-16 wt-2 基线前勘误：设计文档 D2 引用的 SpecSubmitted.commit 字段实测不存在（types.ts:90-91 是 EvidenceSubmittedPayload.commit，时序也晚于 designer 派发）——base 口径修正为「runLoop 启动时项目 cwd HEAD 快照（run 内单次缓存）」，设计文档 D2/P-wt6/§5 已改；非 git 项目 runLoop 启动 fail-fast。波内边界调整：受影响既有断言随 W2 迁移（W5 只余对抗测试与终验）。wt-2 验收基线入 git，builder 派发。
 
 ## 对抗审查修复（2026-08-16）
 
