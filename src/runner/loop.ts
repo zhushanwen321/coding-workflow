@@ -42,10 +42,8 @@
  * 转人工指引（canon 语义：不自动换模型重试，防静默降级）；SPAWN_ERROR 配置错误
  * 不重试，kill 全部 in-flight 后 exit 1。无可派发且无 in-flight 且存在转人工
  * unit → 循环以 exit 1 收束并汇总转人工清单。
- * 重派前工作区清理（共享 cwd 时代的近似，W3 将整体删除）：无 in-flight 时对项目
- * cwd 的 tracked 脏改动 git reset --hard（详见 checkWorkspaceForDispatch 注释），
- * untracked 一律不动；unit worktree 的精确清理（reset --hard + clean -fd
- * -e .cw-spawn）已由派发点的 ensureUnitWorktree 承担。
+ * 半成品清理由派发点 ensureUnitWorktree（reset --hard + clean -fd -e .cw-spawn）
+ * 承担；项目 cwd 属于用户，runner 不触碰。
  *
  * worktree 语义（wt-2 起，docs/rewrite/design-worktree-isolation.md D1/D2/D3）：每个
  * 被派发 unit 在 <CW_WORKTREE_HOME>/<encoded-cwd>/<unitId> 的专属 git worktree
@@ -116,8 +114,6 @@ const AGENT_TIMEOUT_ESCALATION_AFTER = 2;
 const GIT_STEP_TIMEOUT_MS = 120_000;
 /** ms → min 换算（转人工指引文案用） */
 const MS_PER_MINUTE = 60_000;
-/** git status --porcelain 状态码宽度（XY 两列 + 空格 + 路径） */
-const PORCELAIN_STATUS_WIDTH = 2;
 /**
  * emitExitOutput 的回调等待上限：正常路径回调毫秒级到达；高负载下（集成验证
  * 的连续 spawnSync 阻塞 + 全量并行）libuv 线程池的写队列积压可达数秒。超时后
@@ -780,80 +776,6 @@ function escalationExitMessage(rootId: string, escalated: ReadonlyMap<string, Ag
   );
 }
 
-// ---- 重派前工作区清理（共享 cwd 下的安全近似） ----
-
-/**
- * git status --porcelain 的 tracked 脏行（worktree 列非 `?` 非空——untracked 的 ?? 排除）。
- * --no-optional-locks：默认 git status 会乘机刷新 index（创建 .git/index.lock），
- * 与并发的人/agent git 操作（commit 等）撞锁直接失败——实测全量负载下与测试
- * 「人」的 git commit 偶发互斥失败。此 flag 让 status 完全不拿锁（git 为并发
- * 读场景设计的开关）。
- */
-function trackedDirtyLines(cwd: string): string[] | null {
-  const status = spawnSync(
-    "git",
-    ["--no-optional-locks", "-C", cwd, "status", "--porcelain"],
-    {
-      encoding: "utf-8",
-      timeout: GIT_STEP_TIMEOUT_MS,
-    },
-  );
-  if (status.error !== undefined || status.status !== 0) {
-    emitErr(
-      `[runner] 工作区清理检查失败（git status，${cwd}）：` +
-        `${status.error?.message ?? (status.stderr ?? "").trim()}。恢复动作：确认 cwd 是可用 git 仓库后重跑；本次派发继续（跳过清理）。`,
-    );
-    return null;
-  }
-  return (status.stdout ?? "")
-    .split("\n")
-    .filter(
-      (line) =>
-        line.length >= PORCELAIN_STATUS_WIDTH &&
-        line[1] !== "?" &&
-        line[1] !== " ",
-    );
-}
-
-/**
- * 派发新 agent 前的工作区卫生检查：失败 builder 的未提交 tracked 半成品若不清，
- * 会原样进入下一轮任意 unit 的派发（共享 cwd 无隔离）。完整语义（按 unit 隔离
- * 产出）依赖独立 worktree，M2 集成时升级——本近似只处理最痛的「脏 tracked 污染
- * 下一个 agent」：无 in-flight 时 git reset --hard HEAD（untracked 一律不动，
- * 防误删用户/认知外文件）；有 in-flight 时仅提示不清理（避免误伤并行 agent 的
- * 进行中工作）。每轮派发循环只检查一次（调用方用标志去重）。
- */
-function checkWorkspaceForDispatch(cwd: string, hasInFlight: boolean): void {
-  const dirty = trackedDirtyLines(cwd);
-  if (dirty === null || dirty.length === 0) {
-    return;
-  }
-  if (hasInFlight) {
-    emit([
-      `[runner] 提示：工作区有 ${dirty.length} 项 tracked 脏改动，但有 agent 在跑——暂不清理` +
-        "（避免误伤进行中的工作），待无 in-flight 的派发轮再 reset。",
-    ]);
-    return;
-  }
-  const reset = spawnSync("git", ["-C", cwd, "reset", "--hard", "HEAD"], {
-    encoding: "utf-8",
-    timeout: GIT_STEP_TIMEOUT_MS,
-  });
-  if (reset.status !== 0) {
-    emitErr(
-      `[runner] 工作区清理失败（git reset --hard HEAD，${cwd}）：${(reset.stderr ?? "").trim()}。` +
-        "恢复动作：人工执行 git status / git reset 处理上述 tracked 修改后重跑 cw run" +
-        "（untracked 文件与 .cw-spawn/ 产物不受 reset 影响）。",
-    );
-    return;
-  }
-  emit([
-    `[runner] 派发前清理：检测到 ${dirty.length} 项 tracked 脏改动（上一 agent 的未提交半成品），已 git reset --hard HEAD（untracked 不动）。明细：`,
-    ...dirty.map((line) => `  ${line}`),
-  ]);
-}
-
-
 /**
  * R1（D2）：run 启动时项目 HEAD 一次性快照——本轮全部 unit 的 worktree 同 base
  * （兄弟并行、集成兜底一致性；run 期间项目 cwd 无人 commit，快照恒定）。
@@ -991,7 +913,6 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       );
       return 1;
     }
-    let workspaceChecked = false;
     for (const target of targets) {
       if (target.integration) {
         // 集成在本轮同步完成（含 VerifyRan 入账）；后续 target 仍按本轮开头投影
@@ -1005,12 +926,6 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       const unit = projection.units.get(target.unitId);
       if (unit === undefined) {
         continue; // 不可达（target 来自同一投影）
-      }
-      if (!workspaceChecked) {
-        // 派发新 agent 前的 tracked 半成品清理（每轮一次）：无 in-flight →
-        // reset --hard（untracked 不动）；有 in-flight → 仅提示
-        workspaceChecked = true;
-        checkWorkspaceForDispatch(opts.cwd, inFlight.length > 0);
       }
       if (target.role === "designer" && unitStatus(unit) === "spec-frozen") {
         // designer × spec-frozen 两个出口的可观测性（终验日志里明确「为何派 designer」）：

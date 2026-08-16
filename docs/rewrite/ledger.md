@@ -41,7 +41,7 @@
 |------|------|------|----------------|------|
 | wt-1 | W1 worktree 基建（runner/worktree.ts + getCwWorktreeHome/worktreePath/resolveProjectDir + cli CW_PROJECT_DIR） | committed | c0f9f29 | verifier PASS（sha256 aa425af6…，报告 wt1-report.md，9/9 对抗抽查 + 真实性 4 点无空洞断言）。2 偏差裁决合理（B7 worktree list 用分支名断言——/var vs /private/var symlink 实测、语义等价；B4 加强文案断言）。297 全绿（282 既有 + 15 新增）。观察：git 2.52 worktree list 输出 [cw/<branch>] 注释形态依赖 |
 | wt-2 | W2 spawn 链路拆分（projectCwd 双传 + pi env 注入 + human 账本锚定 + brief/escalation 文案） | committed | 075c1e9 | 两轮交付（首版 + v2 审查返工 R-1~R-6）verifier 完整验收 PASS（sha256 de624b80…，报告 wt2-report.md：防篡改/四命令 310 全绿/真实性 5 点/对抗 6 条含空格路径全链路、双 unit 并行、在/亡格循环级）。3 披露全裁决通过（fx3 同锚适配、dist 竞态 3 连跑、reattach 无条件 prune 零字符串匹配）。分支双空间 + clean -e .cw-spawn + 四格矩阵 + 内联前缀 + 解析锚分离（R-5）落地。观察：ensure 失败 error 每轮重复输出（W3+ 去重）；T8/T9 未直测 reviewer role 前缀（cwCommand 统一，风险低） |
-| wt-3 | W3 reset 语义替换（删 checkWorkspaceForDispatch → worktree reset --hard + clean -fd） | pending | — | 依赖 wt-2 |
+| wt-3 | W3 reset 语义替换（删 checkWorkspaceForDispatch → worktree reset --hard + clean -fd） | committed | e1a8b8f | verifier PASS（sha256 781430ae…，报告 wt3-report.md：纯删除证明 +2/-87 零逻辑新增、313 全绿、对抗 20/20 含项目 cwd tracked+untracked 跨 24 轮重派原样保留、SPAWN_ERROR 出口脏保留）。行为变化锁定：项目 cwd 不再被 runner 触碰（A1 防近似复活） |
 | wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify checkout root 分支 HEAD；回收清单输出） | pending | — | 依赖 wt-2；与 wt-3 领地相交（loop.ts）串行 |
 | wt-5 | W5 测试迁移与终验（39 处 .cw-spawn 断言迁移 + 并发污染对抗测试 + canon P7 勾验 + 终验靶子重跑） | pending | — | 收口；依赖 wt-3 + wt-4 |
 
@@ -91,6 +91,7 @@
 - 2026-08-16 设计 v3 committed（db5e9c5）：6 MF + 7 S 全处置（S3 核实不采纳——events/types.ts 无 aborted）；修复 worker 清单外发现 §1.3 baseCommit 残留引用，主 agent 顺手修正随本 commit。
 - 2026-08-16 wt-2 committed（两轮交付 310 全绿）：首版（spawn 链路 worktree 拆分 + 11 文件断言迁移）+ 返工（R-1 分支双空间 cw-root/<rootId> 与 cw/<rootId>/<unitId>、R-2 clean -e .cw-spawn、R-3 ensureUnitWorktree 四格矩阵零字符串匹配、R-4 human 内联前缀+引号、R-5 resolveAgainstCwd 锚 process.cwd（三调用点统一 + fx3 同锚适配）、R-6 断言同步）。verifier PASS（对抗 6 条含含空格路径真实 shell 执行、双 unit 并行、真实 home 零污染）。wt-3 验收基线备料。
 - 2026-08-16 wt-3 验收基线入 git（纯删除波：删 checkWorkspaceForDispatch 近似链 + 项目 cwd 不再被 reset 的行为锁定），builder 派发。
+- 2026-08-16 wt-3 committed（313 全绿）：loop.ts 纯删除 +2/-87（四件套 + 注释段，零逻辑新增）；verifier PASS（对抗 20/20）。项目 cwd 与 agent 工作区彻底解耦。wt-4 验收基线备料。
 
 ## 对抗审查修复（2026-08-16）
 

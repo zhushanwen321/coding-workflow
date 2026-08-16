@@ -1,6 +1,6 @@
 /**
- * u7b 单测：runner 循环的两个健壮性修复——连续 TIMEOUT 转人工 + 重派前 tracked
- * 脏改动清理。直调 dist 的 runLoop + 测试专用 stepped adapter（spawn 时同步执行
+ * u7b 单测：runner 循环的两个健壮性修复——连续 TIMEOUT 转人工 + 重派前 worktree
+ * 半成品清理。直调 dist 的 runLoop + 测试专用 stepped adapter（spawn 时同步执行
  * 副作用（写账本 / 改工作区文件），wait() 按脚本返回四态退出——与 u7/fx 系列的
  * 测试专用适配器同模式）；账本与 git 仓库均真实（零 mock 框架）。
  *
@@ -9,8 +9,9 @@
  *      （含恢复动作与产物路径）、无可推进后 exit 1 汇总
  *   2. TIMEOUT 间穿插账本进展 → 计数清零（「连续」语义）
  *   3. 多 unit：一个转人工后其余 unit 继续推进（循环不因单 unit 卡死）
- *   4. 失败 builder 的 tracked 半成品 → 下轮无 in-flight 派发前 git reset --hard；
- *      untracked 文件一律不动
+ *   4. 失败 builder 的半成品 → 重派前由派发点 ensureUnitWorktree 清理
+ *      （reset --hard + clean -fd -e .cw-spawn，wt-2 起清 unit worktree）；
+ *      项目 cwd 属于用户，runner 不触碰（W3 已删共享 cwd 近似 reset）
  *
  * 注意：直接 `npx vitest run tests/u7b-loop-timeout-reset.test.ts` 不触发 pretest，
  * 需先 `npm run build`（`npm test` 的 pretest 已含）。
