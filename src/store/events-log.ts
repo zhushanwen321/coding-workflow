@@ -5,14 +5,18 @@
  *   - append：文件锁短事务内「读末 seq → seq+1 → 追加 JSONL 行 + fsync」
  *   - readAll / readUnit：全量 / 单 unit 读取（逐行解析，损坏行抛带恢复动作的错误）
  *   - 跨进程文件锁：lockfile + O_EXCL 原子创建 + stale 检测（30s 阈值 + pid 指纹
- *     二次比对防 TOCTOU 误删）+ 有界重试（总上限 10s，超时抛错）
+ *     二次比对防 TOCTOU 误删）+ 有界重试（总上限 10s，超时抛错；可注入缩短，
+ *     测试专用）。空窗口语义（u1 备案承诺）：openSync(wx) 成功到 writeSync 指纹
+ *     之间他进程读到空文件时，不 unlink（会误删刚创建的锁），等待重试直至指纹
+ *     可读或超时报环境错误（错误信息给出删除该 lockfile 的具体命令）。
  *
  * 锁语义沿用旧实现 archive/src/store/cw-store.ts（附录 B.3 已核实的机制），
  * 按验收文档 u1 调整重试上界：从「50 次 × 100ms」改为「总时长 10s」。
  *
  * 写入校验（锁内、追加前；拒绝 = 抛错，账本保持不变）：
  *   - 孤儿事件拒绝：unit 必须已有 UnitCreated（UnitCreated 自身除外）
- *   - EvidenceSubmitted 幂等：同 unitId+runId 已入账则拒绝重复记账
+ *   - EvidenceSubmitted 幂等：同 unitId+runId 已入账则拒绝重复记账，抛
+ *     DuplicateEvidenceError（可区分拒绝——上层据此把「重试同一提交」转幂等成功）
  *   - UnitCreated 幂等：同 unitId 只能创建一次
  */
 import {
@@ -42,19 +46,54 @@ const LOCK_STALE_TIMEOUT_MS = 30_000;
 const LOCK_TOTAL_TIMEOUT_MS = 10_000;
 /** 锁重试间隔（ms） */
 const LOCK_RETRY_DELAY_MS = 100;
+/** ms → s 报错文案的换算因子 */
+const MS_PER_SECOND = 1_000;
 /** Atomics.wait 所需的最小 buffer（4 字节 Int32） */
 const INT32_BYTES = 4;
 /** 首条事件 seq（账本内单调递增起点） */
 const FIRST_SEQ = 1;
 
+/**
+ * EvidenceSubmitted 幂等命中（同 unitId+runId 已入账）的可区分拒绝。
+ *
+ * 消费方区分处置：handler 层据此把「重试同一提交」转为幂等成功（exit 0 + 提示，
+ * 不 append——账本本就无重复记账）；其他消费方仍可当普通 Error 透传（消息自带
+ * 恢复动作）。
+ */
+export class DuplicateEvidenceError extends Error {
+  readonly unitId: string;
+  readonly runId: string;
+
+  constructor(unitId: string, runId: string) {
+    super(
+      `EventLedger: 拒绝重复提交 EvidenceSubmitted：unit "${unitId}" + runId "${runId}" 已入账（幂等键防重复记账）。恢复动作：确认已入账可 readUnit("${unitId}")；重跑请使用新 runId 提交。`,
+    );
+    this.name = "DuplicateEvidenceError";
+    this.unitId = unitId;
+    this.runId = runId;
+  }
+}
+
+/** lockfile 指纹读取结果的三态 */
+type LockFingerprint =
+  | { kind: "valid"; pid: number; ts: number }
+  /** 文件存在但读不出有效指纹（空文件 / NaN）——「创建-写入指纹」空窗口或残留 */
+  | { kind: "empty" }
+  /** 文件不存在（已被释放 / 并发清理） */
+  | { kind: "missing" };
+
 export class EventLedger {
   private readonly ledgerPath: string;
   private readonly lockPath: string;
+  private readonly lockTotalTimeoutMs: number;
   private lockHeld = false;
+  /** 本次 acquireLock 是否见过「空指纹」lockfile（超时报错按此分流恢复动作） */
+  private sawEmptyFingerprint = false;
 
-  constructor(ledgerPath: string) {
+  constructor(ledgerPath: string, options?: { lockTotalTimeoutMs?: number }) {
     this.ledgerPath = ledgerPath;
     this.lockPath = `${ledgerPath}.lock`;
+    this.lockTotalTimeoutMs = options?.lockTotalTimeoutMs ?? LOCK_TOTAL_TIMEOUT_MS;
     // 父目录自动创建（CW_HOME 下项目目录首次使用时不存在）
     mkdirSync(dirname(ledgerPath), { recursive: true });
   }
@@ -117,9 +156,7 @@ export class EventLedger {
           e.payload.runId === runId,
       );
       if (duplicated) {
-        throw new Error(
-          `EventLedger: 拒绝重复提交 EvidenceSubmitted：unit "${payload.unitId}" + runId "${runId}" 已入账（幂等键防重复记账）。恢复动作：确认已入账可 readUnit("${payload.unitId}")；重跑请使用新 runId 提交。`,
-        );
+        throw new DuplicateEvidenceError(payload.unitId, runId);
       }
     }
   }
@@ -188,24 +225,36 @@ export class EventLedger {
   // ── 跨进程文件锁 ────────────────────────────────────────────
 
   /**
-   * 获取锁：O_EXCL 原子创建 lockfile（写入 pid + 时间戳指纹），总时长上限 10s。
-   * EEXIST 时做 stale 判定（超 30s 或持锁进程已死）；stale 抢占前二次读取指纹比对
-   * （pid + ts 均一致才 unlink），防止 TOCTOU 窗口里误删其他进程刚写入的新 lockfile。
+   * 获取锁：O_EXCL 原子创建 lockfile（写入 pid + 时间戳指纹），总时长有上限，
+   * 超时抛错。EEXIST 时做 stale 判定（超 30s 或持锁进程已死）；stale 抢占前二次
+   * 读取指纹比对（pid + ts 均一致才 unlink），防止 TOCTOU 窗口里误删其他进程刚
+   * 写入的新 lockfile。指纹为空（文件存在但不可解析）时等待而非 unlink——那是
+   * 「创建-写入指纹」空窗口里其他进程刚建的锁，误删会导致双写。
    */
   private acquireLock(): void {
-    const deadline = Date.now() + LOCK_TOTAL_TIMEOUT_MS;
+    const timeoutSec = Math.round(this.lockTotalTimeoutMs / MS_PER_SECOND);
+    this.sawEmptyFingerprint = false;
+    const deadline = Date.now() + this.lockTotalTimeoutMs;
     while (Date.now() <= deadline) {
       if (this.tryAcquireLockOnce()) {
         return;
       }
       this.sleep(LOCK_RETRY_DELAY_MS);
     }
+    if (this.sawEmptyFingerprint) {
+      throw new Error(
+        `EventLedger: 账本锁文件存在但 ${timeoutSec}s 内始终读不出有效指纹（${this.lockPath}）——` +
+          "疑似「创建后未写入指纹」的残留或内容被外部损坏，本实现不自动清理此类锁。恢复动作：确认没有 cw 进程在写账本后，" +
+          `删除该 lockfile 重试：rm "${this.lockPath}"。`,
+      );
+    }
     throw new Error(
-      `EventLedger: 10s 内未获得账本锁（${this.lockPath}）。恢复动作：lockfile 内容为「pid + 写入时间戳」——若该 pid 进程已死或时间戳早于 30s 前，可删除此 lockfile 后重试；否则等持锁进程完成后再试。`,
+      `EventLedger: ${timeoutSec}s 内未获得账本锁（${this.lockPath}）。恢复动作：lockfile 内容为「pid + 写入时间戳」——` +
+        "若该 pid 进程已死或时间戳早于 30s 前，可删除此 lockfile 后重试；否则等持锁进程完成后再试。",
     );
   }
 
-  /** 单次获取尝试：成功返回 true；lockfile 被占则按 stale 规则处理后返回 false。 */
+  /** 单次获取尝试：成功返回 true；lockfile 被占则按 stale / 空指纹规则处理后返回 false。 */
   private tryAcquireLockOnce(): boolean {
     try {
       const fd = openSync(this.lockPath, "wx");
@@ -224,9 +273,16 @@ export class EventLedger {
     }
 
     const fingerprint = this.readLockFingerprint();
-    if (fingerprint === null) {
-      // 读不到指纹（文件损坏 / 已被并发清理）→ 不是有效 fresh lock，清掉重试
-      this.unlinkLockFile();
+    if (fingerprint.kind === "empty") {
+      // 「创建-写入指纹」空窗口（u1 备案承诺的兑现）：openSync(wx) 成功后、
+      // writeSync 指纹前，他进程读到的是空文件 → Number("") = NaN。这不是有效
+      // fresh lock 也不是 stale——unlink 会误删刚创建的锁（双写窗口），只能
+      // 等持有者把指纹写完（重试计入 acquireLock 的总预算，超时报环境错误）
+      this.sawEmptyFingerprint = true;
+      return false;
+    }
+    if (fingerprint.kind === "missing") {
+      // 文件已被释放 / 并发清理 → 直接重试（下一轮尝试创建）
       return false;
     }
     if (!this.isStaleLock(fingerprint.pid, fingerprint.ts)) {
@@ -234,7 +290,11 @@ export class EventLedger {
     }
     // stale 二次确认：检查与 unlink 之间其他进程可能已抢先重写 lockfile
     const recheck = this.readLockFingerprint();
-    if (recheck !== null && recheck.pid === fingerprint.pid && recheck.ts === fingerprint.ts) {
+    if (
+      recheck.kind === "valid" &&
+      recheck.pid === fingerprint.pid &&
+      recheck.ts === fingerprint.ts
+    ) {
       this.unlinkLockFile();
     }
     return false;
@@ -260,20 +320,26 @@ export class EventLedger {
     }
   }
 
-  /** 读取 lockfile 指纹（pid + 写入时间戳）；不存在或不可解析返回 null。 */
-  private readLockFingerprint(): { pid: number; ts: number } | null {
+  /**
+   * 读取 lockfile 指纹（pid + 写入时间戳）。三态：valid（可解析）/ empty（文件
+   * 存在但内容无效——空窗口或残留损坏）/ missing（文件不存在或读取失败）。读取
+   * 失败（非 ENOENT 的 IO 错）与不存在同归 missing：原实现即如此（调用方按可
+   * 抢占重试，unlink 失败会上抛可见）。
+   */
+  private readLockFingerprint(): LockFingerprint {
+    let content: string;
     try {
-      const content = readFileSync(this.lockPath, "utf-8").trim().split("\n");
-      const pid = Number(content[0]);
-      const ts = Number(content[1]);
-      if (!Number.isFinite(pid) || !Number.isFinite(ts)) {
-        return null;
-      }
-      return { pid, ts };
+      content = readFileSync(this.lockPath, "utf-8");
     } catch {
-      // 文件不存在 / 读取失败都视为无有效指纹（调用方按可抢占处理）
-      return null;
+      return { kind: "missing" };
     }
+    const lines = content.trim().split("\n");
+    const pid = Number(lines[0]);
+    const ts = Number(lines[1]);
+    if (!Number.isFinite(pid) || !Number.isFinite(ts)) {
+      return { kind: "empty" };
+    }
+    return { kind: "valid", pid, ts };
   }
 
   /** stale 判定：超 30s，或持有进程已死（pid 指纹不可用时也视为 stale）。 */

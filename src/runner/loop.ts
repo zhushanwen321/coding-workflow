@@ -55,7 +55,7 @@ import type {
   SequencedUnitProjection,
   VerifyRanPayload,
 } from "../events/types.js";
-import { loadLedger, unitStatus } from "../readonly/load.js";
+import { loadLedger, treeStatuses, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
 import { getCwHome, ledgerPath } from "../store/project.js";
 import { timeoutForAcceptance } from "../verify/run.js";
@@ -692,13 +692,14 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
   }
 }
 
-/** root closed 的汇总（验收文档循环逻辑 5：每 unit 状态行） */
+/** root closed 的汇总（验收文档循环逻辑 5：每 unit 状态行，树感知口径） */
 function emitSummary(projection: SequencedProjection, rootId: string): void {
   const units = subtreeUnits(projection, rootId);
+  const statuses = treeStatuses(projection);
   const rows = units.map((unit) => {
     const lastVerify =
       unit.verifyRuns.length > 0 ? unit.verifyRuns[unit.verifyRuns.length - 1].result : "-";
-    return `[runner]   ${unit.unitId}  ${unitStatus(unit)}  lastVerify:${lastVerify}`;
+    return `[runner]   ${unit.unitId}  ${statuses.get(unit.unitId)}  lastVerify:${lastVerify}`;
   });
   emit([
     `[runner] root "${rootId}" 已 closed——调度循环结束（exit 0）。汇总（root 子树 ${units.length} 个 unit）：`,
@@ -788,24 +789,16 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       killAll(inFlight);
       return 1;
     }
-    if (unitStatus(root) === "closed") {
-      // u8：内部节点派发时机升级为「子全 verified」后，root 的 exec-review 可能
-      // 先于子的 exec-review 入账（u7 时代 root builder 等子全 closed，不可能）。
-      // 验收文档的 closed 公式 = root verified ∧ root exec-review ∧ 子全 closed，
-      // 而 deriveStatus（禁改的既有语义）不含最后一项——退出条件在这里补齐，
-      // 否则 root 先 closed 会在退出时 kill 未收尾的子 reviewer，子永远停在
-      // verified。u7 各场景两者天然同时成立（rootLast 排序），行为不变。
-      const subtreeAllClosed = subtreeUnits(projection, opts.rootId).every(
-        (unit) => unitStatus(unit) === "closed",
-      );
-      if (subtreeAllClosed) {
-        // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
-        killAll(inFlight);
-        emitSummary(projection, opts.rootId);
-        return 0;
-      }
-      // root closed 但子未收尾：子的 reviewer 仍可派发，等子树收齐再退（无进展
-      // 由 maxIdleMs 兜底，不会死等）
+    if (treeStatuses(projection).get(opts.rootId) === "closed") {
+      // 退出条件 = 树感知 closed（canon D2 完整公式：root verified ∧ exec-review
+      // pass ∧ 全部直接子节点 closed），与 readonly 四命令同一投影口径。u8 时代
+      // 「子全 closed」是本循环的补偿逻辑（当时 deriveStatus 够不到子节点），已
+      // 归位 fold 层——root 的 exec-review 先于子收尾入账时循环不退，子的
+      // reviewer 继续派发，无进展由 maxIdleMs 兜底
+      // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
+      killAll(inFlight);
+      emitSummary(projection, opts.rootId);
+      return 0;
     }
 
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派

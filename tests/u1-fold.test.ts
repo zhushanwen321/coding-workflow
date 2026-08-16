@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { deriveStatus, fold } from "../src/core/fold.js";
+import { deriveStatus, deriveStatuses, deriveStatusInTree, fold } from "../src/core/fold.js";
 import type {
   EventPayloadMap,
   EventType,
@@ -32,6 +32,14 @@ function createdEvent(seq: number, unitId: string): LedgerEvent {
   return makeEvent(seq, "UnitCreated", {
     unitId,
     parentId: null,
+    briefRef: "docs/brief.md",
+  });
+}
+
+function childCreatedEvent(seq: number, unitId: string, parentId: string): LedgerEvent {
+  return makeEvent(seq, "UnitCreated", {
+    unitId,
+    parentId,
     briefRef: "docs/brief.md",
   });
 }
@@ -248,5 +256,173 @@ describe("deriveStatus 边界语义锁定", () => {
       specVerdictEvent(3, "u-1", "fail"),
     ];
     expect(deriveStatus(unitOf(fold(events), "u-1"), gatePass)).toBe("created");
+  });
+});
+
+// ── 时序收紧：verified / closed 的证据必须晚于当前 spec ──────────
+
+describe("时序收紧（closed 不可逆的 fold 半边）", () => {
+  /** 完整链到 closed 后再插入新 SpecSubmitted（模拟手改账本，seq 更大） */
+  function closedThenNewSpec(): LedgerEvent[] {
+    return [
+      ...fullLifecycle, // seq 1-6：u-1 完整链 closed（spec=2, verify pass=5, exec pass=6）
+      specEvent(7, "u-1", "h2", ["A1", "A2"]),
+    ];
+  }
+
+  it("closed 后插入新 spec（seq 更大）→ 旧 VerifyRan/旧 exec-review 全部失效，投影回 created", () => {
+    expect(deriveStatus(unitOf(fold(closedThenNewSpec()), "u-1"), gatePass)).toBe("created");
+  });
+
+  it("新 spec 之后再补 spec-review pass（无新 verify）→ 只到 spec-frozen，旧 pass run 不复用", () => {
+    const events = [...closedThenNewSpec(), specVerdictEvent(8, "u-1", "pass")];
+    expect(deriveStatus(unitOf(fold(events), "u-1"), gatePass)).toBe("spec-frozen");
+  });
+
+  it("旧 verify pass 复用被拒后补新 verify → verified；旧 exec pass 仍不计数 → 非 closed", () => {
+    const events = [
+      ...closedThenNewSpec(),
+      specVerdictEvent(8, "u-1", "pass"),
+      verifyEvent(9, "u-1", "run-2", "pass", ["A1", "A2"]),
+    ];
+    // 新 verify 晚于新 spec → verified 恢复；但 closed 要求 exec-review pass 晚于
+    // 新 spec（seq 6 的旧 pass 不计数）→ 停 verified
+    expect(deriveStatus(unitOf(fold(events), "u-1"), gatePass)).toBe("verified");
+  });
+
+  it("新 exec-review pass（晚于新 spec）才重新 closed——零新证据不可能直达 closed", () => {
+    const events = [
+      ...closedThenNewSpec(),
+      specVerdictEvent(8, "u-1", "pass"),
+      verifyEvent(9, "u-1", "run-2", "pass", ["A1", "A2"]),
+      execVerdictEvent(10, "u-1", "pass"),
+    ];
+    expect(deriveStatus(unitOf(fold(events), "u-1"), gatePass)).toBe("closed");
+  });
+});
+
+// ── 树感知：内部节点 closed 的「子全 closed」条件 ────────────────
+
+describe("deriveStatusInTree / deriveStatuses（树感知口径）", () => {
+  /** root + 两子：root 自身完整链（单 unit 口径 closed）；child 状态由参数事件控制 */
+  function treeEvents(childExtra: LedgerEvent[]): LedgerEvent[] {
+    return [
+      createdEvent(1, "root"),
+      childCreatedEvent(2, "c-1", "root"),
+      childCreatedEvent(3, "c-2", "root"),
+      // root 完整链：spec → review pass → verify 全覆盖 → exec pass
+      specEvent(4, "root", "hr", ["RA1"]),
+      specVerdictEvent(5, "root", "pass"),
+      verifyEvent(6, "root", "run-r", "pass", ["RA1"]),
+      execVerdictEvent(7, "root", "pass"),
+      // 两子各自完整链（c-1 全 closed；c-2 的收尾事件由 childExtra 决定）
+      specEvent(8, "c-1", "h1", ["A1"]),
+      specVerdictEvent(9, "c-1", "pass"),
+      verifyEvent(10, "c-1", "run-1", "pass", ["A1"]),
+      execVerdictEvent(11, "c-1", "pass"),
+      specEvent(12, "c-2", "h2", ["A1"]),
+      specVerdictEvent(13, "c-2", "pass"),
+      verifyEvent(14, "c-2", "run-2", "pass", ["A1"]),
+      ...childExtra,
+    ];
+  }
+
+  it("内部节点：子未全 closed（c-2 停 verified）→ root 不 closed，压回 verified；单 unit 口径仍 closed（对照）", () => {
+    const proj = fold(treeEvents([]));
+    expect(deriveStatus(unitOf(proj, "root"), gatePass)).toBe("closed"); // 单 unit 口径
+    expect(deriveStatuses(proj.units, gatePass).get("root")).toBe("verified"); // 树感知
+    expect(deriveStatuses(proj.units, gatePass).get("c-1")).toBe("closed");
+    expect(deriveStatuses(proj.units, gatePass).get("c-2")).toBe("verified");
+  });
+
+  it("子全 closed 后 root closed（序列推进：c-2 补 exec pass）", () => {
+    const proj = fold(treeEvents([execVerdictEvent(15, "c-2", "pass")]));
+    const statuses = deriveStatuses(proj.units, gatePass);
+    expect(statuses.get("c-2")).toBe("closed");
+    expect(statuses.get("root")).toBe("closed");
+  });
+
+  it("deriveStatusInTree 与 deriveStatuses 同口径：closed 追加子条件，其余状态原样", () => {
+    const proj = fold(treeEvents([]));
+    const root = unitOf(proj, "root");
+    expect(deriveStatusInTree(root, [], gatePass)).toBe("closed"); // 无子参数 = 叶子语义
+    expect(deriveStatusInTree(root, ["closed", "verified"], gatePass)).toBe("verified");
+    expect(deriveStatusInTree(root, ["closed", "closed"], gatePass)).toBe("closed");
+    // 非 closed 的单 unit 状态不被子条件抬高
+    const c2 = unitOf(proj, "c-2");
+    expect(deriveStatusInTree(c2, ["closed"], gatePass)).toBe("verified");
+  });
+
+  it("多层树传播：孙未 closed → 子不 closed → 根不 closed（逐层压回）", () => {
+    const events = [
+      createdEvent(1, "root"),
+      childCreatedEvent(2, "mid", "root"),
+      childCreatedEvent(3, "leaf", "mid"),
+      specEvent(4, "root", "hr", ["RA1"]),
+      specVerdictEvent(5, "root", "pass"),
+      verifyEvent(6, "root", "run-r", "pass", ["RA1"]),
+      execVerdictEvent(7, "root", "pass"),
+      specEvent(8, "mid", "hm", ["A1"]),
+      specVerdictEvent(9, "mid", "pass"),
+      verifyEvent(10, "mid", "run-m", "pass", ["A1"]),
+      execVerdictEvent(11, "mid", "pass"),
+      specEvent(12, "leaf", "hl", ["A1"]),
+      specVerdictEvent(13, "leaf", "pass"),
+      verifyEvent(14, "leaf", "run-l", "pass", ["A1"]),
+      // leaf 无 exec-review → verified；mid/root 逐层压回
+    ];
+    const statuses = deriveStatuses(fold(events).units, gatePass);
+    expect(statuses.get("leaf")).toBe("verified");
+    expect(statuses.get("mid")).toBe("verified");
+    expect(statuses.get("root")).toBe("verified");
+  });
+
+  it("孤儿 unit（parent 不存在）按根节点对待：自身链闭合即 closed，防御不崩溃", () => {
+    const events = [
+      // 孤儿 root-orphan 的 parent u-ghost 不存在（外部手改账本产物）
+      childCreatedEvent(1, "root-orphan", "u-ghost"),
+      specEvent(2, "root-orphan", "ho", ["A1"]),
+      specVerdictEvent(3, "root-orphan", "pass"),
+      verifyEvent(4, "root-orphan", "run-o", "pass", ["A1"]),
+      execVerdictEvent(5, "root-orphan", "pass"),
+    ];
+    const statuses = deriveStatuses(fold(events).units, gatePass);
+    expect(statuses.get("root-orphan")).toBe("closed");
+  });
+
+  it("parentId 环（外部手改账本产物）：不崩溃不死循环，收敛到自洽不动点", () => {
+    const events = [
+      childCreatedEvent(1, "a", "b"),
+      childCreatedEvent(2, "b", "a"),
+      specEvent(3, "a", "ha", ["A1"]),
+      specVerdictEvent(4, "a", "pass"),
+      verifyEvent(5, "a", "run-a", "pass", ["A1"]),
+      execVerdictEvent(6, "a", "pass"),
+      specEvent(7, "b", "hb", ["A1"]),
+      specVerdictEvent(8, "b", "pass"),
+      verifyEvent(9, "b", "run-b", "pass", ["A1"]),
+      execVerdictEvent(10, "b", "pass"),
+    ];
+    const statuses = deriveStatuses(fold(events).units, gatePass);
+    // 双方均 closed 时环上互相确认，自洽保持 closed（防御目标 = 不崩溃不死循环，
+    // 不是强行降级——环本身是外部改坏的数据，投影如实反映自洽状态）
+    expect(statuses.get("a")).toBe("closed");
+    expect(statuses.get("b")).toBe("closed");
+
+    // 一方未收尾（b 无 exec-review）→ 另一方被拉回 verified
+    const events2 = [
+      childCreatedEvent(1, "a", "b"),
+      childCreatedEvent(2, "b", "a"),
+      specEvent(3, "a", "ha", ["A1"]),
+      specVerdictEvent(4, "a", "pass"),
+      verifyEvent(5, "a", "run-a", "pass", ["A1"]),
+      execVerdictEvent(6, "a", "pass"),
+      specEvent(7, "b", "hb", ["A1"]),
+      specVerdictEvent(8, "b", "pass"),
+      verifyEvent(9, "b", "run-b", "pass", ["A1"]),
+    ];
+    const statuses2 = deriveStatuses(fold(events2).units, gatePass);
+    expect(statuses2.get("b")).toBe("verified");
+    expect(statuses2.get("a")).toBe("verified");
   });
 });

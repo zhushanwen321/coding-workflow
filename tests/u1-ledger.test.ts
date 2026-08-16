@@ -5,6 +5,7 @@
  * 重复 UnitCreated、损坏行报错的行为锁定。
  */
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -79,20 +80,31 @@ describe("project：CW_HOME 解析与路径布局", () => {
     expect(() => getCwHome()).toThrow(/绝对路径/);
   });
 
-  it("encodeCwd：`/` 与 `.` → `__`（含 `.`/`..` 特殊目录名防护）", () => {
-    expect(encodeCwd("/Users/x/proj")).toBe("__Users__x__proj");
-    expect(encodeCwd("/Users/x/.bare")).toBe("__Users__x____bare");
-    expect(encodeCwd(".")).toBe("__");
-    expect(encodeCwd("..")).toBe("____");
+  function sha8(cwd: string): string {
+    return createHash("sha256").update(cwd).digest("hex").slice(0, 8);
+  }
+
+  it("encodeCwd：可读前缀 + sha256 防碰撞后缀（`/` `\\` `.` → `__`，异 cwd 必异）", () => {
+    // 可读前缀保留原路径形状（`.` / `..` 的特殊目录名防护同旧规则）
+    expect(encodeCwd("/Users/x/proj")).toBe(`__Users__x__proj-${sha8("/Users/x/proj")}`);
+    expect(encodeCwd("/Users/x/.bare")).toBe(`__Users__x____bare-${sha8("/Users/x/.bare")}`);
+    expect(encodeCwd(".")).toBe(`__-${sha8(".")}`);
+    expect(encodeCwd("..")).toBe(`____-${sha8("..")}`);
+    // 碰撞对（旧编码多对一映射的实害样本）：编码后必不同
+    expect(encodeCwd("/a/b")).not.toBe(encodeCwd("/a.b"));
+    expect(encodeCwd("/x.y/z")).not.toBe(encodeCwd("/x__y/z"));
+    expect(encodeCwd("/a/b\\c")).not.toBe(encodeCwd("/a.b.c"));
+    // 同 cwd 编码稳定（确定性）
+    expect(encodeCwd("/Users/x/proj")).toBe(encodeCwd("/Users/x/proj"));
   });
 
   it("ledgerPath / evidenceDir 落在 <home>/<encoded>/ 下", () => {
     const home = "/tmp/cw-home";
     expect(ledgerPath(home, "/Users/x/proj")).toBe(
-      join(home, "__Users__x__proj", "events.log"),
+      join(home, `__Users__x__proj-${sha8("/Users/x/proj")}`, "events.log"),
     );
     expect(evidenceDir(home, "/Users/x/proj", "u-1", "run-1")).toBe(
-      join(home, "__Users__x__proj", "evidence", "u-1", "run-1"),
+      join(home, `__Users__x__proj-${sha8("/Users/x/proj")}`, "evidence", "u-1", "run-1"),
     );
   });
 });
@@ -158,6 +170,31 @@ describe("EventLedger 账本（验收 6-8）", () => {
     expect(ledger.readAll()).toHaveLength(1);
     // 正常路径下锁已释放
     expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("锁文件存在但指纹为空（「创建-写入指纹」空窗口 / 残留）→ 等待而非删除，超时报含 rm 的环境错误", () => {
+    const { ledger, path } = newLedger("empty-fingerprint");
+
+    // 手工创建空 lockfile：模拟他进程 openSync(wx) 成功后、writeSync 指纹前的
+    // 空窗口被冻结（真实窗口毫秒级自愈；此处用永久空文件验证「绝不 unlink」）
+    const lockPath = `${path}.lock`;
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, "");
+    expect(existsSync(lockPath)).toBe(true);
+
+    // 另一账本实例（短锁超时，测试专用注入）尝试写入：不得清锁成功——旧实现
+    // 读到空指纹 → null → unlink 误删，正是本用例防的回归
+    const victim = new EventLedger(path, { lockTotalTimeoutMs: 300 });
+    expect(() => victim.append("UnitCreated", unitCreatedPayload("u-1"))).toThrow(/读不出有效指纹/);
+    expect(() => victim.append("UnitCreated", unitCreatedPayload("u-1"))).toThrow(/rm "/);
+    // 锁文件未被误删（等待重试而非清锁），账本也未被写入
+    expect(existsSync(lockPath)).toBe(true);
+    expect(ledger.readAll()).toEqual([]);
+
+    // 恢复动作闭环：删除 lockfile 后写入成功（错误信息里的 rm 命令真实有效）
+    rmSync(lockPath);
+    const appended = ledger.append("UnitCreated", unitCreatedPayload("u-1"));
+    expect(appended.seq).toBe(1);
   });
 });
 

@@ -20,7 +20,9 @@ import type {
   SequencedUnitProjection,
   SpecSubmittedPayload,
 } from "../src/events/types.js";
+import type { UnitStatus } from "../src/events/types.js";
 import { computeFrontier, renderFrontier } from "../src/readonly/frontier.js";
+import { treeStatuses } from "../src/readonly/load.js";
 import { renderStatusDetail, renderStatusList, statusJson, unitJson } from "../src/readonly/status.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { ledgerPath } from "../src/store/project.js";
@@ -60,6 +62,15 @@ function getUnit(proj: SequencedProjection, unitId: string): SequencedUnitProjec
   return unit;
 }
 
+/** 从投影取 unit 的树感知状态；缺失时抛错而非静默（同 getUnit 口径） */
+function getStatus(proj: SequencedProjection, unitId: string): UnitStatus {
+  const status = treeStatuses(proj).get(unitId);
+  if (status === undefined) {
+    throw new Error(`fixture 破损：unit "${unitId}" 不在树感知状态集合中`);
+  }
+  return status;
+}
+
 /** 过 spec gate 五规则的 acceptance（core=e2e-real 带可解析 command + unit 级） */
 const STRONG_ACCEPTANCE: readonly AcceptanceItem[] = [
   { id: "A1", core: true, title: "A1 核心链路真实跑通", type: "e2e-real", command: "node -v" },
@@ -92,6 +103,35 @@ function appendFrozenSequence(ledger: EventLedger, unitId: string): void {
   ledger.append("UnitCreated", { unitId, parentId: null, briefRef: `brief-${unitId}.md` });
   ledger.append("SpecSubmitted", strongSpec(unitId));
   ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+}
+
+/**
+ * 「root 过早 exec-review」fixture：root u-pm 自身证据链闭合（spec 过审 → verify
+ * 全覆盖 → exec-review pass = 单 unit 口径 closed），子 u-pm-c 停在 verified
+ * （无 exec-review）——树感知口径 root 不 closed。
+ */
+function appendPrematureExecLedger(ledger: EventLedger): void {
+  ledger.append("UnitCreated", { unitId: "u-pm", parentId: null, briefRef: "b-pm.md" });
+  ledger.append("SpecSubmitted", strongSpec("u-pm"));
+  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerifyRan", {
+    unitId: "u-pm",
+    runId: "vr-pm-1",
+    reportHash: "rh-pm-1",
+    result: "pass",
+    acceptanceIds: ["A1", "A2"],
+  });
+  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "exec-review", verdict: "pass" });
+  ledger.append("UnitCreated", { unitId: "u-pm-c", parentId: "u-pm", briefRef: "b-pmc.md" });
+  ledger.append("SpecSubmitted", strongSpec("u-pm-c"));
+  ledger.append("VerdictSubmitted", { unitId: "u-pm-c", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerifyRan", {
+    unitId: "u-pm-c",
+    runId: "vr-pmc-1",
+    reportHash: "rh-pmc-1",
+    result: "pass",
+    acceptanceIds: ["A1", "A2"],
+  });
 }
 
 // ---- 验收#1：status ----
@@ -127,6 +167,16 @@ describe("status 渲染（验收#1）", () => {
     expect(out).toContain("u-frozen  spec-frozen  specs:1 evidences:1 lastVerify:pass");
   });
 
+  it("树感知 closed：root 过早 exec-review（子停在 verified）→ status 列表显示 root 非 closed", () => {
+    const { ledger } = makeProject("p-status-premature");
+    appendPrematureExecLedger(ledger);
+    const out = renderStatusList(fold(ledger.readAll()));
+    // root 单 unit 口径已 closed，但子未收尾 → 树感知压回 verified（投影即真相）
+    expect(out).toContain("u-pm  verified  specs:1 evidences:0 lastVerify:pass");
+    expect(out).toContain("u-pm-c  verified  specs:1 evidences:0 lastVerify:pass");
+    expect(out).not.toContain("closed");
+  });
+
   it("--unit 详情：briefRef、spec hash 前 12 位、全部 verdict、evidence runId、verify 覆盖 id", () => {
     const { ledger } = makeProject("p-status-detail");
     appendFrozenSequence(ledger, "u-full");
@@ -154,7 +204,8 @@ describe("status 渲染（验收#1）", () => {
       acceptanceIds: [],
     });
 
-    const out = renderStatusDetail(getUnit(fold(ledger.readAll()), "u-full"));
+    const proj = fold(ledger.readAll());
+    const out = renderStatusDetail(getUnit(proj, "u-full"), getStatus(proj, "u-full"));
     expect(out).toContain("briefRef: brief-u-full.md");
     expect(out).toContain("status: spec-frozen");
     // spec hash 前 12 位 = "u-full-stron"（两次提交各一行）
@@ -200,7 +251,9 @@ describe("status 渲染（验收#1）", () => {
     expect(parsed.note).toContain("Map");
     expect(parsed.note).toContain("数组");
 
-    const unitParsed = JSON.parse(unitJson(getUnit(proj, "u-j2"))) as {
+    const unitParsed = JSON.parse(
+      unitJson(getUnit(proj, "u-j2"), getStatus(proj, "u-j2")),
+    ) as {
       unitId: string;
       status: string;
       briefRef: string;

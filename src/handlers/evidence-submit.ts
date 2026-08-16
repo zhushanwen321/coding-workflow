@@ -10,17 +10,20 @@
  *
  * build 形态：`--kind build --unit <id> --commit <hash> --run-id <runId> [--file <path>]...`
  *   unit 存在 → commit 在 cwd git 仓库真实存在 → 每个 --file 存在可读并计算 sha256 →
- *   append EvidenceSubmitted{exitCode: 0}。同 unitId+runId 幂等拒绝由账本层（u1）承担，
- *   handler 透传错误。
+ *   append EvidenceSubmitted{exitCode: 0}。同 unitId+runId 重复提交 = 幂等命中
+ *   （canon「幂等（同 runId 重复提交不重复记账）」）：账本层抛 DuplicateEvidenceError
+ *   区分于其他拒绝，handler 转幂等成功（exit 0 + 提示，不 append）。
  */
 import { spawnSync } from "node:child_process";
 
+import { deriveStatuses, fold } from "../core/fold.js";
 import type { CommandContext } from "../dispatch.js";
 import type {
   EvidenceSubmittedPayload,
   SpecSubmittedPayload,
 } from "../events/types.js";
 import { checkSpecRules } from "../gates/spec-rules.js";
+import { DuplicateEvidenceError } from "../store/events-log.js";
 import {
   fail,
   ledgerForCwd,
@@ -76,6 +79,17 @@ function submitSpec(
   parentId: string | null,
   createdFacts: Map<string, UnitCreatedFact>,
 ): number {
+  // closed 不可逆（canon L0）的命令面半边：树感知状态为 closed 的 unit 拒绝新
+  // spec。append-only 账本无法撤销事件，若放行，重提 spec 会把投影拉回 created
+  // ——历史结论被一条新事件篡改。时序半边在 fold（deriveStatus 的 seq 收紧）
+  const status = deriveStatuses(fold(ledger.readAll()).units, checkSpecRules).get(unitId);
+  if (status === "closed") {
+    return fail(
+      `cw evidence submit --kind spec: unit "${unitId}" 已 closed（树感知状态，含全部子节点 closed），不可逆——closed 是账本上的最终结论，重提 spec 会把投影拉回 created（篡改历史结论）。` +
+        "恢复动作：如需变更请新建 unit（cw create --id <slug> --brief <brief文件> --parent <父unitId>），或在父级 unit replan。",
+    );
+  }
+
   const file = stringArg(ctx.argv, "file");
   if (file === undefined) {
     return fail(
@@ -240,11 +254,20 @@ function submitBuild(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd
     sha256: hashes,
     exitCode: 0,
   };
-  const result = tryAppend(ledger, "EvidenceSubmitted", payload);
-  if (!result.ok) {
-    return fail(result.message);
+  // 直接 append（不走 tryAppend）：幂等命中须与「其他账本拒绝」区分——
+  // DuplicateEvidenceError 转 exit 0 幂等成功，重试方收到的是确认而非错误
+  try {
+    const envelope = ledger.append("EvidenceSubmitted", payload);
+    return succeed(
+      `unit "${unitId}" 的 build 证据已入账（runId ${runId}，产物 ${files.length} 个，seq ${envelope.seq}）。`,
+    );
+  } catch (e) {
+    if (e instanceof DuplicateEvidenceError) {
+      return succeed(
+        `已入账（幂等命中）：unit "${unitId}" + runId "${runId}" 的 build 证据此前已入账，本次未重复记账。` +
+          `核对：cw status --unit ${unitId}（evidences 列表）。`,
+      );
+    }
+    return fail(e instanceof Error ? e.message : String(e));
   }
-  return succeed(
-    `unit "${unitId}" 的 build 证据已入账（runId ${runId}，产物 ${files.length} 个，seq ${result.envelope.seq}）。`,
-  );
 }

@@ -12,14 +12,14 @@
  * （verified 要求最后一条 pass run 覆盖全部；此处逐条展示历史覆盖事实）。
  */
 import type { CommandContext } from "../dispatch.js";
-import type { SequencedProjection, SequencedUnitProjection } from "../events/types.js";
+import type { SequencedProjection, SequencedUnitProjection, UnitStatus } from "../events/types.js";
 import {
   EMPTY_LEDGER_HINT,
   loadLedger,
   parseUnitArg,
+  treeStatuses,
   unitArgUsageError,
   unitNotFoundError,
-  unitStatus,
 } from "./load.js";
 
 /** hash 展示前缀长度（规格锁定：spec/文件 sha256 均展示前 12 位） */
@@ -36,9 +36,9 @@ function isCovered(unit: SequencedUnitProjection, acceptanceId: string): boolean
   );
 }
 
-/** 单 unit 证据链视图（纯函数） */
-export function renderReportUnit(unit: SequencedUnitProjection): string {
-  const lines: string[] = [`unit: ${unit.unitId} (${unitStatus(unit)})`];
+/** 单 unit 证据链视图（纯函数）；status 为树感知口径（closed 含子条件） */
+export function renderReportUnit(unit: SequencedUnitProjection, status: UnitStatus): string {
+  const lines: string[] = [`unit: ${unit.unitId} (${status})`];
 
   const spec = unit.specs.length > 0 ? unit.specs[unit.specs.length - 1] : undefined;
   lines.push(spec === undefined ? "  spec: (未提交)" : `  spec: ${hashPrefix(spec.specHash)}`);
@@ -81,10 +81,22 @@ export function renderReportUnit(unit: SequencedUnitProjection): string {
   return lines.join("\n");
 }
 
-/** 全账本报告（纯函数）：unit 之间空行分隔 */
+/** 全账本报告（纯函数）：unit 之间空行分隔；状态为树感知口径 */
 export function renderReport(projection: SequencedProjection): string {
-  const blocks = [...projection.units.values()].map((unit) => renderReportUnit(unit));
+  const statuses = treeStatuses(projection);
+  const blocks = [...projection.units.values()].map((unit) =>
+    renderReportUnit(unit, statusOf(statuses, unit.unitId)),
+  );
   return `${blocks.join("\n\n")}\n`;
+}
+
+/** 从树感知状态集合取单 unit 状态；缺失 = 投影与状态集不一致（不可达，抛错不静默） */
+function statusOf(statuses: ReadonlyMap<string, UnitStatus>, unitId: string): UnitStatus {
+  const status = statuses.get(unitId);
+  if (status === undefined) {
+    throw new Error(`report: unit "${unitId}" 不在树感知状态集合中（不可达）`);
+  }
+  return status;
 }
 
 /** parentId → 直接子 unit（保持账本顺序；--root 子树遍历的索引） */
@@ -103,8 +115,8 @@ function childrenOf(projection: SequencedProjection): Map<string, SequencedUnitP
 
 /**
  * 子树报告（纯函数）：以 rootId 为根，先根后子、同层按账本序遍历，逐节点输出
- * 证据链块（块间空行分隔，与全账本报告同格式）。rootId 不在投影中 → undefined
- * （由 handler 转 exit 1 + 可操作错误）。
+ * 证据链块（块间空行分隔，与全账本报告同格式）；状态为树感知口径。rootId 不在
+ * 投影中 → undefined（由 handler 转 exit 1 + 可操作错误）。
  */
 export function renderReportSubtree(
   projection: SequencedProjection,
@@ -114,10 +126,11 @@ export function renderReportSubtree(
   if (root === undefined) {
     return undefined;
   }
+  const statuses = treeStatuses(projection);
   const children = childrenOf(projection);
   const blocks: string[] = [];
   const walk = (unit: SequencedUnitProjection): void => {
-    blocks.push(renderReportUnit(unit));
+    blocks.push(renderReportUnit(unit, statusOf(statuses, unit.unitId)));
     for (const child of children.get(unit.unitId) ?? []) {
       walk(child);
     }
@@ -165,7 +178,9 @@ export async function reportHandler(ctx: CommandContext): Promise<number> {
       process.stderr.write(unitNotFoundError("report", unitArg.unitId));
       return 1;
     }
-    process.stdout.write(`${renderReportUnit(unit)}\n`);
+    process.stdout.write(
+      `${renderReportUnit(unit, statusOf(treeStatuses(projection), unit.unitId))}\n`,
+    );
     return 0;
   }
 

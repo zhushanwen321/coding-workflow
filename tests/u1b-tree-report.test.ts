@@ -17,6 +17,8 @@ import type {
   SequencedUnitProjection,
   SpecSubmittedPayload,
 } from "../src/events/types.js";
+import type { UnitStatus } from "../src/events/types.js";
+import { treeStatuses } from "../src/readonly/load.js";
 import { renderReport, renderReportSubtree, renderReportUnit } from "../src/readonly/report.js";
 import { renderTree } from "../src/readonly/tree.js";
 import { EventLedger } from "../src/store/events-log.js";
@@ -55,6 +57,15 @@ function getUnit(proj: SequencedProjection, unitId: string): SequencedUnitProjec
   return unit;
 }
 
+/** 从投影取 unit 的树感知状态；缺失时抛错而非静默（同 getUnit 口径） */
+function getStatus(proj: SequencedProjection, unitId: string): UnitStatus {
+  const status = treeStatuses(proj).get(unitId);
+  if (status === undefined) {
+    throw new Error(`fixture 破损：unit "${unitId}" 不在树感知状态集合中`);
+  }
+  return status;
+}
+
 const STRONG_ACCEPTANCE: readonly AcceptanceItem[] = [
   { id: "A1", core: true, title: "A1 核心链路真实跑通", type: "e2e-real", command: "node -v" },
   { id: "A2", core: false, title: "A2 单元级", type: "unit" },
@@ -68,6 +79,35 @@ function strongSpec(unitId: string): SpecSubmittedPayload {
     contracts: [],
     split: [],
   };
+}
+
+/**
+ * 「root 过早 exec-review」fixture：root u-pm 自身证据链闭合（spec 过审 → verify
+ * 全覆盖 → exec-review pass = 单 unit 口径 closed），子 u-pm-c 停在 verified
+ * （无 exec-review）——树感知口径 root 不 closed。
+ */
+function appendPrematureExecLedger(ledger: EventLedger): void {
+  ledger.append("UnitCreated", { unitId: "u-pm", parentId: null, briefRef: "b-pm.md" });
+  ledger.append("SpecSubmitted", strongSpec("u-pm"));
+  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerifyRan", {
+    unitId: "u-pm",
+    runId: "vr-pm-1",
+    reportHash: "rh-pm-1",
+    result: "pass",
+    acceptanceIds: ["A1", "A2"],
+  });
+  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "exec-review", verdict: "pass" });
+  ledger.append("UnitCreated", { unitId: "u-pm-c", parentId: "u-pm", briefRef: "b-pmc.md" });
+  ledger.append("SpecSubmitted", strongSpec("u-pm-c"));
+  ledger.append("VerdictSubmitted", { unitId: "u-pm-c", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerifyRan", {
+    unitId: "u-pm-c",
+    runId: "vr-pmc-1",
+    reportHash: "rh-pmc-1",
+    result: "pass",
+    acceptanceIds: ["A1", "A2"],
+  });
 }
 
 // ---- 验收#3：tree ----
@@ -90,6 +130,29 @@ describe("tree（验收#3）", () => {
       "    t-leaf (created)",
       "t-orphan-a (created) !?",
       "  t-orphan-b (created)",
+      "",
+    ]);
+  });
+
+  it("树感知 closed：root 自身链闭合（含 exec-review pass）但子停在 verified → root 显示 verified；子收尾后 root 才 closed", () => {
+    const { ledger } = makeProject("p-tree-premature");
+    appendPrematureExecLedger(ledger);
+    // root 的 exec-review 先于子入账（u8 派发时序）：单 unit 口径已 closed，
+    // 树感知口径必须压回 verified——「投影即真相」，closed 不允诺未发生的子树收尾
+    expect(renderTree(fold(ledger.readAll())).split("\n")).toEqual([
+      "u-pm (verified)",
+      "  u-pm-c (verified)",
+      "",
+    ]);
+    // 子 exec-review pass 收尾 → 子 closed → root 树感知 closed
+    ledger.append("VerdictSubmitted", {
+      unitId: "u-pm-c",
+      verdictKind: "exec-review",
+      verdict: "pass",
+    });
+    expect(renderTree(fold(ledger.readAll())).split("\n")).toEqual([
+      "u-pm (closed)",
+      "  u-pm-c (closed)",
       "",
     ]);
   });
@@ -135,7 +198,8 @@ describe("report（验收#4）", () => {
       acceptanceIds: ["A1"],
     });
 
-    const out = renderReportUnit(getUnit(fold(ledger.readAll()), "r-full"));
+    const proj = fold(ledger.readAll());
+    const out = renderReportUnit(getUnit(proj, "r-full"), getStatus(proj, "r-full"));
     // spec hash 前 12 位（"r-full-spec-hash" → "r-full-spec-"）
     expect(out).toContain("unit: r-full (spec-frozen)");
     expect(out).toContain("spec: r-full-spec-");

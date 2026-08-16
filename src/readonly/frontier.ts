@@ -9,18 +9,19 @@
  */
 import type { CommandContext } from "../dispatch.js";
 import type { SequencedProjection } from "../events/types.js";
-import { EMPTY_LEDGER_HINT, loadLedger, unitStatus } from "./load.js";
+import { EMPTY_LEDGER_HINT, loadLedger, treeStatuses } from "./load.js";
 
 export interface FrontierGroups {
   specReady: string[];
   buildReady: string[];
 }
 
-/** 就绪集合计算（纯函数）：created → specReady，spec-frozen → buildReady */
+/** 就绪集合计算（纯函数）：created → specReady，spec-frozen → buildReady（树感知口径） */
 export function computeFrontier(projection: SequencedProjection): FrontierGroups {
   const groups: FrontierGroups = { specReady: [], buildReady: [] };
+  const statuses = treeStatuses(projection);
   for (const unit of projection.units.values()) {
-    const status = unitStatus(unit);
+    const status = statuses.get(unit.unitId);
     if (status === "created") {
       groups.specReady.push(unit.unitId);
     } else if (status === "spec-frozen") {

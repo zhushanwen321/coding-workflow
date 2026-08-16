@@ -9,14 +9,14 @@
  * 胶水——内容断言测纯函数，exit code 断言走 dispatch，stdout 断言走 e2e 子进程。
  */
 import type { CommandContext } from "../dispatch.js";
-import type { SequencedProjection, SequencedUnitProjection } from "../events/types.js";
+import type { SequencedProjection, SequencedUnitProjection, UnitStatus } from "../events/types.js";
 import {
   EMPTY_LEDGER_HINT,
   loadLedger,
   parseUnitArg,
+  treeStatuses,
   unitArgUsageError,
   unitNotFoundError,
-  unitStatus,
 } from "./load.js";
 
 /** hash 展示前缀长度（规格锁定：spec/文件 sha256 均展示前 12 位） */
@@ -28,7 +28,8 @@ const JSON_INDENT = 2;
 /** Map → 数组投影的形状说明（--json 输出自包含注明） */
 const MAP_SHAPE_NOTE =
   "units 为 Map<string, SequencedUnitProjection> 的数组投影（键即 unitId，已内嵌为字段）；" +
-  "status 为 deriveStatus 派生字段（specGate 注入 checkSpecRules），非事件流原始数据";
+  "status 为树感知派生字段（deriveStatuses + checkSpecRules，closed 含「全部直接子节点 " +
+  "closed」条件），非事件流原始数据";
 
 function hashPrefix(hash: string): string {
   return hash.slice(0, HASH_PREFIX_LEN);
@@ -38,21 +39,25 @@ function lastVerifyOf(unit: SequencedUnitProjection): string {
   return unit.verifyRuns.length > 0 ? unit.verifyRuns[unit.verifyRuns.length - 1].result : "-";
 }
 
-/** 列表视图（纯函数）：每 unit 一行 */
+/** 列表视图（纯函数）：每 unit 一行；status 为树感知口径（closed 含子条件） */
 export function renderStatusList(projection: SequencedProjection): string {
+  const statuses = treeStatuses(projection);
   const lines = [...projection.units.values()].map(
     (unit) =>
-      `${unit.unitId}  ${unitStatus(unit)}  ` +
+      `${unit.unitId}  ${statuses.get(unit.unitId)}  ` +
       `specs:${unit.specs.length} evidences:${unit.evidences.length} lastVerify:${lastVerifyOf(unit)}`,
   );
   return `${lines.join("\n")}\n`;
 }
 
 /** 详情视图（纯函数）：briefRef、全部 spec hash、verdicts、evidences、verifyRuns */
-export function renderStatusDetail(unit: SequencedUnitProjection): string {
+export function renderStatusDetail(
+  unit: SequencedUnitProjection,
+  status: UnitStatus,
+): string {
   const lines: string[] = [
     `unit: ${unit.unitId}`,
-    `status: ${unitStatus(unit)}`,
+    `status: ${status}`,
     `briefRef: ${unit.briefRef}`,
   ];
 
@@ -99,16 +104,17 @@ export function renderStatusDetail(unit: SequencedUnitProjection): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** 单 unit 的结构化输出（--unit --json） */
-export function unitJson(unit: SequencedUnitProjection): string {
-  return `${JSON.stringify({ ...unit, status: unitStatus(unit) }, null, JSON_INDENT)}\n`;
+/** 单 unit 的结构化输出（--unit --json）；status 为树感知口径 */
+export function unitJson(unit: SequencedUnitProjection, status: UnitStatus): string {
+  return `${JSON.stringify({ ...unit, status }, null, JSON_INDENT)}\n`;
 }
 
 /** 全账本投影的结构化输出（--json）：Map → 数组，note 字段注明形状 */
 export function statusJson(projection: SequencedProjection): string {
+  const statuses = treeStatuses(projection);
   const units = [...projection.units.values()].map((unit) => ({
     ...unit,
-    status: unitStatus(unit),
+    status: statuses.get(unit.unitId),
   }));
   return `${JSON.stringify({ units, totalEvents: projection.totalEvents, note: MAP_SHAPE_NOTE }, null, JSON_INDENT)}\n`;
 }
@@ -129,7 +135,11 @@ export async function statusHandler(ctx: CommandContext): Promise<number> {
       process.stderr.write(unitNotFoundError("status", unitArg.unitId));
       return 1;
     }
-    process.stdout.write(wantJson ? unitJson(unit) : renderStatusDetail(unit));
+    const status = treeStatuses(projection).get(unitArg.unitId);
+    if (status === undefined) {
+      throw new Error(`status: unit "${unitArg.unitId}" 不在树感知状态集合中（不可达）`);
+    }
+    process.stdout.write(wantJson ? unitJson(unit, status) : renderStatusDetail(unit, status));
     return 0;
   }
 

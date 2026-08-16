@@ -434,7 +434,7 @@ describe("验收3：evidence submit --kind build（dispatch 层，真实 git 仓
     });
   });
 
-  it("同 runId 二次提交被账本层拒（错误透传），账本不变", async () => {
+  it("同 runId 二次提交 = 幂等命中：exit 0 + stdout 提示 + 账本无重复事件", async () => {
     const { repoDir, head } = initRepo("repo-idem");
     const brief = join(repoDir, "brief.md");
     writeFileSync(brief, "# 任务书\n");
@@ -452,14 +452,22 @@ describe("验收3：evidence submit --kind build（dispatch 层，真实 git 仓
       "--run-id",
       "run-1",
     ] as const;
-    expect((await run([...args], repoDir)).code).toBe(0);
+    const first = await run([...args], repoDir);
+    expect(first.code, `stderr: ${first.stderr}`).toBe(0);
+
+    // canon「幂等（同 runId 重复提交不重复记账）」：重试方收到确认而非错误
     const res = await run([...args], repoDir);
-    expect(res.code).toBe(1);
-    expect(res.stderr).toContain("run-1");
-    expect(res.stderr).toContain("幂等");
-    expect(res.stderr).toContain("恢复动作");
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain("幂等命中");
+    expect(res.stdout).toContain("run-1");
+    expect(res.stdout).toContain("未重复记账");
 
     const repoLedger = new EventLedger(ledgerPath(cwHome, repoDir));
+    // 账本无重复事件：仍是 UnitCreated + EvidenceSubmitted 各一条
     expect(repoLedger.readAll()).toHaveLength(2);
+    const evidenceEvents = repoLedger
+      .readAll()
+      .filter((e) => e.type === "EvidenceSubmitted");
+    expect(evidenceEvents).toHaveLength(1);
   });
 });
