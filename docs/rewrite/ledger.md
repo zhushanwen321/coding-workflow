@@ -92,6 +92,7 @@
 - 2026-08-16 wt-2 committed（两轮交付 310 全绿）：首版（spawn 链路 worktree 拆分 + 11 文件断言迁移）+ 返工（R-1 分支双空间 cw-root/<rootId> 与 cw/<rootId>/<unitId>、R-2 clean -e .cw-spawn、R-3 ensureUnitWorktree 四格矩阵零字符串匹配、R-4 human 内联前缀+引号、R-5 resolveAgainstCwd 锚 process.cwd（三调用点统一 + fx3 同锚适配）、R-6 断言同步）。verifier PASS（对抗 6 条含含空格路径真实 shell 执行、双 unit 并行、真实 home 零污染）。wt-3 验收基线备料。
 - 2026-08-16 wt-3 验收基线入 git（纯删除波：删 checkWorkspaceForDispatch 近似链 + 项目 cwd 不再被 reset 的行为锁定），builder 派发。
 - 2026-08-16 wt-3 committed（313 全绿）：loop.ts 纯删除 +2/-87（四件套 + 注释段，零逻辑新增）；verifier PASS（对抗 20/20）。项目 cwd 与 agent 工作区彻底解耦。wt-4 验收基线备料。
+- 2026-08-16 wt-4 验收基线入 git（J1 merge 内聚幂等 / J2 三处锚 root 分支 / J3 孤儿清扫查全账本 / J4 延迟回收；M1-M8 条款），builder 派发。
 
 ## 对抗审查修复（2026-08-16）
 
