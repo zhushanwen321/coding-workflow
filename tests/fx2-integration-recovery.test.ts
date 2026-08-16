@@ -309,8 +309,13 @@ async function captureStd(fn: () => Promise<number>): Promise<{ code: number; ou
   const origOut = process.stdout.write;
   const origErr = process.stderr.write;
   const collector = (chunks: string[]): typeof process.stdout.write =>
-    ((chunk: unknown) => {
+    ((chunk: unknown, cb?: (err?: Error | null) => void) => {
       chunks.push(String(chunk));
+      // 透传回调：loop.ts 的 flushOutputs 退出屏障依赖 write 回调等待 flush，
+      // 不透传会使其落入兜底超时，拖慢每个 runLoop 退出
+      if (typeof cb === "function") {
+        cb();
+      }
       return true;
     }) as typeof process.stdout.write;
   process.stdout.write = collector(outChunks);

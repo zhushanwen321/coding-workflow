@@ -17,18 +17,17 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  closeSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
-  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -72,7 +71,14 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 function gitRun(repoDir: string, args: readonly string[]): string {
-  const res = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf-8" });
+  const res = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf-8", timeout: 30_000 });
+  if (res.error !== undefined) {
+    // 超时被杀（ETIMEDOUT）或启动失败：status 为 null，必须先于 status 检查
+    const timedOut = (res.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+    throw new Error(
+      `git ${args.join(" ")} ${timedOut ? "超时被杀(30s 上限)" : "执行失败"}: ${res.error.message}`,
+    );
+  }
   if (res.status !== 0) {
     throw new Error(`git ${args.join(" ")} 失败: ${res.stderr}`);
   }
@@ -97,7 +103,17 @@ function runCli(
     cwd: repoDir,
     encoding: "utf-8",
     env: { ...process.env, CW_HOME: cwHome },
+    timeout: 90_000,
   });
+  if (res.error !== undefined) {
+    // 超时被杀：status 为 null、error 置位——code 取 -1，stdout/stderr 附可诊断行
+    const timeoutNote = `[runCli] 超时被杀(${args.join(" ")}): ${res.error.message}\n`;
+    return {
+      code: -1,
+      stdout: (res.stdout ?? "") + timeoutNote,
+      stderr: (res.stderr ?? "") + timeoutNote,
+    };
+  }
   return { code: res.status ?? -1, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 }
 
@@ -125,59 +141,102 @@ function specJson(split: SplitEntry[]): string {
   return `${JSON.stringify({ acceptance: ACCEPTANCE_FIXTURE, contracts: [], split }, null, 2)}\n`;
 }
 
-function startRunner(repoDir: string, rootId: string): ChildProcess {
-  const outFd = openSync(join(repoDir, "runner.stdout"), "a");
-  const errFd = openSync(join(repoDir, "runner.stderr"), "a");
+/**
+ * 启动 runner 子进程并捕获其 stdout/stderr。
+ * 用管道而非「open fd → spawn → 立即 close」的数字 fd 传递：后者存在 fd 复用
+ * 竞态（实测偶发子进程继承到上一个 tmp 目录已删文件的 fd——本进程读到截断
+ * 输出而 runner 写进了旧 inode），管道 + 持续收集的数据完整性由内核语义保证。
+ * 收集副本同步落盘 runner.stdout / runner.stderr（诊断现场用）。
+ */
+interface RunnerCapture {
+  child: ChildProcess;
+  stdoutText(): string;
+  stderrText(): string;
+}
+
+function startRunner(repoDir: string, rootId: string): RunnerCapture {
+  const outChunks: string[] = [];
+  const errChunks: string[] = [];
+  const outPath = join(repoDir, "runner.stdout");
+  const errPath = join(repoDir, "runner.stderr");
   const child = spawn(
     process.execPath,
     [CLI_PATH, "run", "--root", rootId, "--spawn", "human", "--poll-ms", "300"],
-    { cwd: repoDir, env: { ...process.env, CW_HOME: cwHome }, stdio: ["ignore", outFd, errFd] },
+    { cwd: repoDir, env: { ...process.env, CW_HOME: cwHome }, stdio: ["ignore", "pipe", "pipe"] },
   );
-  closeSync(outFd);
-  closeSync(errFd);
+  child.stdout?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf-8");
+    outChunks.push(text);
+    appendFileSync(outPath, text);
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf-8");
+    errChunks.push(text);
+    appendFileSync(errPath, text);
+  });
   liveRunners.add(child);
   child.on("exit", () => {
     liveRunners.delete(child);
   });
-  return child;
+  return {
+    child,
+    stdoutText: () => outChunks.join(""),
+    stderrText: () => errChunks.join(""),
+  };
 }
 
-function waitExit(
-  child: ChildProcess,
+/**
+ * 等 runner 退出（超时报卡点）。子进程退出后管道内的剩余数据仍可读尽（内核
+ * 缓冲保留到读端 EOF），exit 与两个流 'close' 全部到达后才结算——不丢尾部。
+ */
+async function waitExit(
+  runner: RunnerCapture,
   timeoutMs: number,
-  outPath: string,
-  errPath: string,
-): Promise<number> {
-  return new Promise((resolve, reject) => {
-    // 竞态防护（实测 Node 行为：子进程退出后挂 "exit" 监听器不再触发）：
-    // humanDrive 的收尾检查（150ms 轮询账本）与 runner 的 300ms poll 赛跑，
-    // runner 先退时此处可能晚到——exitCode 已非 null 则直接结算
-    if (child.exitCode !== null) {
-      resolve(child.exitCode);
-      return;
-    }
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const exited = new Promise<number>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(
         new Error(
-          `runner 未在 ${timeoutMs}ms 内退出（exitCode=${String(child.exitCode)}）。` +
-            `stdout 末尾：${readTail(outPath)}；stderr 末尾：${readTail(errPath)}`,
+          `runner 未在 ${timeoutMs}ms 内退出（exitCode=${String(runner.child.exitCode)}）。` +
+            `stdout 末尾：${readTailOf(runner.stdoutText())}；stderr 末尾：${readTailOf(runner.stderrText())}`,
         ),
       );
     }, timeoutMs);
-    child.on("exit", (code) => {
+    if (runner.child.exitCode !== null) {
+      clearTimeout(timer);
+      resolve(runner.child.exitCode);
+      return;
+    }
+    runner.child.on("exit", (code) => {
       clearTimeout(timer);
       resolve(code ?? -1);
     });
   });
+  // 两个流的 close 是独立资源释放，用 allSettled（项目约定：独立数据源不互相拖垮）
+  const streamsClosed = Promise.allSettled([
+    awaitStreamClosed(runner.child.stdout),
+    awaitStreamClosed(runner.child.stderr),
+  ]);
+  const code = await exited;
+  await streamsClosed;
+  return { code, stdout: runner.stdoutText(), stderr: runner.stderrText() };
 }
 
-/** 诊断辅助：读文件尾部（不存在返回占位；间歇失败时定位 runner 卡点） */
-function readTail(path: string): string {
-  try {
-    return readFileSync(path, "utf-8").slice(-600);
-  } catch {
-    return "(不可读)";
+/**
+ * 流的 close 结算：流已 destroyed（close 事件已发过、此刻无 listener 被丢弃）时
+ * 后挂的 once("close") 永不触发——直接结算，防 waitExit 永久挂起（实测竞态：
+ * humanDrive 收尾慢于 runner 退出 + 流读尽的场景）。
+ */
+function awaitStreamClosed(stream: Readable | null): Promise<void> {
+  if (stream === null || stream.destroyed) {
+    return Promise.resolve();
   }
+  return new Promise<void>((resolve) => stream.once("close", resolve));
+}
+
+/** 诊断辅助：截断长文本尾部（间歇失败时定位 runner 卡点） */
+function readTailOf(text: string): string {
+  return text.slice(-600);
 }
 
 /**
@@ -303,7 +362,9 @@ function performHumanStep(
     if (submit.code !== 0) {
       return submit;
     }
-    return runCli(repoDir, ["verify", "--unit", unitId]);
+    // 60s 上限：满负载下 verify 内嵌的验收 vitest 可远超 humanDrive 的 90s 预算，
+    // 超限走 fail 可重试/可诊断，而不是无限等
+    return runCli(repoDir, ["verify", "--unit", unitId, "--timeout-ms", "60000"]);
   }
   if (kind === "exec-review") {
     return runCli(repoDir, [
@@ -355,18 +416,12 @@ describe("E2E real：human 后端走新 loop + humanAdapter（u6b 合入后自�
     const runner = startRunner(repoDir, "demo");
     await humanDrive(repoDir, "demo", 90_000);
 
-    const code = await waitExit(
-      runner,
-      60_000,
-      join(repoDir, "runner.stdout"),
-      join(repoDir, "runner.stderr"),
-    );
-    expect(code).toBe(0);
-    const stdoutText = readFileSync(join(repoDir, "runner.stdout"), "utf-8");
-    expect(stdoutText).toContain("closed");
+    const exited = await waitExit(runner, 60_000);
+    expect(exited.code).toBe(0);
+    expect(exited.stdout).toContain("closed");
     // 账本终态复核（真实 CLI status）
     expect(runCli(repoDir, ["status"]).stdout).toMatch(/demo\s+closed/);
-  }, 150_000);
+  }, 240_000);
 });
 
 // ================================================================

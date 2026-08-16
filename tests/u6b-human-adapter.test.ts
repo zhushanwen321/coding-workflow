@@ -30,6 +30,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import type {
   EvidenceSubmittedPayload,
   SpecSubmittedPayload,
+  UnitCreatedPayload,
+  VerdictSubmittedPayload,
+  VerifyRanPayload,
 } from "../src/events/types.js";
 import { humanAdapter } from "../src/runner/spawn/human.js";
 import type {
@@ -60,7 +63,7 @@ const CHILD_APPEND_EVENT_SCRIPT = [
 /** 「人肉操作」的等价物：另一真实子进程向账本追加一条进展事件 */
 function appendEventFromRealChild(
   ledgerFile: string,
-  type: "SpecSubmitted" | "EvidenceSubmitted" | "VerdictSubmitted",
+  type: "SpecSubmitted" | "EvidenceSubmitted" | "VerdictSubmitted" | "UnitCreated" | "VerifyRan",
   payload: unknown,
 ): void {
   const res = spawnSync(
@@ -122,6 +125,18 @@ function evidencePayload(unitId: string, runId: string): EvidenceSubmittedPayloa
   return { unitId, runId, commit: "0f1e2d3c4b5a", paths: [], sha256: [], exitCode: 0 };
 }
 
+function verifyRanPayload(unitId: string, runId: string): VerifyRanPayload {
+  return { unitId, runId, reportHash: "rh-fixture", result: "pass", acceptanceIds: [] };
+}
+
+function childCreatedPayload(unitId: string, parentId: string): UnitCreatedPayload {
+  return { unitId, parentId, briefRef: "brief-child.md" };
+}
+
+function verdictPayload(unitId: string): VerdictSubmittedPayload {
+  return { unitId, verdictKind: "spec-review", verdict: "pass" };
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 describe("u6b human 适配器", () => {
@@ -171,24 +186,28 @@ describe("u6b human 适配器", () => {
     expect(result.pid).toBe(-1); // human 无子进程，-1 = 不适用（与 lifecycle/pi 一致）
   });
 
-  it("验收#3 builder wait() 事件按 role 过滤：新 SpecSubmitted 不触发，EvidenceSubmitted 才触发", async () => {
+  it("验收#3 builder wait() 事件按 role 过滤：SpecSubmitted / EvidenceSubmitted 均不触发（完成信号对齐任务书第 3 步 cw verify），VerifyRan 才触发", async () => {
     const scenario = makeScenario("builder-filter", "bf");
     // spawn 前账本已有 SpecSubmitted（ts 早于 spawn 起始——旧事件 + 类型不符双重不触发）
     new EventLedger(scenario.ledgerFile).append("SpecSubmitted", specPayload("bf"));
     const handle = await humanAdapter.spawn(spawnRequest(scenario, "bf", "builder", 15_000));
     const waitPromise = handle.wait();
 
-    // spawn 之后写入的新 SpecSubmitted（晚于起始、同 unit）：builder 不认——类型过滤
+    // spawn 之后写入的新 SpecSubmitted / EvidenceSubmitted（晚于起始、同 unit）：
+    // builder 任务书第 3 步（cw verify）才是最后一步——前两步的产物若提前
+    // resolve，verify 永远无人执行，loop 重算时 unit 仍 spec-frozen 只能重派
     appendEventFromRealChild(scenario.ledgerFile, "SpecSubmitted", specPayload("bf"));
+    appendEventFromRealChild(scenario.ledgerFile, "EvidenceSubmitted", evidencePayload("bf", "run-bf-1"));
     const state = await Promise.race([
       waitPromise.then(() => "resolved" as const),
       sleep(1_500).then(() => "pending" as const),
     ]);
-    expect(state, "builder wait() 对 SpecSubmitted 不应误判（轮询 1s，观察窗 1.5s）").toBe(
-      "pending",
-    );
+    expect(
+      state,
+      "builder wait() 对 SpecSubmitted / EvidenceSubmitted 不应误判（轮询 1s，观察窗 1.5s）",
+    ).toBe("pending");
 
-    appendEventFromRealChild(scenario.ledgerFile, "EvidenceSubmitted", evidencePayload("bf", "run-bf-1"));
+    appendEventFromRealChild(scenario.ledgerFile, "VerifyRan", verifyRanPayload("bf", "run-bf-1"));
     const result = await waitPromise;
     expect(result.exitCode).toBe(0);
   });
@@ -224,5 +243,56 @@ describe("u6b human 适配器", () => {
     const adapter: AgentSpawnAdapter = humanAdapter;
     expect(adapter.name).toBe("human");
     expect(typeof adapter.spawn).toBe("function");
+  });
+});
+
+// ---- designer 完成信号按任务书分支扩展（fx 失配修复回归） ----
+// 修复前 designer 完成信号唯一映射 SpecSubmitted：spec 补审分支（人提交的是
+// VerdictSubmitted）与补建子分支（产出是子 unitId 的 UnitCreated）都不匹配，
+// `cw run` 缺省 human 后端下这两个分支必然空转满 30min TIMEOUT。
+
+describe("u6b human 适配器：designer 完成信号按任务书分支扩展", () => {
+  it("designer + VerdictSubmitted（spec 补审分支）→ wait 正常返回 exitCode 0，非 TIMEOUT", async () => {
+    const scenario = makeScenario("designer-rereview", "drr");
+    const handle = await humanAdapter.spawn(spawnRequest(scenario, "drr", "designer", 15_000));
+    const waitPromise = handle.wait();
+    appendEventFromRealChild(scenario.ledgerFile, "VerdictSubmitted", verdictPayload("drr"));
+    const result = await waitPromise;
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("designer + 子 UnitCreated（payload.parentId === 本 unit，补建子分支）→ wait 正常返回 exitCode 0", async () => {
+    const scenario = makeScenario("designer-missing-children", "dmc");
+    const handle = await humanAdapter.spawn(spawnRequest(scenario, "dmc", "designer", 15_000));
+    const waitPromise = handle.wait();
+    // 补建子任务书的产出：新建子 unit 的 UnitCreated——事件 unitId 是子、
+    // parentId 才指向本 unit（按 parent 维度匹配）
+    appendEventFromRealChild(
+      scenario.ledgerFile,
+      "UnitCreated",
+      childCreatedPayload("dmc-child-1", "dmc"),
+    );
+    const result = await waitPromise;
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("designer + 与本 unit 无关的 UnitCreated（parentId 指向别的 unit）→ 不触发（parent 维度匹配的判别力）", async () => {
+    const scenario = makeScenario("designer-unrelated", "dur");
+    const handle = await humanAdapter.spawn(spawnRequest(scenario, "dur", "designer", 15_000));
+    const waitPromise = handle.wait();
+    appendEventFromRealChild(
+      scenario.ledgerFile,
+      "UnitCreated",
+      childCreatedPayload("dur-child-x", "someone-else"),
+    );
+    const state = await Promise.race([
+      waitPromise.then(() => "resolved" as const),
+      sleep(1_500).then(() => "pending" as const),
+    ]);
+    expect(state, "他人子 unit 的创建不应触发本 unit 的 designer 完成（观察窗 1.5s）").toBe(
+      "pending",
+    );
+    handle.kill(); // 观察完毕收尾，不空等超时
+    await waitPromise;
   });
 });

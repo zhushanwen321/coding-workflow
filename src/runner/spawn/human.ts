@@ -24,7 +24,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { LedgerEvent } from "../../events/types.js";
+import type { DiscriminatedEvent, LedgerEvent } from "../../events/types.js";
 import { EventLedger } from "../../store/events-log.js";
 import { getCwHome, ledgerPath } from "../../store/project.js";
 import type {
@@ -39,14 +39,32 @@ import type {
 const POLL_INTERVAL_CEILING_MS = 1_000;
 const POLL_INTERVAL_DIVISOR = 10;
 
-/** role → 视为「该 unit 有进展」的账本事件类型（wait() 的轮询匹配目标） */
-const PROGRESS_EVENT: Record<
-  AgentRole,
-  "SpecSubmitted" | "EvidenceSubmitted" | "VerdictSubmitted"
-> = {
-  designer: "SpecSubmitted",
-  builder: "EvidenceSubmitted",
-  reviewer: "VerdictSubmitted",
+/** 「该 unit 有进展」的账本事件匹配器（入参为判别联合视图，payload 按 type 窄化） */
+type ProgressMatcher = (event: DiscriminatedEvent, req: AgentSpawnRequest) => boolean;
+
+/**
+ * role → wait() 的完成信号匹配器。完成信号与任务书最后一步对齐（提前 resolve
+ * 会让 loop 在任务未完成时重算重派，最后一步永远无人执行）：
+ *   - designer：三类任务书的完成信号并集——首派 = SpecSubmitted（新 spec；过审
+ *     由下轮补审派发接手）；spec 补审（fx-1 R2 第四分支）= VerdictSubmitted
+ *     （spec-review）；补建子（fx-3 R5.3）= UnitCreated 且 parentId === 本 unit
+ *     （事件的 unitId 是新建子、parentId 才指向本 unit——按 parent 维度匹配）。
+ *   - builder：任务书共 3 步，最后一步 cw verify 产出 VerifyRan——若按第 2 步
+ *     的 EvidenceSubmitted 判完成，第 3 步 verify 无人执行。
+ *   - reviewer：任务书唯一产出 = VerdictSubmitted（exec-review）。
+ */
+const PROGRESS_MATCHERS: Record<AgentRole, readonly ProgressMatcher[]> = {
+  designer: [
+    (event, req) => event.type === "SpecSubmitted" && event.payload.unitId === req.unitId,
+    (event, req) => event.type === "VerdictSubmitted" && event.payload.unitId === req.unitId,
+    (event, req) => event.type === "UnitCreated" && event.payload.parentId === req.unitId,
+  ],
+  builder: [
+    (event, req) => event.type === "VerifyRan" && event.payload.unitId === req.unitId,
+  ],
+  reviewer: [
+    (event, req) => event.type === "VerdictSubmitted" && event.payload.unitId === req.unitId,
+  ],
 };
 
 /** 信任边界提示（三 role 共用）：human 无自动 reviewer，执行者自任审查者 */
@@ -112,15 +130,16 @@ function readLedgerEvents(req: AgentSpawnRequest): LedgerEvent[] {
   }
 }
 
-/** 该 unit 是否已出现 role 对应的「新」进展事件（ts 晚于 spawn 起始才算——旧事件不触发） */
+/** 该 unit 是否已出现 role 对应的「新」完成信号（ts 晚于 spawn 起始才算——旧事件不触发） */
 function hasProgressSince(req: AgentSpawnRequest, startedAtMs: number): boolean {
-  const progressType = PROGRESS_EVENT[req.role];
-  return readLedgerEvents(req).some(
-    (event) =>
-      event.type === progressType &&
-      event.payload.unitId === req.unitId &&
-      Date.parse(event.ts) > startedAtMs,
-  );
+  const matchers = PROGRESS_MATCHERS[req.role];
+  return readLedgerEvents(req).some((record) => {
+    if (Date.parse(record.ts) <= startedAtMs) {
+      return false;
+    }
+    const event = record as DiscriminatedEvent;
+    return matchers.some((match) => match(event, req));
+  });
 }
 
 function sleep(ms: number): Promise<void> {

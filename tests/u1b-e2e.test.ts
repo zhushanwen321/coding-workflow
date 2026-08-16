@@ -191,7 +191,16 @@ describe("E2E real：flag 端到端（--unit / --json）", () => {
 
     const f = await runCli(["frontier", "--json"], projDir);
     expect(f.code).toBe(0);
-    expect(JSON.parse(f.stdout)).toEqual({ specReady: ["root"], buildReady: ["leaf"] });
+    // 全维度（与 runner 派发同口径）：本账本 root 待 spec、leaf 待 build，其余组空
+    expect(JSON.parse(f.stdout)).toEqual({
+      specReady: ["root"],
+      reReview: [],
+      missingChildren: [],
+      integrationDrift: [],
+      integrationReady: [],
+      buildReady: ["leaf"],
+      execReviewReady: [],
+    });
   });
 
   it("report --unit：exit 0 仅输出该 unit；status --unit 不存在：exit 1 且 stderr 可操作", async () => {
@@ -228,6 +237,14 @@ describe("E2E real：空账本目录", () => {
 
     const f = await runCli(["frontier", "--json"], emptyProjDir);
     expect(f.code).toBe(0);
-    expect(JSON.parse(f.stdout)).toEqual({ specReady: [], buildReady: [] });
+    expect(JSON.parse(f.stdout)).toEqual({
+      specReady: [],
+      reReview: [],
+      missingChildren: [],
+      integrationDrift: [],
+      integrationReady: [],
+      buildReady: [],
+      execReviewReady: [],
+    });
   });
 });

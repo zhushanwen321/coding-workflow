@@ -21,7 +21,7 @@ import type {
   SpecSubmittedPayload,
 } from "../src/events/types.js";
 import type { UnitStatus } from "../src/events/types.js";
-import { computeFrontier, renderFrontier } from "../src/readonly/frontier.js";
+import { computeFrontier, consecutiveIntegrationFails, renderFrontier } from "../src/readonly/frontier.js";
 import { treeStatuses } from "../src/readonly/load.js";
 import { renderStatusDetail, renderStatusList, statusJson, unitJson } from "../src/readonly/status.js";
 import { EventLedger } from "../src/store/events-log.js";
@@ -101,6 +101,13 @@ function weakSpec(unitId: string): SpecSubmittedPayload {
 /** 构造 spec-frozen unit 的事件序列（spec 过 gate + spec-review pass） */
 function appendFrozenSequence(ledger: EventLedger, unitId: string): void {
   ledger.append("UnitCreated", { unitId, parentId: null, briefRef: `brief-${unitId}.md` });
+  ledger.append("SpecSubmitted", strongSpec(unitId));
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+}
+
+/** 同上但 parentId 指向指定 root（分解树内的子 unit 形态） */
+function appendFrozenChild(ledger: EventLedger, unitId: string, parentId: string): void {
+  ledger.append("UnitCreated", { unitId, parentId, briefRef: `brief-${unitId}.md` });
   ledger.append("SpecSubmitted", strongSpec(unitId));
   ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
 }
@@ -297,7 +304,7 @@ describe("status dispatch 级（验收#1 通用条款）", () => {
 // ---- 验收#2：frontier ----
 
 describe("frontier（验收#2）", () => {
-  it("三态账本：specReady 恰含 created 者、buildReady 恰含 spec-frozen 者（verified 不入组）", () => {
+  it("三态账本：specReady 恰含 created 者、buildReady 恰含 spec-frozen 者、verified → execReviewReady（closed 不入组）", () => {
     const { ledger } = makeProject("p-frontier-3states");
     ledger.append("UnitCreated", { unitId: "f-created", parentId: null, briefRef: "b1.md" });
     appendFrozenSequence(ledger, "f-frozen");
@@ -312,17 +319,25 @@ describe("frontier（验收#2）", () => {
 
     const proj = fold(ledger.readAll());
     const groups = computeFrontier(proj);
-    expect(groups).toEqual({ specReady: ["f-created"], buildReady: ["f-frozen"] });
+    expect(groups.specReady).toEqual(["f-created"]);
+    expect(groups.buildReady).toEqual(["f-frozen"]);
+    expect(groups.execReviewReady).toEqual(["f-verified"]);
+    // 其余维度（本账本无对应形态）为空
+    expect(groups.reReview).toEqual([]);
+    expect(groups.missingChildren).toEqual([]);
+    expect(groups.integrationDrift).toEqual([]);
+    expect(groups.integrationReady).toEqual([]);
 
     const out = renderFrontier(groups);
     expect(out).toContain("specReady:");
     expect(out).toContain("buildReady:");
+    expect(out).toContain("execReviewReady:");
     expect(out).toContain("  f-created");
     expect(out).toContain("  f-frozen");
-    expect(out).not.toContain("f-verified");
+    expect(out).toContain("  f-verified");
   });
 
-  it("真实 checkSpecRules 接线：弱 spec + spec-review pass → 停在 created，进 specReady 不进 buildReady", () => {
+  it("真实 checkSpecRules 接线：弱 spec + spec-review pass → 停在 created 且不入任何推进组（机器派发无出口）", () => {
     const { ledger } = makeProject("p-frontier-weak");
     appendFrozenSequence(ledger, "w-frozen");
     ledger.append("UnitCreated", { unitId: "w-weak", parentId: null, briefRef: "b-weak.md" });
@@ -333,9 +348,85 @@ describe("frontier（验收#2）", () => {
     const proj = fold(ledger.readAll());
     expect(renderStatusList(proj)).toContain("w-weak  created  specs:1");
     const groups = computeFrontier(proj);
-    expect(groups.specReady).toContain("w-weak");
+    // 弱 spec 已提交且已过审（gate 红）：既非首派也非补审出口——重派 designer 只会
+    // 重提交-重审-仍弱循环，与 runner 派发口径一致地不入组（需人工修 spec）
+    expect(groups.specReady).not.toContain("w-weak");
+    expect(groups.reReview).not.toContain("w-weak");
     expect(groups.buildReady).not.toContain("w-weak");
     expect(groups.buildReady).toEqual(["w-frozen"]);
+  });
+
+  it("fx 维度（与 loop 派发同口径）：spec-frozen 缺子 → missingChildren 而非 buildReady", () => {
+    const { ledger } = makeProject("p-frontier-missing-children");
+    // root spec-frozen：split 声明 2 个子，仅 1 个已创建 → 派 designer 补建子
+    ledger.append("UnitCreated", { unitId: "mc-root", parentId: null, briefRef: "b-mc.md" });
+    ledger.append("SpecSubmitted", {
+      unitId: "mc-root",
+      specHash: "mc-root-hash",
+      acceptance: [...STRONG_ACCEPTANCE],
+      contracts: [],
+      split: [
+        { unitId: "mc-c1", dependsOn: [] },
+        { unitId: "mc-c2", dependsOn: [] },
+      ],
+    });
+    ledger.append("VerdictSubmitted", { unitId: "mc-root", verdictKind: "spec-review", verdict: "pass" });
+    appendFrozenChild(ledger, "mc-c1", "mc-root");
+
+    const proj = fold(ledger.readAll());
+    const groups = computeFrontier(proj);
+    expect(groups.missingChildren).toContain("mc-root");
+    expect(groups.buildReady).not.toContain("mc-root"); // 旧口径会误报 buildReady
+    expect(groups.integrationReady).not.toContain("mc-root");
+  });
+
+  it("fx 维度：created 且有 spec 未审 → reReview；内部节点子全 verified → integrationReady；连续 fail 达上限 → integrationDrift", () => {
+    const { ledger } = makeProject("p-frontier-integration");
+    // rr：spec 已提交、无 spec-review → 补审出口
+    ledger.append("UnitCreated", { unitId: "rr", parentId: null, briefRef: "b-rr.md" });
+    ledger.append("SpecSubmitted", strongSpec("rr"));
+
+    // ig-root：spec-frozen 内部节点，两个子全部 verified → 集成就绪
+    ledger.append("UnitCreated", { unitId: "ig-root", parentId: null, briefRef: "b-ig.md" });
+    ledger.append("SpecSubmitted", {
+      unitId: "ig-root",
+      specHash: "ig-root-hash",
+      acceptance: [...STRONG_ACCEPTANCE],
+      contracts: [],
+      split: [
+        { unitId: "ig-c1", dependsOn: [] },
+        { unitId: "ig-c2", dependsOn: [] },
+      ],
+    });
+    ledger.append("VerdictSubmitted", { unitId: "ig-root", verdictKind: "spec-review", verdict: "pass" });
+    for (const child of ["ig-c1", "ig-c2"]) {
+      appendFrozenChild(ledger, child, "ig-root");
+      ledger.append("VerifyRan", {
+        unitId: child,
+        runId: `vr-${child}`,
+        reportHash: `rh-${child}`,
+        result: "pass",
+        acceptanceIds: ["A1", "A2"],
+      });
+    }
+
+    const events = ledger.readAll();
+    const proj = fold(events);
+    const ready = computeFrontier(proj);
+    expect(ready.reReview).toContain("rr");
+    expect(ready.specReady).not.toContain("rr");
+    expect(ready.integrationReady).toContain("ig-root");
+    expect(ready.buildReady).not.toContain("ig-root");
+
+    // 连续 2 次集成 fail（fx-2 R4a 上限）→ integrationDrift 取代 integrationReady；
+    // fails 计数由原始事件流重放（与 loop / frontier 命令同一口径）
+    ledger.append("VerifyRan", { unitId: "ig-root", runId: "int-1", reportHash: "rh1", result: "fail", acceptanceIds: [] });
+    ledger.append("VerifyRan", { unitId: "ig-root", runId: "int-2", reportHash: "rh2", result: "fail", acceptanceIds: [] });
+    const drifted = computeFrontier(fold(ledger.readAll()), {
+      consecutiveIntegrationFails: consecutiveIntegrationFails(ledger.readAll()),
+    });
+    expect(drifted.integrationDrift).toContain("ig-root");
+    expect(drifted.integrationReady).not.toContain("ig-root");
   });
 
   it("dispatch 级：frontier 与 frontier --json 均 exit 0，账本只读", async () => {

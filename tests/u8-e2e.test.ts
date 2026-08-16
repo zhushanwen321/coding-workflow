@@ -139,7 +139,7 @@ const CAPITALIZE_OK = 'export function capitalize(s) {\n  return s.charAt(0).toU
 const CAPITALISE_DRIFT = 'export function capitalise(s) {\n  return s.charAt(0).toUpperCase() + s.slice(1);\n}\n';
 const SLUGGIFY = 'export function sluggify(s) {\n  return s.toLowerCase().replaceAll(" ", "-");\n}\n';
 
-/** 验收（id 全部以 A 起头——e2e-sh 标记行 `^A<id> (PASS|FAIL)` 的约定） */
+/** 验收（e2e-sh 标记行第一列 = 验收 id 全文，不要求任何前缀；本文件 id 以 A 起头是 fixture 命名习惯而非约定要求） */
 function unitJson(id: string): AcceptanceItem {
   return {
     id,
@@ -351,8 +351,13 @@ async function captureStd(fn: () => Promise<number>): Promise<{ code: number; ou
   const origOut = process.stdout.write;
   const origErr = process.stderr.write;
   const collector = (chunks: string[]): typeof process.stdout.write =>
-    ((chunk: unknown) => {
+    ((chunk: unknown, cb?: (err?: Error | null) => void) => {
       chunks.push(String(chunk));
+      // 透传回调：loop.ts 的 flushOutputs 退出屏障依赖 write 回调等待 flush，
+      // 不透传会使其落入兜底超时，拖慢每个 runLoop 退出
+      if (typeof cb === "function") {
+        cb();
+      }
       return true;
     }) as typeof process.stdout.write;
   process.stdout.write = collector(outChunks);

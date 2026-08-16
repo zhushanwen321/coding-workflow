@@ -13,7 +13,9 @@
  * 结果写 root 的 VerifyRan（pass/fail 都入账；fail 留审计，下轮重派重试，与
  * builder 重派同待遇）。
  *
- * 派发对象规则（每轮对投影重算，子树 BFS 序）：
+ * 派发对象规则（每轮对投影重算，子树 BFS 序；就绪判定输入 = readonly/frontier.ts
+ * 的 computeFrontier——与 `cw frontier` 命令同一出处，维度 → 派发形态的映射见
+ * DISPATCH_SHAPE）：
  *   - created 且无 spec      → designer（一次完成建子（root 无子时，fx-3 R5.2
  *     任务书第 0 步）+ spec 提交 + spec-review）
  *   - created 且有 spec 且最后一条 SpecSubmitted 之后无 spec-review pass → designer
@@ -34,16 +36,22 @@
  *   - verified 且未 closed   → reviewer（exec-review）
  *
  * 等待期间零锁（canon D4：等待 spawn 期间持锁会饿死子进程的账本写入）。
- * 失败语义只看四态退出（types.ts）：exit≠0 / TIMEOUT / CRASH 可重派（下轮重算
- * 自然再次进入派发集合）；SPAWN_ERROR 配置错误不重试，kill 全部 in-flight 后
- * exit 1。
+ * 失败语义只看四态退出（types.ts）：exit≠0 / CRASH 可重派（下轮重算自然再次
+ * 进入派发集合）；TIMEOUT 可重派但有封顶——同一 unit 连续 2 次 TIMEOUT（期间
+ * 无任何该 unit 的账本进展）即转人工：不再派发，其余 unit 继续，stderr 打印
+ * 转人工指引（canon 语义：不自动换模型重试，防静默降级）；SPAWN_ERROR 配置错误
+ * 不重试，kill 全部 in-flight 后 exit 1。无可派发且无 in-flight 且存在转人工
+ * unit → 循环以 exit 1 收束并汇总转人工清单。
+ * 重派前工作区清理：无 in-flight 时对 tracked 脏改动 git reset --hard（详见
+ * resetTrackedChanges 前的注释），untracked 一律不动。
  *
  * M1 简化（验收文档锁定）：workdir = cwd 本身（无独立 worktree，M2 集成时升级）；
  * 循环不亲自创建 split 子 unit（fx-3 后子创建职责归 designer：首派任务书第 0 步
  * 指令化建子，spec gate 强制先建子后提 spec；循环仅在子未建时派 designer 兜底）。
  */
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import { fold } from "../core/fold.js";
@@ -55,10 +63,18 @@ import type {
   SequencedUnitProjection,
   VerifyRanPayload,
 } from "../events/types.js";
+import {
+  computeFrontier,
+  consecutiveIntegrationFails,
+  type FrontierGroups,
+  INTEGRATION_MAX_CONSECUTIVE_FAILS,
+  splitChildrenNotCreated,
+  splitOf,
+  splitSelfReferences,
+} from "../readonly/frontier.js";
 import { loadLedger, treeStatuses, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
 import { getCwHome, ledgerPath } from "../store/project.js";
-import { timeoutForAcceptance } from "../verify/run.js";
 import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
@@ -76,13 +92,27 @@ export const DEFAULT_LOOP_MAX_CONCURRENCY = 3;
 /** 单次 agent spawn 超时（验收文档循环逻辑 3：timeoutMs 固定 30min） */
 const AGENT_SPAWN_TIMEOUT_MS = 1_800_000;
 /**
- * 同一内部节点集成的连续 fail 重派上限（fx-2 R4a，验收文档锁定 2 次）：达到后
- * 不再自动重派集成，改派 designer 处置契约漂移。R4b 的修复即此上限本身——集成
- * fail 的 VerifyRan 审计事件会持续喂活 idle 进展判定（totalEvents 每轮 +1），
- * 无上限时 maxIdleMs 永不触发 = 无限循环烧 CPU；有上限后账本不再自我喂食，
- * designer 若也无进展，maxIdleMs 正常触发 exit 1（回归「有界空转」语义）。
+ * 同一 unit 连续 spawn TIMEOUT 的转人工阈值（连续 2 次）：期间无任何该 unit 的
+ * 账本进展即累计；该 unit 一旦出现新账本事件（agent 被超时 kill 前已有产出）
+ * 计数清零。计数是单进程内存态——TIMEOUT 是 spawn 失败不入账本，跨进程累计
+ * 物理不可得（Ctrl-C 重跑后从 0 重新计，属可接受损失：封顶防的是单次运行内
+ * 的无限重派烧 token）。转人工 = 不再派发（canon：不自动换模型，防静默降级）。
  */
-const INTEGRATION_MAX_CONSECUTIVE_FAILS = 2;
+const AGENT_TIMEOUT_ESCALATION_AFTER = 2;
+
+/** 单步 git 操作超时（与 integrate.ts 同口径：本地操作毫秒级，上限防挂死） */
+const GIT_STEP_TIMEOUT_MS = 120_000;
+/** ms → min 换算（转人工指引文案用） */
+const MS_PER_MINUTE = 60_000;
+/** git status --porcelain 状态码宽度（XY 两列 + 空格 + 路径） */
+const PORCELAIN_STATUS_WIDTH = 2;
+/**
+ * emitExitOutput 的回调等待上限：正常路径回调毫秒级到达；高负载下（集成验证
+ * 的连续 spawnSync 阻塞 + 全量并行）libuv 线程池的写队列积压可达数秒。超时后
+ * 走 writeSync 兜底而非无限等待（进程内直调测试场景 collector 透传回调，
+ * 同步到达，不吃此上限）。
+ */
+const FLUSH_BARRIER_TIMEOUT_MS = 5_000;
 
 export interface RunLoopOptions {
   rootId: string;
@@ -131,6 +161,47 @@ function emitErr(message: string): void {
 }
 
 /**
+ * 退出路径关键输出的落盘屏障：node 对文件/管道 fd 的 stdout/stderr 写入是异步
+ * 提交（libuv 线程池队列），cli.ts 的显式 process.exit 不等 flush——高负载下
+ * 队列积压可达数秒且无上界，exit 时排队中的写全部丢弃（实测全量测试负载下
+ * root closed 的汇总与其前的尾部输出整段丢失而 exit code 正常）。
+ * 两级防线：① 常规 write + 等回调（流按调用序串行 flush，回调到达 = 含此前
+ * 队列已全部落盘；测试 collector 经 write 捕获，亦走此路径）；② 回调超时
+ * （timer unref 不挂进程）则 writeSync 直写同一内容——数据完整优先于极端
+ * 场景下队列随后 flush 造成的重复。
+ */
+/** 退出路径输出的目标流（两者的实际类型都自带 fd 字面量，供 writeSync 兜底） */
+type ExitStream = typeof process.stdout | typeof process.stderr;
+
+async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        writeSync(stream.fd, text);
+      } catch (err) {
+        // 兜底失败不抛（数据已尽力），但必须出声——此刻常规 write 队列已不可信，
+        // 只剩 stderr 裸 write 一次尝试让错误事实可见
+        emitErr(`[runner] 退出输出 writeSync 兜底失败（fd=${stream.fd}）：${String(err)}\n`);
+      }
+      resolve();
+    }, FLUSH_BARRIER_TIMEOUT_MS);
+    timer.unref();
+    stream.write(text, () => {
+      finish();
+    });
+  });
+}
+
+/**
  * root 子树的 unit 列表（BFS 序 = root 先、子按账本创建序）。实现与 human-loop
  * 的同名私有函数一致（泛化期两处并存，human-loop 退役后单一化）。
  */
@@ -159,175 +230,65 @@ function subtreeUnits(
   return units;
 }
 
-/** builder 的 rootLast 等待条件（叶子路径）：该 unit 的全部子 unit（按账本 parentId）已 closed */
-function childrenAllClosed(
-  subtree: readonly SequencedUnitProjection[],
-  unit: SequencedUnitProjection,
-): boolean {
-  return subtree.every(
-    (candidate) => candidate.parentId !== unit.unitId || unitStatus(candidate) === "closed",
-  );
-}
-
-/** 内部节点判定 = 最后一条冻结 spec 的 split 非空（canon D1：层级是数据不是代码） */
-function splitOf(unit: SequencedUnitProjection): SequencedUnitProjection["specs"][number]["split"] {
-  return unit.specs[unit.specs.length - 1]?.split ?? [];
-}
+/** frontier 维度 → 派发形态（role 与集成直跑标记）。维度语义单一出处 = readonly/frontier.ts */
+const DISPATCH_SHAPE: Record<keyof FrontierGroups, { role: AgentRole; integration: boolean }> = {
+  specReady: { role: "designer", integration: false },
+  reReview: { role: "designer", integration: false },
+  missingChildren: { role: "designer", integration: false },
+  integrationDrift: { role: "designer", integration: false },
+  integrationReady: { role: "builder", integration: true },
+  buildReady: { role: "builder", integration: false },
+  execReviewReady: { role: "reviewer", integration: false },
+};
 
 /**
- * 内部节点的集成等待条件（u8 rootLast 升级）：split 声明的全部子 unit 已 verified
- * （closed 蕴含 verified，同样放行——证据链已闭合）。子以 split 为权威集合而非
- * 账本 parentId：split 声明了但子尚未创建时，parentId 集合的「部分子全 verified」
- * 会放行一次缺子集成（静默漏掉一个子树），split 口径下未创建 = 未 verified = 等待。
- */
-function splitChildrenAllVerified(
-  projection: SequencedProjection,
-  unit: SequencedUnitProjection,
-): boolean {
-  return splitOf(unit).every((entry) => {
-    const child = projection.units.get(entry.unitId);
-    if (child === undefined) {
-      return false;
-    }
-    const status = unitStatus(child);
-    return status === "verified" || status === "closed";
-  });
-}
-
-/** split 自引用判定（fx-1 R1）：任一条目 unitId === 自身 unitId */
-function splitSelfReferences(unit: SequencedUnitProjection): boolean {
-  return splitOf(unit).some((entry) => entry.unitId === unit.unitId);
-}
-
-/**
- * split 声明但尚未 created 的子 unitId 清单（fx-3 R5.3 派发兜底的判定输入）。
- * 与 splitChildrenAllVerified 同口径以 split 为权威集合（非账本 parentId）。
- */
-function splitChildrenNotCreated(
-  projection: SequencedProjection,
-  unit: SequencedUnitProjection,
-): string[] {
-  return splitOf(unit)
-    .filter((entry) => !projection.units.has(entry.unitId))
-    .map((entry) => entry.unitId);
-}
-
-/**
- * 最后一条 SpecSubmitted 之后是否存在 spec-review pass verdict。与 deriveStatus
- * 的「之后存在」语义同口径（fold.ts 禁改，此处按 SequencedUnitProjection 的顺序
- * 锚点重算）——fx-1 R2 第四分支的判定输入：重提 spec = 打回重审，旧 pass 不计数。
- */
-function hasSpecReviewPassAfterLastSpec(unit: SequencedUnitProjection): boolean {
-  const lastSpecSeq = unit.lastSpecSeq;
-  if (lastSpecSeq === null) {
-    return false;
-  }
-  return unit.verdicts.some(
-    (verdict, i) =>
-      unit.verdictSeqs[i] > lastSpecSeq &&
-      verdict.verdictKind === "spec-review" &&
-      verdict.verdict === "pass",
-  );
-}
-
-/**
- * 各 unit 的连续 VerifyRan fail 计数（fx-2 R4a 重派上限的判定输入）：自该 unit
- * 上一条 SpecSubmitted / result=pass 的 VerifyRan 之后连续 fail 的次数（任何
- * pass / 新 spec 提交清零——验收文档锁定的口径）。SpecSubmitted 与 VerifyRan
- * 的相对顺序在 fold 投影里已丢失（平行数组），须从原始事件流重放；与
- * hasSpecReviewPassAfterLastSpec 的「之后存在」语义同族。
- */
-function consecutiveIntegrationFails(events: readonly LedgerEvent[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const record of events) {
-    const event = record as DiscriminatedEvent;
-    if (event.type === "SpecSubmitted") {
-      counts.set(event.payload.unitId, 0);
-    } else if (event.type === "VerifyRan") {
-      const previous = counts.get(event.payload.unitId) ?? 0;
-      counts.set(
-        event.payload.unitId,
-        event.payload.result === "fail" ? previous + 1 : 0,
-      );
-    }
-  }
-  return counts;
-}
-
-/**
- * 派发对象集合（纯函数；规则见模块头）。in-flight 的同 (unitId, role) 不重复派。
- * consecutiveFails = 各 unit 连续 VerifyRan fail 计数（fx-2 R4a 上限判定输入）。
+ * 派发对象集合：消费 readonly/frontier.ts 的 computeFrontier（与 `cw frontier`
+ * 命令同一就绪判定，A4「零上下文接手」场景输出与真实派发一致），限定 root
+ * 子树、按 BFS 序展开为 (role, unitId, integration)。in-flight 的同
+ * (unitId, role) 不重复派；excluded = 转人工 unit（连续 TIMEOUT 封顶后不再
+ * 派发）。spec-frozen 自引用的 stderr 警告保持每轮可见——判定半边在共享函数
+ * （按叶子语义入组），此处只保留可观测性半边（fx-1 R1 loop 级防御）。
  */
 function computeDispatchTargets(
   projection: SequencedProjection,
   rootId: string,
   inFlight: readonly InFlightSpawn[],
   consecutiveFails: ReadonlyMap<string, number>,
+  excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
+  const groups = computeFrontier(projection, {
+    consecutiveIntegrationFails: consecutiveFails,
+  });
+  const dimensionOf = new Map<string, keyof FrontierGroups>();
+  for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
+    for (const unitId of groups[key]) {
+      dimensionOf.set(unitId, key);
+    }
+  }
   const subtree = subtreeUnits(projection, rootId);
   const targets: DispatchTarget[] = [];
   for (const unit of subtree) {
-    const status = unitStatus(unit);
-    let role: AgentRole | undefined;
-    let integration = false;
-    if (status === "created" && unit.specs.length === 0) {
-      role = "designer";
-    } else if (
-      status === "created" &&
-      unit.specs.length > 0 &&
-      !hasSpecReviewPassAfterLastSpec(unit)
-    ) {
-      // fx-1 R2 第四分支：spec 已提交待审（builder 重提 spec / designer 半途退出）
-      // → 派 designer 补审（brief 见 renderBrief 的补审任务书），不再空转
-      role = "designer";
-    } else if (status === "spec-frozen") {
-      // fx-1 R1 loop 级防御：split 含自身 = 自引用（gate 规则⑥已拒新账本，此处为
-      // 纵深防御）→ 不按内部节点处理（等待「自己 verified」永不满足 = 死锁），
-      // 记一行 stderr 警告后按叶子语义参与派发
-      const selfReferencing = splitSelfReferences(unit);
-      if (selfReferencing) {
-        emitErr(
-          `[runner] 警告：unit "${unit.unitId}" 的 spec.split 含自身（自引用——gate 规则⑥应拒，` +
-            "账本可能建于该规则生效前或被旁路写入）——不作为内部节点等待子树，按叶子语义派发。\n",
-        );
-      }
-      if (!selfReferencing && splitOf(unit).length > 0) {
-        const missingChildren = splitChildrenNotCreated(projection, unit);
-        if (missingChildren.length > 0) {
-          // fx-3 R5.3 派发兜底出口：spec 声明了子但未创建（历史账本/旁路写入
-          // 绕过 fx-3 R5.1 gate 的数据）→ 派 designer 补建子。必须在集成等待
-          // 分支之前拦截——子不齐不集成，且 splitChildrenAllVerified 对未创建
-          // 子永 false = 派发真空（终验第 3 次空转 45 分钟的根因）
-          role = "designer";
-        } else if (splitChildrenAllVerified(projection, unit)) {
-          // 内部节点：子全 verified 即集成（u8 派发时机升级，不等子 closed）
-          if ((consecutiveFails.get(unit.unitId) ?? 0) >= INTEGRATION_MAX_CONSECUTIVE_FAILS) {
-            // fx-2 R4a：集成连续 fail 达上限——不再自动重派（fail 审计事件每轮
-            // 喂活 idle 判定 = R4b 无限循环），改派 designer 处置契约漂移（brief
-            // = integrationDriftTasks：失败事实清单 + 二选一处置路径）
-            role = "designer";
-          } else {
-            role = "builder";
-            integration = true;
-          }
-        }
-      } else if (childrenAllClosed(subtree, unit)) {
-        // 叶子：现行 rootLast 不变（无子 ∨ 子全部 closed）
-        role = "builder";
-      }
-    } else if (status === "verified") {
-      role = "reviewer";
+    if (unitStatus(unit) === "spec-frozen" && splitSelfReferences(unit)) {
+      emitErr(
+        `[runner] 警告：unit "${unit.unitId}" 的 spec.split 含自身（自引用——gate 规则⑥应拒，` +
+          "账本可能建于该规则生效前或被旁路写入）——不作为内部节点等待子树，按叶子语义派发。\n",
+      );
     }
-    if (role === undefined) {
+    if (excluded.has(unit.unitId)) {
       continue;
     }
+    const dimension = dimensionOf.get(unit.unitId);
+    if (dimension === undefined) {
+      continue;
+    }
+    const shape = DISPATCH_SHAPE[dimension];
     const alreadyInFlight = inFlight.some(
-      (flight) => flight.unitId === unit.unitId && flight.role === role,
+      (flight) => flight.unitId === unit.unitId && flight.role === shape.role,
     );
     if (alreadyInFlight) {
       continue;
     }
-    targets.push({ role, unitId: unit.unitId, integration });
+    targets.push({ role: shape.role, unitId: unit.unitId, integration: shape.integration });
   }
   return targets;
 }
@@ -408,10 +369,8 @@ async function runIntegrationDispatch(
     children,
     rootAcceptance: spec.acceptance,
     contracts: collectIntegrationContracts(unit, childUnits),
-    // 集成批次混装各 type 验收而 runIntegrationVerify 只收单一 timeoutMs（必填
-    // number，src/runner/integrate.ts 非本任务领地），取分档上限（e2e 30min）防
-    // 最慢档被误杀；其参数可选化后此处改传 undefined 即恢复逐条分档
-    timeoutMs: timeoutForAcceptance("e2e-real"),
+    // timeoutMs 省略：透传 runAcceptances 的逐条按验收 type 分档语义（单测 10min /
+    // e2e 30min）——集成批次混装各 type 验收，单一统一档会误杀快档或放跑慢档
   });
 
   // acceptanceIds：pass = 覆盖的验收 id（子 ∪ root，manual 免机器验证一并入）；
@@ -692,8 +651,8 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
   }
 }
 
-/** root closed 的汇总（验收文档循环逻辑 5：每 unit 状态行，树感知口径） */
-function emitSummary(projection: SequencedProjection, rootId: string): void {
+/** root closed 的汇总文本（验收文档循环逻辑 5：每 unit 状态行，树感知口径） */
+function summaryText(projection: SequencedProjection, rootId: string): string {
   const units = subtreeUnits(projection, rootId);
   const statuses = treeStatuses(projection);
   const rows = units.map((unit) => {
@@ -701,11 +660,12 @@ function emitSummary(projection: SequencedProjection, rootId: string): void {
       unit.verifyRuns.length > 0 ? unit.verifyRuns[unit.verifyRuns.length - 1].result : "-";
     return `[runner]   ${unit.unitId}  ${statuses.get(unit.unitId)}  lastVerify:${lastVerify}`;
   });
-  emit([
+  return [
     `[runner] root "${rootId}" 已 closed——调度循环结束（exit 0）。汇总（root 子树 ${units.length} 个 unit）：`,
     ...rows,
     `[runner] 证据链详情：cw report（全量）或 cw report --unit ${rootId}`,
-  ]);
+    "",
+  ].join("\n");
 }
 
 function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number): string {
@@ -731,9 +691,141 @@ function describeExit(exitCode: SpawnResult["exitCode"]): string {
   if (exitCode === "SPAWN_ERROR") {
     return "SPAWN_ERROR";
   }
-  const retryable = exitCode === "TIMEOUT" || exitCode === "CRASH" ? "，可重派" : "";
-  return `${String(exitCode)}${retryable}`;
+  const capped =
+    exitCode === "TIMEOUT"
+      ? `，可重派（连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次后转人工）`
+      : exitCode === "CRASH"
+        ? "，可重派"
+        : "";
+  return `${String(exitCode)}${capped}`;
 }
+
+/**
+ * 各 unit 的最新事件 seq 高水位（连续 TIMEOUT 计数的进展清零输入）：五类事件
+ * payload 均含 unitId，任何类型的新事件（SpecSubmitted / EvidenceSubmitted /
+ * VerdictSubmitted / VerifyRan / UnitCreated）都视为该 unit 有进展。
+ */
+function unitEventHighWaterSeqs(events: readonly LedgerEvent[]): Map<string, number> {
+  const seqs = new Map<string, number>();
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (event.seq > (seqs.get(event.payload.unitId) ?? 0)) {
+      seqs.set(event.payload.unitId, event.seq);
+    }
+  }
+  return seqs;
+}
+
+/** 同一 unit 连续 TIMEOUT 的计数条目（role = 最近一次 TIMEOUT 的派发 role） */
+interface TimeoutStreak {
+  count: number;
+  role: AgentRole;
+}
+
+/**
+ * 转人工指引（连续 TIMEOUT 封顶时逐 unit 打印；错误指向恢复动作，规则 16）。
+ * spawn 超时是 src/runner/loop.ts 的固定常量（30min），cw run 无调大 flag——
+ * 如实告知现状而非指向不存在的入口。
+ */
+function escalationMessage(rootId: string, unitId: string, role: AgentRole, cwd: string): string {
+  const stdoutPath = join(cwd, ".cw-spawn", `${unitId}.${role}.stdout`);
+  return (
+    `cw run: unit "${unitId}" 的 ${role} 连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次 spawn TIMEOUT` +
+    "（期间无该 unit 的任何账本进展）——停止自动重派，转人工处理（canon：不自动换模型重试，" +
+    "防静默降级；本循环继续处理其余 unit）。恢复动作（按序）：\n" +
+    `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
+    `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（历次运行的完整输出）\n` +
+    `  3. 若任务量确超单次 spawn 上限（${AGENT_SPAWN_TIMEOUT_MS / MS_PER_MINUTE}min 固定值，cw run 暂无调大入口）：` +
+    "人工接手完成该 unit，或拆小任务另建 unit"
+  );
+}
+
+/** 转人工收束的退出汇总（无可自动推进的 unit 且存在转人工 unit → exit 1） */
+function escalationExitMessage(rootId: string, escalated: ReadonlyMap<string, AgentRole>): string {
+  return (
+    `cw run: root "${rootId}" 已无可自动推进的 unit（无 in-flight、无待派发），转人工 unit 共 ` +
+    `${escalated.size} 个：\n` +
+    [...escalated]
+      .map(([unitId, role]) => `  - ${unitId}（最后派发 role：${role}）`)
+      .join("\n") +
+    `\n恢复动作：按各 unit 的转人工指引处理（cw run --root ${rootId} --spawn human 人工接手），` +
+    "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。"
+  );
+}
+
+// ---- 重派前工作区清理（共享 cwd 下的安全近似） ----
+
+/**
+ * git status --porcelain 的 tracked 脏行（worktree 列非 `?` 非空——untracked 的 ?? 排除）。
+ * --no-optional-locks：默认 git status 会乘机刷新 index（创建 .git/index.lock），
+ * 与并发的人/agent git 操作（commit 等）撞锁直接失败——实测全量负载下与测试
+ * 「人」的 git commit 偶发互斥失败。此 flag 让 status 完全不拿锁（git 为并发
+ * 读场景设计的开关）。
+ */
+function trackedDirtyLines(cwd: string): string[] | null {
+  const status = spawnSync(
+    "git",
+    ["--no-optional-locks", "-C", cwd, "status", "--porcelain"],
+    {
+      encoding: "utf-8",
+      timeout: GIT_STEP_TIMEOUT_MS,
+    },
+  );
+  if (status.error !== undefined || status.status !== 0) {
+    emitErr(
+      `[runner] 工作区清理检查失败（git status，${cwd}）：` +
+        `${status.error?.message ?? (status.stderr ?? "").trim()}。恢复动作：确认 cwd 是可用 git 仓库后重跑；本次派发继续（跳过清理）。`,
+    );
+    return null;
+  }
+  return (status.stdout ?? "")
+    .split("\n")
+    .filter(
+      (line) =>
+        line.length >= PORCELAIN_STATUS_WIDTH &&
+        line[1] !== "?" &&
+        line[1] !== " ",
+    );
+}
+
+/**
+ * 派发新 agent 前的工作区卫生检查：失败 builder 的未提交 tracked 半成品若不清，
+ * 会原样进入下一轮任意 unit 的派发（共享 cwd 无隔离）。完整语义（按 unit 隔离
+ * 产出）依赖独立 worktree，M2 集成时升级——本近似只处理最痛的「脏 tracked 污染
+ * 下一个 agent」：无 in-flight 时 git reset --hard HEAD（untracked 一律不动，
+ * 防误删用户/认知外文件）；有 in-flight 时仅提示不清理（避免误伤并行 agent 的
+ * 进行中工作）。每轮派发循环只检查一次（调用方用标志去重）。
+ */
+function checkWorkspaceForDispatch(cwd: string, hasInFlight: boolean): void {
+  const dirty = trackedDirtyLines(cwd);
+  if (dirty === null || dirty.length === 0) {
+    return;
+  }
+  if (hasInFlight) {
+    emit([
+      `[runner] 提示：工作区有 ${dirty.length} 项 tracked 脏改动，但有 agent 在跑——暂不清理` +
+        "（避免误伤进行中的工作），待无 in-flight 的派发轮再 reset。",
+    ]);
+    return;
+  }
+  const reset = spawnSync("git", ["-C", cwd, "reset", "--hard", "HEAD"], {
+    encoding: "utf-8",
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
+  if (reset.status !== 0) {
+    emitErr(
+      `[runner] 工作区清理失败（git reset --hard HEAD，${cwd}）：${(reset.stderr ?? "").trim()}。` +
+        "恢复动作：人工执行 git status / git reset 处理上述 tracked 修改后重跑 cw run" +
+        "（untracked 文件与 .cw-spawn/ 产物不受 reset 影响）。",
+    );
+    return;
+  }
+  emit([
+    `[runner] 派发前清理：检测到 ${dirty.length} 项 tracked 脏改动（上一 agent 的未提交半成品），已 git reset --hard HEAD（untracked 不动）。明细：`,
+    ...dirty.map((line) => `  ${line}`),
+  ]);
+}
+
 
 function assertPositive(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
@@ -745,7 +837,9 @@ function assertPositive(name: string, value: number): void {
 
 /**
  * 通用调度循环：root closed → 汇总返回 0；无进展超 maxIdleMs → stderr + 返回 1；
- * SPAWN_ERROR（配置错误）→ kill 全部 in-flight + stderr + 返回 1。
+ * SPAWN_ERROR（配置错误）→ kill 全部 in-flight + stderr + 返回 1；连续 TIMEOUT
+ * 封顶的 unit 转人工（不再派发），无可自动推进且存在转人工 unit → stderr 汇总 +
+ * 返回 1。
  * root 不在账本 → 抛可操作错误（调用方负责转 exit 1）。
  */
 export async function runLoop(opts: RunLoopOptions): Promise<number> {
@@ -772,6 +866,12 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   const inFlight: InFlightSpawn[] = [];
   let lastTotalEvents = initial.projection.totalEvents;
   let lastProgressAt = Date.now();
+  // 连续 TIMEOUT 计数（单进程内存态；语义见 AGENT_TIMEOUT_ESCALATION_AFTER 注释）。
+  // escalated 单向：一经转人工，本次运行内不再自动派发（人工接手期间 loop 插足
+  // 会与人工操作冲突；进展清零只作用于计数，不撤销转人工）
+  const timeoutStreaks = new Map<string, TimeoutStreak>();
+  const escalated = new Map<string, AgentRole>();
+  let lastUnitSeqs = new Map<string, number>();
 
   while (true) {
     // 每轮重读投影（子进程 agent 与本循环并发写账本，投影必须重新装载）。保留
@@ -782,11 +882,12 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
     const root = projection.units.get(opts.rootId);
     if (root === undefined) {
       // append-only 账本里 UnitCreated 不会消失；走到这里说明账本被外部改动
-      emitErr(
-        `cw run: root "${opts.rootId}" 在循环中途从账本消失（账本被外部改动？）。` +
-          "恢复动作：cw status 查看现存 unit 后重新运行 cw run --root <id>。",
-      );
       killAll(inFlight);
+      await emitExitOutput(
+        `cw run: root "${opts.rootId}" 在循环中途从账本消失（账本被外部改动？）。` +
+          "恢复动作：cw status 查看现存 unit 后重新运行 cw run --root <id>。\n",
+        process.stderr,
+      );
       return 1;
     }
     if (treeStatuses(projection).get(opts.rootId) === "closed") {
@@ -797,18 +898,48 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       // reviewer 继续派发，无进展由 maxIdleMs 兜底
       // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
       killAll(inFlight);
-      emitSummary(projection, opts.rootId);
+      await emitExitOutput(summaryText(projection, opts.rootId), process.stdout);
       return 0;
+    }
+
+    // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前：被超时 kill 的
+    // agent 若死前已写账本，本轮先清零——不冤枉有产出的 agent；清零后仍达阈值的
+    // 才转人工，本轮流派发即排除）。顺序不能反：先判定后清零会把「有产出的
+    // 第二次 TIMEOUT」也误转人工
+    const unitSeqs = unitEventHighWaterSeqs(events);
+    for (const [unitId, seq] of unitSeqs) {
+      if (seq > (lastUnitSeqs.get(unitId) ?? 0)) {
+        timeoutStreaks.delete(unitId);
+      }
+    }
+    lastUnitSeqs = unitSeqs;
+    for (const [unitId, streak] of timeoutStreaks) {
+      if (streak.count >= AGENT_TIMEOUT_ESCALATION_AFTER && !escalated.has(unitId)) {
+        escalated.set(unitId, streak.role);
+        emitErr(escalationMessage(opts.rootId, unitId, streak.role, opts.cwd));
+      }
     }
 
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
     // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
-    for (const target of computeDispatchTargets(
+    const targets = computeDispatchTargets(
       projection,
       opts.rootId,
       inFlight,
       consecutiveIntegrationFails(events),
-    )) {
+      new Set(escalated.keys()),
+    );
+    if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {
+      // 转人工收束：root 子树已无 machine 推进路径（转人工 unit 可能阻塞其祖先
+      // 的集成等待，祖先同样无解），继续循环只剩空转烧 CPU——汇总退出交人工
+      await emitExitOutput(
+        `${escalationExitMessage(opts.rootId, escalated)}\n`,
+        process.stderr,
+      );
+      return 1;
+    }
+    let workspaceChecked = false;
+    for (const target of targets) {
       if (target.integration) {
         // 集成在本轮同步完成（含 VerifyRan 入账）；后续 target 仍按本轮开头投影
         // 派发，集成引起的状态跃迁由下一轮重算接手
@@ -821,6 +952,12 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       const unit = projection.units.get(target.unitId);
       if (unit === undefined) {
         continue; // 不可达（target 来自同一投影）
+      }
+      if (!workspaceChecked) {
+        // 派发新 agent 前的 tracked 半成品清理（每轮一次）：无 in-flight →
+        // reset --hard（untracked 不动）；有 in-flight → 仅提示
+        workspaceChecked = true;
+        checkWorkspaceForDispatch(opts.cwd, inFlight.length > 0);
       }
       if (target.role === "designer" && unitStatus(unit) === "spec-frozen") {
         // designer × spec-frozen 两个出口的可观测性（终验日志里明确「为何派 designer」）：
@@ -864,9 +1001,21 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
         `[runner] ${new Date().toISOString()} ${finished.flight.role} unit "${finished.flight.unitId}" 退出 ${describeExit(finished.result.exitCode)}`,
       ]);
       if (finished.result.exitCode === "SPAWN_ERROR") {
-        emitErr(spawnErrorMessage(opts.rootId, finished.flight.unitId, finished.flight.role));
         killAll(inFlight);
+        await emitExitOutput(
+          `${spawnErrorMessage(opts.rootId, finished.flight.unitId, finished.flight.role)}\n`,
+          process.stderr,
+        );
         return 1;
+      }
+      if (finished.result.exitCode === "TIMEOUT") {
+        // 连续计数只记不判：是否转人工由下一轮开头（进展清零之后）判定——被
+        // kill 的 agent 若死前已写账本，下一轮先清零，避免误转人工
+        const previous = timeoutStreaks.get(finished.flight.unitId);
+        timeoutStreaks.set(finished.flight.unitId, {
+          count: (previous?.count ?? 0) + 1,
+          role: finished.flight.role,
+        });
       }
     }
 
@@ -876,8 +1025,11 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       lastTotalEvents = totalEvents;
       lastProgressAt = Date.now();
     } else if (Date.now() - lastProgressAt >= maxIdleMs) {
-      emitErr(idleFailureMessage(opts.rootId, maxIdleMs, totalEvents));
       killAll(inFlight);
+      await emitExitOutput(
+        `${idleFailureMessage(opts.rootId, maxIdleMs, totalEvents)}\n`,
+        process.stderr,
+      );
       return 1;
     }
   }

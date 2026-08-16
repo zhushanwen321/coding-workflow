@@ -86,7 +86,8 @@ export async function runIntegrationVerify(opts: {
   children: readonly { unitId: string; commit: string }[];
   rootAcceptance: AcceptanceItem[];
   contracts: Contract[];
-  timeoutMs: number;
+  /** 省略 = 逐条按验收 type 分档（透传 runAcceptances 的可选语义）；显式值统一覆盖全部批次 */
+  timeoutMs?: number;
 }): Promise<IntegrateResult> {
   const runId = `integrate-${randomUUID()}`;
   const evidenceBase = evidenceDir(getCwHome(), opts.cwd, opts.rootId, runId);

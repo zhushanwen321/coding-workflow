@@ -169,7 +169,8 @@ export function spawnProcess(req: SpawnProcessRequest): SpawnHandle {
    * 由 kill 发起方声明。
    * 手动 kill() 不置位：「与超时同路径」指 kill 机制（kill(-pgid, SIGKILL) 整树 +
    * ESRCH 幂等静默），归因上它不是超时，按四态定义的「被信号杀死」归 CRASH——
-   * 且不污染 runner 的「连续 2 次 TIMEOUT 转人工」计数。
+   * 且不进 loop 的连续 TIMEOUT 计数（runLoop 的 timeoutStreaks 只对 exitCode
+   * === "TIMEOUT" 结算累计，连续 2 次且期间无该 unit 账本进展才转人工）。
    */
   let timeoutKillInitiated = false;
 

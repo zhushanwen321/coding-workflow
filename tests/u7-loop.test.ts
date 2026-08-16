@@ -268,8 +268,13 @@ async function captureStd(fn: () => Promise<number>): Promise<{ code: number; ou
   const origOut = process.stdout.write;
   const origErr = process.stderr.write;
   const collector = (chunks: string[]): typeof process.stdout.write =>
-    ((chunk: unknown) => {
+    ((chunk: unknown, cb?: (err?: Error | null) => void) => {
       chunks.push(String(chunk));
+      // 透传回调：loop.ts 的 flushOutputs 退出屏障依赖 write 回调等待 flush，
+      // 不透传会使其落入兜底超时，拖慢每个 runLoop 退出
+      if (typeof cb === "function") {
+        cb();
+      }
       return true;
     }) as typeof process.stdout.write;
   process.stdout.write = collector(outChunks);
@@ -489,6 +494,12 @@ describe("修复回归：killAll 兜底清理是 best-effort（kill 异常不炸
     // macOS 对该场景返回 EPERM（lifecycle.killTree 只豁免 ESRCH）；kill() 在
     // 真实 kill 之后再抛一次模拟 EPERM，钉死「killAll 必须吞 kill 异常」契约
     // （红性不依赖 OS 对死组返回 EPERM 还是 ESRCH）。
+    //
+    // 竞态消除（存量 flaky 修复）：先 await 真实 handle.wait()（worker 死透、
+    // 账本写入完整）再返回外层 handle。原实现直接返回，loop 的 50ms 轮询可能
+    // 捕获「spec 已写、evidence 未写」的中间态（瞬时 spec-frozen → 派 builder，
+    // canon 允许同 unit 不同 role 并存），第二个 worker 的新 spec 使 lastSpecSeq
+    // 后移、旧 exec-review 失效，root 永远回不到 closed → 偶发 maxIdle exit 1。
     let killCalled = false;
     const staleAdapter: AgentSpawnAdapter = {
       name: "u7-stale-flight",
@@ -501,6 +512,8 @@ describe("修复回归：killAll 兜底清理是 best-effort（kill 异常不炸
           stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
           stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
         });
+        // 等真实 worker 退出（结果丢弃）：对 loop 的视角由下方永不结算的 wait 扮演
+        await handle.wait();
         return {
           wait: () => new Promise<SpawnResult>(() => {}), // 永不结算：模拟 race 未消费
           kill: () => {

@@ -11,7 +11,8 @@
  *      （runId/rawPath 目录不同不作比对）。
  *
  * u4b 判定升级适配（验收文档 E2E 条款允许，理由逐条见各 spec 版本注释）：
- *   - e2e 用例的「过/挂」改由标记行 ^A<id> (PASS|FAIL) 表达（exit code 不再是判定输入）；
+ *   - e2e 用例的「过/挂」改由标记行 <验收id原文> (PASS|FAIL) 表达（第一列 =
+ *     验收 id 全文，不要求任何前缀；exit code 不再是判定输入）；
  *   - unit 型用例 v1 用非 vitest 兼容命令覆盖 parse 抛错路径（原「缺 command」
  *     语义已迁移给 e2e-sh translate 防线），v2/v3 用本仓库 vitest bin 绝对路径
  *     跑真实测试（干净 checkout 无 node_modules，npx 解析不确定）。
