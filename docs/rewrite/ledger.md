@@ -90,6 +90,7 @@
 - 2026-08-16 设计 v2 对抗审查（tech-design rubric，报告 /tmp/design-review-worktree-v2.md）：方案本体成立；6 must-fix + 7 suggestion。主 agent 裁决：MF-1 文件解析锚定分离（CW_PROJECT_DIR 只锚账本与 git 操作，--file/--brief 解析锚 process.cwd——长期方案；模板改绝对路径为短期补丁弃用）；S3 aborted 终态不采纳（产品状态机无 aborted，系两层状态混淆）；其余 S 采纳。wt-2 交付按旧口径实现需返工（R-1~R-6，wt2-acceptance.md §11），验收基线重置随本 commit；设计 v3 修复与代码返工并行派发。
 - 2026-08-16 设计 v3 committed（db5e9c5）：6 MF + 7 S 全处置（S3 核实不采纳——events/types.ts 无 aborted）；修复 worker 清单外发现 §1.3 baseCommit 残留引用，主 agent 顺手修正随本 commit。
 - 2026-08-16 wt-2 committed（两轮交付 310 全绿）：首版（spawn 链路 worktree 拆分 + 11 文件断言迁移）+ 返工（R-1 分支双空间 cw-root/<rootId> 与 cw/<rootId>/<unitId>、R-2 clean -e .cw-spawn、R-3 ensureUnitWorktree 四格矩阵零字符串匹配、R-4 human 内联前缀+引号、R-5 resolveAgainstCwd 锚 process.cwd（三调用点统一 + fx3 同锚适配）、R-6 断言同步）。verifier PASS（对抗 6 条含含空格路径真实 shell 执行、双 unit 并行、真实 home 零污染）。wt-3 验收基线备料。
+- 2026-08-16 wt-3 验收基线入 git（纯删除波：删 checkWorkspaceForDispatch 近似链 + 项目 cwd 不再被 reset 的行为锁定），builder 派发。
 
 ## 对抗审查修复（2026-08-16）
 
