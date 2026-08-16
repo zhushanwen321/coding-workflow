@@ -54,6 +54,7 @@
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | done |
 | 终验 | markdown-reader 全流程无人干预 | PASS | — | 第 4 次（commit 见 final-gate-4-report）：45.1min 自然完成零人工、全树 3 unit closed、7/7 机器验证 manual=0、10 spawn（1 TIMEOUT 重派——超时机制首次真实触发）、靶子全绿（install/build/vitest/渲染/HTTP 200）。fx-2 R4a 首次现场闭环（契约漂移→2 fail 封顶→designer 仲裁→65s 恢复）；fx-3 children-first 现场证据成立。四次卡点：分解层→集成层→建子→无 |
 | fx-3 | 分解结构建立缺位 R5 修复 | committed | 528e9ff | R5.1 gate 收紧（先建子后提 spec，missing/mismatched 分类清单）+ R5.2 designer 第 0 步 + R5.3 兜底出口（拦截在集成等待之前，优先于 R4a）；verifier 22/22 对抗 PASS、越界适配 2 处裁决语义等价。230 全绿 |
+| M3 gate | worktree 隔离全链 E2E（真实 pi 靶子无人干预） | PASS | — | 第 5 次终验（报告 m3-gate-report.md）：26min52s 零人工、9 spawn / 0 重派 / 0 TIMEOUT、全树 3 unit closed、六条通过标准机器判定 6/6（worktree 回收清单、cw-root/md-reader 干净回流、靶子 master 零污染、CW_PROJECT_DIR 无分裂账本、323 全绿）。**集成 merge 真实冲突首次现场再现并经 R4a 处置出口闭环恢复**（designer 按 fail 文案指引解决冲突 commit → 第 3 跑集成 pass → root closed；设计待验证检查点②现场验证）。观察 4 条不阻塞：① agent `git add -A` 把 .cw-spawn 产物卷入 commit 随 merge 进 root 分支（设计层缺口，回流会带产物文件，待立项 fx-4）② root closed 后 killAll 收尾无退出行（cosmetic）③ u5b-e2e 既有并发 flaky（4 次全量 2 红 2 绿，与 M3 无关，待独立跟进）④ reset/clean 对「未打靶分支」的覆盖未现场触发（wt 系单测已覆盖）。起跑态偏离已记理由（snapshotHeadCommit fail-fast → 单 README 存档 commit；--max-idle-ms 2700000 防默认值 idle 误杀竞态） |
 
 ## 事件
 
@@ -95,6 +96,7 @@
 - 2026-08-16 wt-4 验收基线入 git（J1 merge 内聚幂等 / J2 三处锚 root 分支 / J3 孤儿清扫查全账本 / J4 延迟回收；M1-M8 条款），builder 派发。
 - 2026-08-16 wt-4 committed（321 全绿 = 313+8）：步骤 0 merge 汇聚（已达跳过幂等 + 冲突 abort 收 failures 含内联前缀指引 + best-effort branch -D）+ 三处 HEAD 锚 cw-root/<rootId> + 启动孤儿清扫（全账本口径、排除本 rootId）+ 每轮延迟回收（pendingReclaim + 退出清尾）+ summary 回收清单与回流指引；u8-integrate/u8-e2e/u5b-e2e 三文件适配。verifier PASS（对抗 8 条：冲突人工解决后重跑 pass 闭环、他 root 跨 run 清扫、项目 cwd 不被触碰不回归）。wt-5 验收基线备料。
 - 2026-08-16 wt-5 committed（323 全绿 = 321+2）：C1 并发污染对抗（ready-rendezvous 屏障实测重叠 430ms、账本 commit 的 git show diff 体互不含对方标记、项目 cwd 监视器全程零 violation、全链 root 集成 pass）+ C2 P7 场景（检出树三断言与 cwd 脏无关且脏保留）+ C4 zero 残留 + canon P7 勾验。verifier PASS（混卷红性 /tmp 实证：共享 cwd 下单 commit 含双标记——断言真有抓混卷能力）。M3 五 unit 全 committed，进入 M3 gate（终验靶子：真实 pi 全流程）。
+- 2026-08-17 M3 gate **PASS**（终验第 5 次，26min52s 零人工）：worktree 隔离全链在真实靶子成立，集成 merge 真实冲突经 R4a 处置出口首次现场闭环（设计检查点②验证）。L2-F3 worktree 隔离升级全部完成：设计 v3（两轮对抗审查）→ wt-1~wt-5 五 unit（297→323 绿）→ 终验 PASS。遗留：fx-4 候选（.cw-spawn 产物卷入 commit 的设计缺口）、u5b-e2e 既有 flaky 独立跟进。
 
 ## 对抗审查修复（2026-08-16）
 
