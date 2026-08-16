@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { dispatch } from "./dispatch.js";
 import { getVersion } from "./index.js";
+import { resolveProjectDir } from "./store/project.js";
 
 /** node 进程 argv 偏移：argv[0]=node argv[1]=脚本路径，其后才是 CLI 参数 */
 const CLI_ARGS_OFFSET = 2;
@@ -35,7 +36,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${getVersion()}\n`);
     return 0;
   }
-  const status = await dispatch(argv, process.cwd());
+  const status = await dispatch(argv, resolveProjectDir(process.cwd()));
   if (status === -1) {
     process.stderr.write(`未知命令: ${cmd}\n运行 cw --help 查看可用命令。\n`);
     return 1;

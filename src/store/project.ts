@@ -69,3 +69,48 @@ export function evidenceDir(
 ): string {
   return join(cwHome, encodeCwd(cwd), EVIDENCE_DIR_NAME, unitId, runId);
 }
+
+// ── worktree 布局（design-worktree-isolation.md §3.3 D1/D3，W1 纯增量）──────
+
+/**
+ * worktree 根目录。默认 ~/.cw-worktrees，CW_WORKTREE_HOME 环境变量可覆盖。
+ * 覆盖值必须是绝对路径（worktree 布局依赖稳定、唯一的根），否则抛错；
+ * 空串视为未设置（与 getCwHome 的空串语义一致）。
+ */
+export function getCwWorktreeHome(): string {
+  const override = process.env.CW_WORKTREE_HOME;
+  if (override !== undefined && override !== "") {
+    if (!isAbsolute(override)) {
+      throw new Error(
+        `CW_WORKTREE_HOME 必须是绝对路径，当前值：${override}。` +
+          "恢复动作：改为绝对路径（如 /tmp/cw-test-worktrees），或取消该环境变量使用默认 ~/.cw-worktrees。",
+      );
+    }
+    return override;
+  }
+  return join(homedir(), ".cw-worktrees");
+}
+
+/** unit worktree 路径：<cwWorktreeHome>/<encodeCwd(projectCwd)>/<unitId>——与账本目录同 encoded key（D1） */
+export function worktreePath(cwWorktreeHome: string, projectCwd: string, unitId: string): string {
+  return join(cwWorktreeHome, encodeCwd(projectCwd), unitId);
+}
+
+/**
+ * CLI 入口的项目目录解析：CW_PROJECT_DIR 非空时优先（必须绝对路径，否则抛错）；
+ * 空串视为未设置；未设置时返回 fallback（进程 cwd）。
+ * 用途：agent 在 worktree 内执行 cw 命令时，经该 env 锚定项目账本（D3）。
+ */
+export function resolveProjectDir(fallback: string): string {
+  const override = process.env.CW_PROJECT_DIR;
+  if (override !== undefined && override !== "") {
+    if (!isAbsolute(override)) {
+      throw new Error(
+        `CW_PROJECT_DIR 必须是绝对路径，当前值：${override}。` +
+          "恢复动作：改为绝对路径（指向项目根目录），或取消该环境变量使用进程当前目录。",
+      );
+    }
+    return override;
+  }
+  return fallback;
+}
