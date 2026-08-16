@@ -42,12 +42,17 @@
  * 转人工指引（canon 语义：不自动换模型重试，防静默降级）；SPAWN_ERROR 配置错误
  * 不重试，kill 全部 in-flight 后 exit 1。无可派发且无 in-flight 且存在转人工
  * unit → 循环以 exit 1 收束并汇总转人工清单。
- * 重派前工作区清理：无 in-flight 时对 tracked 脏改动 git reset --hard（详见
- * resetTrackedChanges 前的注释），untracked 一律不动。
+ * 重派前工作区清理（共享 cwd 时代的近似，W3 将整体删除）：无 in-flight 时对项目
+ * cwd 的 tracked 脏改动 git reset --hard（详见 checkWorkspaceForDispatch 注释），
+ * untracked 一律不动；unit worktree 的精确清理（reset --hard + clean -fd
+ * -e .cw-spawn）已由派发点的 ensureUnitWorktree 承担。
  *
- * M1 简化（验收文档锁定）：workdir = cwd 本身（无独立 worktree，M2 集成时升级）；
- * 循环不亲自创建 split 子 unit（fx-3 后子创建职责归 designer：首派任务书第 0 步
- * 指令化建子，spec gate 强制先建子后提 spec；循环仅在子未建时派 designer 兜底）。
+ * worktree 语义（wt-2 起，docs/rewrite/design-worktree-isolation.md D1/D2/D3）：每个
+ * 被派发 unit 在 <CW_WORKTREE_HOME>/<encoded-cwd>/<unitId> 的专属 git worktree
+ * （分支双空间命名——root unit = cw-root/<rootId>、子 unit = cw/<rootId>/<unitId>，
+ * base = run 启动时项目 HEAD 快照）里干活；账本与仓库操作锚定项目 cwd（D3 双路径）。循环不亲自创建 split 子 unit（fx-3 后子创建职责归
+ * designer：首派任务书第 0 步指令化建子，spec gate 强制先建子后提 spec；循环仅
+ * 在子未建时派 designer 兜底）。
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -74,7 +79,13 @@ import {
 } from "../readonly/frontier.js";
 import { loadLedger, treeStatuses, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
-import { getCwHome, ledgerPath } from "../store/project.js";
+import {
+  encodeCwd,
+  getCwHome,
+  getCwWorktreeHome,
+  ledgerPath,
+  worktreePath,
+} from "../store/project.js";
 import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
@@ -82,6 +93,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "./spawn/types.js";
+import { ensureUnitWorktree, unitBranchName } from "./worktree.js";
 
 /** 账本轮询间隔默认值（--poll-ms；验收文档：默认 1000） */
 export const DEFAULT_LOOP_POLL_MS = 1_000;
@@ -571,7 +583,9 @@ function renderBrief(
   projection: SequencedProjection,
   unit: SequencedUnitProjection,
   role: AgentRole,
-  cwd: string,
+  rootId: string,
+  projectCwd: string,
+  workdir: string,
 ): string {
   let briefContent: string;
   try {
@@ -588,7 +602,7 @@ function renderBrief(
     role === "designer" && unitStatus(unit) === "spec-frozen"
       ? splitChildrenNotCreated(projection, unit).length > 0
         ? missingChildrenTasks(unit, splitChildrenNotCreated(projection, unit))
-        : integrationDriftTasks(unit, cwd)
+        : integrationDriftTasks(unit, projectCwd)
       : role === "designer" && unit.specs.length > 0
         ? reReviewTasks(unit.unitId)
         : role === "designer"
@@ -609,22 +623,27 @@ function renderBrief(
     roleTasks,
     "",
     "## 环境约定",
-    `- workdir: ${cwd}（M1 简化 = 仓库本身，无独立 worktree）`,
-    "- 账本命令：在 workdir 下执行 cw …（状态推进全部经账本命令入账）",
+    `- workdir: ${workdir}（unit 专属 git worktree，分支 ${unitBranchName(rootId, unit.unitId)}）`,
+    `- 账本命令：直接在 workdir 下执行 cw …（CW_PROJECT_DIR 已注入 env，自动锚定项目账本 ${projectCwd}）`,
     "",
   ].join("\n");
 }
 
-/** brief 落盘到 <workdir>/.cw-spawn/<unitId>.<role>.brief.md（验收文档循环逻辑 2） */
+/** brief 落盘到 <worktreeDir>/.cw-spawn/<unitId>.<role>.brief.md（wt-2 起产物根随 workdir 迁 worktree） */
 function writeBriefFile(
-  cwd: string,
+  worktreeDir: string,
   target: DispatchTarget,
   unit: SequencedUnitProjection,
   projection: SequencedProjection,
+  rootId: string,
+  projectCwd: string,
 ): string {
-  const path = join(cwd, ".cw-spawn", `${target.unitId}.${target.role}.brief.md`);
-  mkdirSync(join(cwd, ".cw-spawn"), { recursive: true });
-  writeFileSync(path, renderBrief(projection, unit, target.role, cwd));
+  const path = join(worktreeDir, ".cw-spawn", `${target.unitId}.${target.role}.brief.md`);
+  mkdirSync(join(worktreeDir, ".cw-spawn"), { recursive: true });
+  writeFileSync(
+    path,
+    renderBrief(projection, unit, target.role, rootId, projectCwd, worktreeDir),
+  );
   return path;
 }
 
@@ -668,11 +687,14 @@ function summaryText(projection: SequencedProjection, rootId: string): string {
   ].join("\n");
 }
 
-function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number): string {
+function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number, cwd: string): string {
+  // agent 产物随 wt-2 迁到各 unit 的 worktree（<CW_WORKTREE_HOME>/<encoded-cwd>/<unitId>/.cw-spawn/）
+  const spawnProbeDir = join(getCwWorktreeHome(), encodeCwd(cwd), "<unitId>", ".cw-spawn");
   return (
     `cw run: root "${rootId}" 超过 ${maxIdleMs}ms 无账本进展（totalEvents 停在 ${totalEvents}，` +
-    "被派发 agent 未产出任何事件）。恢复动作：查看 <workdir>/.cw-spawn/ 下各 agent 的 " +
-    `stdout / stderr 定位卡点，或 cw status 查看现状；排除故障后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。`
+    "被派发 agent 未产出任何事件）。恢复动作：查看各 unit 的 worktree（" +
+    `${spawnProbeDir}）下 agent 的 stdout / stderr 定位卡点，或 cw status 查看现状；` +
+    `排除故障后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。`
   );
 }
 
@@ -728,7 +750,12 @@ interface TimeoutStreak {
  * 如实告知现状而非指向不存在的入口。
  */
 function escalationMessage(rootId: string, unitId: string, role: AgentRole, cwd: string): string {
-  const stdoutPath = join(cwd, ".cw-spawn", `${unitId}.${role}.stdout`);
+  // 产物根随 wt-2 迁 unit worktree（D3）：stdout/stderr 在 worktree 的 .cw-spawn/ 下
+  const stdoutPath = join(
+    worktreePath(getCwWorktreeHome(), cwd, unitId),
+    ".cw-spawn",
+    `${unitId}.${role}.stdout`,
+  );
   return (
     `cw run: unit "${unitId}" 的 ${role} 连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次 spawn TIMEOUT` +
     "（期间无该 unit 的任何账本进展）——停止自动重派，转人工处理（canon：不自动换模型重试，" +
@@ -827,6 +854,29 @@ function checkWorkspaceForDispatch(cwd: string, hasInFlight: boolean): void {
 }
 
 
+/**
+ * R1（D2）：run 启动时项目 HEAD 一次性快照——本轮全部 unit 的 worktree 同 base
+ * （兄弟并行、集成兜底一致性；run 期间项目 cwd 无人 commit，快照恒定）。
+ * 非 git 仓库 / 无 HEAD → throw 可操作错误：git 是证据链硬依赖，fail-fast 优于
+ * 空转到 idle 超时。
+ */
+function snapshotHeadCommit(cwd: string): string {
+  const res = spawnSync("git", ["-C", cwd, "rev-parse", "HEAD"], {
+    encoding: "utf-8",
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
+  const head = (res.stdout ?? "").trim();
+  if (res.error !== undefined || res.status !== 0 || head === "") {
+    throw new Error(
+      `runLoop: 无法读取项目 HEAD（git -C ${cwd} rev-parse HEAD 失败：` +
+        `${res.error?.message ?? ((res.stderr ?? "").trim() || `exit ${String(res.status)}`)}）。` +
+        "恢复动作：cw 依赖 git 仓库（evidence/verify 均需），在项目仓库内运行 cw run，" +
+        "或先 git init + commit。",
+    );
+  }
+  return head;
+}
+
 function assertPositive(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(
@@ -857,6 +907,9 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
         `恢复动作：运行 cw status 查看全部 unit 确认 id，或 cw create --id ${opts.rootId} --brief <路径> 创建。`,
     );
   }
+
+  // R1：base 快照在 root 存在性检查之后、首个派发之前一次性取得（全部 unit 同 base）
+  const baseCommit = snapshotHeadCommit(opts.cwd);
 
   emit([
     `[runner] 循环启动：root=${opts.rootId} adapter=${opts.adapter.name} ` +
@@ -975,17 +1028,35 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
           ]);
         }
       }
-      const briefPath = writeBriefFile(opts.cwd, target, unit, projection);
+      // wt-2（D5 四格矩阵）：派发前确保 unit worktree 就绪；失败不炸循环——error 原文
+      // （含恢复指引）落 stderr，跳过该 unit 本轮派发（不 push inFlight），其余
+      // unit 继续；下轮重算重试，无人处理时由 maxIdle 兜底退出
+      const wtDir = worktreePath(getCwWorktreeHome(), opts.cwd, target.unitId);
+      const ensured = ensureUnitWorktree(
+        opts.cwd,
+        wtDir,
+        opts.rootId,
+        target.unitId,
+        baseCommit,
+      );
+      if (!ensured.ok) {
+        emitErr(
+          `[runner] unit "${target.unitId}" worktree 就绪失败，跳过本轮派发：${ensured.error}\n`,
+        );
+        continue;
+      }
+      const briefPath = writeBriefFile(wtDir, target, unit, projection, opts.rootId, opts.cwd);
       const handle = await opts.adapter.spawn({
         role: target.role,
         unitId: target.unitId,
-        workdir: opts.cwd,
+        workdir: wtDir,
+        projectCwd: opts.cwd,
         briefPath,
         timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
       });
       inFlight.push({ role: target.role, unitId: target.unitId, handle });
       emit([
-        `[runner] ${new Date().toISOString()} 派发 ${target.role} → unit "${target.unitId}"（brief: ${briefPath}）`,
+        `[runner] ${new Date().toISOString()} 派发 ${target.role} → unit "${target.unitId}"（worktree: ${wtDir}，brief: ${briefPath}）`,
       ]);
     }
 
@@ -1027,7 +1098,7 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
     } else if (Date.now() - lastProgressAt >= maxIdleMs) {
       killAll(inFlight);
       await emitExitOutput(
-        `${idleFailureMessage(opts.rootId, maxIdleMs, totalEvents)}\n`,
+        `${idleFailureMessage(opts.rootId, maxIdleMs, totalEvents, opts.cwd)}\n`,
         process.stderr,
       );
       return 1;

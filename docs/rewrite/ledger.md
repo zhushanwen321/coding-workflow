@@ -40,7 +40,7 @@
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | wt-1 | W1 worktree 基建（runner/worktree.ts + getCwWorktreeHome/worktreePath/resolveProjectDir + cli CW_PROJECT_DIR） | committed | c0f9f29 | verifier PASS（sha256 aa425af6…，报告 wt1-report.md，9/9 对抗抽查 + 真实性 4 点无空洞断言）。2 偏差裁决合理（B7 worktree list 用分支名断言——/var vs /private/var symlink 实测、语义等价；B4 加强文案断言）。297 全绿（282 既有 + 15 新增）。观察：git 2.52 worktree list 输出 [cw/<branch>] 注释形态依赖 |
-| wt-2 | W2 spawn 链路拆分（projectCwd 双传 + pi env 注入 + human 账本锚定 + brief/escalation 文案） | pending | — | 依赖 wt-1；行为切换点 |
+| wt-2 | W2 spawn 链路拆分（projectCwd 双传 + pi env 注入 + human 账本锚定 + brief/escalation 文案） | committed | 075c1e9 | 两轮交付（首版 + v2 审查返工 R-1~R-6）verifier 完整验收 PASS（sha256 de624b80…，报告 wt2-report.md：防篡改/四命令 310 全绿/真实性 5 点/对抗 6 条含空格路径全链路、双 unit 并行、在/亡格循环级）。3 披露全裁决通过（fx3 同锚适配、dist 竞态 3 连跑、reattach 无条件 prune 零字符串匹配）。分支双空间 + clean -e .cw-spawn + 四格矩阵 + 内联前缀 + 解析锚分离（R-5）落地。观察：ensure 失败 error 每轮重复输出（W3+ 去重）；T8/T9 未直测 reviewer role 前缀（cwCommand 统一，风险低） |
 | wt-3 | W3 reset 语义替换（删 checkWorkspaceForDispatch → worktree reset --hard + clean -fd） | pending | — | 依赖 wt-2 |
 | wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify checkout root 分支 HEAD；回收清单输出） | pending | — | 依赖 wt-2；与 wt-3 领地相交（loop.ts）串行 |
 | wt-5 | W5 测试迁移与终验（39 处 .cw-spawn 断言迁移 + 并发污染对抗测试 + canon P7 勾验 + 终验靶子重跑） | pending | — | 收口；依赖 wt-3 + wt-4 |
@@ -88,6 +88,8 @@
 - 2026-08-16 wt-1 committed：builder 交付 worktree.ts（add/reset/remove + unitBranchName，Outcome 模式）+ project.ts 三函数 + cli.ts CW_PROJECT_DIR 接线 + 15 测试（A1-A4/B1-B9/C1-C2 全覆盖）；verifier PASS（防篡改/四命令/真实性 4 点/对抗 9 条含假 baseCommit 零残留、路径逃逸拒绝、相对 env 报错可操作）。297 全绿。wt-2 验收基线备料。
 - 2026-08-16 wt-2 基线前勘误：设计文档 D2 引用的 SpecSubmitted.commit 字段实测不存在（types.ts:90-91 是 EvidenceSubmittedPayload.commit，时序也晚于 designer 派发）——base 口径修正为「runLoop 启动时项目 cwd HEAD 快照（run 内单次缓存）」，设计文档 D2/P-wt6/§5 已改；非 git 项目 runLoop 启动 fail-fast。波内边界调整：受影响既有断言随 W2 迁移（W5 只余对抗测试与终验）。wt-2 验收基线入 git，builder 派发。
 - 2026-08-16 设计 v2 对抗审查（tech-design rubric，报告 /tmp/design-review-worktree-v2.md）：方案本体成立；6 must-fix + 7 suggestion。主 agent 裁决：MF-1 文件解析锚定分离（CW_PROJECT_DIR 只锚账本与 git 操作，--file/--brief 解析锚 process.cwd——长期方案；模板改绝对路径为短期补丁弃用）；S3 aborted 终态不采纳（产品状态机无 aborted，系两层状态混淆）；其余 S 采纳。wt-2 交付按旧口径实现需返工（R-1~R-6，wt2-acceptance.md §11），验收基线重置随本 commit；设计 v3 修复与代码返工并行派发。
+- 2026-08-16 设计 v3 committed（db5e9c5）：6 MF + 7 S 全处置（S3 核实不采纳——events/types.ts 无 aborted）；修复 worker 清单外发现 §1.3 baseCommit 残留引用，主 agent 顺手修正随本 commit。
+- 2026-08-16 wt-2 committed（两轮交付 310 全绿）：首版（spawn 链路 worktree 拆分 + 11 文件断言迁移）+ 返工（R-1 分支双空间 cw-root/<rootId> 与 cw/<rootId>/<unitId>、R-2 clean -e .cw-spawn、R-3 ensureUnitWorktree 四格矩阵零字符串匹配、R-4 human 内联前缀+引号、R-5 resolveAgainstCwd 锚 process.cwd（三调用点统一 + fx3 同锚适配）、R-6 断言同步）。verifier PASS（对抗 6 条含含空格路径真实 shell 执行、双 unit 并行、真实 home 零污染）。wt-3 验收基线备料。
 
 ## 对抗审查修复（2026-08-16）
 

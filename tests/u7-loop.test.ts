@@ -44,6 +44,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "../dist/runner/spawn/types.js";
+import { worktreePath } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 const CLI_PATH = join(DIST_ROOT, "cli.js");
@@ -56,10 +57,14 @@ for (const required of [CLI_PATH, join(DIST_ROOT, "runner", "loop.js")]) {
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u7-loop-"));
 // 直调场景：测试进程与 worker 子进程共享同一 CW_HOME（worker 经 env 继承定位账本）
 process.env.CW_HOME = join(tmpRoot, "cw-home");
+// wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -135,6 +140,9 @@ interface SpawnRecord {
   role: AgentRole;
   unitId: string;
   briefPath: string;
+  /** wt-2 迁移：brief 在派发时刻的存在性与内容快照（后续重派的 clean -fd 会清 worktree 内上一轮 untracked 产物） */
+  briefExisted: boolean;
+  briefContent: string;
   at: number;
 }
 
@@ -161,14 +169,20 @@ function makeScriptAdapter(opts: {
         if (inFlightCount > peak) {
           peak = inFlightCount;
         }
-        records.push({ role: req.role, unitId: req.unitId, briefPath: req.briefPath, at: Date.now() });
+        // wt-2 迁移：派发时刻即断言 brief 已落盘（worktree 语义下重派 reset 会清上一轮产物，
+        // 循环结束后只有最后一轮的 brief 幸存——存在性必须在 spawn 时点捕获）
+        const briefExisted = existsSync(req.briefPath);
+        const briefContent = briefExisted ? readFileSync(req.briefPath, "utf-8") : "(missing)";
+        records.push({ role: req.role, unitId: req.unitId, briefPath: req.briefPath, briefExisted, briefContent, at: Date.now() });
         const handle = spawnProcess({
           command: process.execPath,
           args: [
             WORKER_PATH,
             req.role,
             req.unitId,
-            req.workdir,
+            // wt-2 迁移：worker 代表 agent 写账本——账本锚定经 projectCwd（等价于
+            // agent 的 cw 命令经 CW_PROJECT_DIR 锚定），workdir 只是工作区
+            req.projectCwd,
             opts.mode,
             String(opts.workMs),
             opts.commit,
@@ -320,6 +334,7 @@ describe("u7 验收#1 测试专用适配器：真实 node 进程 + dist EventLed
       role: "designer",
       unitId: "sanity",
       workdir: repoDir,
+      projectCwd: repoDir,
       briefPath: join(repoDir, "brief.md"),
       timeoutMs: 30_000,
     });
@@ -357,15 +372,23 @@ describe("u7 验收#2 单 unit 全链", () => {
     expect(statusOf(repoDir, "root")).toBe("closed");
     // 派发顺序：designer → builder → reviewer（同一 unit 状态机串行推进）
     expect(script.spawned().map((r) => r.role)).toEqual(["designer", "builder", "reviewer"]);
-    // 循环六步之 2：每次派发的 brief 落盘 <workdir>/.cw-spawn/<unitId>.<role>.brief.md
+    // 循环六步之 2：每次派发的 brief 落盘 <worktree>/.cw-spawn/<unitId>.<role>.brief.md
+    //（wt-2 迁移：workdir = worktreePath(WT_HOME, repoDir, unitId)；存在性在派发时点断言——
+    // 同 unit 换角色重派时 ensure 的 clean -fd 会清上一轮 untracked 产物）
     for (const record of script.spawned()) {
-      const briefPath = join(repoDir, ".cw-spawn", `${record.unitId}.${record.role}.brief.md`);
-      expect(existsSync(briefPath)).toBe(true);
+      expect(record.briefExisted, `${record.role} 的 brief 应在派发时点已落盘`).toBe(true);
+      expect(record.briefPath).toBe(
+        join(
+          worktreePath(WT_HOME, repoDir, record.unitId),
+          ".cw-spawn",
+          `${record.unitId}.${record.role}.brief.md`,
+        ),
+      );
     }
-    const designerBrief = readFileSync(
-      join(repoDir, ".cw-spawn", "root.designer.brief.md"),
-      "utf-8",
-    );
+    const designerBrief = script
+      .spawned()
+      .filter((r) => r.role === "designer")
+      .map((r) => r.briefContent)[0] ?? "(missing)";
     expect(designerBrief).toContain('designer 任务书：unit "root"');
     expect(designerBrief).toContain("原始任务书内容");
     expect(designerBrief).toContain("# u7 fixture 任务书");
@@ -431,7 +454,11 @@ describe("u7 验收#4 空转超时", () => {
     expect(loadLedger(repoDir).projection.totalEvents).toBe(1);
     expect(statusOf(repoDir, "root")).toBe("created");
     // runLoop 退出路径 kill 了 in-flight worker：stdout 文件取 pid，真实进程表复核
-    const workerOut = readFileSync(join(repoDir, ".cw-spawn", "root.designer.stdout"), "utf-8");
+    //（wt-2 迁移：产物路径随派发 workdir 迁 unit worktree）
+    const workerOut = readFileSync(
+      join(worktreePath(WT_HOME, repoDir, "root"), ".cw-spawn", "root.designer.stdout"),
+      "utf-8",
+    );
     const pid = Number(/pid=(\d+)/.exec(workerOut)?.[1]);
     expect(pid).toBeGreaterThan(0);
     expect(await waitPidGone(pid, 5_000)).toBe(true);
@@ -506,7 +533,8 @@ describe("修复回归：killAll 兜底清理是 best-effort（kill 异常不炸
       spawn: async (req: AgentSpawnRequest): Promise<SpawnHandle> => {
         const handle = spawnProcess({
           command: process.execPath,
-          args: [STALE_WORKER_PATH, req.unitId, req.workdir, head],
+          // wt-2 迁移：worker 写账本锚定 projectCwd（workdir 仅工作区）
+          args: [STALE_WORKER_PATH, req.unitId, req.projectCwd, head],
           cwd: req.workdir,
           timeoutMs: req.timeoutMs,
           stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),

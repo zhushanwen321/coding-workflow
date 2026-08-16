@@ -42,6 +42,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "../dist/runner/spawn/types.js";
+import { worktreePath } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 for (const required of [join(DIST_ROOT, "runner", "loop.js")]) {
@@ -53,10 +54,14 @@ for (const required of [join(DIST_ROOT, "runner", "loop.js")]) {
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u7b-loop-"));
 // 直调场景：测试进程与副作用同进程共享 CW_HOME（stepped adapter 在本进程写账本）
 process.env.CW_HOME = join(tmpRoot, "cw-home");
+// wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -239,7 +244,10 @@ describe("连续 TIMEOUT 转人工", () => {
     expect(captured.err).toContain('unit "root" 的 designer 连续 2 次 spawn TIMEOUT');
     expect(captured.err).toContain("转人工");
     expect(captured.err).toContain("cw run --root root --spawn human");
-    expect(captured.err).toContain(join(repoDir, ".cw-spawn", "root.designer.stdout"));
+    // wt-2 迁移：转人工指引的产物路径随派发 workdir 迁 unit worktree
+    expect(captured.err).toContain(
+      join(worktreePath(WT_HOME, repoDir, "root"), ".cw-spawn", "root.designer.stdout"),
+    );
     // 收束汇总：列出转人工清单
     expect(captured.err).toContain("转人工 unit 共 1 个");
     expect(captured.err).toContain("- root");
@@ -254,7 +262,7 @@ describe("连续 TIMEOUT 转人工", () => {
       {
         // 第 2 次：agent 被 kill 前已写 spec+过审（TIMEOUT 但有产出）→ 不累计
         exitCode: "TIMEOUT",
-        onSpawn: (req) => advanceStep(req.workdir, req.unitId, "designer", ""),
+        onSpawn: (req) => advanceStep(req.projectCwd, req.unitId, "designer", ""),
       },
       { exitCode: "TIMEOUT" }, // 清零后第 1 次（builder）
       { exitCode: "TIMEOUT" }, // 清零后第 2 次（builder）→ 转人工
@@ -292,7 +300,7 @@ describe("连续 TIMEOUT 转人工", () => {
         if (req.unitId === "leaf-a") {
           return handleOf(req, "TIMEOUT");
         }
-        advanceStep(req.workdir, req.unitId, req.role, head);
+        advanceStep(req.projectCwd, req.unitId, req.role, head);
         return handleOf(req, 0);
       },
     };
@@ -313,39 +321,43 @@ describe("连续 TIMEOUT 转人工", () => {
   }, 60_000);
 });
 
-// ---- 2. 重派前 tracked 脏改动清理 ----
+// ---- 2. 重派前 worktree 清理（wt-2 迁移：清理对象随派发 workdir 迁 unit worktree） ----
 
 describe("重派前 tracked 半成品清理", () => {
-  it("失败 builder 留下 tracked 脏改动 → 下轮无 in-flight 派发前 git reset --hard；untracked 文件不动", async () => {
+  it("失败 builder 在 unit worktree 留下 tracked 脏改 + untracked 产物 → 重派前被 ensure reset 清净（porcelain 为空）；项目 cwd 的用户 untracked 文件不受影响", async () => {
     const { repoDir, head } = makeRepo("reset-dirty");
-    // 预置 untracked 文件（用户/认知外文件——reset 不得动它）
+    // 项目 cwd 预置 untracked 文件（用户/认知外文件——任何清理都不得动它）
     writeFileSync(join(repoDir, "user-notes.txt"), "user's own file");
     appendUnitCreated(repoDir, "root", null);
     appendSpecFrozen(repoDir, "root"); // 直接 spec-frozen → 派 builder
 
+    const wtDir = worktreePath(WT_HOME, repoDir, "root");
     let porcelainAtSecondSpawn = "(not captured)";
     const script = makeSteppedAdapter([
       {
-        // 失败 builder：改 tracked 文件（brief.md）不提交 → 留下未提交半成品，exit 1
+        // 失败 builder：在 unit worktree 改 tracked 文件（brief.md）不提交 + 留
+        // untracked 构建产物，exit 1（wt-2 起 agent 的半成品只落在自己的 worktree）
         exitCode: 1,
         onSpawn: (req) => {
           const brief = join(req.workdir, "brief.md");
           writeFileSync(brief, `${readFileSync(brief, "utf-8")}\n<!-- half-done builder output -->`);
+          writeFileSync(join(req.workdir, "build-artifact.tmp"), "half-done");
         },
       },
       {
-        // 重派 builder：此刻工作区应已被 loop 的派发前清理 reset 干净——捕获证据
+        // 重派 builder：此刻 worktree 应已被派发点 ensure 的 reset --hard + clean -fd
+        // 清净（wt-2 精确语义：tracked 脏改与 untracked 一并清，D4）——捕获证据
         exitCode: 0,
         onSpawn: (req) => {
           porcelainAtSecondSpawn = spawnSync("git", ["-C", req.workdir, "status", "--porcelain"], {
             encoding: "utf-8",
           }).stdout ?? "";
-          advanceStep(req.workdir, req.unitId, "builder", head);
+          advanceStep(req.projectCwd, req.unitId, "builder", head);
         },
       },
       {
         exitCode: 0,
-        onSpawn: (req) => advanceStep(req.workdir, req.unitId, "reviewer", ""),
+        onSpawn: (req) => advanceStep(req.projectCwd, req.unitId, "reviewer", ""),
       },
     ]);
 
@@ -355,16 +367,19 @@ describe("重派前 tracked 半成品清理", () => {
 
     expect(captured.code).toBe(0);
     expect(statusOf(repoDir, "root")).toBe("closed");
-    // 清理动作有日志（出声）
-    expect(captured.out).toContain("git reset --hard HEAD");
-    // 第二次 spawn（即 reset 之后）时工作区 tracked 已干净：porcelain 只剩 untracked 行
-    const trackedLines = porcelainAtSecondSpawn
+    // 第二次 spawn（即 ensure reset 之后）时 worktree 全净：tracked 脏改与 untracked
+    // 产物均清；唯一残迹是 ensure 之后 loop 自己写入的 .cw-spawn/ brief（cw 产物，非半成品）
+    const nonCwLines = porcelainAtSecondSpawn
       .split("\n")
-      .filter((line) => line !== "" && !line.startsWith("??"));
-    expect(trackedLines).toEqual([]);
-    expect(porcelainAtSecondSpawn).toContain("?? user-notes.txt"); // untracked 可见
-    // untracked 文件 reset 后仍然存在且内容不变（安全断言）
+      .filter((line) => line !== "" && !line.includes(".cw-spawn"));
+    expect(nonCwLines).toEqual([]);
+    // 半成品确实被清掉（文件本体消失，不是 porcelain 误报）
+    expect(existsSync(join(wtDir, "build-artifact.tmp"))).toBe(false);
+    // 项目 cwd 的用户 untracked 文件不受任何清理影响（安全断言：worktree 隔离后
+    // builder 半成品不再污染项目 cwd，用户文件更不会被 clean 波及）
     expect(existsSync(join(repoDir, "user-notes.txt"))).toBe(true);
     expect(readFileSync(join(repoDir, "user-notes.txt"), "utf-8")).toBe("user's own file");
+    // 重派真实发生（worktree 路径出现在派发日志行）
+    expect(captured.out).toContain(`派发 builder → unit "root"（worktree: ${wtDir}`);
   }, 30_000);
 });

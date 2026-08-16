@@ -37,6 +37,9 @@ const maybeIt = existsSync(HUMAN_ADAPTER_DIST) ? it : it.todo;
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u5b-e2e-"));
 const cwHome = join(tmpRoot, "cw-home");
+// wt-2 迁移：run 走 runLoop（派发 workdir 迁 unit worktree），隔离 worktree 根
+//（runner 子进程与 runCli 均经 {...process.env} 继承）
+process.env.CW_WORKTREE_HOME = join(tmpRoot, "cw-worktrees");
 
 /** runner 轮询间隔与各等待的统一超时上限 */
 const RUNNER_POLL_MS = 300;
@@ -79,6 +82,10 @@ function initRepo(repoDir: string): void {
   gitRun(repoDir, ["init"]);
   gitRun(repoDir, ["config", "user.email", "cw-e2e@example.com"]);
   gitRun(repoDir, ["config", "user.name", "cw-e2e"]);
+  // wt-2 迁移（R1 行为前提）：runLoop 启动即取项目 HEAD 快照——需至少一个 commit
+  writeFileSync(join(repoDir, "fixture.txt"), "u5b-e2e fixture\n");
+  gitRun(repoDir, ["add", "-A"]);
+  gitRun(repoDir, ["commit", "-m", "fixture: base"]);
 }
 
 /** 「人」真实调 CLI（同步子进程，与 runner 共享 cwd + CW_HOME 账本） */

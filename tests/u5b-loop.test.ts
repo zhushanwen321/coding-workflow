@@ -7,7 +7,8 @@
  *
  * 用例编号「验收N」对应 docs/rewrite/acceptance/u5b-acceptance.md「单测验收」第 1/2/3 组。
  */
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +30,9 @@ import { ledgerPath } from "../src/store/project.js";
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u5b-loop-"));
 const cwHome = join(tmpRoot, "home");
 const originalCwHome = process.env.CW_HOME;
+// wt-2 迁移：run 走 runLoop（派发 workdir 迁 unit worktree），隔离 worktree 根
+const originalWtHome = process.env.CW_WORKTREE_HOME;
+process.env.CW_WORKTREE_HOME = join(tmpRoot, "cw-worktrees");
 
 afterAll(() => {
   if (originalCwHome === undefined) {
@@ -36,8 +40,21 @@ afterAll(() => {
   } else {
     process.env.CW_HOME = originalCwHome;
   }
+  if (originalWtHome === undefined) {
+    delete process.env.CW_WORKTREE_HOME;
+  } else {
+    process.env.CW_WORKTREE_HOME = originalWtHome;
+  }
   rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+function gitRun(dir: string, args: readonly string[]): string {
+  const res = spawnSync("git", ["-C", dir, ...args], { encoding: "utf-8" });
+  if (res.status !== 0) {
+    throw new Error(`git -C ${dir} ${args.join(" ")} 失败: ${res.stderr}`);
+  }
+  return (res.stdout ?? "").trim();
+}
 
 /** 每个 it 独立 cwd → 独立账本，互不串扰 */
 let caseNo = 0;
@@ -49,6 +66,14 @@ beforeEach(() => {
   caseNo += 1;
   cwd = join(tmpRoot, `case-${caseNo}`);
   mkdirSync(cwd, { recursive: true });
+  // wt-2 迁移（R1 行为前提）：run 走 runLoop，启动即取项目 HEAD 快照——每 case
+  // 需真实 git 仓库（init + 一个 commit）
+  gitRun(cwd, ["init"]);
+  gitRun(cwd, ["config", "user.email", "cw-u5b@example.com"]);
+  gitRun(cwd, ["config", "user.name", "cw-u5b"]);
+  writeFileSync(join(cwd, "fixture.txt"), "u5b fixture\n");
+  gitRun(cwd, ["add", "-A"]);
+  gitRun(cwd, ["commit", "-m", "fixture: case base"]);
   ledger = new EventLedger(ledgerPath(cwHome, cwd));
 });
 

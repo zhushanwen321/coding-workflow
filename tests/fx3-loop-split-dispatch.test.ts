@@ -46,6 +46,7 @@ import type {
   AgentSpawnRequest,
   SpawnHandle,
 } from "../dist/runner/spawn/types.js";
+import { worktreePath } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 if (!existsSync(join(DIST_ROOT, "runner", "loop.js"))) {
@@ -55,10 +56,14 @@ if (!existsSync(join(DIST_ROOT, "runner", "loop.js"))) {
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-fx3-loop-"));
 // 测试进程与 worker 子进程共享同一 CW_HOME（worker 经 env 继承定位账本）
 process.env.CW_HOME = join(tmpRoot, "cw-home");
+// wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -120,11 +125,13 @@ if (mode === "idle") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   if (unit === undefined) throw new Error("fx3-worker: unit " + unitId + " 不在账本");
   if (unit.specs.length === 0) {
-    // 首派：root 且无子 → 执行 brief 第 0 步（fx-3 R5.2）：先建子后提 spec
+    // 首派：root 且无子 → 执行 brief 第 0 步（fx-3 R5.2）：先建子后提 spec。
+    // 文件写入锚 process.cwd()（worker 的执行目录 = worktree）：cw 命令的相对
+    // --file/--brief 跟随执行目录解析（wt-2 R-5），写入与解析必须同锚
     if (unitId === ROOT_ID) {
       for (const leafId of LEAF_IDS) {
         const briefName = "brief-" + leafId + ".md";
-        writeFileSync(joinDir(cwd, briefName), "# " + leafId + " 子任务书（占位）\\n");
+        writeFileSync(joinDir(process.cwd(), briefName), "# " + leafId + " 子任务书（占位）\\n");
         await run(["create", "--id", leafId, "--brief", briefName, "--parent", ROOT_ID]);
       }
     }
@@ -133,7 +140,7 @@ if (mode === "idle") {
       : [];
     const specName = "spec-" + unitId + ".json";
     writeFileSync(
-      joinDir(cwd, specName),
+      joinDir(process.cwd(), specName),
       JSON.stringify({ acceptance: ACCEPTANCE, contracts: [], split }, null, 2),
     );
     await run(["evidence", "submit", "--kind", "spec", "--unit", unitId, "--file", specName]);
@@ -171,20 +178,37 @@ interface SpawnRecord {
   unitId: string;
 }
 
+/** wt-2 迁移：派发时刻的 brief 内容快照（同 unit 换角色重派时 clean -fd 清上一轮 untracked 产物） */
+interface BriefSnapshot {
+  role: AgentRole;
+  unitId: string;
+  content: string;
+}
+
 function makeScriptAdapter(opts: { mode: "idle" | "work"; commit: string }): {
   adapter: AgentSpawnAdapter;
   spawned(): readonly SpawnRecord[];
+  briefs(): readonly BriefSnapshot[];
 } {
   const records: SpawnRecord[] = [];
+  const briefSnapshots: BriefSnapshot[] = [];
   return {
     adapter: {
       name: "fx3-test-script",
       spawn: (req: AgentSpawnRequest): Promise<SpawnHandle> => {
         records.push({ role: req.role, unitId: req.unitId });
+        // wt-2 迁移：内容断言在派发时点取快照（循环结束后早轮 brief 已被后续重派的 reset 清掉）
+        briefSnapshots.push({
+          role: req.role,
+          unitId: req.unitId,
+          content: existsSync(req.briefPath) ? readFileSync(req.briefPath, "utf-8") : "(missing)",
+        });
         return Promise.resolve(
           spawnProcess({
             command: process.execPath,
-            args: [WORKER_PATH, req.role, req.unitId, req.workdir, opts.mode, opts.commit, req.briefPath],
+            // wt-2 迁移：worker 的 cw 命令（dispatch）与文件写入锚定 projectCwd
+            // （等价 agent 的 CW_PROJECT_DIR 锚定；workdir 仅工作区）
+            args: [WORKER_PATH, req.role, req.unitId, req.projectCwd, opts.mode, opts.commit, req.briefPath],
             cwd: req.workdir,
             timeoutMs: req.timeoutMs,
             stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
@@ -194,6 +218,7 @@ function makeScriptAdapter(opts: { mode: "idle" | "work"; commit: string }): {
       },
     },
     spawned: () => records,
+    briefs: () => briefSnapshots,
   };
 }
 
@@ -299,7 +324,11 @@ describe("fx-3 R5.2 回归3：root 无子 → designer brief 含第 0 步建子�
     // idle worker 不写账本 → maxIdle 兜底 exit 1（判定窗口内 brief 已落盘）
     expect(captured.code).toBe(1);
     expect(script.spawned()).toEqual([{ role: "designer", unitId: ROOT_ID }]);
-    const brief = readFileSync(join(repoDir, ".cw-spawn", `${ROOT_ID}.designer.brief.md`), "utf-8");
+    // wt-2 迁移：brief 落盘随派发 workdir 迁 unit worktree
+    const brief = readFileSync(
+      join(worktreePath(WT_HOME, repoDir, ROOT_ID), ".cw-spawn", `${ROOT_ID}.designer.brief.md`),
+      "utf-8",
+    );
     // 第 0 步指令化建子（验收文档锁定文案要素：根节点判定 + create 模板 + 占位 brief 许可）
     expect(brief).toContain("本 unit 是根节点且尚无子 unit");
     expect(brief).toContain(`cw create --id <slug> --brief <子brief文件> --parent ${ROOT_ID}`);
@@ -321,10 +350,17 @@ describe("fx-3 R5.2 回归3：root 无子 → designer brief 含第 0 步建子�
     );
 
     expect(captured.code).toBe(1);
-    const rootBrief = readFileSync(join(repoDir, ".cw-spawn", `${ROOT_ID}.designer.brief.md`), "utf-8");
+    // wt-2 迁移：brief 落盘随派发 workdir 迁各 unit 的 worktree
+    const rootBrief = readFileSync(
+      join(worktreePath(WT_HOME, repoDir, ROOT_ID), ".cw-spawn", `${ROOT_ID}.designer.brief.md`),
+      "utf-8",
+    );
     expect(rootBrief).not.toContain("本 unit 是根节点且尚无子 unit");
     // 叶子首派同样不含（第 0 步条件收窄到 root 无子）
-    const leafBrief = readFileSync(join(repoDir, ".cw-spawn", `${LEAF_IDS[0]}.designer.brief.md`), "utf-8");
+    const leafBrief = readFileSync(
+      join(worktreePath(WT_HOME, repoDir, LEAF_IDS[0]), ".cw-spawn", `${LEAF_IDS[0]}.designer.brief.md`),
+      "utf-8",
+    );
     expect(leafBrief).not.toContain("本 unit 是根节点且尚无子 unit");
   }, 30_000);
 });
@@ -355,7 +391,11 @@ describe("fx-3 R5.3 回归4：split 子未建 → 派 designer 补建；补建�
     // 可观测性：终验日志明确「为何派 designer」
     expect(captured.out).toContain("派 designer 补建子");
     expect(captured.out).toContain("2 个未创建");
-    const brief = readFileSync(join(repoDir, ".cw-spawn", `${ROOT_ID}.designer.brief.md`), "utf-8");
+    // wt-2 迁移：brief 落盘随派发 workdir 迁 unit worktree
+    const brief = readFileSync(
+      join(worktreePath(WT_HOME, repoDir, ROOT_ID), ".cw-spawn", `${ROOT_ID}.designer.brief.md`),
+      "utf-8",
+    );
     expect(brief).toContain("声明了 2 个子 unit 但 2 个未创建");
     expect(brief).toContain(`cw create --id ${LEAF_IDS[0]} --brief <文件> --parent ${ROOT_ID}`);
     expect(brief).toContain(`cw create --id ${LEAF_IDS[1]} --brief <文件> --parent ${ROOT_ID}`);
@@ -428,7 +468,12 @@ describe("fx-3 全链回归5：root 首派 → 建子 → R5.1 过审 → 子链
     expect(seqOf("UnitCreated", LEAF_IDS[1])).toBeLessThan(rootSpecSeq);
 
     // R5.2 现场证据：root 首派 designer 的 brief 落盘第 0 步
-    const rootBrief = readFileSync(join(repoDir, ".cw-spawn", `${ROOT_ID}.designer.brief.md`), "utf-8");
+    //（wt-2 迁移：内容在派发时点断言——root 后续 reviewer 派发的 reset 会清首派 brief）
+    const rootBrief =
+      script
+        .briefs()
+        .filter((b) => b.unitId === ROOT_ID && b.role === "designer")
+        .map((b) => b.content)[0] ?? "(missing)";
     expect(rootBrief).toContain("本 unit 是根节点且尚无子 unit");
 
     // root 的 build = 子树集成（u8）：VerifyRan 为集成产物且 pass

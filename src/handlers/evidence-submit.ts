@@ -96,11 +96,11 @@ function submitSpec(
       "cw evidence submit --kind spec: 缺少 --file <spec.json>。恢复动作：加 --file 指向 spec.json（结构 { acceptance, contracts, split }）。",
     );
   }
-  const fileAbs = resolveAgainstCwd(ctx.cwd, file);
+  const fileAbs = resolveAgainstCwd(file);
   const fileRead = readOrErrno(fileAbs);
   if (!fileRead.ok) {
     return fail(
-      `cw evidence submit --kind spec: spec 文件不可读（${file}，按 cwd "${ctx.cwd}" 解析为 ${fileAbs}）：${fileRead.errno}。恢复动作：确认路径正确且文件存在可读。`,
+      `cw evidence submit --kind spec: spec 文件不可读（${file}，按执行目录 "${process.cwd()}" 解析为 ${fileAbs}）：${fileRead.errno}。恢复动作：确认路径正确且文件存在可读。`,
     );
   }
   let parsed: unknown;
@@ -237,10 +237,10 @@ function submitBuild(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd
   const files = stringArrayArg(ctx.argv, "file");
   const hashes: string[] = [];
   for (const p of files) {
-    const fileRead = readOrErrno(resolveAgainstCwd(ctx.cwd, p));
+    const fileRead = readOrErrno(resolveAgainstCwd(p));
     if (!fileRead.ok) {
       return fail(
-        `cw evidence submit --kind build: 产物文件不可读（${p}，按 cwd "${ctx.cwd}" 解析）：${fileRead.errno}。恢复动作：确认路径存在可读后重试。`,
+        `cw evidence submit --kind build: 产物文件不可读（${p}，按执行目录 "${process.cwd()}" 解析）：${fileRead.errno}。恢复动作：确认路径存在可读后重试。`,
       );
     }
     hashes.push(sha256Hex(fileRead.raw));

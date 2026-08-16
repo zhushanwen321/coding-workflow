@@ -14,6 +14,8 @@ export interface AgentSpawnRequest {
   unitId: string;
   /** 独立 worktree 绝对路径 */
   workdir: string;
+  /** 项目仓库目录：账本定位与仓库操作的锚点（agent 的 cw 命令经 CW_PROJECT_DIR 锚定此处；与 workdir 分离见设计 D3） */
+  projectCwd: string;
   /** runner 生成的完整任务书（brief 文件路径，file-based 传递） */
   briefPath: string;
   /** 附加环境变量（如 CW_HOME 隔离） */

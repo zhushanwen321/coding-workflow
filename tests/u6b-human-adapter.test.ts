@@ -101,6 +101,8 @@ function spawnRequest(
     role,
     unitId,
     workdir: scenario.workdir,
+    // wt-2 迁移：u6b 场景的 workdir 即项目目录（无 worktree 拆分），账本锚定不变
+    projectCwd: scenario.workdir,
     briefPath: join(scenario.workdir, "brief.md"),
     env: { CW_HOME: cwHome },
     timeoutMs,
@@ -148,7 +150,7 @@ describe("u6b human 适配器", () => {
       // spawn 立即返回即产物就绪（human 无子进程，文件写入先于 handle 返回）
       await humanAdapter.spawn(spawnRequest(scenario, "instr", role, 60_000));
       const out = readFileSync(artifactPath(scenario, "instr", role, "stdout"), "utf8");
-      expect(out, `${role} 指令应含 workdir cd 命令`).toContain(`cd ${scenario.workdir}`);
+      expect(out, `${role} 指令应含 workdir cd 命令`).toContain(`cd "${scenario.workdir}"`);
       expect(out, `${role} 指令应含 briefPath 路径`).toContain(briefPath);
 
       const stderr = artifactPath(scenario, "instr", role, "stderr");

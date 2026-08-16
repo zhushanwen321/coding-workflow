@@ -48,6 +48,7 @@ import type {
   AgentSpawnRequest,
   SpawnHandle,
 } from "../dist/runner/spawn/types.js";
+import { worktreePath } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 if (!existsSync(join(DIST_ROOT, "runner", "loop.js"))) {
@@ -57,10 +58,14 @@ if (!existsSync(join(DIST_ROOT, "runner", "loop.js"))) {
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-fx2-int-"));
 // 测试进程与 worker 子进程共享同一 CW_HOME（worker 经 env 继承定位账本）
 process.env.CW_HOME = join(tmpRoot, "cw-home");
+// wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -167,7 +172,8 @@ function makeScriptAdapter(opts: { mode: "noop" | "contract-fix" }): {
         return Promise.resolve(
           spawnProcess({
             command: process.execPath,
-            args: [WORKER_PATH, req.role, req.unitId, req.workdir, opts.mode],
+            // wt-2 迁移：worker 写账本锚定 projectCwd（等价 agent 的 CW_PROJECT_DIR 锚定）
+            args: [WORKER_PATH, req.role, req.unitId, req.projectCwd, opts.mode],
             cwd: req.workdir,
             timeoutMs: req.timeoutMs,
             stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
@@ -375,7 +381,11 @@ describe("fx-2 R4a 回归2：连续 fail 2 次达上限 → 派 designer 处置�
     expect(captured.out).toContain("停止自动重派集成");
 
     // brief = 契约漂移处置任务书：契约清单（id + signature + 期望 file）+ 失败验收 + 二选一
-    const brief = readFileSync(join(repoDir, ".cw-spawn", `${ROOT_ID}.designer.brief.md`), "utf-8");
+    //（wt-2 迁移：brief 落盘随派发 workdir 迁 unit worktree）
+    const brief = readFileSync(
+      join(worktreePath(WT_HOME, repoDir, ROOT_ID), ".cw-spawn", `${ROOT_ID}.designer.brief.md`),
+      "utf-8",
+    );
     expect(brief).toContain("集成契约漂移处置");
     expect(brief).toContain("连续 fail 2 次");
     expect(brief).toContain("C1");

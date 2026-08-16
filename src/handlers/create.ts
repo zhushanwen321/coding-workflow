@@ -39,11 +39,11 @@ export async function handleCreate(ctx: CommandContext): Promise<number> {
       "cw create: 缺少 --brief <任务书路径>。恢复动作：cw create --id <slug> --brief <brief 路径>。",
     );
   }
-  const briefAbs = resolveAgainstCwd(ctx.cwd, brief);
+  const briefAbs = resolveAgainstCwd(brief);
   const briefRead = readOrErrno(briefAbs);
   if (!briefRead.ok) {
     return fail(
-      `cw create: brief 文件不可读（${brief}，按 cwd "${ctx.cwd}" 解析为 ${briefAbs}）：${briefRead.errno}。` +
+      `cw create: brief 文件不可读（${brief}，按执行目录 "${process.cwd()}" 解析为 ${briefAbs}）：${briefRead.errno}。` +
         "恢复动作：确认路径正确且文件存在可读；brief 内容原样不解析，空文件亦可。",
     );
   }

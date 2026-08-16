@@ -101,8 +101,10 @@ export function createPiAdapter(opts?: PiAdapterOptions): AgentSpawnAdapter {
           command,
           args,
           cwd: req.workdir,
-          // req.env 覆盖 process.env 子集的合并由 lifecycle 完成（适配器只透传）
-          env: req.env,
+          // req.env 覆盖 process.env 子集的合并由 lifecycle 完成（适配器只透传）；
+          // CW_PROJECT_DIR 在适配器层注入（D3）：agent 在 worktree 内执行 cw 命令时
+          // 锚定项目账本（覆盖外部环境可能残留的同名值）
+          env: { ...req.env, CW_PROJECT_DIR: req.projectCwd },
           // 默认 30min 由调用方给（types.ts 必填），本层不另设缺省
           timeoutMs: req.timeoutMs,
           stdoutPath,

@@ -53,6 +53,9 @@ if (!existsSync(CLI_PATH)) {
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u7-e2e-"));
 const cwHome = join(tmpRoot, "cw-home");
 process.env.CW_HOME = cwHome;
+// wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 /** 断言中途失败时防子进程泄漏 */
 const liveRunners = new Set<ChildProcess>();
@@ -65,6 +68,7 @@ afterAll(() => {
   }
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -92,6 +96,10 @@ function makeScenario(name: string): string {
   gitRun(dir, ["init"]);
   gitRun(dir, ["config", "user.email", "cw-u7e2e@example.com"]);
   gitRun(dir, ["config", "user.name", "cw-u7-e2e"]);
+  // wt-2 迁移（R1 行为前提）：runLoop 启动即取项目 HEAD 快照，至少需一个 commit
+  writeFileSync(join(dir, "brief.md"), "# u7-e2e fixture 任务书\n");
+  gitRun(dir, ["add", "-A"]);
+  gitRun(dir, ["commit", "-m", "fixture: brief"]);
   return dir;
 }
 
@@ -490,7 +498,8 @@ function makeParallelAdapter(commit: string, builderWorkMs: number): {
             PARALLEL_WORKER_PATH,
             req.role,
             req.unitId,
-            req.workdir,
+            // wt-2 迁移：worker 写账本锚定 projectCwd（等价 agent 的 CW_PROJECT_DIR 锚定）
+            req.projectCwd,
             String(builderWorkMs),
             commit,
             req.briefPath,

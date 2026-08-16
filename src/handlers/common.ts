@@ -23,9 +23,15 @@ export function ledgerForCwd(cwd: string): EventLedger {
   return new EventLedger(ledgerPath(getCwHome(), cwd));
 }
 
-/** 相对路径一律相对 ctx.cwd 解析（CLI 语义：cwd 是权威工作目录，而非 node 进程启动目录） */
-export function resolveAgainstCwd(cwd: string, p: string): string {
-  return isAbsolute(p) ? p : join(cwd, p);
+/**
+ * 相对路径相对执行者所在目录（process.cwd()）解析（wt-2 R-5 双锚分离：
+ * CW_PROJECT_DIR / ctx.cwd 只锚账本定位与 git 仓库操作；文件路径参数
+ * （--file / --brief）跟随执行者所在目录——agent 在 worktree 里执行
+ * `cw evidence submit --file spec.json` 时读 worktree 的 spec.json，账本
+ * 仍写项目 cwd。未设 CW_PROJECT_DIR 时两锚同值，既有行为不变）。
+ */
+export function resolveAgainstCwd(p: string): string {
+  return isAbsolute(p) ? p : join(process.cwd(), p);
 }
 
 /**

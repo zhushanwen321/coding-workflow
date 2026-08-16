@@ -18,8 +18,13 @@
  *   1. 入参 SequencedUnitProjection → AgentSpawnRequest（briefPath 由派发方显式
  *      传递，human-loop 从投影取 briefRef）；
  *   2. 去掉「当前 created，尚无 spec」等状态注记（本适配器不读账本状态）；
- *   3. 头部补 cd <workdir>（human-loop 的指令在其自身 cwd 语义下执行；spawn 派发
- *      的指令可能在任意终端执行，workdir 必须显式给出）。
+ *   3. 头部补 cd <workdir> 与每条 cw 命令的内联 CW_PROJECT_DIR="<projectCwd>"
+ *      前缀（human-loop 的指令在其自身 cwd 语义下执行；spawn 派发的指令可能在
+ *      任意终端执行，工作区与账本锚定都必须显式给出——wt-2 起 workdir 是 unit
+ *      worktree，cw 命令不带该前缀会定位到 worktree 编码下的空账本。用内联
+ *      前缀而非 export 行：export 一次性设环境依赖 shell 状态，换终端/重开会话
+ *      即失效，内联前缀每条命令自证锚定、无状态依赖——D3 口径）。
+ * 路径渲染规则：一律双引号包裹（POSIX/macOS 路径含 " 非法，不另设转义）。
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -72,25 +77,33 @@ function trustBoundaryLine(): string {
   return "[human] 信任边界：human 适配器无自动 reviewer——你自任 reviewer（human 模式的审查责任由人承担）";
 }
 
-/** role 定点操作步骤（蓝本与差异见文件头注释） */
+/**
+ * cw 命令的内联账本锚定前缀（D3）：人的 shell 没有 spawn 注入的 env，每条 cw
+ * 命令自带 CW_PROJECT_DIR 前缀——无 shell 状态依赖，换终端/重开会话不失效。
+ */
+function cwCommand(req: AgentSpawnRequest, args: string): string {
+  return `CW_PROJECT_DIR="${req.projectCwd}" cw ${args}`;
+}
+
+/** role 定点操作步骤（蓝本与差异见文件头注释；cw 命令一律带内联锚定前缀） */
 function roleStepLines(req: AgentSpawnRequest): string[] {
   switch (req.role) {
     case "designer":
       return [
         "[human]   1. 写 spec.json（字段契约见 src/events/types.ts；验收非空，core 用例须 e2e 级且带可执行 command）",
-        `[human]   2. cw evidence submit --kind spec --unit ${req.unitId} --file spec.json`,
-        `[human]   3. cw review submit --unit ${req.unitId} --verdict-kind spec-review --verdict pass`,
+        `[human]   2. ${cwCommand(req, `evidence submit --kind spec --unit ${req.unitId} --file spec.json`)}`,
+        `[human]   3. ${cwCommand(req, `review submit --unit ${req.unitId} --verdict-kind spec-review --verdict pass`)}`,
       ];
     case "builder":
       return [
         "[human]   1. 按 brief 完成实现并 git commit（取 hash：git rev-parse HEAD）",
-        `[human]   2. cw evidence submit --kind build --unit ${req.unitId} --commit <hash> --run-id <自拟唯一 runId> --file <产物路径>`,
-        `[human]   3. cw verify --unit ${req.unitId}`,
+        `[human]   2. ${cwCommand(req, `evidence submit --kind build --unit ${req.unitId} --commit <hash> --run-id <自拟唯一 runId> --file <产物路径>`)}`,
+        `[human]   3. ${cwCommand(req, `verify --unit ${req.unitId}`)}`,
       ];
     case "reviewer":
       return [
-        `[human]   1. 审查该 unit 的 spec / 实现 / 证据（可先 cw report --unit ${req.unitId}）`,
-        `[human]   2. cw review submit --unit ${req.unitId} --verdict-kind <spec-review|exec-review> --verdict <pass|fail>`,
+        `[human]   1. 审查该 unit 的 spec / 实现 / 证据（可先 ${cwCommand(req, `report --unit ${req.unitId}`)}）`,
+        `[human]   2. ${cwCommand(req, `review submit --unit ${req.unitId} --verdict-kind <spec-review|exec-review> --verdict <pass|fail>`)}`,
       ];
     default: {
       const _exhaustive: never = req.role;
@@ -99,27 +112,29 @@ function roleStepLines(req: AgentSpawnRequest): string[] {
   }
 }
 
-/** 指令清单全文：定位（cd/cat）+ role 步骤 + 信任边界 */
+/** 指令清单全文：定位（cd/账本锚定/cat）+ role 步骤 + 信任边界 */
 function renderInstructionLines(req: AgentSpawnRequest): string[] {
   return [
     `[human] ${req.role} 指令：unit "${req.unitId}"（human 适配器——无自动 agent，由人执行）`,
-    `[human]   cd ${req.workdir}`,
-    `[human]   cat ${req.briefPath}`,
+    `[human]   cd "${req.workdir}"`,
+    `[human]   cat "${req.briefPath}"`,
     ...roleStepLines(req),
     trustBoundaryLine(),
   ];
 }
 
 /**
- * 读 workdir 对应账本的全部事件（cwd 推导账本路径）。CW_HOME 优先取 req.env，
- * 空串视为未设置——与 getCwHome 的语义一致（env 隔离不经 process.env，无全局副作用）。
+ * 读项目账本（wt-2 D3：锚定 req.projectCwd 而非 req.workdir）的全部事件。
+ * CW_HOME 优先取 req.env，空串视为未设置——与 getCwHome 的语义一致（env 隔离
+ * 不经 process.env，无全局副作用）。workdir 是 unit worktree，其 cwd 编码下的
+ * 账本为空——轮询若读它将永远等不到完成信号（wt-2 必改点）。
  * 读取异常（损坏行等持久错误）返回空数组：本轮视为无进展继续轮询，不中止等待；
  * 持续无法读取最终由超时出口收敛（TIMEOUT 可重派）。
  */
 function readLedgerEvents(req: AgentSpawnRequest): LedgerEvent[] {
   const envHome = req.env?.CW_HOME;
   const cwHome = envHome !== undefined && envHome !== "" ? envHome : getCwHome();
-  const path = ledgerPath(cwHome, req.workdir);
+  const path = ledgerPath(cwHome, req.projectCwd);
   if (!existsSync(path)) {
     return [];
   }

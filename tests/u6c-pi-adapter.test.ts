@@ -41,6 +41,8 @@ function baseReq(overrides?: Partial<AgentSpawnRequest>): AgentSpawnRequest {
     role: "builder",
     unitId: "u6c-unit",
     workdir,
+    // wt-2 迁移：适配器直调场景的账本锚定（值 = 测试的项目 tmp 目录）
+    projectCwd: join(tmpRoot, "base-project"),
     briefPath: join(workdir, "brief.md"),
     timeoutMs: 1_800_000,
     ...overrides,

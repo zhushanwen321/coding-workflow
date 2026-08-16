@@ -12,7 +12,7 @@
  * 需先 `npm run build`（`npm test` 的 pretest 已含 build）。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,32 +128,34 @@ describe("A 组：路径与 env 解析", () => {
 // ── B 组：worktree 生命周期（runner/worktree.ts）──────────────
 
 describe("B 组：worktree 生命周期", () => {
-  it("B1 add 成功：目录存在，worktree 分支 = cw/<unitId>，主仓库分支指向 baseCommit", () => {
+  it("B1 add 成功：目录存在，worktree 分支 = cw/<rootId>/<unitId>，主仓库分支指向 baseCommit；分支双空间命名（root unit = cw-root/<rootId>）", () => {
     const { repoDir, head } = initRepo("b1-repo");
     const wt = join(tmpRoot, "wts", "b1");
-    expect(unitBranchName("u-b1")).toBe("cw/u-b1");
-    const res = addUnitWorktree(repoDir, wt, "u-b1", head);
+    // R-1 双空间：root unit（unitId === rootId）与子 unit 分属两棵 ref 树
+    expect(unitBranchName("r-b1", "r-b1")).toBe("cw-root/r-b1");
+    expect(unitBranchName("r-b1", "u-b1")).toBe("cw/r-b1/u-b1");
+    const res = addUnitWorktree(repoDir, wt, "r-b1", "u-b1", head);
     expect(res).toEqual({ ok: true });
     expect(existsSync(wt)).toBe(true);
-    expect(gitRun(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("cw/u-b1");
-    expect(gitRun(repoDir, ["rev-parse", "cw/u-b1"])).toBe(head);
+    expect(gitRun(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("cw/r-b1/u-b1");
+    expect(gitRun(repoDir, ["rev-parse", "cw/r-b1/u-b1"])).toBe(head);
   });
 
   it("B2 父目录多级缺失时 add 仍成功（recursive mkdir 生效）", () => {
     const { repoDir, head } = initRepo("b2-repo");
     const wt = join(tmpRoot, "deep-a", "b", "c", "wt-b2");
     expect(existsSync(join(tmpRoot, "deep-a"))).toBe(false);
-    const res = addUnitWorktree(repoDir, wt, "u-b2", head);
+    const res = addUnitWorktree(repoDir, wt, "r-b2", "u-b2", head);
     expect(res).toEqual({ ok: true });
     expect(existsSync(wt)).toBe(true);
   });
 
   it("B3 分支已存在时 add 失败：{ok:false}，error 含 already exists 原文与恢复动作", () => {
     const { repoDir, head } = initRepo("b3-repo");
-    expect(addUnitWorktree(repoDir, join(tmpRoot, "wts", "b3-first"), "u-b3", head)).toEqual({
+    expect(addUnitWorktree(repoDir, join(tmpRoot, "wts", "b3-first"), "r-b3", "u-b3", head)).toEqual({
       ok: true,
     });
-    const second = addUnitWorktree(repoDir, join(tmpRoot, "wts", "b3-second"), "u-b3", head);
+    const second = addUnitWorktree(repoDir, join(tmpRoot, "wts", "b3-second"), "r-b3", "u-b3", head);
     expect(second.ok).toBe(false);
     if (!second.ok) {
       expect(second.error).toContain("already exists");
@@ -161,41 +163,57 @@ describe("B 组：worktree 生命周期", () => {
     }
   });
 
-  it("B4 非法 unitId（../escape、UPPER、空串）：add 返回 error 且文件系统无新目录", () => {
+  it("B4 非法 unitId / rootId（../escape、UPPER、空串）：add 返回 error 且文件系统无新目录", () => {
     const { repoDir, head } = initRepo("b4-repo");
     // 全新父前缀：调用后不存在 = 连 mkdir 都未执行（零文件系统副作用）
     const absentRoot = join(tmpRoot, "wt-b4-should-not-exist");
     const badIds = ["../escape", "UPPER", ""];
     for (const bad of badIds) {
       const wt = join(absentRoot, bad === "" ? "empty" : bad.replace(/[/.]/g, "_"));
-      const res = addUnitWorktree(repoDir, wt, bad, head);
+      const res = addUnitWorktree(repoDir, wt, "r-b4", bad, head);
       expect(res.ok, `unitId "${bad}" 应被拒绝`).toBe(false);
       if (!res.ok) {
-        expect(res.error).toContain("非法 unit id");
+        expect(res.error).toContain("非法 id");
+      }
+      // rootId 参与分支名拼接，同样过 slug 白名单（R-1 后新增的注入面）
+      const resByRoot = addUnitWorktree(repoDir, join(absentRoot, "by-root"), bad, "u-b4", head);
+      expect(resByRoot.ok, `rootId "${bad}" 应被拒绝`).toBe(false);
+      if (!resByRoot.ok) {
+        expect(resByRoot.error).toContain("非法 id");
       }
     }
     expect(existsSync(absentRoot)).toBe(false);
   });
 
-  it("B5 reset 清 tracked 脏改与 untracked 文件/目录：porcelain 为空", () => {
+  it("B5 reset 清 tracked 脏改与 untracked 文件/目录、排除 .cw-spawn（porcelain 仅剩 .cw-spawn 行）", () => {
     const { repoDir, head } = initRepo("b5-repo");
     const wt = join(tmpRoot, "wts", "b5");
-    expect(addUnitWorktree(repoDir, wt, "u-b5", head)).toEqual({ ok: true });
+    expect(addUnitWorktree(repoDir, wt, "r-b5", "u-b5", head)).toEqual({ ok: true });
     writeFileSync(join(wt, "a.txt"), "dirty\n");
     writeFileSync(join(wt, "untracked.txt"), "new\n");
     mkdirSync(join(wt, "untracked-dir"), { recursive: true });
     writeFileSync(join(wt, "untracked-dir", "inner.txt"), "inner\n");
+    // .cw-spawn 产物（上一角色 stdout/brief——untracked）：clean -e 排除，不随 reset 丢失（R-2）
+    mkdirSync(join(wt, ".cw-spawn"), { recursive: true });
+    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.stdout"), "prev role stdout\n");
+    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.brief.md"), "prev role brief\n");
     expect(gitRun(wt, ["status", "--porcelain"])).not.toBe("");
     expect(resetWorktree(wt)).toEqual({ ok: true });
-    expect(gitRun(wt, ["status", "--porcelain"])).toBe("");
+    // porcelain 仅剩 .cw-spawn 的 untracked 行（半成品全清、产物留存）
+    const porcelain = gitRun(wt, ["status", "--porcelain"]);
+    expect(porcelain.split("\n").filter((line) => line !== "" && !line.includes(".cw-spawn"))).toEqual([]);
+    expect(porcelain).toContain(".cw-spawn");
     expect(existsSync(join(wt, "untracked.txt"))).toBe(false);
     expect(existsSync(join(wt, "untracked-dir"))).toBe(false);
+    expect(existsSync(join(wt, ".cw-spawn", "u-b5.builder.stdout"))).toBe(true);
+    expect(readFileSync(join(wt, ".cw-spawn", "u-b5.builder.brief.md"), "utf-8")).toContain("prev role brief");
+    expect(readFileSync(join(wt, "a.txt"), "utf-8")).toBe("a\n"); // tracked 脏改被 reset
   });
 
   it("B6 reset 保留已 commit 产出：文件仍在且 status 干净", () => {
     const { repoDir, head } = initRepo("b6-repo");
     const wt = join(tmpRoot, "wts", "b6");
-    expect(addUnitWorktree(repoDir, wt, "u-b6", head)).toEqual({ ok: true });
+    expect(addUnitWorktree(repoDir, wt, "r-b6", "u-b6", head)).toEqual({ ok: true });
     writeFileSync(join(wt, "committed.txt"), "kept\n");
     gitRun(wt, ["add", "-A"]);
     gitRun(wt, ["commit", "-m", "work"]);
@@ -207,19 +225,19 @@ describe("B 组：worktree 生命周期", () => {
   it("B7 remove --force 回收含脏文件的 worktree：目录消失且 worktree list 不再列出", () => {
     const { repoDir, head } = initRepo("b7-repo");
     const wt = join(tmpRoot, "wts", "b7");
-    expect(addUnitWorktree(repoDir, wt, "u-b7", head)).toEqual({ ok: true });
+    expect(addUnitWorktree(repoDir, wt, "r-b7", "u-b7", head)).toEqual({ ok: true });
     writeFileSync(join(wt, "dirty-leftover.txt"), "dirty\n");
     const res = removeWorktree(repoDir, wt);
     expect(res).toEqual({ ok: true });
     expect(existsSync(wt)).toBe(false);
     // 分支名不出现在列表 = 该 worktree 注册已移除（路径列因 /var 符号链接不做逐字节比对）
-    expect(gitRun(repoDir, ["worktree", "list"])).not.toContain("cw/u-b7");
+    expect(gitRun(repoDir, ["worktree", "list"])).not.toContain("cw/r-b7/u-b7");
   });
 
   it("B8 object store 共享（P-wt2）：worktree 内 commit 在主仓库 cat-file 为 commit", () => {
     const { repoDir, head } = initRepo("b8-repo");
     const wt = join(tmpRoot, "wts", "b8");
-    expect(addUnitWorktree(repoDir, wt, "u-b8", head)).toEqual({ ok: true });
+    expect(addUnitWorktree(repoDir, wt, "r-b8", "u-b8", head)).toEqual({ ok: true });
     writeFileSync(join(wt, "b8.txt"), "obj\n");
     gitRun(wt, ["add", "-A"]);
     gitRun(wt, ["commit", "-m", "wt-commit"]);
@@ -230,7 +248,7 @@ describe("B 组：worktree 生命周期", () => {
   it("B9 clone 携带 refs（P-wt3）：clone 主仓库后 hash 仍为 commit", () => {
     const { repoDir, head } = initRepo("b9-repo");
     const wt = join(tmpRoot, "wts", "b9");
-    expect(addUnitWorktree(repoDir, wt, "u-b9", head)).toEqual({ ok: true });
+    expect(addUnitWorktree(repoDir, wt, "r-b9", "u-b9", head)).toEqual({ ok: true });
     writeFileSync(join(wt, "b9.txt"), "ref\n");
     gitRun(wt, ["add", "-A"]);
     gitRun(wt, ["commit", "-m", "wt-commit"]);

@@ -63,10 +63,14 @@ for (const required of [CLI_PATH, join(DIST_ROOT, "runner", "loop.js")]) {
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u8-e2e-"));
 const cwHome = join(tmpRoot, "cw-home");
 process.env.CW_HOME = cwHome;
+// wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
+const WT_HOME = join(tmpRoot, "cw-worktrees");
+process.env.CW_WORKTREE_HOME = WT_HOME;
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.CW_HOME;
+  delete process.env.CW_WORKTREE_HOME;
 });
 
 function gitRun(repoDir: string, args: readonly string[]): string {
@@ -305,7 +309,8 @@ function makeReviewerAdapter(): { adapter: AgentSpawnAdapter; spawned(): readonl
         records.push({ role: req.role, unitId: req.unitId });
         return spawnProcess({
           command: process.execPath,
-          args: [WORKER_PATH, req.role, req.unitId, req.workdir],
+          // wt-2 迁移：worker 写账本锚定 projectCwd（等价 agent 的 CW_PROJECT_DIR 锚定）
+          args: [WORKER_PATH, req.role, req.unitId, req.projectCwd],
           cwd: req.workdir,
           timeoutMs: req.timeoutMs,
           stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
