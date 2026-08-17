@@ -78,11 +78,11 @@ export function buildPiCommand(
   };
 }
 
-/** 产物落盘约定（types.ts SpawnResult 注释同款）：<workdir>/.cw-spawn/<unitId>.<role>.stdout/.stderr */
+/** 产物落盘约定（types.ts SpawnResult 注释同款）：<artifactDir>/<unitId>.<role>.stdout/.stderr——fx-4 起产物根为 run 级 topic 目录（适配器只拼文件名，不感知 topic 布局；lifecycle 的 openSync "a" append 语义不变） */
 function artifactPaths(req: AgentSpawnRequest): { stdoutPath: string; stderrPath: string } {
   return {
-    stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-    stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+    stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+    stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
   };
 }
 

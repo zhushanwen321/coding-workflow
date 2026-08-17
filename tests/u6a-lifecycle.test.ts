@@ -29,11 +29,11 @@ afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-/** 产物路径按适配器的 .cw-spawn/ 约定拼（嵌套目录，验证模块自建） */
+/** 产物路径按适配器约定的 <artifactDir>/<unitId>.<role>.* 形态拼（嵌套目录，验证模块自建；fx-4 起产物根是 run 级 topic 目录，本模块只管传入路径） */
 function artifactPaths(name: string): Pick<SpawnProcessRequest, "stdoutPath" | "stderrPath"> {
   return {
-    stdoutPath: join(tmpRoot, name, ".cw-spawn", `${name}.stdout`),
-    stderrPath: join(tmpRoot, name, ".cw-spawn", `${name}.stderr`),
+    stdoutPath: join(tmpRoot, name, "topic", `${name}.stdout`),
+    stderrPath: join(tmpRoot, name, "topic", `${name}.stderr`),
   };
 }
 

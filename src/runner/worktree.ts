@@ -2,8 +2,13 @@
  * worktree 生命周期封装（design-worktree-isolation.md §3.3 D2/D4/D5、探针 P-wt1~P-wt6）。
  *
  * 每 unit 一个 git worktree（~/.cw-worktrees/<encoded-cwd>/<unitId>）+ 独立分支
- * （双空间命名：root unit = cw-root/<rootId>，子 unit = cw/<rootId>/<unitId>——
- * unitId 唯一性只在单个 root 子树内成立，命名空间防跨 root 并行撞分支）：独立
+ * （双空间命名：root unit = cw-root/<rootId>，子 unit = cw/<rootId>/<unitId>。
+ * unitId 唯一性是账本级——cw create 查同账本全集唯一（不分 root 子树），同项目
+ * 两个并行 run 的同名 unit 物理不可能并存；双空间命名的必要性是另两条：① ref 树
+ * 冲突隔离——git 的 ref 存储是文件路径树，refs/heads/cw/<rootId> 文件与
+ * refs/heads/cw/<rootId>/<unitId> 目录不能并存，root 分支若命名 cw/<rootId> 会
+ * 创建失败；② 归属排查——分支名携带 rootId，git branch 输出一眼归属到具体 run。
+ * 对齐 design-worktree-isolation.md v3 D2）：独立
  * 工作目录物理隔离并行 agent，共享 object store 让 worktree 内 commit 在主仓库
  * 立即可见（P-wt2），证据链免回传。
  *
@@ -25,9 +30,6 @@ const UNIT_BRANCH_PREFIX = "cw/";
 
 /** root unit 分支前缀 */
 const ROOT_BRANCH_PREFIX = "cw-root/";
-
-/** reset 时 clean 排除的产物目录（D4：.cw-spawn 下历次 stdout/stderr/brief 是 untracked，裸 clean -fd 会把换角色派发时上一角色的产物整个删掉） */
-const SPAWN_ARTIFACT_DIR = ".cw-spawn";
 
 /** unitId slug 规则（与 src/handlers/create.ts 的 SLUG_RE 同规则）：防路径逃逸与分支名注入 */
 const UNIT_ID_RE = /^[a-z][a-z0-9-]*$/;
@@ -90,9 +92,11 @@ export function addUnitWorktree(
 }
 
 /**
- * 派发前重置 unit worktree（D4 精确语义）：清未提交半成品（含 untracked），
- * 保留已 commit 产出与 .cw-spawn/ 产物（换角色派发时上一角色的 stdout/stderr/
- * brief 不随 reset 丢失，探针 P-wt8）。reset --hard 与 clean 任一失败即返回 error。
+ * 派发前重置 unit worktree（D4 裸形态，fx-4 纯化）：reset --hard + clean -fd 清
+ * 未提交半成品（含 untracked）。worktree 内不存在任何 cw 想保护的东西——过程产物
+ * （brief/stdout/stderr）已迁 run 级 topic 目录；agent 自建的 .cw-spawn 等目录是
+ * 普通 untracked，被清是正确语义（无任何 -e 例外条款）。reset --hard 与 clean
+ * 任一失败即返回 error。
  */
 export function resetWorktree(worktreeDir: string): WorktreeOutcome {
   const hard = git(["-C", worktreeDir, "reset", "--hard", "HEAD"]);
@@ -102,17 +106,17 @@ export function resetWorktree(worktreeDir: string): WorktreeOutcome {
       error:
         `git reset --hard HEAD 失败（worktree "${worktreeDir}"）：${hard}。` +
         `恢复动作：git -C ${worktreeDir} status 查看现场；确认目录归 cw 管理后手动 ` +
-        `git -C ${worktreeDir} reset --hard HEAD && git -C ${worktreeDir} clean -fd -e ${SPAWN_ARTIFACT_DIR}，重跑。`,
+        `git -C ${worktreeDir} reset --hard HEAD && git -C ${worktreeDir} clean -fd，重跑。`,
     };
   }
-  const clean = git(["-C", worktreeDir, "clean", "-fd", "-e", SPAWN_ARTIFACT_DIR]);
+  const clean = git(["-C", worktreeDir, "clean", "-fd"]);
   if (clean !== null) {
     return {
       ok: false,
       error:
-        `git clean -fd -e ${SPAWN_ARTIFACT_DIR} 失败（worktree "${worktreeDir}"，reset 已完成）：${clean}。` +
+        `git clean -fd 失败（worktree "${worktreeDir}"，reset 已完成）：${clean}。` +
         `恢复动作：git -C ${worktreeDir} clean -ndn 预览待删项；排除占用进程后手动 ` +
-        `git -C ${worktreeDir} clean -fd -e ${SPAWN_ARTIFACT_DIR}，重跑。`,
+        `git -C ${worktreeDir} clean -fd，重跑。`,
     };
   }
   return { ok: true };
@@ -122,7 +126,7 @@ export function resetWorktree(worktreeDir: string): WorktreeOutcome {
  * 派发前确保 unit worktree 就绪（D5 存在性检测矩阵——分支与目录两维独立检测，
  * 不依赖 git stderr 文案）：分支检测 `rev-parse --verify --quiet`、目录检测
  * existsSync。四格处置：
- *   - 目录在 + 分支在 → resetWorktree 复用（跨 run 常态，清半成品保留 commit 与产物）；
+ *   - 目录在 + 分支在 → resetWorktree 复用（跨 run 常态，清半成品保留已 commit 产出）；
  *   - 目录亡 + 分支在 → worktree add 挂既有分支（无 -b，中断重跑复用分支上已
  *     commit 的产出）；失败先 worktree prune（清 stale 注册）重试一次，仍败 → error；
  *   - 目录在 + 分支亡 → 异常态（人动过分支）→ error 指引 git worktree remove

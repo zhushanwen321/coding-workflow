@@ -25,6 +25,7 @@ import type {
 import { checkSpecRules } from "../gates/spec-rules.js";
 import { DuplicateEvidenceError } from "../store/events-log.js";
 import {
+  copyAttachmentToEvidence,
   fail,
   ledgerForCwd,
   readOrErrno,
@@ -196,6 +197,9 @@ function submitSpec(
   if (!result.ok) {
     return fail(result.message);
   }
+  // fx-4 D4：spec 原文副本入 evidence（此前只存账本 specHash，本体随 reset 丢失
+  // 即审计断点）；内容 hash 命名幂等，重复提交零增长
+  copyAttachmentToEvidence(ctx.cwd, unitId, fileAbs, fileRead.raw);
   return succeed(
     `unit "${unitId}" 的 spec 已入账（specHash ${payload.specHash}，seq ${result.envelope.seq}）。`,
   );
@@ -236,13 +240,16 @@ function submitBuild(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd
 
   const files = stringArrayArg(ctx.argv, "file");
   const hashes: string[] = [];
+  const fileContents: Array<{ abs: string; raw: Buffer }> = [];
   for (const p of files) {
-    const fileRead = readOrErrno(resolveAgainstCwd(p));
+    const abs = resolveAgainstCwd(p);
+    const fileRead = readOrErrno(abs);
     if (!fileRead.ok) {
       return fail(
         `cw evidence submit --kind build: 产物文件不可读（${p}，按执行目录 "${process.cwd()}" 解析）：${fileRead.errno}。恢复动作：确认路径存在可读后重试。`,
       );
     }
+    fileContents.push({ abs, raw: fileRead.raw });
     hashes.push(sha256Hex(fileRead.raw));
   }
 
@@ -258,11 +265,21 @@ function submitBuild(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd
   // DuplicateEvidenceError 转 exit 0 幂等成功，重试方收到的是确认而非错误
   try {
     const envelope = ledger.append("EvidenceSubmitted", payload);
+    // fx-4 D4：产物原文副本入 evidence（--file 不校验在 commit 树内，untracked
+    // 产物随 clean 丢失与 spec 同构断点——「build 本体必在 commit 树」不成立）
+    for (const content of fileContents) {
+      copyAttachmentToEvidence(ctx.cwd, unitId, content.abs, content.raw);
+    }
     return succeed(
       `unit "${unitId}" 的 build 证据已入账（runId ${runId}，产物 ${files.length} 个，seq ${envelope.seq}）。`,
     );
   } catch (e) {
     if (e instanceof DuplicateEvidenceError) {
+      // 幂等命中也补副本：copy 是内容寻址的 no-op（此前成功提交已写过同 hash
+      // 文件），但能兜住「上次 copy 失败、这次重试补齐」的恢复路径
+      for (const content of fileContents) {
+        copyAttachmentToEvidence(ctx.cwd, unitId, content.abs, content.raw);
+      }
       return succeed(
         `已入账（幂等命中）：unit "${unitId}" + runId "${runId}" 的 build 证据此前已入账，本次未重复记账。` +
           `核对：cw status --unit ${unitId}（evidences 列表）。`,

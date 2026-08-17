@@ -351,8 +351,9 @@ function makeContamAdapter(barrierDir: string): {
             args: [WORKER_PATH, req.role, req.unitId, req.projectCwd, barrierDir, peerUnitId, markerLine],
             cwd: req.workdir,
             timeoutMs: req.timeoutMs,
-            stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-            stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+            // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+            stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+            stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
           }),
         );
       },
@@ -362,7 +363,7 @@ function makeContamAdapter(barrierDir: string): {
   };
 }
 
-/** 项目 cwd 污染监视（C1「全程」断言的载体）：25ms 轮询 .cw-spawn/ 与 src/app.ts 原样性 */
+/** 项目 cwd 污染监视（C1「全程」断言的载体）：25ms 轮询 .cw-spawn/（fx-4 起更不该出现——产物已迁 topic）与 src/app.ts 原样性 */
 function startCwdPollutionWatch(repoDir: string): { stop(): string[] } {
   const violations: string[] = [];
   const appPath = join(repoDir, "src", "app.ts");
@@ -439,6 +440,9 @@ describe("wt5 C1 并发污染对抗（场景 1，G1）", () => {
     // 项目 cwd 全程零污染（25ms 轮询 + 终态复核）
     expect(pollution, "项目 cwd 污染监视记录").toEqual([]);
     expect(existsSync(join(repoDir, ".cw-spawn"))).toBe(false);
+    // fx-4：worktree 内也无 .cw-spawn（产物迁 run 级 topic 目录后，worktree 只承载
+    // agent 业务产出与 commit；root worktree 永不回收，终态必然可查）
+    expect(existsSync(join(worktreePath(WT_HOME, repoDir, ROOT_ID), ".cw-spawn"))).toBe(false);
     expect(readFileSync(join(repoDir, "src", "app.ts"), "utf-8")).toBe(BASE_APP_TS);
     expect(gitRun(repoDir, ["status", "--porcelain"])).toBe("");
 

@@ -42,8 +42,8 @@
  * 转人工指引（canon 语义：不自动换模型重试，防静默降级）；SPAWN_ERROR 配置错误
  * 不重试，kill 全部 in-flight 后 exit 1。无可派发且无 in-flight 且存在转人工
  * unit → 循环以 exit 1 收束并汇总转人工清单。
- * 半成品清理由派发点 ensureUnitWorktree（reset --hard + clean -fd -e .cw-spawn）
- * 承担；项目 cwd 属于用户，runner 不触碰。
+ * 半成品清理由派发点 ensureUnitWorktree（reset --hard + clean -fd，裸形态——
+ * worktree 内不存在任何 cw 想保护的东西）承担；项目 cwd 属于用户，runner 不触碰。
  *
  * worktree 语义（wt-2 起，docs/rewrite/design-worktree-isolation.md D1/D2/D3）：每个
  * 被派发 unit 在 <CW_WORKTREE_HOME>/<encoded-cwd>/<unitId> 的专属 git worktree
@@ -82,10 +82,10 @@ import {
 import { loadLedger, treeStatuses, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
 import {
-  encodeCwd,
   getCwHome,
   getCwWorktreeHome,
   ledgerPath,
+  topicDir,
   worktreePath,
 } from "../store/project.js";
 import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
@@ -629,20 +629,25 @@ function renderBrief(
   ].join("\n");
 }
 
-/** brief 落盘到 <worktreeDir>/.cw-spawn/<unitId>.<role>.brief.md（wt-2 起产物根随 workdir 迁 worktree） */
+/**
+ * brief 落盘到 <artifactDir>/<unitId>.<role>.brief.md（fx-4：产物根随 run 级 topic
+ * 目录，worktree 内不再有任何 cw 自身文件）。覆盖写语义不变——brief 内容随投影
+ * 变化，append 会拼接出多版本任务书（设计 D2）。
+ */
 function writeBriefFile(
-  worktreeDir: string,
+  artifactDir: string,
   target: DispatchTarget,
   unit: SequencedUnitProjection,
   projection: SequencedProjection,
   rootId: string,
   projectCwd: string,
+  workdir: string,
 ): string {
-  const path = join(worktreeDir, ".cw-spawn", `${target.unitId}.${target.role}.brief.md`);
-  mkdirSync(join(worktreeDir, ".cw-spawn"), { recursive: true });
+  const path = join(artifactDir, `${target.unitId}.${target.role}.brief.md`);
+  mkdirSync(artifactDir, { recursive: true });
   writeFileSync(
     path,
-    renderBrief(projection, unit, target.role, rootId, projectCwd, worktreeDir),
+    renderBrief(projection, unit, target.role, rootId, projectCwd, workdir),
   );
   return path;
 }
@@ -752,13 +757,12 @@ function sweepOrphanWorktrees(cwd: string, rootId: string): string[] {
   return reclaimed;
 }
 
-function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number, cwd: string): string {
-  // agent 产物随 wt-2 迁到各 unit 的 worktree（<CW_WORKTREE_HOME>/<encoded-cwd>/<unitId>/.cw-spawn/）
-  const spawnProbeDir = join(getCwWorktreeHome(), encodeCwd(cwd), "<unitId>", ".cw-spawn");
+function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number, artifactDir: string): string {
+  // 产物根随 fx-4 迁 run 级 topic 目录（stdout/stderr 按 <unitId>.<role>.* 落盘其下）
   return (
     `cw run: root "${rootId}" 超过 ${maxIdleMs}ms 无账本进展（totalEvents 停在 ${totalEvents}，` +
-    "被派发 agent 未产出任何事件）。恢复动作：查看各 unit 的 worktree（" +
-    `${spawnProbeDir}）下 agent 的 stdout / stderr 定位卡点，或 cw status 查看现状；` +
+    "被派发 agent 未产出任何事件）。恢复动作：查看本次 run 的 agent 输出（" +
+    `${artifactDir}/ 下各 <unitId>.<role>.stdout / .stderr）定位卡点，或 cw status 查看现状；` +
     `排除故障后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。`
   );
 }
@@ -814,19 +818,15 @@ interface TimeoutStreak {
  * spawn 超时是 src/runner/loop.ts 的固定常量（30min），cw run 无调大 flag——
  * 如实告知现状而非指向不存在的入口。
  */
-function escalationMessage(rootId: string, unitId: string, role: AgentRole, cwd: string): string {
-  // 产物根随 wt-2 迁 unit worktree（D3）：stdout/stderr 在 worktree 的 .cw-spawn/ 下
-  const stdoutPath = join(
-    worktreePath(getCwWorktreeHome(), cwd, unitId),
-    ".cw-spawn",
-    `${unitId}.${role}.stdout`,
-  );
+function escalationMessage(rootId: string, unitId: string, role: AgentRole, artifactDir: string): string {
+  // 产物根随 fx-4 迁 run 级 topic 目录（stdout/stderr append 累积本 run 历次输出）
+  const stdoutPath = join(artifactDir, `${unitId}.${role}.stdout`);
   return (
     `cw run: unit "${unitId}" 的 ${role} 连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次 spawn TIMEOUT` +
     "（期间无该 unit 的任何账本进展）——停止自动重派，转人工处理（canon：不自动换模型重试，" +
     "防静默降级；本循环继续处理其余 unit）。恢复动作（按序）：\n" +
     `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
-    `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（历次运行的完整输出）\n` +
+    `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（本次 run 的历次输出；跨 run 历史在 ~/.cw/topic/ 下按 runTs 目录可查）\n` +
     `  3. 若任务量确超单次 spawn 上限（${AGENT_SPAWN_TIMEOUT_MS / MS_PER_MINUTE}min 固定值，cw run 暂无调大入口）：` +
     "人工接手完成该 unit，或拆小任务另建 unit"
   );
@@ -905,6 +905,13 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   // wt-4 J3：启动孤儿清扫（HEAD 快照之后、首次派发之前）——跨 run 兜底回收
   // 已 closed / 账本不存在的 unit worktree；本 run root 的永不回收（回流载体）
   const reclaimedIds: string[] = [...sweepOrphanWorktrees(opts.cwd, opts.rootId)];
+
+  // fx-4：run 级 topic 目录——spawn 过程产物（brief/stdout/stderr）的归档根。
+  // 启动创建一次、全 run 复用：同 run 重派共用（stdout/stderr append 累积、brief
+  // 覆盖写）；跨 run（≥1 秒）自然新目录，同秒碰撞由 topicDir 的 -N 递增后缀消解。
+  // 产物落在 CW_HOME 内，worktree 从此只承载 agent 业务产出与 commit（纯化）
+  const artifactsDir = topicDir(getCwHome(), opts.cwd, opts.rootId);
+  mkdirSync(artifactsDir, { recursive: true });
 
   emit([
     `[runner] 循环启动：root=${opts.rootId} adapter=${opts.adapter.name} ` +
@@ -1002,7 +1009,7 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
     for (const [unitId, streak] of timeoutStreaks) {
       if (streak.count >= AGENT_TIMEOUT_ESCALATION_AFTER && !escalated.has(unitId)) {
         escalated.set(unitId, streak.role);
-        emitErr(escalationMessage(opts.rootId, unitId, streak.role, opts.cwd));
+        emitErr(escalationMessage(opts.rootId, unitId, streak.role, artifactsDir));
       }
     }
 
@@ -1071,12 +1078,13 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
         );
         continue;
       }
-      const briefPath = writeBriefFile(wtDir, target, unit, projection, opts.rootId, opts.cwd);
+      const briefPath = writeBriefFile(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir);
       const handle = await opts.adapter.spawn({
         role: target.role,
         unitId: target.unitId,
         workdir: wtDir,
         projectCwd: opts.cwd,
+        artifactDir: artifactsDir,
         briefPath,
         timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
       });
@@ -1124,7 +1132,7 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
     } else if (Date.now() - lastProgressAt >= maxIdleMs) {
       killAll(inFlight);
       await emitExitOutput(
-        `${idleFailureMessage(opts.rootId, maxIdleMs, totalEvents, opts.cwd)}\n`,
+        `${idleFailureMessage(opts.rootId, maxIdleMs, totalEvents, artifactsDir)}\n`,
         process.stderr,
       );
       return 1;

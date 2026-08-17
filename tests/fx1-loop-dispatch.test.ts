@@ -20,6 +20,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -42,7 +43,7 @@ import type {
   AgentSpawnRequest,
   SpawnHandle,
 } from "../dist/runner/spawn/types.js";
-import { worktreePath } from "../dist/store/project.js";
+import { encodeCwd } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 if (!existsSync(join(DIST_ROOT, "runner", "loop.js"))) {
@@ -55,6 +56,20 @@ process.env.CW_HOME = join(tmpRoot, "cw-home");
 // wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
 const WT_HOME = join(tmpRoot, "cw-worktrees");
 process.env.CW_WORKTREE_HOME = WT_HOME;
+
+/**
+ * fx-4：本 root 的 topic run 目录（<cwHome>/topic/<encoded>/<runTs>-<rootId>[-N]）。
+ * 单 run 场景下唯一（runLoop 启动建一次）；不唯一即抛（fixture 前置失败，非断言目标）。
+ */
+function findTopicDir(home: string, cwd: string, rootId: string): string {
+  const topicRoot = join(home, "topic", encodeCwd(cwd));
+  const entries = existsSync(topicRoot) ? readdirSync(topicRoot).sort() : [];
+  const hits = entries.filter((name) => name.endsWith(`-${rootId}`) || name.includes(`-${rootId}-`));
+  if (hits.length !== 1) {
+    throw new Error(`topic run 目录不唯一（rootId=${rootId}）：${hits.join(", ") || "(无)"}`);
+  }
+  return join(topicRoot, hits[0]!);
+}
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
@@ -161,8 +176,9 @@ function makeScriptAdapter(opts: { mode: "review" | "fix"; commit: string }): {
             args: [WORKER_PATH, req.role, req.unitId, req.projectCwd, opts.mode, opts.commit, req.briefPath],
             cwd: req.workdir,
             timeoutMs: req.timeoutMs,
-            stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-            stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+            // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+            stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+            stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
           }),
         );
       },
@@ -268,13 +284,13 @@ describe("fx-1 R1.3 loop 级：账本已有自引用 spec → 不死锁，正常
     expect(statusOf(repoDir, "selfref")).toBe("closed");
     expect(script.spawned().map((r) => r.role)).toEqual(["designer", "builder", "reviewer"]);
     // 补审任务书（而非「撰写 spec」任务书）落到 designer 手里
-    //（wt-2 迁移：brief 内容在派发时点断言；落盘路径 = worktreePath(WT_HOME, repoDir, unitId)/.cw-spawn/）
+    //（fx-4 迁移：brief 内容在派发时点断言；落盘路径 = run 级 topic 目录）
     const brief = script
       .spawned()
       .filter((r) => r.role === "designer")
       .map((r) => r.briefContent)[0] ?? "(missing)";
     expect(script.spawned().filter((r) => r.role === "designer")[0]?.briefPath).toBe(
-      join(worktreePath(WT_HOME, repoDir, "selfref"), ".cw-spawn", "selfref.designer.brief.md"),
+      join(findTopicDir(process.env.CW_HOME ?? "", repoDir, "selfref"), "selfref.designer.brief.md"),
     );
     expect(brief).toContain(
       "spec 已提交待审——请审查该 spec 并执行 cw review submit --verdict-kind spec-review --verdict pass|fail",
@@ -304,13 +320,13 @@ describe("fx-1 R2.2 loop 级：重提 spec 后无过审 → 派 designer 补审"
     expect(statusOf(repoDir, "u")).toBe("closed");
     // 断言 designer spawn 且恰一次（补审后不再重复派 designer）
     expect(script.spawned().map((r) => r.role)).toEqual(["designer", "builder", "reviewer"]);
-    //（wt-2 迁移：brief 内容在派发时点断言；落盘路径 = worktreePath(WT_HOME, repoDir, unitId)/.cw-spawn/）
+    //（fx-4 迁移：brief 内容在派发时点断言；落盘路径 = run 级 topic 目录）
     const brief = script
       .spawned()
       .filter((r) => r.role === "designer")
       .map((r) => r.briefContent)[0] ?? "(missing)";
     expect(script.spawned().filter((r) => r.role === "designer")[0]?.briefPath).toBe(
-      join(worktreePath(WT_HOME, repoDir, "u"), ".cw-spawn", "u.designer.brief.md"),
+      join(findTopicDir(process.env.CW_HOME ?? "", repoDir, "u"), "u.designer.brief.md"),
     );
     expect(brief).toContain(
       "spec 已提交待审——请审查该 spec 并执行 cw review submit --verdict-kind spec-review --verdict pass|fail",

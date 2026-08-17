@@ -78,17 +78,20 @@ function appendEventFromRealChild(
 
 interface Scenario {
   workdir: string;
+  /** fx-4：spawn 过程产物根（run 级 topic 目录的替身——适配器场景无 runLoop，测试自管） */
+  artifactDir: string;
   ledgerFile: string;
 }
 
 /** 独立场景：tmp workdir + 隔离 CW_HOME 下的独立账本（per-cwd 编码）+ UnitCreated 前置 */
 function makeScenario(name: string, unitId: string): Scenario {
   const workdir = join(tmpRoot, name);
+  const artifactDir = join(tmpRoot, `${name}-topic`);
   mkdirSync(workdir, { recursive: true });
   writeFileSync(join(workdir, "brief.md"), "# u6b 任务书 fixture\n");
   const ledger = new EventLedger(ledgerPath(cwHome, workdir));
   ledger.append("UnitCreated", { unitId, parentId: null, briefRef: "brief.md" });
-  return { workdir, ledgerFile: ledgerPath(cwHome, workdir) };
+  return { workdir, artifactDir, ledgerFile: ledgerPath(cwHome, workdir) };
 }
 
 function spawnRequest(
@@ -103,20 +106,21 @@ function spawnRequest(
     workdir: scenario.workdir,
     // wt-2 迁移：u6b 场景的 workdir 即项目目录（无 worktree 拆分），账本锚定不变
     projectCwd: scenario.workdir,
+    artifactDir: scenario.artifactDir,
     briefPath: join(scenario.workdir, "brief.md"),
     env: { CW_HOME: cwHome },
     timeoutMs,
   };
 }
 
-/** 产物路径（<workdir>/.cw-spawn/<unitId>.<role>.stdout|stderr 约定） */
+/** 产物路径（<artifactDir>/<unitId>.<role>.stdout|stderr 约定，fx-4 起产物根随 topic） */
 function artifactPath(
   scenario: Scenario,
   unitId: string,
   role: AgentRole,
   kind: "stdout" | "stderr",
 ): string {
-  return join(scenario.workdir, ".cw-spawn", `${unitId}.${role}.${kind}`);
+  return join(scenario.artifactDir, `${unitId}.${role}.${kind}`);
 }
 
 function specPayload(unitId: string): SpecSubmittedPayload {

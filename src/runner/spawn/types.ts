@@ -16,6 +16,14 @@ export interface AgentSpawnRequest {
   workdir: string;
   /** 项目仓库目录：账本定位与仓库操作的锚点（agent 的 cw 命令经 CW_PROJECT_DIR 锚定此处；与 workdir 分离见设计 D3） */
   projectCwd: string;
+  /**
+   * spawn 过程产物（brief/stdout/stderr）的落盘目录 = run 级 topic 目录
+   * （<CW_HOME>/topic/<encoded-cwd>/<runTs>-<rootId>，fx-4 起 worktree 只承载
+   * agent 业务产出与 commit，不再有任何 cw 自身文件）。适配器只在此目录下按
+   * <unitId>.<role>.stdout/.stderr 拼自己的文件名（append 语义），不感知 topic
+   * 全局布局——目录由 runner 显式传递并创建。
+   */
+  artifactDir: string;
   /** runner 生成的完整任务书（brief 文件路径，file-based 传递） */
   briefPath: string;
   /** 附加环境变量（如 CW_HOME 隔离） */
@@ -31,7 +39,7 @@ export interface AgentSpawnRequest {
  */
 export interface SpawnResult {
   exitCode: number | "TIMEOUT" | "CRASH" | "SPAWN_ERROR";
-  /** <workdir>/.cw-spawn/<unitId>.<role>.stdout（管道直写落盘，进证据链） */
+  /** <artifactDir>/<unitId>.<role>.stdout（管道直写落盘，进证据链；append 累积本次 run 的历次输出） */
   stdoutPath: string;
   stderrPath: string;
   pid: number;

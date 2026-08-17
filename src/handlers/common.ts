@@ -5,8 +5,8 @@
  * 命令语义（slug 规则、深度上限、gate 链）留在各自 handler，验收文档逐条可对。
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 
 import type { CommandContext } from "../dispatch.js";
 import type {
@@ -16,7 +16,7 @@ import type {
   EventType,
 } from "../events/types.js";
 import { EventLedger } from "../store/events-log.js";
-import { getCwHome, ledgerPath } from "../store/project.js";
+import { attachmentsDir, getCwHome, ledgerPath } from "../store/project.js";
 
 /** 按当前进程环境的 CW_HOME 语义定位 cwd 对应账本（project.ts 单一出处） */
 export function ledgerForCwd(cwd: string): EventLedger {
@@ -78,6 +78,35 @@ export function succeed(message: string): number {
 
 export function sha256Hex(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+/**
+ * 原文副本入 evidence（fx-4 设计 D4，三类提交一致布局）：
+ * evidence/<unitId>/attachments/<sha256(内容)>.<原文件名>。
+ * 内容 hash 命名天然幂等——同内容重复提交覆盖同路径，零增长；账本零变更
+ * （paths/specHash/briefRef 字段不动），副本是纯增量审计资产：原文可从
+ * attachments 重读，不依赖 commit 树可达或 worktree 存活（spec 本体 / untracked
+ * 产物 / designer 的 brief 文件都会随 reset/clean/reclaim 丢失）。
+ * 入账成功后调用；copy 失败不阻断命令成功（账本是权威），stderr 出声留恢复路径。
+ */
+export function copyAttachmentToEvidence(
+  cwd: string,
+  unitId: string,
+  absPath: string,
+  raw: Buffer,
+): void {
+  const dir = attachmentsDir(getCwHome(), cwd, unitId);
+  const dest = join(dir, `${sha256Hex(raw)}.${basename(absPath)}`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(dest, raw);
+  } catch (e) {
+    process.stderr.write(
+      `原文副本写入失败（目标 ${dest}，事件已入账不受影响）：` +
+        `${e instanceof Error ? e.message : String(e)}。` +
+        `恢复动作：确认目录可写后手工复制原文到该路径（文件名 = sha256(原文字节) + 原文件名）。\n`,
+    );
+  }
 }
 
 /** 读取文件原始字节；不可读时返回 errno code 供错误信息定位（ENOENT/EACCES/EISDIR…） */

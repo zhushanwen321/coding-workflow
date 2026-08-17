@@ -167,10 +167,11 @@ export const humanAdapter: AgentSpawnAdapter = {
   name: "human",
   async spawn(req: AgentSpawnRequest): Promise<SpawnHandle> {
     const startedAt = Date.now();
-    const stdoutPath = join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`);
-    const stderrPath = join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`);
+    // fx-4：产物根 = req.artifactDir（run 级 topic 目录），workdir 不再承载 cw 文件
+    const stdoutPath = join(req.artifactDir, `${req.unitId}.${req.role}.stdout`);
+    const stderrPath = join(req.artifactDir, `${req.unitId}.${req.role}.stderr`);
 
-    mkdirSync(join(req.workdir, ".cw-spawn"), { recursive: true });
+    mkdirSync(req.artifactDir, { recursive: true });
     const lines = renderInstructionLines(req);
     // append：同 unit+role 重派不覆盖前次指令（与 u6a lifecycle 的产物约定一致）
     writeFileSync(stdoutPath, `${lines.join("\n")}\n\n`, { flag: "a" });

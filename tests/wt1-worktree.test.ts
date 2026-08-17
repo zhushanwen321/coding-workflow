@@ -185,7 +185,7 @@ describe("B 组：worktree 生命周期", () => {
     expect(existsSync(absentRoot)).toBe(false);
   });
 
-  it("B5 reset 清 tracked 脏改与 untracked 文件/目录、排除 .cw-spawn（porcelain 仅剩 .cw-spawn 行）", () => {
+  it("B5 reset 清 tracked 脏改与 untracked 文件/目录，无任何例外条款（fx-4 语义反转：产物已迁 topic，worktree 内伪造的 .cw-spawn 一并被清、porcelain 归零）", () => {
     const { repoDir, head } = initRepo("b5-repo");
     const wt = join(tmpRoot, "wts", "b5");
     expect(addUnitWorktree(repoDir, wt, "r-b5", "u-b5", head)).toEqual({ ok: true });
@@ -193,20 +193,19 @@ describe("B 组：worktree 生命周期", () => {
     writeFileSync(join(wt, "untracked.txt"), "new\n");
     mkdirSync(join(wt, "untracked-dir"), { recursive: true });
     writeFileSync(join(wt, "untracked-dir", "inner.txt"), "inner\n");
-    // .cw-spawn 产物（上一角色 stdout/brief——untracked）：clean -e 排除，不随 reset 丢失（R-2）
+    // 手工伪造 .cw-spawn/x（模拟旧习惯 agent 自建）：产物已迁 run 级 topic 目录，
+    // worktree 内的它是普通 untracked——裸 clean -fd 清掉是正确语义（原 `-e .cw-spawn`
+    // 保留断言随 fx-4 纯化整体反转：worktree 内不存在 cw 想保护的东西）
     mkdirSync(join(wt, ".cw-spawn"), { recursive: true });
-    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.stdout"), "prev role stdout\n");
-    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.brief.md"), "prev role brief\n");
+    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.stdout"), "forged prev role stdout\n");
+    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.brief.md"), "forged prev role brief\n");
     expect(gitRun(wt, ["status", "--porcelain"])).not.toBe("");
     expect(resetWorktree(wt)).toEqual({ ok: true });
-    // porcelain 仅剩 .cw-spawn 的 untracked 行（半成品全清、产物留存）
-    const porcelain = gitRun(wt, ["status", "--porcelain"]);
-    expect(porcelain.split("\n").filter((line) => line !== "" && !line.includes(".cw-spawn"))).toEqual([]);
-    expect(porcelain).toContain(".cw-spawn");
+    // porcelain 全空：无 -e 例外条款，伪造目录一并被清
+    expect(gitRun(wt, ["status", "--porcelain"])).toBe("");
     expect(existsSync(join(wt, "untracked.txt"))).toBe(false);
     expect(existsSync(join(wt, "untracked-dir"))).toBe(false);
-    expect(existsSync(join(wt, ".cw-spawn", "u-b5.builder.stdout"))).toBe(true);
-    expect(readFileSync(join(wt, ".cw-spawn", "u-b5.builder.brief.md"), "utf-8")).toContain("prev role brief");
+    expect(existsSync(join(wt, ".cw-spawn"))).toBe(false);
     expect(readFileSync(join(wt, "a.txt"), "utf-8")).toBe("a\n"); // tracked 脏改被 reset
   });
 

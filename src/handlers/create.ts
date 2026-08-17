@@ -6,6 +6,7 @@
  */
 import type { CommandContext } from "../dispatch.js";
 import {
+  copyAttachmentToEvidence,
   fail,
   ledgerForCwd,
   readOrErrno,
@@ -80,6 +81,9 @@ export async function handleCreate(ctx: CommandContext): Promise<number> {
   if (!result.ok) {
     return fail(result.message);
   }
+  // fx-4 D4：unit 原始 brief 副本入 evidence——账本 briefRef 是路径引用，文件本体
+  // 是 designer 在父 worktree 写的 untracked、随 clean/reclaim 丢失留下死路径
+  copyAttachmentToEvidence(ctx.cwd, unitId, briefAbs, briefRead.raw);
   return succeed(
     `unit "${unitId}" 已创建${parentId !== null ? `（parent "${parentId}"）` : "（根）"}，seq ${result.envelope.seq}。`,
   );

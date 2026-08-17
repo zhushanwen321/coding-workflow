@@ -21,6 +21,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -44,7 +45,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "../dist/runner/spawn/types.js";
-import { worktreePath } from "../dist/store/project.js";
+import { encodeCwd } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 const CLI_PATH = join(DIST_ROOT, "cli.js");
@@ -68,6 +69,20 @@ afterAll(() => {
 });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * fx-4：本 root 的 topic run 目录（<cwHome>/topic/<encoded>/<runTs>-<rootId>[-N]）。
+ * 单 run 场景下唯一（runLoop 启动建一次）；不唯一即抛（fixture 前置失败，非断言目标）。
+ */
+function findTopicDir(home: string, cwd: string, rootId: string): string {
+  const topicRoot = join(home, "topic", encodeCwd(cwd));
+  const entries = existsSync(topicRoot) ? readdirSync(topicRoot).sort() : [];
+  const hits = entries.filter((name) => name.endsWith(`-${rootId}`) || name.includes(`-${rootId}-`));
+  if (hits.length !== 1) {
+    throw new Error(`topic run 目录不唯一（rootId=${rootId}）：${hits.join(", ") || "(无)"}`);
+  }
+  return join(topicRoot, hits[0]!);
+}
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ---- 测试专用 worker 脚本（真实 node 子进程；按 role 对账本真实写入） ----
@@ -190,8 +205,9 @@ function makeScriptAdapter(opts: {
           ],
           cwd: req.workdir,
           timeoutMs: req.timeoutMs,
-          stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-          stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+          // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+          stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+          stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
         });
         let decremented = false;
         return {
@@ -335,6 +351,7 @@ describe("u7 验收#1 测试专用适配器：真实 node 进程 + dist EventLed
       unitId: "sanity",
       workdir: repoDir,
       projectCwd: repoDir,
+      artifactDir: join(tmpRoot, "adapter-sanity-topic"),
       briefPath: join(repoDir, "brief.md"),
       timeoutMs: 30_000,
     });
@@ -372,15 +389,14 @@ describe("u7 验收#2 单 unit 全链", () => {
     expect(statusOf(repoDir, "root")).toBe("closed");
     // 派发顺序：designer → builder → reviewer（同一 unit 状态机串行推进）
     expect(script.spawned().map((r) => r.role)).toEqual(["designer", "builder", "reviewer"]);
-    // 循环六步之 2：每次派发的 brief 落盘 <worktree>/.cw-spawn/<unitId>.<role>.brief.md
-    //（wt-2 迁移：workdir = worktreePath(WT_HOME, repoDir, unitId)；存在性在派发时点断言——
-    // 同 unit 换角色重派时 ensure 的 clean -fd 会清上一轮 untracked 产物）
+    // 循环六步之 2：每次派发的 brief 落盘 run 级 topic 目录（fx-4：<cwHome>/topic/
+    // <encoded>/<runTs>-root/<unitId>.<role>.brief.md；存在性在派发时点断言——brief
+    // 覆盖写，同 unit 换角色重派只留最新版）
     for (const record of script.spawned()) {
       expect(record.briefExisted, `${record.role} 的 brief 应在派发时点已落盘`).toBe(true);
       expect(record.briefPath).toBe(
         join(
-          worktreePath(WT_HOME, repoDir, record.unitId),
-          ".cw-spawn",
+          findTopicDir(process.env.CW_HOME ?? "", repoDir, "root"),
           `${record.unitId}.${record.role}.brief.md`,
         ),
       );
@@ -454,9 +470,9 @@ describe("u7 验收#4 空转超时", () => {
     expect(loadLedger(repoDir).projection.totalEvents).toBe(1);
     expect(statusOf(repoDir, "root")).toBe("created");
     // runLoop 退出路径 kill 了 in-flight worker：stdout 文件取 pid，真实进程表复核
-    //（wt-2 迁移：产物路径随派发 workdir 迁 unit worktree）
+    //（fx-4 迁移：产物路径随派发迁 run 级 topic 目录）
     const workerOut = readFileSync(
-      join(worktreePath(WT_HOME, repoDir, "root"), ".cw-spawn", "root.designer.stdout"),
+      join(findTopicDir(process.env.CW_HOME ?? "", repoDir, "root"), "root.designer.stdout"),
       "utf-8",
     );
     const pid = Number(/pid=(\d+)/.exec(workerOut)?.[1]);
@@ -537,8 +553,9 @@ describe("修复回归：killAll 兜底清理是 best-effort（kill 异常不炸
           args: [STALE_WORKER_PATH, req.unitId, req.projectCwd, head],
           cwd: req.workdir,
           timeoutMs: req.timeoutMs,
-          stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-          stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+          // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+          stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+          stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
         });
         // 等真实 worker 退出（结果丢弃）：对 loop 的视角由下方永不结算的 wait 扮演
         await handle.wait();

@@ -16,6 +16,7 @@
  * 负担），编码后的旧目录留待人工清理。
  */
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -23,6 +24,10 @@ import { isAbsolute, join } from "node:path";
 const LEDGER_FILE_NAME = "events.log";
 /** 证据产物根目录名（账本只记元数据，产物本体落这里） */
 const EVIDENCE_DIR_NAME = "evidence";
+/** spawn 过程产物（brief/stdout/stderr）的项目层根目录名（fx-4，run 级 topic 目录在其下） */
+const TOPIC_DIR_NAME = "topic";
+/** 原文副本目录名（evidence/<unitId>/attachments/，fx-4 纯增量审计资产） */
+const ATTACHMENTS_DIR_NAME = "attachments";
 /** 防碰撞后缀长度（sha256 hex 前 8 位；64^8 组合，同前缀冲突概率可忽略） */
 const HASH_SUFFIX_LEN = 8;
 
@@ -68,6 +73,53 @@ export function evidenceDir(
   runId: string,
 ): string {
   return join(cwHome, encodeCwd(cwd), EVIDENCE_DIR_NAME, unitId, runId);
+}
+
+/**
+ * 原文副本目录（fx-4 设计 D4）：<cwHome>/<encoded-cwd>/evidence/<unitId>/attachments/。
+ * 与 <runId>/ 产物目录平级的纯增量布局（既有 evidence/<unitId>/<runId>/ 不变），
+ * 存放 spec / build --file / unit brief 三类提交的原文副本（文件名
+ * <sha256(内容)>.<原文件名>，内容寻址天然幂等）——账本零变更，原文可重读，
+ * 不依赖 commit 树可达或 worktree 存活。
+ */
+export function attachmentsDir(cwHome: string, cwd: string, unitId: string): string {
+  return join(cwHome, encodeCwd(cwd), EVIDENCE_DIR_NAME, unitId, ATTACHMENTS_DIR_NAME);
+}
+
+// ── topic 目录（design-topic-artifacts.md §3.3 D1，fx-4）─────────────────────
+
+/** runTs 的本地时间格式化：YYYYMMDD-HHmmss（秒级精度，人可读可排序） */
+const TS_TWO_DIGIT_WIDTH = 2;
+
+function formatRunTs(now: Date): string {
+  const pad = (n: number): string => String(n).padStart(TS_TWO_DIGIT_WIDTH, "0");
+  return (
+    `${String(now.getFullYear())}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  );
+}
+
+/**
+ * 本次 run 的 spawn 过程产物目录（topic）：
+ * <cwHome>/topic/<encodeCwd(projectCwd)>/<runTs>-<rootId>
+ *
+ * 一次 run 一个目录：同 run 重派沿用（stdout/stderr 的 append 语义在目录内累积）；
+ * 跨 run（≥1 秒）自然新目录。秒级碰撞策略（设计 D1）：runTs 精度为秒，同 rootId
+ * 先后两次 run 在同一秒内启动会拼出同名目录——创建前 existsSync 探测，已存在则
+ * 追加 -2/-3… 递增后缀直到唯一（确定性；同一 root 并行 runLoop 已被单进程口径
+ * 禁止，探测时无并发写者，无竞态窗口）。只探测不创建：目录由调用方（runLoop
+ * 启动）一次建立，本函数保持纯路径计算。位于 CW_HOME 内，测试隔离沿用 CW_HOME
+ * 覆盖，不新增 env。跨 run 历史按 runTs 目录名可查（永久保留，设计 D5）。
+ */
+export function topicDir(cwHome: string, projectCwd: string, rootId: string): string {
+  const runTs = formatRunTs(new Date());
+  const base = join(cwHome, TOPIC_DIR_NAME, encodeCwd(projectCwd), `${runTs}-${rootId}`);
+  for (let suffix = 1; ; suffix++) {
+    const candidate = suffix === 1 ? base : `${base}-${suffix}`;
+    if (!existsSync(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 // ── worktree 布局（design-worktree-isolation.md §3.3 D1/D3，W1 纯增量）──────

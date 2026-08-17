@@ -26,6 +26,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -48,7 +49,7 @@ import type {
   AgentSpawnRequest,
   SpawnHandle,
 } from "../dist/runner/spawn/types.js";
-import { worktreePath } from "../dist/store/project.js";
+import { encodeCwd } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 if (!existsSync(join(DIST_ROOT, "runner", "loop.js"))) {
@@ -61,6 +62,20 @@ process.env.CW_HOME = join(tmpRoot, "cw-home");
 // wt-2 迁移：派发 workdir 迁 unit worktree，隔离 worktree 根（与 CW_HOME 同款）
 const WT_HOME = join(tmpRoot, "cw-worktrees");
 process.env.CW_WORKTREE_HOME = WT_HOME;
+
+/**
+ * fx-4：本 root 的 topic run 目录（<cwHome>/topic/<encoded>/<runTs>-<rootId>[-N]）。
+ * 单 run 场景下唯一（runLoop 启动建一次）；不唯一即抛（fixture 前置失败，非断言目标）。
+ */
+function findTopicDir(home: string, cwd: string, rootId: string): string {
+  const topicRoot = join(home, "topic", encodeCwd(cwd));
+  const entries = existsSync(topicRoot) ? readdirSync(topicRoot).sort() : [];
+  const hits = entries.filter((name) => name.endsWith(`-${rootId}`) || name.includes(`-${rootId}-`));
+  if (hits.length !== 1) {
+    throw new Error(`topic run 目录不唯一（rootId=${rootId}）：${hits.join(", ") || "(无)"}`);
+  }
+  return join(topicRoot, hits[0]!);
+}
 
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
@@ -176,8 +191,9 @@ function makeScriptAdapter(opts: { mode: "noop" | "contract-fix" }): {
             args: [WORKER_PATH, req.role, req.unitId, req.projectCwd, opts.mode],
             cwd: req.workdir,
             timeoutMs: req.timeoutMs,
-            stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-            stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+            // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+            stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+            stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
           }),
         );
       },
@@ -381,9 +397,9 @@ describe("fx-2 R4a 回归2：连续 fail 2 次达上限 → 派 designer 处置�
     expect(captured.out).toContain("停止自动重派集成");
 
     // brief = 契约漂移处置任务书：契约清单（id + signature + 期望 file）+ 失败验收 + 二选一
-    //（wt-2 迁移：brief 落盘随派发 workdir 迁 unit worktree）
+    //（fx-4 迁移：brief 落盘在 run 级 topic 目录）
     const brief = readFileSync(
-      join(worktreePath(WT_HOME, repoDir, ROOT_ID), ".cw-spawn", `${ROOT_ID}.designer.brief.md`),
+      join(findTopicDir(process.env.CW_HOME ?? "", repoDir, ROOT_ID), `${ROOT_ID}.designer.brief.md`),
       "utf-8",
     );
     expect(brief).toContain("集成契约漂移处置");

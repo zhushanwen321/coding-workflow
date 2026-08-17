@@ -43,6 +43,8 @@ function baseReq(overrides?: Partial<AgentSpawnRequest>): AgentSpawnRequest {
     workdir,
     // wt-2 迁移：适配器直调场景的账本锚定（值 = 测试的项目 tmp 目录）
     projectCwd: join(tmpRoot, "base-project"),
+    // fx-4：产物根 = run 级 topic 目录（适配器直调场景由测试自管）
+    artifactDir: join(tmpRoot, "base-topic"),
     briefPath: join(workdir, "brief.md"),
     timeoutMs: 1_800_000,
     ...overrides,
@@ -106,8 +108,9 @@ describe("u6c pi 适配器：buildPiCommand 命令拼装与模型三级优先级
 });
 
 describe("u6c pi 适配器：env 合并透传（真实子进程观测）", () => {
-  it("req.env 变量出现在子进程 env；产物落 <workdir>/.cw-spawn/<unitId>.<role>.*", async () => {
+  it("req.env 变量出现在子进程 env；产物落 <artifactDir>/<unitId>.<role>.*", async () => {
     const workdir = join(tmpRoot, "env-merge-work");
+    const artifactDir = join(tmpRoot, "env-merge-topic");
     const briefPath = join(workdir, "brief.md");
     mkdirSync(workdir, { recursive: true });
     writeFileSync(briefPath, "env merge probe brief");
@@ -124,6 +127,7 @@ describe("u6c pi 适配器：env 合并透传（真实子进程观测）", () =>
       role: "reviewer",
       unitId: "u6c-env",
       workdir,
+      artifactDir,
       briefPath,
       timeoutMs: 30_000,
       env: { CW_U6C_PROBE: "transferred", PATH: `${binDir}:${process.env.PATH ?? ""}` },
@@ -131,9 +135,9 @@ describe("u6c pi 适配器：env 合并透传（真实子进程观测）", () =>
     const handle = await createPiAdapter().spawn(req);
     const result = await handle.wait();
     expect(result.exitCode).toBe(0);
-    expect(result.stdoutPath).toBe(join(workdir, ".cw-spawn", "u6c-env.reviewer.stdout"));
-    expect(result.stderrPath).toBe(join(workdir, ".cw-spawn", "u6c-env.reviewer.stderr"));
-    expect(readFileSync(result.stdoutPath, "utf8")).toContain("CW_U6C_PROBE=transferred");
+    expect(result.stdoutPath).toBe(join(artifactDir, "u6c-env.reviewer.stdout"));
+    expect(result.stderrPath).toBe(join(artifactDir, "u6c-env.reviewer.stderr"));
+    expect(readFileSync(result.stdoutPath, "utf-8")).toContain("CW_U6C_PROBE=transferred");
   });
 });
 
@@ -191,7 +195,9 @@ describe("u6c pi 适配器：SPAWN_ERROR 转译", () => {
     const result = await handle.wait();
     expect(result.exitCode).toBe("SPAWN_ERROR");
     expect(result.pid).toBe(-1);
-    expect(result.stdoutPath).toBe(join(workdir, ".cw-spawn", "u6c-unit.builder.stdout"));
-    expect(result.stderrPath).toBe(join(workdir, ".cw-spawn", "u6c-unit.builder.stderr"));
+    // fx-4：产物路径从 req.artifactDir 拼装（此处未建目录——SPAWN_ERROR 前置失败，
+    // 路径语义仍是契约的一部分）
+    expect(result.stdoutPath).toBe(join(tmpRoot, "base-topic", "u6c-unit.builder.stdout"));
+    expect(result.stderrPath).toBe(join(tmpRoot, "base-topic", "u6c-unit.builder.stderr"));
   });
 });

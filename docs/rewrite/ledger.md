@@ -44,7 +44,7 @@
 | wt-3 | W3 reset 语义替换（删 checkWorkspaceForDispatch → worktree reset --hard + clean -fd） | committed | e1a8b8f | verifier PASS（sha256 781430ae…，报告 wt3-report.md：纯删除证明 +2/-87 零逻辑新增、313 全绿、对抗 20/20 含项目 cwd tracked+untracked 跨 24 轮重派原样保留、SPAWN_ERROR 出口脏保留）。行为变化锁定：项目 cwd 不再被 runner 触碰（A1 防近似复活） |
 | wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify 三处锚 root 分支；孤儿清扫 + 延迟回收 + 回流指引） | committed | 917ac1e | verifier PASS（sha256 7bc77414…，报告 wt4-report.md：防篡改/321 全绿/M1-M8 真实性 5 点/对抗 8 条含冲突恢复闭环、跨 root 清扫、真实 home 零污染）。4 披露全接受（退出清尾回收、J3 排除本 rootId、branch -D 占用静默、u5b 形态适配经 A7 反证必要）。观察：真实链路首次集成分支残留常态（可达跳过 merge 即跳过 -D，无害设计权衡内） |
 | wt-5 | W5 测试迁移与终验（并发污染对抗测试 + canon P7 勾验 + 残余断言复核） | committed | 2a975d7 | verifier PASS（sha256 3f6ed093…，报告 wt5-report.md：323 全绿、真实性 4 点、对抗含混卷红性实证（共享 cwd 探针双标记同 commit）与 C2 反向隔离证明、C1 flake 3 连跑稳定）。C4 zero 残留（builder 自报 46 处与 verifier 实测 89 处口径差为清单条目数 vs grep 原始数，实质无差异）。canon P7 ⛔→✅（该文档被 gitignore，更新在磁盘）。终验靶子拆为 M3 gate |
-| fx-4 | spawn 产物收口 topic 目录（M3 终验观察①修复；worktree 纯化 + 三类原文副本入 evidence + 场景 4 反向断言补齐） | pending | 本 commit | 设计 design-topic-artifacts.md v1.1（P1-P4 用户拍板 + 对抗审查 3MF+7S 修复，fcd90d6→f301420）；单波承载 |
+| fx-4 | spawn 产物收口 topic 目录（M3 终验观察①修复；worktree 纯化 + 三类原文副本入 evidence + 场景 4 反向断言补齐） | committed | 0642d15 | verifier PASS（sha256 f2b31528…，报告 fx4-report.md：331 全绿、T1-T5 真实性 5 点、对抗 7 条含 482 轮重派 append/覆盖写铁证、真实 home 零污染）。4 披露全接受（common.ts 公共函数、91/88 计数口径、字面量 4 文件 tsc 无缺口三重验证、幂等分支补 copy）。minor 4 项不阻断（lifecycle 注释过时、escalation 硬编码路径、幂等 copy 探针补验、密集重派语义 u7 既有）。设计 design-topic-artifacts.md v1.1（f301420） |
 
 ## 里程碑 gate
 
@@ -99,6 +99,7 @@
 - 2026-08-16 wt-5 committed（323 全绿 = 321+2）：C1 并发污染对抗（ready-rendezvous 屏障实测重叠 430ms、账本 commit 的 git show diff 体互不含对方标记、项目 cwd 监视器全程零 violation、全链 root 集成 pass）+ C2 P7 场景（检出树三断言与 cwd 脏无关且脏保留）+ C4 zero 残留 + canon P7 勾验。verifier PASS（混卷红性 /tmp 实证：共享 cwd 下单 commit 含双标记——断言真有抓混卷能力）。M3 五 unit 全 committed，进入 M3 gate（终验靶子：真实 pi 全流程）。
 - 2026-08-17 M3 gate **PASS**（终验第 5 次，26min52s 零人工）：worktree 隔离全链在真实靶子成立，集成 merge 真实冲突经 R4a 处置出口首次现场闭环（设计检查点②验证）。L2-F3 worktree 隔离升级全部完成：设计 v3（两轮对抗审查）→ wt-1~wt-5 五 unit（297→323 绿）→ 终验 PASS。遗留：fx-4 候选（.cw-spawn 产物卷入 commit 的设计缺口）、u5b-e2e 既有 flaky 独立跟进。
 - 2026-08-17 收尾三线：① u5b-e2e flaky committed（8b1c1bf，根因 = 测试弱屏障撞 clean 窗口非产品缺陷，强屏障修复 + 探针 15/15 + 全量 5 连跑零红；铁证顺带坐实 fx-4 双害形态）；② 设计-实现偏离审查（报告 /tmp/design-impl-deviation.md）6 条全 minor——#2/#4/#5/#6 随 v3.1 勘误修正（fcd90d6），#1 反向断言与 #3 头注释挂 fx-4 波；③ 临时文件收口设计：全景盘点 → 讨论稿 → 用户拍板 P1-P4（topic 带 encoded 层/永久保留/spec 原文 copy/单波）→ 设计 v1（fcd90d6）→ 对抗审查 3MF+7S → v1.1（f301420：扁平布局/runTs -N 碰撞后缀/D4 扩三类副本）。fx-4 验收基线入 git，builder 派发。
+- 2026-08-17 fx-4 committed（331 全绿 = 323+8）：spawn 产物迁 `~/.cw/topic/<encoded-cwd>/<runTs>-<rootId>[-N]/`（AgentSpawnRequest.artifactDir 契约、brief 覆盖写/stdout append、同秒 -N 递增）；worktree 纯化（clean 裸化删 -e、头注释 v2 口径修正）；三类原文副本 `evidence/<unitId>/attachments/<sha256>.<name>`（spec/build --file/unit brief，内容寻址幂等）；场景 4 反向断言补齐（无前缀 cw create → 分裂账本目录实证）。verifier PASS（对抗 7 条含 482 轮重派极限：append 与覆盖写语义铁证）。真实 pi 全链复跑（设计场景 5）待跑。
 
 ## 对抗审查修复（2026-08-16）
 

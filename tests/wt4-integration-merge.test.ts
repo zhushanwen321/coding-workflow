@@ -343,7 +343,7 @@ describe("wt4 M2 merge 冲突：fail + abort 清现场 + 恢复指引", () => {
     // 恢复指引：root worktree 路径 + 内联前缀形态（人 cd 过去解决、cw 命令锚定项目账本）
     expect(joined).toContain(fx.rootWorktreeDir);
     expect(joined).toContain(`CW_PROJECT_DIR="${fx.repoDir}"`);
-    // 冲突现场已 abort：root worktree porcelain 干净（直调场景无 .cw-spawn 产物）
+    // 冲突现场已 abort：root worktree porcelain 干净（fx-4 起 spawn 产物在 topic 目录，worktree 内无 cw 文件）
     const porcelain = spawnSync("git", ["-C", fx.rootWorktreeDir, "status", "--porcelain"], {
       encoding: "utf-8",
     });
@@ -586,8 +586,9 @@ function makeProgressAdapter(unitAId: string, rootCommit: string): {
           wait: () =>
             Promise.resolve({
               exitCode: 0,
-              stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-              stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+              // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+              stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+              stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
               pid: -1,
             } satisfies SpawnResult),
           kill: () => {},

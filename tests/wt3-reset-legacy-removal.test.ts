@@ -5,8 +5,8 @@
  *   - A1 项目 cwd 不再被 reset：预置 tracked 脏改动跨重派轮次原样保留
  *     （锁死 W3 行为变化，防共享 cwd 近似 reset 复活）
  *   - A2 worktree 半成品清理仍生效（防删过头）：失败 builder 留在 worktree 的
- *     tracked 脏 + untracked 重派前被派发点 ensureUnitWorktree 清净
- *     （porcelain 除 ?? .cw-spawn/ 外为空，与 wt2 T3 同语义）
+ *     tracked 脏 + untracked（含手工伪造的 .cw-spawn）重派前被派发点
+ *     ensureUnitWorktree 清净（fx-4 起裸 clean -fd、porcelain 全空，与 wt2 T3 同语义）
  *   - A3 派发流程零回归：fake adapter 收敛 root closed（exit 0），输出无
  *     「派发前清理」字样（旧文案已随近似实现整体删除）
  *
@@ -193,8 +193,9 @@ function handleOf(req: AgentSpawnRequest, exitCode: SpawnResult["exitCode"]): Sp
   return {
     wait: async () => ({
       exitCode,
-      stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-      stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+      // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+      stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+      stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
       pid: -1,
     }),
     kill: () => {},
@@ -273,10 +274,10 @@ describe("wt3 A1 项目 cwd 不再被 reset", () => {
   }, 15_000);
 });
 
-// ---- A2：worktree 半成品清理仍生效（防删过头） ----
+// ---- A2：worktree 半成品清理仍生效（防删过头；fx-4 语义反转：无 -e 例外条款） ----
 
 describe("wt3 A2 worktree 半成品清理仍生效", () => {
-  it("失败 builder 在 unit worktree 留 tracked 脏改 + untracked 产物 → 重派 spawn 时 worktree porcelain 除 ?? .cw-spawn/ 外为空（派发点 ensureUnitWorktree 精确清理未被本次删除波及）", async () => {
+  it("失败 builder 在 unit worktree 留 tracked 脏改 + untracked 产物 + 伪造 .cw-spawn → 重派 spawn 时 worktree porcelain 全空（裸 clean -fd 无例外条款；伪造目录一并被清、topic 产物不在 worktree 所以无东西可保护）", async () => {
     const { repoDir } = initRepo("a2");
     appendUnitCreated(repoDir, "a2");
     appendSpecFrozen(repoDir, "a2");
@@ -285,16 +286,19 @@ describe("wt3 A2 worktree 半成品清理仍生效", () => {
     let porcelainAtRedispatch = "(not captured)";
     const script = makeSteppedAdapter([
       {
-        // 失败 builder：在自己的 worktree 留 tracked 脏改（brief.md）+ untracked 产物
+        // 失败 builder：在自己的 worktree 留 tracked 脏改（brief.md）+ untracked 产物 +
+        // 手工伪造 .cw-spawn/x（旧习惯 agent 自建——普通 untracked，被清是正确语义）
         exitCode: 1,
         onSpawn: (req) => {
           writeFileSync(join(req.workdir, "brief.md"), `${BRIEF_CONTENT}<!-- half-done -->`);
           writeFileSync(join(req.workdir, "half-done.tmp"), "half-done");
+          mkdirSync(join(req.workdir, ".cw-spawn"), { recursive: true });
+          writeFileSync(join(req.workdir, ".cw-spawn", "forged.txt"), "forged\n");
         },
       },
       {
-        // 重派：此刻派发点 ensure 的 reset --hard + clean -fd -e .cw-spawn 已清
-        // 半成品——捕获现场（仅首次）
+        // 重派：此刻派发点 ensure 的 reset --hard + clean -fd（fx-4 裸形态，无 -e）
+        // 已清半成品——捕获现场（仅首次）
         exitCode: 1,
         onSpawn: (req) => {
           if (porcelainAtRedispatch !== "(not captured)") {
@@ -312,16 +316,14 @@ describe("wt3 A2 worktree 半成品清理仍生效", () => {
 
     expect(captured.code).toBe(1);
     expect(script.calls.length).toBeGreaterThan(1); // 重派真实发生
-    // porcelain 除 ?? .cw-spawn/（loop 落盘的 brief 产物）外为空
-    const nonCwLines = porcelainAtRedispatch
-      .split("\n")
-      .filter((line) => line !== "" && !line.includes(".cw-spawn"));
-    expect(nonCwLines).toEqual([]);
+    // porcelain 全空：无 -e 例外条款，伪造的 .cw-spawn 一并被清
+    expect(porcelainAtRedispatch).toBe("");
     // 半成品确实被清掉（文件本体消失 / tracked 内容回滚，非 porcelain 误报）
     expect(existsSync(join(wtDir, "half-done.tmp"))).toBe(false);
+    expect(existsSync(join(wtDir, ".cw-spawn"))).toBe(false);
     expect(readFileSync(join(wtDir, "brief.md"), "utf-8")).toBe(BRIEF_CONTENT);
-    // D4 的 -e .cw-spawn 排除语义：cw 产物保留
-    expect(existsSync(join(wtDir, ".cw-spawn", "a2.builder.brief.md"))).toBe(true);
+    // cw 产物（历次派发的 brief）不在 worktree——在 run 级 topic 目录（fx-4 迁移）
+    expect(existsSync(join(wtDir, ".cw-spawn", "a2.builder.brief.md"))).toBe(false);
   }, 15_000);
 });
 

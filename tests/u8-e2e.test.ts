@@ -324,8 +324,9 @@ function makeReviewerAdapter(): { adapter: AgentSpawnAdapter; spawned(): readonl
           args: [WORKER_PATH, req.role, req.unitId, req.projectCwd],
           cwd: req.workdir,
           timeoutMs: req.timeoutMs,
-          stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-          stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+          // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+          stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+          stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
         });
       },
     },

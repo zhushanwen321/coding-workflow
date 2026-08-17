@@ -10,7 +10,7 @@
  *   2. TIMEOUT 间穿插账本进展 → 计数清零（「连续」语义）
  *   3. 多 unit：一个转人工后其余 unit 继续推进（循环不因单 unit 卡死）
  *   4. 失败 builder 的半成品 → 重派前由派发点 ensureUnitWorktree 清理
- *      （reset --hard + clean -fd -e .cw-spawn，wt-2 起清 unit worktree）；
+ *      （reset --hard + clean -fd 裸形态，wt-2 起清 unit worktree；fx-4 起无 -e 例外）；
  *      项目 cwd 属于用户，runner 不触碰（W3 已删共享 cwd 近似 reset）
  *
  * 注意：直接 `npx vitest run tests/u7b-loop-timeout-reset.test.ts` 不触发 pretest，
@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -43,7 +44,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "../dist/runner/spawn/types.js";
-import { worktreePath } from "../dist/store/project.js";
+import { encodeCwd, worktreePath } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 for (const required of [join(DIST_ROOT, "runner", "loop.js")]) {
@@ -66,6 +67,20 @@ afterAll(() => {
 });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/**
+ * fx-4：本 root 的 topic run 目录（<cwHome>/topic/<encoded>/<runTs>-<rootId>[-N]）。
+ * 单 run 场景下唯一（runLoop 启动建一次）；不唯一即抛（fixture 前置失败，非断言目标）。
+ */
+function findTopicDir(home: string, cwd: string, rootId: string): string {
+  const topicRoot = join(home, "topic", encodeCwd(cwd));
+  const entries = existsSync(topicRoot) ? readdirSync(topicRoot).sort() : [];
+  const hits = entries.filter((name) => name.endsWith(`-${rootId}`) || name.includes(`-${rootId}-`));
+  if (hits.length !== 1) {
+    throw new Error(`topic run 目录不唯一（rootId=${rootId}）：${hits.join(", ") || "(无)"}`);
+  }
+  return join(topicRoot, hits[0]!);
+}
 
 // ---- fixture 基建（真实 git repo + 真实账本直写） ----
 
@@ -197,8 +212,9 @@ function handleOf(req: AgentSpawnRequest, exitCode: SpawnResult["exitCode"]): Sp
   return {
     wait: async () => ({
       exitCode,
-      stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-      stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+      // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+      stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+      stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
       pid: -1,
     }),
     kill: () => {},
@@ -245,9 +261,9 @@ describe("连续 TIMEOUT 转人工", () => {
     expect(captured.err).toContain('unit "root" 的 designer 连续 2 次 spawn TIMEOUT');
     expect(captured.err).toContain("转人工");
     expect(captured.err).toContain("cw run --root root --spawn human");
-    // wt-2 迁移：转人工指引的产物路径随派发 workdir 迁 unit worktree
+    // fx-4 迁移：转人工指引的产物路径随派发迁 run 级 topic 目录
     expect(captured.err).toContain(
-      join(worktreePath(WT_HOME, repoDir, "root"), ".cw-spawn", "root.designer.stdout"),
+      join(findTopicDir(process.env.CW_HOME ?? "", repoDir, "root"), "root.designer.stdout"),
     );
     // 收束汇总：列出转人工清单
     expect(captured.err).toContain("转人工 unit 共 1 个");
@@ -369,11 +385,8 @@ describe("重派前 tracked 半成品清理", () => {
     expect(captured.code).toBe(0);
     expect(statusOf(repoDir, "root")).toBe("closed");
     // 第二次 spawn（即 ensure reset 之后）时 worktree 全净：tracked 脏改与 untracked
-    // 产物均清；唯一残迹是 ensure 之后 loop 自己写入的 .cw-spawn/ brief（cw 产物，非半成品）
-    const nonCwLines = porcelainAtSecondSpawn
-      .split("\n")
-      .filter((line) => line !== "" && !line.includes(".cw-spawn"));
-    expect(nonCwLines).toEqual([]);
+    // 产物均清；fx-4 后 brief 落 topic 目录，worktree 内无任何 cw 残迹（porcelain 归零）
+    expect(porcelainAtSecondSpawn).toBe("");
     // 半成品确实被清掉（文件本体消失，不是 porcelain 误报）
     expect(existsSync(join(wtDir, "build-artifact.tmp"))).toBe(false);
     // 项目 cwd 的用户 untracked 文件不受任何清理影响（安全断言：worktree 隔离后

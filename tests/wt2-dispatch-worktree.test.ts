@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -46,7 +47,7 @@ import type {
 } from "../dist/runner/spawn/types.js";
 import { addUnitWorktree, ensureUnitWorktree, removeWorktree } from "../dist/runner/worktree.js";
 import { EventLedger } from "../dist/store/events-log.js";
-import { ledgerPath, worktreePath } from "../dist/store/project.js";
+import { encodeCwd, ledgerPath, worktreePath } from "../dist/store/project.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 const CLI_PATH = join(DIST_ROOT, "cli.js");
@@ -69,6 +70,20 @@ afterAll(() => {
 });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * fx-4：本 root 的 topic run 目录（<cwHome>/topic/<encoded>/<runTs>-<rootId>[-N]）。
+ * 单 run 场景下唯一（runLoop 启动建一次）；不唯一即抛（fixture 前置失败，非断言目标）。
+ */
+function findTopicDir(home: string, cwd: string, rootId: string): string {
+  const topicRoot = join(home, "topic", encodeCwd(cwd));
+  const entries = existsSync(topicRoot) ? readdirSync(topicRoot).sort() : [];
+  const hits = entries.filter((name) => name.endsWith(`-${rootId}`) || name.includes(`-${rootId}-`));
+  if (hits.length !== 1) {
+    throw new Error(`topic run 目录不唯一（rootId=${rootId}）：${hits.join(", ") || "(无)"}`);
+  }
+  return join(topicRoot, hits[0]!);
+}
 
 /** T9 的 spec fixture（过 gate 全规则：core e2e-real 带 command + unit 级用例） */
 const SPEC_ACCEPTANCE = [
@@ -151,8 +166,9 @@ async function waitUntil(cond: () => boolean, timeoutMs = 10_000, label = "条�
 function resultOf(req: AgentSpawnRequest, exitCode: SpawnResult["exitCode"]): SpawnResult {
   return {
     exitCode,
-    stdoutPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stdout`),
-    stderrPath: join(req.workdir, ".cw-spawn", `${req.unitId}.${req.role}.stderr`),
+    // fx-4：产物路径从 req.artifactDir 拼装（run 级 topic 目录）
+    stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+    stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
     pid: -1,
   };
 }
@@ -258,29 +274,31 @@ describe("wt2 T1/T2 派发双传与 worktree 创建", () => {
 // ---- T3/T4：重派复用与 reset、中断重跑复用分支 ----
 
 describe("wt2 T3/T4 worktree 复用语义", () => {
-  it("T3 重派复用与 reset（D5「在/在」格）：同 unit 重派 worktree 目录不变；预置 tracked 脏改 + untracked 文件被清（.cw-spawn 产物保留）", async () => {
+  it("T3 重派复用与 reset（D5「在/在」格）：同 unit 重派 worktree 目录不变；预置 tracked 脏改 + untracked 文件 + 伪造 .cw-spawn 均被清（fx-4：无 -e 例外条款，porcelain 归零）", async () => {
     const { repoDir } = initRepo("t3");
     appendUnitCreated(repoDir, "t3", null);
     const wtDir = worktreePath(WT_HOME, repoDir, "t3");
     let porcelainAtSecondSpawn = "(not captured)";
-    let spawnArtifactKept = false;
 
     const script = makeSteppedAdapter([
       {
-        // 失败 designer：在 worktree 留 tracked 脏改（brief.md）+ untracked 产物
+        // 失败 designer：在 worktree 留 tracked 脏改（brief.md）+ untracked 产物 +
+        // 手工伪造 .cw-spawn/x（旧习惯 agent 自建——普通 untracked，被清是正确语义）
         exitCode: 1,
         onSpawn: (req) => {
           writeFileSync(join(req.workdir, "brief.md"), `${BRIEF_CONTENT}<!-- half-done -->`);
           writeFileSync(join(req.workdir, "build-artifact.tmp"), "half-done");
+          mkdirSync(join(req.workdir, ".cw-spawn"), { recursive: true });
+          writeFileSync(join(req.workdir, ".cw-spawn", "forged.txt"), "forged\n");
         },
       },
       {
-        // 重派：此刻 ensure 的 reset --hard + clean -fd -e .cw-spawn 已清半成品——捕获现场
+        // 重派：此刻 ensure 的 reset --hard + clean -fd（裸形态，无 -e 例外）已清
+        // 半成品——捕获现场
         exitCode: 1,
         onSpawn: (req) => {
           porcelainAtSecondSpawn =
             spawnSync("git", ["-C", req.workdir, "status", "--porcelain"], { encoding: "utf-8" }).stdout ?? "";
-          spawnArtifactKept = existsSync(join(req.workdir, ".cw-spawn", "t3.designer.brief.md"));
         },
       },
     ]);
@@ -295,17 +313,16 @@ describe("wt2 T3/T4 worktree 复用语义", () => {
     for (const req of script.calls()) {
       expect(req.workdir).toBe(wtDir);
     }
-    // 预置的 tracked 脏改与 untracked 产物均被清（porcelain 仅剩 ensure 之后 loop
-    // 自己写入的 .cw-spawn/ brief——cw 产物，非半成品）
-    const nonCwLines = porcelainAtSecondSpawn
-      .split("\n")
-      .filter((line) => line !== "" && !line.includes(".cw-spawn"));
-    expect(nonCwLines).toEqual([]);
+    // 预置的 tracked 脏改、untracked 产物、伪造 .cw-spawn 均被清（porcelain 全空，
+    // 无任何例外条款——fx-4 后 worktree 内不存在 cw 想保护的东西）
+    expect(porcelainAtSecondSpawn).toBe("");
     expect(existsSync(join(wtDir, "build-artifact.tmp"))).toBe(false);
+    expect(existsSync(join(wtDir, ".cw-spawn"))).toBe(false);
     expect(readFileSync(join(wtDir, "brief.md"), "utf-8")).toBe(BRIEF_CONTENT);
-    // 上一角色（首次派发）的 brief 产物在重派 reset 后仍在（R-2：clean 排除 .cw-spawn）
-    expect(spawnArtifactKept).toBe(true);
-    expect(existsSync(join(wtDir, ".cw-spawn", "t3.designer.brief.md"))).toBe(true);
+    // cw 产物（上一轮派发的 brief）不在 worktree——在 run 级 topic 目录（append 档案）
+    const topic = findTopicDir(cwHome, repoDir, "t3");
+    expect(existsSync(join(wtDir, ".cw-spawn", "t3.designer.brief.md"))).toBe(false);
+    expect(existsSync(join(topic, "t3.designer.brief.md"))).toBe(true);
   }, 15_000);
 
   it("T4 中断重跑复用分支（D5「亡/在」格 + stale 注册 prune 重试）：worktree 目录被删但分支残留与注册残留 → 重跑挂既有分支，已 commit 产出仍在", async () => {
@@ -410,7 +427,7 @@ describe("wt2 T5 ensure 失败跳过（R3）", () => {
 // ---- T6：brief 落盘与内容 ----
 
 describe("wt2 T6 brief 落盘与内容", () => {
-  it("briefPath 在 <wtDir>/.cw-spawn/ 下；内容含 worktree 路径行与 CW_PROJECT_DIR 说明行；项目 cwd 不再新增 .cw-spawn/", async () => {
+  it("briefPath 在 run 级 topic 目录下（<cwHome>/topic/<encoded>/<runTs>-t6/）；内容含 worktree 路径行与 CW_PROJECT_DIR 说明行；worktree 内无 .cw-spawn、项目 cwd 也无", async () => {
     const { repoDir } = initRepo("t6");
     appendUnitCreated(repoDir, "t6", null);
     const fake = makeHoldAdapter();
@@ -421,14 +438,18 @@ describe("wt2 T6 brief 落盘与内容", () => {
 
     expect(captured.code).toBe(1);
     const wtDir = worktreePath(WT_HOME, repoDir, "t6");
+    const topic = findTopicDir(cwHome, repoDir, "t6");
     const req = fake.calls()[0];
-    expect(req?.briefPath).toBe(join(wtDir, ".cw-spawn", "t6.designer.brief.md"));
+    expect(req?.briefPath).toBe(join(topic, "t6.designer.brief.md"));
     expect(existsSync(req?.briefPath ?? "")).toBe(true);
-    const brief = readFileSync(join(wtDir, ".cw-spawn", "t6.designer.brief.md"), "utf-8");
+    expect(req?.artifactDir).toBe(topic);
+    const brief = readFileSync(join(topic, "t6.designer.brief.md"), "utf-8");
     expect(brief).toContain(`workdir: ${wtDir}（unit 专属 git worktree，分支 cw-root/t6）`);
     expect(brief).toContain("CW_PROJECT_DIR 已注入 env");
     expect(brief).toContain(`自动锚定项目账本 ${repoDir}`);
-    // 项目 cwd 不再是产物落盘根
+    // fx-4：worktree 内不再是产物落盘根（.cw-spawn 不存在）
+    expect(existsSync(join(wtDir, ".cw-spawn"))).toBe(false);
+    // 项目 cwd 也不是产物落盘根（wt-2 起的既有断言保留）
     expect(existsSync(join(repoDir, ".cw-spawn"))).toBe(false);
   }, 15_000);
 });
@@ -457,6 +478,7 @@ describe("wt2 T7 pi env 注入", () => {
         unitId: "t7",
         workdir,
         projectCwd,
+        artifactDir: join(tmpRoot, "t7-topic"),
         briefPath: join(workdir, "brief.md"),
         env: { PATH: `${binDir}:${process.env.PATH ?? ""}` },
         timeoutMs: 30_000,
@@ -504,6 +526,7 @@ describe("wt2 T8 human 指令与账本锚定（场景 4 前半）", () => {
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(join(projectDir, "brief.md"), BRIEF_CONTENT);
     const workdir = join(tmpRoot, "t8-workdir"); // unit worktree 占位（human 无子进程，仅需可创建产物目录）
+    const artifactDir = join(tmpRoot, "t8-topic"); // fx-4：产物根 = run 级 topic 目录占位
     const ledgerFile = ledgerPath(cwHome, projectDir);
     new EventLedger(ledgerFile).append("UnitCreated", {
       unitId: "t8",
@@ -516,15 +539,16 @@ describe("wt2 T8 human 指令与账本锚定（场景 4 前半）", () => {
       unitId: "t8",
       workdir,
       projectCwd: projectDir,
-      briefPath: join(projectDir, "brief.md"),
+      artifactDir,
+      briefPath: join(artifactDir, "t8.builder.brief.md"),
       env: { CW_HOME: cwHome },
       timeoutMs: 15_000,
     });
 
     // 指令清单（R-4）：cd 含双引号；每条 cw 命令内联前缀；不再有 export 行
-    const instruction = readFileSync(join(workdir, ".cw-spawn", "t8.builder.stdout"), "utf-8");
+    const instruction = readFileSync(join(artifactDir, "t8.builder.stdout"), "utf-8");
     expect(instruction).toContain(`cd "${workdir}"`);
-    expect(instruction).toContain(`cat "${join(projectDir, "brief.md")}"`);
+    expect(instruction).toContain(`cat "${join(artifactDir, "t8.builder.brief.md")}"`);
     expect(instruction).toContain(`CW_PROJECT_DIR="${projectDir}" cw evidence submit --kind build --unit t8`);
     expect(instruction).toContain(`CW_PROJECT_DIR="${projectDir}" cw verify --unit t8`);
     expect(instruction).not.toContain("export CW_PROJECT_DIR");
@@ -564,11 +588,20 @@ describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
       runLoop({ rootId: "t9", adapter: humanAdapter, cwd: repoDir, pollMs: 50, maxIdleMs: 15_000 }),
     );
 
-    // 1. 等 designer 指令落盘（human spawn 即写 worktree 的 .cw-spawn/）
-    await waitUntil(() => existsSync(join(wtDir, ".cw-spawn", "t9.designer.stdout")), 10_000, "designer 指令");
-    const instruction = readFileSync(join(wtDir, ".cw-spawn", "t9.designer.stdout"), "utf-8");
+    // 1. 等 designer 指令落盘（fx-4：human spawn 即写 run 级 topic 目录下的产物）
+    let t9Topic = "";
+    await waitUntil(() => {
+      try {
+        t9Topic = findTopicDir(cwHome, repoDir, "t9");
+        return true;
+      } catch {
+        return false; // runLoop 尚未建 topic 目录（异步启动窗口）
+      }
+    }, 10_000, "topic 目录");
+    await waitUntil(() => existsSync(join(t9Topic, "t9.designer.stdout")), 10_000, "designer 指令");
+    const instruction = readFileSync(join(t9Topic, "t9.designer.stdout"), "utf-8");
     expect(instruction).toContain(`cd "${wtDir}"`);
-    expect(instruction).toContain(`CW_PROJECT_DIR="${repoDir}" cw evidence submit --kind spec --unit t9`);
+    expect(instruction).toContain("CW_PROJECT_DIR=\"" + repoDir + "\" cw evidence submit --kind spec --unit t9");
     expect(instruction).not.toContain("export CW_PROJECT_DIR");
 
     // 2. 人按指引在 worktree 里写 spec 并真实执行 cw evidence submit（子进程跑 dist/cli.js；
@@ -602,8 +635,8 @@ describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
     ]);
     expect(review.code, `review submit 应成功（stderr: ${review.stderr}）`).toBe(0);
 
-    // 4. 循环消费项目账本事件 → unit spec-frozen → 派发 builder（下一状态）
-    await waitUntil(() => existsSync(join(wtDir, ".cw-spawn", "t9.builder.brief.md")), 10_000, "builder 派发");
+    // 4. 循环消费项目账本事件 → unit spec-frozen → 派发 builder（下一状态；brief 落 topic）
+    await waitUntil(() => existsSync(join(t9Topic, "t9.builder.brief.md")), 10_000, "builder 派发");
     const captured = await runPromise;
     expect(captured.code).toBe(1); // 之后无人推进 → maxIdle 有界退出（非崩溃）
     expect(captured.err).toContain("无账本进展");
