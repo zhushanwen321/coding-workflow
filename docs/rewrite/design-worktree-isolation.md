@@ -129,7 +129,7 @@ $ cw run
 |---|---|---|
 | worktree 目录在但分支 ref 已亡（人手动删过分支） | ensure 检测到「目录在 / 分支亡」态 → runner 报 env error 并跳过该 unit | 👉 `git worktree remove --force <path>` 清掉无分支的目录后重跑 `cw run`（正常路径见 D5 复用矩阵，勿盲删有分支的现场） |
 | worktree/磁盘创建失败（磁盘满等） | mkdtemp/add 返回 ENOSPC → runner 报 env error | 👉 清理 `~/.cw-worktrees/` 下历史目录后重跑 |
-| 集成 merge 冲突（两个子改了同一文件的同一区域） | merge 失败落 integrate-report.json 后入账 fail（见 D6），连续达上限后集成不再就绪、转人工 | 👉 指引打印 root worktree 路径，人 cd 过去解决冲突、commit，再以 `CW_PROJECT_DIR="<项目cwd>" cw evidence submit` 推进 |
+| 集成 merge 冲突（两个子改了同一文件的同一区域） | merge 失败落 integrate-report.json 后入账 fail（见 D6），连续达上限（2 次）后集成不再就绪、转派 designer 处置（R4a 上限出口，处置任务书含失败事实与二选一路径） | 👉 处置指引打印 root worktree 路径，按指引在其中解决冲突、commit，再以 `CW_PROJECT_DIR="<项目cwd>" cw evidence submit` 推进 |
 | worktree 回收时含脏残留 | `git worktree remove` 拒绝（探针 P-wt4 实测 exit 128） | 设计内行为：closed unit 的回收用 `--force`（产出已进证据链与 root 分支，残留可弃；stdout/stderr 随 worktree 销毁可接受——审计价值已被 gate 消费，见 D4）；非 closed 的一律保留不回收 |
 
 **终态物理数据流（对照 §2.2 现状）**：
@@ -203,7 +203,7 @@ gate/verify：cleanCheckout（clone 项目仓库 → checkout 账本 commit）�
 
 root worktree 适用同一矩阵：集成 merge 前确保存在（防御性——root spec 冻结后不再派 designer、无首派创建时机，worktree 若亡则按「亡/在」自动重建；正常时序 root 最后 closed，其 worktree 全程在）。回收：unit closed 后不立即删（debug 常需翻看现场），下一轮 runner 循环统一回收上一轮 closed 的 worktree（`git worktree remove --force`——探针 P-wt4：脏残留需 force）；失败/转人工的一律保留并在指引中打印路径。**启动孤儿清扫**（回收的跨进程兜底——「上一轮 closed」的内存态判断跨 run 不可靠）：runLoop 启动时扫描 `~/.cw-worktrees/<encoded-cwd>/` 下全部目录，目录对应 unit 已 closed（或账本内不存在该 unit）→ 回收，防反复中断导致的目录堆积。注意与并行 run 的边界：同项目另一 run 的未 closed unit 不在账本本 root 子树内，按「账本内存在且未 closed」判断保留（跨 root 并行时扫的是同一 `<encoded-cwd>` 目录，判定必须查全账本而非本 root 子树）。进程数边界：同一 root 同时只允许一个 runLoop 进程——双进程并行会对同 unit 双派发到同一 worktree、退回共享工作区混卷（M1 共享 cwd 时代同样如此，非本设计引入的回归）；跨 root 并行无此约束（受账本级 unitId 唯一性约束，见 D2）。子分支在 merge 进 root 分支后可删（commit 经 root 分支可达，探针 P-wt5：GC 安全）；root 分支 run 结束后保留供回流（G5）。root closed 汇总输出打印回收清单（§3.1 样例末段）。
 
-**D6 集成汇聚：子 closed 即 merge 进 root 分支，集成 verify 三处 HEAD 全部锚 root 分支引用。** 子 gate PASS 后，runner 在 root worktree 执行 `git merge cw/<rootId>/<unitId>`——冲突早发现（子级别暴露，而非集成时集中爆发）；base 相同、改动文件不同时自动合并，真冲突 = 真实集成冲突。集成 verify 复用既有 cleanCheckout（本地 clone 携带全部 refs，探针 P-wt3），且 `integrate.ts` 的**三处** HEAD 消费点统一改锚 root 分支引用（`git rev-parse cw-root/<rootId>` 解析，不再用项目 cwd HEAD）：101 行 `revParseHead`（集成基准）、103 行 `isAncestor`（子 commit 可达性——子 commit 在子分支上、merge 后经 root 分支可达，对项目 cwd HEAD 即用户自己的分支**永不可达**，锚错则可达性检查全灭）、130 行 `cleanCheckout` 的 checkout 目标（root 分支 HEAD = 「子的 commit 集合」汇聚态，防「工作区现状冒充证据状态」的 Goodhart 纪律不变）。**merge 失败的 loop 语义**：冲突/失败不无限重试——merge 步骤内聚进 runIntegrationVerify：失败也落一份 integrate-report.json（记录冲突文件与 merge 输出）再入账 fail 的 VerifyRan 事件，`VerifyRanPayload.reportHash` 必填约束因此满足（sha256OfFile 有文件可指，账本零变更），复用既有连续失败上限通道（达上限后 frontier 不再将该集成步骤置为就绪，转派 designer/人工处置）；转人工指引给出 root worktree 路径 + 每条 cw 命令内联 `CW_PROJECT_DIR` 前缀（与 D3 human 口径一致）。
+**D6 集成汇聚：子全 verified 即 merge 进 root 分支，集成 verify 三处 HEAD 全部锚 root 分支引用。** 集成就绪口径 = 全部直接子 verified（closed 蕴含其中——verified 是证据链闭合点，集成不必等 exec-review 收尾；与 frontier 的 integrationReady 维度同一判定）。子 gate PASS 后，runner 在 root worktree 执行 `git merge cw/<rootId>/<unitId>`——冲突早发现（子级别暴露，而非集成时集中爆发）；base 相同、改动文件不同时自动合并，真冲突 = 真实集成冲突。集成 verify 复用既有 cleanCheckout（本地 clone 携带全部 refs，探针 P-wt3），且 `integrate.ts` 的 HEAD 消费点统一改锚 root 分支引用（`git rev-parse cw-root/<rootId>` 解析，不再用项目 cwd HEAD）——设计时锚定三处（集成基准 revParseHead / 子 commit 可达性 isAncestor——子 commit 对项目 cwd HEAD 即用户自己的分支**永不可达**，锚错则可达性检查全灭 / cleanCheckout 的 checkout 目标）；实现另含第 4 处兜底消费：root worktree 与 root 分支**双亡**的重建场景（D5 矩阵「亡/亡」格）以集成时刻的项目 HEAD 作重建 base——与 D2 启动快照不同源属已知偏差（兜底态无快照可传，且该时点项目 HEAD 必然包含快照的树，语义上界安全）。**merge 失败的 loop 语义**：冲突/失败不无限重试——merge 步骤内聚进 runIntegrationVerify：失败也落一份 integrate-report.json（记录冲突文件与 merge 输出）再入账 fail 的 VerifyRan 事件，`VerifyRanPayload.reportHash` 必填约束因此满足（sha256OfFile 有文件可指，账本零变更），复用既有连续失败上限通道（达上限后 frontier 不再将该集成步骤置为就绪，转派 designer/人工处置）；转人工指引给出 root worktree 路径 + 每条 cw 命令内联 `CW_PROJECT_DIR` 前缀（与 D3 human 口径一致）。
 
 ### 3.4 探针清单（运行时断言，全部实测 ✅）
 
@@ -232,7 +232,7 @@ root worktree 适用同一矩阵：集成 merge 前确保存在（防御性—�
 
 ## 5. 下一层拆分（实现计划层入口）
 
-**按依赖序分 5 波，每波独立可验收、可回滚；实施沿用 cw-orchestrator 机制（builder/verifier 派发 + 验收基线防篡改）。**
+**按依赖序分 5 波，每波独立可验收、可回滚；实施沿用 cw-orchestrator 机制（builder/verifier 派发 + 验收基线防篡改）。**（本节行号锚点为各波设计时点快照，波次实施后不再滚动更新——查阅当前代码以 git log 为准，同 §2.1 注记。）
 
 | 波次 | 内容 | justification | 独立验收 |
 |---|---|---|---|
@@ -252,3 +252,4 @@ root worktree 适用同一矩阵：集成 merge 前确保存在（防御性—�
 - 2026-08-16 v1.1（bd31730）：D2 勘误——`SpecSubmitted.commit` 字段不存在，base 改为 run 启动 HEAD 快照；非 git 项目启动 fail-fast。
 - 2026-08-16 v2：吸收对抗式审查 must-fix——分支命名双空间（`cw-root/<rootId>` / `cw/<rootId>/<unitId>`）；reset 的 clean 排除 `.cw-spawn/`（换角色不删产物）；human 锚定改内联前缀（shell 状态无关）；D5 存在性检测矩阵 + 启动孤儿清扫（跨 run 重跑为常态路径）；integrate.ts 三处 HEAD 全部锚 root 分支（子 commit 对项目 cwd HEAD 永不可达）；方案对比补 `--detach` 被否理由；D1 被否备选理由改实测版（P-wt7）。W1 返工注记随附。
 - 2026-08-16 v3（本版）：吸收第二轮对抗审查 must-fix——D3 补 handlers 层文件路径参数消费点（resolveAgainstCwd 锚改 process.cwd()）与指引双引号规则（含空格路径可执行）；D2 论据重写（unitId 唯一性钉为账本级、删除跨 run 同名冲突的不成立场景，保留 ref 冲突实测与归属排查，声明 worktree 目录不带 rootId 的推论）；场景 2 通过标准加 `.cw-spawn/` 例外、场景 4 反向断言改写命令（只读命令不创建账本目录）、场景 5 测试数以实跑为准；D6 补 merge 失败落 integrate-report.json 再入账的事件承载；D5 补同一 root 单 runLoop 进程边界；§2.1 补锚点为 M1 基线注记；W2 补 human.ts 指令清单 export→内联前缀返工注记。
+- 2026-08-17 v3.1：实施后偏离审查修正——D6 标题与正文口径改「子全 verified 即 merge」（与 frontier integrationReady 同一判定）；D6 补第 4 处 HEAD 兜底消费说明（root worktree+分支双亡重建 base = 集成时刻项目 HEAD，与 D2 启动快照的差异及安全性）；失败路径表 merge 冲突行改「转派 designer（R4a）」；§5 补行号快照注记。遗留待修：场景 4 反向断言测试缺口、src/runner/worktree.ts 头注释 v2 旧口径——均挂 fx-4（spawn 产物收口）实施波。
