@@ -258,6 +258,10 @@ function seedDriftFixture(name: string): string {
   const head = gitRun(repoDir, ["rev-parse", "HEAD"]);
 
   const ledger = ledgerForCwd(repoDir);
+  // rv-4 契约配对化迁移：leaf 冻结同 id 契约 C1（self-provider，async 版签名 =
+  // 实现真身）。root 契约仍非 async → 配对第一道（consumer ≡ provider 冻结）
+  // 确定性 fail；树内 leaf 版命中（组过）——fail 只来自配对，语义内核与 fx-2
+  // 时代的「async 实现与冻结签名字节不匹配」同构
   const contract: Contract = {
     id: "C1",
     kind: "function",
@@ -265,7 +269,16 @@ function seedDriftFixture(name: string): string {
     consumer: ROOT_ID,
     signature: CONTRACT_SIGNATURE,
     file: "src/renderer.js",
-    description: "leaf 向集成树提供 renderMarkdown 签名",
+    description: "root 期望的 renderMarkdown 签名（与 leaf 冻结版一字差）",
+  };
+  const leafContract: Contract = {
+    id: "C1",
+    kind: "function",
+    provider: LEAF_ID,
+    consumer: ROOT_ID,
+    signature: CONTRACT_SIGNATURE_FIXED,
+    file: "src/renderer.js",
+    description: "leaf 冻结的提供承诺（async 实现真身）",
   };
   const split: SplitEntry[] = [{ unitId: LEAF_ID, dependsOn: [] }];
   const appendSpec = (unitId: string, acceptance: readonly AcceptanceItem[], contracts: Contract[], specSplit: SplitEntry[]) => {
@@ -284,7 +297,7 @@ function seedDriftFixture(name: string): string {
   ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass" });
 
   ledger.append("UnitCreated", { unitId: LEAF_ID, parentId: ROOT_ID, briefRef: join(repoDir, "brief.md") });
-  appendSpec(LEAF_ID, LEAF_ACCEPTANCE, [], []);
+  appendSpec(LEAF_ID, LEAF_ACCEPTANCE, [leafContract], []);
   ledger.append("VerdictSubmitted", { unitId: LEAF_ID, verdictKind: "spec-review", verdict: "pass" });
   const runId = `run-${LEAF_ID}-1`;
   ledger.append("EvidenceSubmitted", {
@@ -352,11 +365,11 @@ async function captureStd(fn: () => Promise<number>): Promise<{ code: number; ou
 }
 
 // ================================================================
-// 回归 1：集成 fail 1 次 → 重派集成（既有行为不回退）
+// 回归 1：首 fail 即停（rv-4 语义迁移：MAX=1，不再自动重派集成）
 // ================================================================
 
-describe("fx-2 R4a 回归1：fail 1 次后仍自动重派集成", () => {
-  it("第 2 次集成真实发生且同样留 fail 审计（上限 2 次未到，不触发 designer 出口前的行为与 fx-1 前一致）", async () => {
+describe("fx-2 R4a 回归1（rv-4 语义迁移）：fail 1 次即达上限 → 不再有第 2 次自动集成，转派 designer", () => {
+  it("首次集成 fail 后下轮即派 designer（integrationDrift），账本只 1 条 fail 集成审计（fx-2 时代的第 2 次自动重试语义作废）", async () => {
     const repoDir = seedDriftFixture("reg1-resubmit");
     const script = makeScriptAdapter({ mode: "noop" });
 
@@ -367,19 +380,21 @@ describe("fx-2 R4a 回归1：fail 1 次后仍自动重派集成", () => {
     // noop designer 不推进 → 最终 idle exit 1（既有兜底语义，附带有界性证明）
     expect(captured.code).toBe(1);
     const runs = integrateRunsOf(repoDir);
-    // 核心：fail 1 次后第 2 次集成被自动重派（若回退了重派，只会剩 1 条 fail）
-    expect(runs.length).toBe(2);
-    expect(runs.map((r) => r.result)).toEqual(["fail", "fail"]);
+    // rv-4 语义迁移（MAX=1）：首次 fail 即转 drift——恰 1 次集成，无第 2 次
+    expect(runs.length).toBe(1);
+    expect(runs.map((r) => r.result)).toEqual(["fail"]);
+    // 首 fail 后下轮派 designer 处置（不再重派集成）
+    expect(script.spawned().some((r) => r.role === "designer" && r.unitId === ROOT_ID)).toBe(true);
     expect(statusOf(repoDir, ROOT_ID)).toBe("spec-frozen");
   }, 30_000);
 });
 
 // ================================================================
-// 回归 2：连续 fail 2 次 → 停止集成、派 designer、brief 内容
+// 回归 2：首 fail 达上限（rv-4：MAX=1）→ 停止集成、派 designer、brief 内容
 // ================================================================
 
-describe("fx-2 R4a 回归2：连续 fail 2 次达上限 → 派 designer 处置契约漂移", () => {
-  it("不再有第 3 次集成；designer 收到的 brief 含契约清单与两条处置路径", async () => {
+describe("fx-2 R4a 回归2（rv-4 语义迁移：上限 1 次）：首 fail 达上限 → 派 designer 处置契约漂移", () => {
+  it("不再有第 2 次集成；designer 收到的 brief 含契约清单与两条处置路径", async () => {
     const repoDir = seedDriftFixture("reg2-cap-brief");
     const script = makeScriptAdapter({ mode: "noop" });
 
@@ -388,9 +403,9 @@ describe("fx-2 R4a 回归2：连续 fail 2 次达上限 → 派 designer 处置�
     );
 
     expect(captured.code).toBe(1);
-    // 上限生效：恰 2 次集成，无第 3 次（fail 审计不再无限入账 = R4b 前提）
+    // rv-4 语义迁移（MAX=1）：恰 1 次集成即达上限（fail 审计不再无限入账 = R4b 前提）
     const runs = integrateRunsOf(repoDir);
-    expect(runs.length).toBe(2);
+    expect(runs.length).toBe(1);
     // designer 被派发（上限出口），且 runner 明示停止自动重派
     expect(script.spawned().some((r) => r.role === "designer" && r.unitId === ROOT_ID)).toBe(true);
     expect(captured.out).toContain("集成连续 fail 达上限");
@@ -403,7 +418,8 @@ describe("fx-2 R4a 回归2：连续 fail 2 次达上限 → 派 designer 处置�
       "utf-8",
     );
     expect(brief).toContain("集成契约漂移处置");
-    expect(brief).toContain("连续 fail 2 次");
+    // rv-4 语义迁移：上限 2 → 1（「连续 fail 2 次」断言随常量改写）
+    expect(brief).toContain("连续 fail 1 次");
     expect(brief).toContain("C1");
     expect(brief).toContain(CONTRACT_SIGNATURE);
     expect(brief).toContain("src/renderer.js");
@@ -423,8 +439,8 @@ describe("fx-2 R4a 回归2：连续 fail 2 次达上限 → 派 designer 处置�
 // 回归 3：designer 处置（重提修正契约的 spec 过审）→ 计数清零 → 全链 closed
 // ================================================================
 
-describe("fx-2 R4a 回归3：designer 修契约重过审 → 集成重跑且计数清零 → root closed", () => {
-  it("第 3 次集成（新 spec 下首次）pass → verified → exec-review → closed 全链", async () => {
+describe("fx-2 R4a 回归3（rv-4 语义迁移：处置链路不变）：designer 修契约重过审 → 集成重跑且计数清零 → root closed", () => {
+  it("首次集成 fail → drift 派 designer 修正契约 → 第 2 次集成（新 spec 下首次）pass → verified → exec-review → closed 全链", async () => {
     const repoDir = seedDriftFixture("reg3-recover");
     const script = makeScriptAdapter({ mode: "contract-fix" });
 
@@ -436,10 +452,11 @@ describe("fx-2 R4a 回归3：designer 修契约重过审 → 集成重跑且计�
     expect(statusOf(repoDir, ROOT_ID)).toBe("closed");
     expect(statusOf(repoDir, LEAF_ID)).toBe("closed");
 
-    // 集成序列 = fail, fail, pass：前 2 次撞上限；designer 重提 spec（计数清零）
-    // 后集成按正常路径重跑，第 3 次在新契约下 pass
+    // 集成序列 = fail, pass（rv-4 语义迁移：MAX=1 时代是 fail, fail, pass）：
+    // 首次 fail 撞上限 → designer 重提 spec（计数清零）→ 集成按正常路径重跑，
+    // 第 2 次在新契约（root ≡ leaf 冻结的 async 版）下 pass
     const runs = integrateRunsOf(repoDir);
-    expect(runs.map((r) => r.result)).toEqual(["fail", "fail", "pass"]);
+    expect(runs.map((r) => r.result)).toEqual(["fail", "pass"]);
 
     // designer 处置真实入账：重提的 spec 契约签名已修正（async 差异消除）
     const feat = loadLedger(repoDir).projection.units.get(ROOT_ID);
@@ -473,10 +490,11 @@ describe("fx-2 R4b 回归4：上限后无人应答 brief → maxIdleMs 正常触
     expect(captured.code).toBe(1);
     expect(captured.err).toContain("无账本进展");
     // 修复前（R4b）：集成每轮写 fail VerifyRan → totalEvents 持续推进 → idle
-    // 永不触发 = 无限循环；修复后上限停止集成 → 集成恰 2 次，idle 正常到期
-    expect(integrateRunsOf(repoDir).length).toBe(2);
+    // 永不触发 = 无限循环；上限停止集成 → idle 正常到期。
+    // rv-4 语义迁移（MAX=1）：恰 1 次集成即停（fx-2 时代为 2 次）
+    expect(integrateRunsOf(repoDir).length).toBe(1);
     expect(script.spawned().some((r) => r.role === "designer")).toBe(true);
-    // 有界性：2 轮集成（每轮干净 checkout + 4 条验收）+ 3s idle，留足余量上限
+    // 有界性：1 轮集成（干净 checkout + 4 条验收）+ 3s idle，留足余量上限
     expect(elapsed).toBeLessThan(20_000);
     expect(statusOf(repoDir, ROOT_ID)).toBe("spec-frozen");
   }, 60_000);

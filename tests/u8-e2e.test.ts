@@ -10,9 +10,11 @@
  *      exec-review」，且 root 的 builder 全程无 agent spawn（内部节点不派 agent）。
  *   2. 契约违背路径：同 fixture 但 leaf-a 实现改名（capitalize → capitalise）→
  *      集成 fail、VerifyRan(result=fail) 留痕、stderr 指明 C1 与期望文件；随后
- *      fixture 受控修复（验收脚本把正确实现补进 origin 仓库并提交）→ 下轮重派
- *      集成 → 修复后 verified → exec-review → closed 全链（覆盖单测验收#3 后半：
- *      集成 fail → 重派一轮后修复）。
+ *      fixture 受控修复（验收脚本把正确实现补进 root 分支并提交——发生在首轮
+ *      集成的验收重跑内）。rv-4 语义迁移（MAX=1）：首次 fail 即转 drift 派
+ *      designer，worker 按处置指引重提 spec 过审（fail 计数清零）→ 集成按正常
+ *      路径重跑 → 修复后的 root 分支树上 verified → exec-review → closed 全链。
+ *      （fx-2 时代「fail → 下轮自动重试」语义已废除——确定性失败无瞬时态可重试）
  *
  * 全部真实子进程（worker 经 spawnProcess 起真实 node；集成验收命令在干净 checkout
  * 里真实执行）+ tmp git 仓库 + 隔离 CW_HOME，零 mock。注意：直接
@@ -281,23 +283,46 @@ function dirnameOf(p: string): string {
   return idx === -1 ? "." : p.slice(0, idx);
 }
 
-// ---- 测试专用 worker / 适配器（reviewer-only；spawn 记录用于「内部节点不派 agent」断言） ----
+// ---- 测试专用 worker / 适配器（reviewer + rv-4 designer 处置；spawn 记录用于「内部节点不派 agent」断言） ----
 
 function writeWorkerScript(): string {
   const script = `// tests/u8-e2e.test.ts 生成的测试专用 agent worker（真实进程，非 mock）
 // argv: <role> <unitId> <cwd>
+// rv-4 语义迁移（MAX=1）：契约违背首次集成 fail 即转 drift——designer 分支按
+// 处置指引重提同内容 spec 并过审（fail 计数随新 spec 提交清零 → 集成按正常
+// 路径重跑；首轮集成时 AR1 脚本的 heal 已把修复提交进 root 分支，重跑轮锚定
+// 的 root 分支 HEAD 已含修复）。幂等：specs 已重提过（>1 条）只补 verdict。
 const DIST = ${JSON.stringify(DIST_ROOT)};
 const [role, unitId, cwd] = process.argv.slice(2);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const { ledgerForCwd } = await import(DIST + "/handlers/common.js");
+const { loadLedger } = await import(DIST + "/readonly/load.js");
 console.log("worker " + role + " " + unitId + " pid=" + process.pid);
-if (role !== "reviewer") {
-  console.error("u8 fixture: 内部节点集成不派 agent，收到非 reviewer 派发 " + role);
+if (role === "designer") {
+  const unit = loadLedger(cwd).projection.units.get(unitId);
+  const lastSpec = unit?.specs[unit.specs.length - 1];
+  if (unit === undefined || lastSpec === undefined) throw new Error("u8 fixture: unit " + unitId + " 无 spec");
+  const ledger = ledgerForCwd(cwd);
+  if (unit.specs.length === 1) {
+    const spec = { acceptance: lastSpec.acceptance, contracts: lastSpec.contracts, split: lastSpec.split };
+    ledger.append("SpecSubmitted", {
+      unitId,
+      specHash: "rv4-disposal-" + spec.contracts.length + "-" + spec.acceptance.length,
+      acceptance: lastSpec.acceptance,
+      contracts: lastSpec.contracts,
+      split: lastSpec.split,
+    });
+  }
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  console.log("worker-done designer " + unitId);
+} else if (role === "reviewer") {
+  await sleep(50);
+  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
+  console.log("worker-done reviewer " + unitId);
+} else {
+  console.error("u8 fixture: 内部节点集成不派 agent，收到未预期的派发 " + role);
   process.exit(3);
 }
-await sleep(50);
-ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
-console.log("worker-done reviewer " + unitId);
 `;
   const path = join(tmpRoot, "u8-worker.mjs");
   writeFileSync(path, script);
@@ -458,8 +483,8 @@ describe("E2E real：内部节点集成成功路径（runLoop 直调，root veri
 // E2E 条件 2：契约违背路径（+ 单测验收#3 后半：fail 留痕 → 重派 → 修复 → 全链）
 // ================================================================
 
-describe("E2E real：契约违背路径（capitalize → capitalise → 集成 fail 留痕 → 受控修复 → 重派成功）", () => {
-  it("集成 fail 写 VerifyRan(result=fail) + stderr 指明 C1 与期望文件；修复后重派 → verified → exec-review → closed", async () => {
+describe("E2E real：契约违背路径（capitalize → capitalise → 集成 fail 留痕 → drift 处置 → 受控修复生效 → 重跑成功）", () => {
+  it("首次集成 fail 写 VerifyRan(result=fail) + stderr 指明 C1 与期望文件；rv-4 MAX=1 转 drift designer 重提 spec（计数清零）→ 重跑 pass → verified → exec-review → closed", async () => {
     const repoDir = seedFixture("contract-drift", true);
     const { adapter, spawned } = makeReviewerAdapter();
 
@@ -472,12 +497,11 @@ describe("E2E real：契约违背路径（capitalize → capitalise → 集成 f
       expect(statusOf(repoDir, unitId)).toBe("closed");
     }
 
-    // fail 留痕 + 重派成功：feat 的集成 VerifyRan 序列 = 先 fail（审计）后 pass
+    // fail 留痕 + 处置后重跑成功（rv-4 语义迁移：MAX=1——恰 2 次集成，fail 后经
+    // designer 处置链路（重提 spec 清零计数）重跑，无 fx-2 时代的自动重试轮）
     const feat = loadLedger(repoDir).projection.units.get("feat");
     const integrateRuns = (feat?.verifyRuns ?? []).filter((run) => run.runId.startsWith("integrate-"));
-    expect(integrateRuns.length).toBeGreaterThanOrEqual(2);
-    expect(integrateRuns[0]?.result).toBe("fail");
-    expect(integrateRuns.at(-1)?.result).toBe("pass");
+    expect(integrateRuns.map((run) => run.result)).toEqual(["fail", "pass"]);
     expect(integrateRuns[0]?.acceptanceIds).toEqual([]); // fail 轮无机器判定 pass 的验收
 
     // stderr 指明 C1 与期望文件（契约违背的失败清单 + 恢复动作）
@@ -496,7 +520,11 @@ describe("E2E real：契约违背路径（capitalize → capitalise → 集成 f
       expect(existsSync(join(evidenceDir(cwHome, repoDir, "feat", run.runId), "integrate-report.json"))).toBe(true);
     }
 
-    // 全链收尾仍有 reviewer 派发（两叶 + root），且全程无 builder/designer spawn
-    expect(spawned().every((r) => r.role === "reviewer")).toBe(true);
+    // 派发形态：drift 处置的 designer(root) + 两叶与 root 的 exec-review reviewer，
+    // 全程无 builder（内部节点的 build = 集成，不派 agent）
+    const spawnedRoles = spawned();
+    expect(spawnedRoles.some((r) => r.role === "designer" && r.unitId === "feat")).toBe(true);
+    expect(spawnedRoles.every((r) => r.role === "reviewer" || r.role === "designer")).toBe(true);
+    expect(spawnedRoles.some((r) => r.role === "builder")).toBe(false);
   }, 120_000);
 });

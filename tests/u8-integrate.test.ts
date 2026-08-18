@@ -81,6 +81,7 @@ interface ReportShape {
   runId: string;
   head: string;
   children: Array<{ unitId: string; commit: string; reachable: boolean }>;
+  mergeFailures: string[];
   acceptanceBatches: Array<{
     unitId: string;
     results: Array<{ id: string; status: string; reason?: string }>;
@@ -107,6 +108,12 @@ function seedLeafSpec(repoDir: string, acceptance: AcceptanceItem[]): void {
   });
 }
 
+/**
+ * rv-4 语义迁移：契约输入结构改带 owner（OwnedContract[]）。本文件的契约
+ * provider="leaf" 与 owner 同值（self-provider 形态）→ 配对第一道跳过，树内
+ * 验证语义与迁移前一致；配对道的行为由 tests/rv4-contract-pairing.test.ts 与
+ * tests/rv4-integration-disposal.test.ts 覆盖。
+ */
 async function integrate(
   repoDir: string,
   opts: Partial<Parameters<typeof runIntegrationVerify>[0]> = {},
@@ -117,7 +124,17 @@ async function integrate(
     children: [{ unitId: "leaf", commit: git(repoDir, ["rev-parse", "HEAD"]) }],
     rootAcceptance: ROOT_ACCEPTANCE,
     contracts: [
-      { id: "C1", kind: "function", provider: "leaf", consumer: "root", signature: CAP_SIG, file: "src/capitalize.js" },
+      {
+        contract: {
+          id: "C1",
+          kind: "function",
+          provider: "leaf",
+          consumer: "root",
+          signature: CAP_SIG,
+          file: "src/capitalize.js",
+        },
+        ownerUnitId: "leaf",
+      },
     ],
     timeoutMs: 15_000,
     ...opts,
@@ -172,6 +189,8 @@ describe("验收2：全部可达 + 验收全绿 + 契约全中 → ok=true + 报
     expect(report.runId).toBe(result.runId);
     expect(report.head).toBe(head);
     expect(report.children).toEqual([{ unitId: "leaf", commit: head, reachable: true }]);
+    // rv-4：报告结构化的 mergeFailures 节（本场景无 merge 失败 → 空清单）
+    expect(report.mergeFailures).toEqual([]);
     expect(report.acceptanceBatches).toEqual([
       { unitId: "leaf", results: [{ id: "AA1", status: "pass" }] },
       { unitId: "root", results: [{ id: "AR1", status: "pass" }] },
@@ -223,12 +242,15 @@ describe("验收4：契约漂移 → ok=false 指明契约 id", () => {
     const result = await integrate(repoDir, {
       contracts: [
         {
-          id: "C1",
-          kind: "function",
-          provider: "leaf",
-          consumer: "root",
-          signature: "export function capitalise(",
-          file: "src/capitalize.js",
+          contract: {
+            id: "C1",
+            kind: "function",
+            provider: "leaf",
+            consumer: "root",
+            signature: "export function capitalise(",
+            file: "src/capitalize.js",
+          },
+          ownerUnitId: "leaf",
         },
       ],
     });

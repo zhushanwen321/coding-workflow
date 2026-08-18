@@ -6,16 +6,20 @@
  * 测试入口）从 build commit patch 进父树再跑——只回退不 patch 时，恒真测试
  * （无条件 PASS）放进新文件即可让父树命令因文件缺失 fail 被误判有区分力。
  *
+ * rv-4 语义迁移：--red-phase 不再是 standalone 模式（旧：只跑红阶段、不写
+ * VerifyRan、无父 commit → exit 2），保留为默认红阶段的显式同义——常规干净
+ * 重跑 + 红阶段三道 gate 并列，verify 总是入账，无父 commit 合法跳过。
  *   - 验收5a（真测试）c2 新增脚本引用 c2 实现产物 → patch 到 c1 树跑必挂 →
- *     有区分力 exit 0，stdout 逐条「有区分力」，不写 VerifyRan，产物落
- *     red-phase 前缀目录；
- *   - 验收5b（假命令）验收 command=echo ok 不引用任何变更文件 → 无可 patch，
- *     父树原样跑两树都过 → 无区分力 exit 1 且 stderr 列 id，恢复动作指向
+ *     有区分力：常规 pass + 红阶段过 → exit 0，VerifyRan(pass) 入账，红阶段执行
+ *     产物仍落 red-phase 前缀目录；
+ *   - 验收5b（假命令）echo ok 不引用变更文件 → 无可 patch，两树都过 → 常规
+ *     fail（无标记行）+ 红阶段无区分力 → exit 1 且 stderr 列 id，恢复动作指向
  *     「修测试而非修 gate」；
  *   - 验收5c（恒真测试穿透防线）c2 新增无条件 PASS 脚本 + 验收 command 引用
- *     它 → patch 到 c1 树后旧树也绿 → 拒绝 exit 1，stderr 指明「新测试在基线
- *     代码树上也通过」；
- *   - 验收6 初始 commit（无父）→ exit 2 附说明。
+ *     它 → patch 到 c1 树后旧树也绿 → 常规 pass + 红阶段拒绝 → exit 1，stderr
+ *     指明「新测试在基线代码树上也通过」；
+ *   - 验收6 初始 commit（无父）→ 红阶段合法跳过（redPhase 节 skipped:true），
+ *     判定不受影响（rv-4 废除旧 exit 2 语义——单 commit 仓库 verify 必须可用）。
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -247,21 +251,23 @@ describe("patch 语义纯单元（真实 git 子进程）", () => {
   });
 });
 
-describe("验收5：--red-phase 区分力判定（dispatch 层，含 patch 语义）", () => {
-  it("验收5a 真测试：c2 脚本引用 c2 实现产物 → patch 到 c1 树跑必挂 → 有区分力 exit 0；不写 VerifyRan；产物落 red-phase 目录", async () => {
+describe("验收5：红阶段区分力判定（dispatch 层，含 patch 语义；rv-4 起三道 gate 并列）", () => {
+  it("验收5a 真测试：c2 脚本引用 c2 实现产物 → patch 到 c1 树跑必挂 → 常规 pass + 红阶段过 → exit 0；VerifyRan 总是入账；红阶段产物落 red-phase 目录", async () => {
     makeRealTestFixture("bash run-tests.sh");
 
+    // rv-4 语义迁移：--red-phase 是默认红阶段的显式同义（不再是 standalone 模式）
     const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
     expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stdout).toContain("A1 pass");
     expect(res.stdout).toContain("A1 有区分力");
-    expect(res.stdout).toMatch(/red-phase unit "u-1"：1\/1 条机器验收/);
-    // patch 语境在成功摘要中透明呈现
-    expect(res.stdout).toContain("patch 测试文件 [run-tests.sh]");
+    expect(res.stdout).toContain("result=pass");
 
-    // 红阶段不是验证结论：绝不写 VerifyRan
-    expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
+    // rv-4 语义迁移：verify 总是入账（旧「红阶段不写 VerifyRan」废除）
+    const verifyRans = ledger.readAll().filter((e) => e.type === "VerifyRan");
+    expect(verifyRans).toHaveLength(1);
+    expect((verifyRans[0]?.payload as { result: string }).result).toBe("pass");
 
-    // 产物落盘留审计（runId 目录以 red-phase- 前缀与常规 verify 区分）
+    // 红阶段执行产物落盘留审计（runId 目录以 red-phase- 前缀与常规 verify 区分）
     const unitDir = dirname(evidenceDir(cwHome, cwd, "u-1", "probe"));
     const redPhaseDirs = readdirSync(unitDir).filter((n) => n.startsWith("red-phase-"));
     expect(redPhaseDirs).toHaveLength(1);
@@ -269,34 +275,47 @@ describe("验收5：--red-phase 区分力判定（dispatch 层，含 patch 语�
     expect(readFileSync(reportPath, "utf8")).toContain('"A1"');
   });
 
-  it("验收5b 假命令：echo ok 不引用任何变更文件 → 无可 patch，父树原样跑也过 → 无区分力 exit 1 且 stderr 列 id + 修测试指引", async () => {
+  it("验收5b 假命令：echo ok 不引用任何变更文件 → 常规 fail（无标记行）+ 红阶段无区分力 → exit 1 且 stderr 列 id + 修测试指引", async () => {
     makeTrueTestFixture("echo ok");
 
     const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
     expect(res.code).toBe(1);
+    // 常规层：无标记行且 exitCode=0（假命令防线）
     expect(res.stderr).toContain("A1");
+    expect(res.stderr).toContain("无标记行且 exitCode=0");
+    // 红阶段层：两树都过 → 无区分力（rv-4 并列 gate 的红阶段失败区）
+    expect(res.stderr).toContain("红阶段");
     expect(res.stderr).toContain("无区分力");
-    expect(res.stderr).toContain("修测试而非修 gate");
-    expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
+    expect(res.stderr).toContain("恢复动作");
+    // rv-4 语义迁移：fail 也入账（打回依据）
+    const verifyRans = ledger.readAll().filter((e) => e.type === "VerifyRan");
+    expect(verifyRans).toHaveLength(1);
+    expect((verifyRans[0]?.payload as { result: string }).result).toBe("fail");
   });
 
-  it("验收5c 恒真测试穿透防线：c2 新增无条件 PASS 脚本 + 验收 command 引用它 → patch 后旧树也绿 → 拒绝 exit 1，stderr 指明新测试在基线代码树上也通过", async () => {
+  it("验收5c 恒真测试穿透防线：c2 新增无条件 PASS 脚本 + 验收 command 引用它 → 常规 pass + patch 后旧树也绿 → 拒绝 exit 1，stderr 指明新测试在基线代码树上也通过", async () => {
     makeTrueTestFixture("bash run-tests.sh");
 
     const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
     expect(res.code, `stdout: ${res.stdout}`).toBe(1);
+    // 常规层：恒真脚本在新树也绿（机器判定 pass），fail 只来自红阶段
+    expect(res.stdout).toContain("A1 pass");
+    expect(res.stderr).toContain("红阶段");
     expect(res.stderr).toContain("A1");
     expect(res.stderr).toContain("无区分力");
     // 恒真穿透的专属拒绝文案（judgeRedPhase 的 patched 语境 reason）
     expect(res.stderr).toContain("新测试在基线代码树");
     expect(res.stderr).toContain("恒真测试");
-    expect(res.stderr).toContain("修测试而非修 gate");
-    expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
+    expect(res.stderr).toContain("恢复动作");
+    // rv-4 语义迁移：红阶段 fail 的 verify 也入账（恒真测试在自动链路上必死）
+    const verifyRans = ledger.readAll().filter((e) => e.type === "VerifyRan");
+    expect(verifyRans).toHaveLength(1);
+    expect((verifyRans[0]?.payload as { result: string }).result).toBe("fail");
   });
 });
 
-describe("验收6：初始 commit（无父）→ exit 2 附说明", () => {
-  it("单 commit 仓库的 build 锚 → --red-phase exit 2，stderr 说明无父可回退", async () => {
+describe("验收6：初始 commit（无父）→ 红阶段合法跳过（rv-4 废除旧 exit 2 语义）", () => {
+  it("单 commit 仓库的 build 锚 → 红阶段 skipped 不影响判定；echo ok 的常规 fail 照常 exit 1 且入账", async () => {
     makeGitRepo(cwd, [{ "seed.txt": "only" }]);
     ledger.append("UnitCreated", { unitId: "u-1", parentId: null, briefRef: "brief.md" });
     ledger.append("SpecSubmitted", {
@@ -315,11 +334,32 @@ describe("验收6：初始 commit（无父）→ exit 2 附说明", () => {
       exitCode: 0,
     });
 
+    // rv-4 语义迁移：无父 commit 是合法跳过不是失败（旧 standalone → exit 2）；
+    // 本 fixture 的验收是 echo ok（常规层假命令 fail）→ exit 1（红阶段 skip
+    // 不参与判定，echo ok 的常规失败不被跳过掩盖）
     const res = await run(["verify", "--unit", "u-1", "--red-phase"]);
-    expect(res.code).toBe(2);
-    expect(res.stderr).toContain("无父 commit");
-    expect(res.stderr).toContain("初始 commit");
-    expect(res.stderr).toContain("恢复动作");
-    expect(ledger.readAll().filter((e) => e.type === "VerifyRan")).toHaveLength(0);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("A1");
+    expect(res.stderr).toContain("无标记行且 exitCode=0");
+    // 跳过事实在 stdout 摘要透明呈现（含原因）
+    expect(res.stdout).toContain("A1 跳过");
+    expect(res.stdout).toContain("无父 commit");
+    expect(res.stdout).toContain("红阶段不适用");
+    // verify 可用且入账（单 commit 仓库不因红阶段而 exit 2 / 拒绝服务）
+    const verifyRans = ledger.readAll().filter((e) => e.type === "VerifyRan");
+    expect(verifyRans).toHaveLength(1);
+    // report.json 的 redPhase 节记录 skipped 条目（rv4-acceptance §2 结构）
+    const runId = (verifyRans[0]?.payload as { runId: string }).runId;
+    const report = JSON.parse(
+      readFileSync(join(evidenceDir(cwHome, cwd, "u-1", runId), "report.json"), "utf-8"),
+    ) as { redPhase: Array<{ id: string; skipped?: boolean; reason: string }> };
+    expect(report.redPhase).toEqual([
+      {
+        id: "A1",
+        discriminative: true,
+        skipped: true,
+        reason: expect.stringContaining("无父 commit"),
+      },
+    ]);
   });
 });

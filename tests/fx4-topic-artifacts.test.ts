@@ -611,7 +611,9 @@ describe("fx4 T5 human 接管 + 反向断言（场景 4）", () => {
       "--commit", commit, "--run-id", "run-t5-1", "--file", "app.js",
     ]);
     expect(submit.code, `evidence submit 应成功（stderr: ${submit.stderr}）`).toBe(0);
-    const verifyRes = runCliInWorktree(["verify", "--unit", "t5"]);
+    // rv-4 语义迁移：fixture 验收为内联恒真形态，红阶段默认执行下无区分力必挂
+    //——本用例锁定 topic 产物与 human 接管链路，用 --no-red-phase 逃生口保持原语义
+    const verifyRes = runCliInWorktree(["verify", "--unit", "t5", "--no-red-phase"]);
     expect(verifyRes.code, `verify 应 pass（stdout: ${verifyRes.stdout}，stderr: ${verifyRes.stderr}）`).toBe(0);
 
     // 4. 循环消费账本事件 → 派 reviewer（指令落盘 topic）→ 人执行 exec-review → root closed

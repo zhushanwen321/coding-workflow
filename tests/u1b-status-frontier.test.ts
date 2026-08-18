@@ -418,7 +418,9 @@ describe("frontier（验收#2）", () => {
     expect(ready.integrationReady).toContain("ig-root");
     expect(ready.buildReady).not.toContain("ig-root");
 
-    // 连续 2 次集成 fail（fx-2 R4a 上限）→ integrationDrift 取代 integrationReady；
+    // 集成 fail 达上限（rv-4 语义迁移：MAX=1，首次 fail 即 drift；本断言 append
+    // 两条 fail 后判定，在 MAX=1 与 MAX=2 下同为 drift——语义内核不变，上限值
+    // 见 src/readonly/frontier.ts）→ integrationDrift 取代 integrationReady；
     // fails 计数由原始事件流重放（与 loop / frontier 命令同一口径）
     ledger.append("VerifyRan", { unitId: "ig-root", runId: "int-1", reportHash: "rh1", result: "fail", acceptanceIds: [] });
     ledger.append("VerifyRan", { unitId: "ig-root", runId: "int-2", reportHash: "rh2", result: "fail", acceptanceIds: [] });

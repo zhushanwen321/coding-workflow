@@ -29,8 +29,10 @@
  *   - spec-frozen 内部节点（split 非空且不含自身）且子全部 verified → 不派 agent，
  *     直接 runIntegrationVerify（u8 rootLast 升级：集成的物理前提是子证据齐——
  *     verified 即证据链闭合，不必等 exec-review 收尾 closed）。连续 fail 达上限
- *     （fx-2 R4a，2 次）→ 停止自动重派，改派 designer 处置契约漂移（brief 含失败
- *     契约清单与二选一处置路径）。split 含自身
+ *     （fx-2 R4a 引入，rv-4 起上限 1：集成 fail 是确定性失败，无瞬时态可重试）
+ *     → 停止自动重派，改派 designer 处置契约漂移（brief 含 merge 冲突清单、失败
+ *     契约清单与二选一处置路径；人工窗口期间 loop 不再触发集成、不 reset root
+ *     worktree）。split 含自身
  *     unitId = 自引用（gate 规则⑥ fx-1 已拒新账本）→ 记 stderr 警告并按叶子语义
  *     参与派发，绝不作为内部节点等待子树（fx-1 R1 loop 级防御）
  *   - verified 且未 closed   → reviewer（exec-review）
@@ -65,7 +67,6 @@ import { join } from "node:path";
 
 import { fold } from "../core/fold.js";
 import type {
-  Contract,
   DiscriminatedEvent,
   LedgerEvent,
   SequencedProjection,
@@ -90,6 +91,7 @@ import {
   topicDir,
   worktreePath,
 } from "../store/project.js";
+import type { OwnedContract } from "../verify/contract-match.js";
 import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
@@ -323,25 +325,20 @@ interface IntegrationChild {
 }
 
 /**
- * 集成契约集合：root spec 契约 ∪ 各子 spec 契约（跨节点承诺由 provider 的 spec
- * 冻结——root 声明集成级契约，子声明自己提供的契约，两者都属「切分时冻结的
- * 承诺」）。同 id 冲突以 root 为先（root 是集成契约的 owner；冲突本身是分解
- * 缺陷，M2 不展开，报告里的比对结果会暴露不一致的那份）。
+ * 集成契约集合：root spec 契约 ∪ 各子 spec 契约，全量带 owner 保留（rv-4：废除
+ * 「同 id root 优先去重」——同 id 多 owner 版本并存时，冲突由契约比对的两道组合
+ * 判定显性暴露：root 版 provider 指向子 → 与子冻结版配对比对；树内同 id 任一版本
+ * 命中即过）。owner 标记是配对第一道（consumer ≡ provider 冻结）的输入。
  */
 function collectIntegrationContracts(
   root: SequencedUnitProjection,
   children: readonly SequencedUnitProjection[],
-): Contract[] {
+): OwnedContract[] {
   const owners = [root, ...children];
-  const seen = new Set<string>();
-  const contracts: Contract[] = [];
+  const contracts: OwnedContract[] = [];
   for (const owner of owners) {
     for (const contract of owner.specs[owner.specs.length - 1]?.contracts ?? []) {
-      if (seen.has(contract.id)) {
-        continue;
-      }
-      seen.add(contract.id);
-      contracts.push(contract);
+      contracts.push({ contract, ownerUnitId: owner.unitId });
     }
   }
   return contracts;
@@ -434,7 +431,8 @@ async function runIntegrationDispatch(
   emitErr(
     [
       `[runner] 集成验证 unit "${unitId}" 失败（${result.failures.length} 项，已写 fail VerifyRan 留审计，` +
-        `下轮重派重试——连续 fail 达 ${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次后停止自动重派、转派 designer 处置）：`,
+        `连续 fail 达 ${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次上限——停止自动重派，下轮转派 designer 处置；` +
+        `处置完成（新 spec 过审后计数清零）前不再自动重跑集成）：`,
       ...result.failures.map((f) => `  ${f}`),
       `[runner] report: ${result.reportPath}`,
       "",
@@ -453,7 +451,7 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
     "## 你的任务（builder）",
     "1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。",
     `2. 提交 build 证据：cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <自拟唯一 runId> [--file <产物路径>...]`,
-    `3. 触发干净重跑验证：cw verify --unit ${unitId}`,
+    `3. 触发干净重跑验证：cw verify --unit ${unitId}（默认含红阶段检查——新测试在旧代码树必须 fail，恒真测试会被拒）。`,
     "完成标志：unit 进入 verified。",
   ].join("\n"),
   reviewer: (unitId) => [
@@ -526,10 +524,12 @@ function reReviewTasks(unitId: string): string {
 
 /**
  * fx-2 R4a 上限出口的任务书（集成连续 fail 达上限后的 designer）：内嵌最近一次
- * 集成报告的失败事实（契约清单 + 失败验收 id）与二选一处置指引——契约漂移的
- * 归属（改 spec 契约还是修 provider 实现）需要语义判断，是 designer 的职责而非
- * runner 的（canon D4：runner 无智能）。报告不可读时降级为冻结 spec 的契约全集
- * + 指向查证命令（错误可操作闭环）。
+ * 集成报告的失败事实（merge 冲突清单 + 契约清单 + 失败验收 id）与二选一处置指引
+ * ——契约漂移/冲突的归属（改 spec 契约还是修实现/人工解冲突）需要语义判断，是
+ * designer 的职责而非 runner 的（canon D4：runner 无智能）。报告不可读时降级为
+ * 冻结 spec 的契约全集 + 指向查证命令（错误可操作闭环）。rv-4 起 MAX=1：首次
+ * fail 即进入本出口（确定性失败无瞬时态可重试），且 merge 冲突事实（报告
+ * mergeFailures 节）不再退化为「契约比对无失败项」类笼统文案。
  */
 function integrationDriftTasks(unit: SequencedUnitProjection, cwd: string): string {
   const lastFailRun = [...unit.verifyRuns]
@@ -546,16 +546,28 @@ function integrationDriftTasks(unit: SequencedUnitProjection, cwd: string): stri
     factLines.push(
       `- 最近一次集成报告不可读——失败明细见 cw report --unit ${unit.unitId}；当前冻结 spec 的契约全集：`,
       ...(contracts.length === 0
-        ? ["  （无契约——fail 来自验收红或 commit 可达性，见失败明细）"]
+        ? ["  （无契约——fail 来自 merge 冲突、验收红或 commit 可达性，见失败明细）"]
         : contracts.map(
             (c) => `  - ${c.id}: signature "${c.signature}" 期望文件 ${c.file ?? "（全树搜索）"}`,
           )),
     );
   } else {
+    // rv-4：merge 冲突事实独立提取（报告 mergeFailures 节；旧报告无该节按空清单）
+    const mergeFailures = read.report.mergeFailures ?? [];
+    if (mergeFailures.length > 0) {
+      factLines.push(
+        "- merge 冲突清单（步骤 0 汇聚失败原文，含冲突子 unitId 与 root worktree 路径）：",
+        ...mergeFailures.map((f) => `  - ${f}`),
+      );
+    }
     const contractFailures = read.report.contracts.failures;
     factLines.push(
       ...(contractFailures.length === 0
-        ? ["- 契约比对无失败项（fail 来自验收红或 commit 可达性，见失败明细）"]
+        ? [
+            mergeFailures.length > 0
+              ? "- 契约比对无失败项（fail 的机器事实见上方 merge 冲突清单与失败验收）"
+              : "- 契约比对无失败项（fail 来自验收红或 commit 可达性，见失败明细）",
+          ]
         : [
             "- 契约比对失败清单（机器判定原文，含 id + signature + 期望文件）：",
             ...contractFailures.map((f) => `  - ${f}`),
@@ -578,7 +590,7 @@ function integrationDriftTasks(unit: SequencedUnitProjection, cwd: string): stri
     "## 你的任务（designer：集成契约漂移处置）",
     "",
     `unit "${unit.unitId}" 的集成已连续 fail ${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次（重派上限），`,
-    "runner 已停止自动重派集成——契约漂移的归属需要语义判断，由你按下述指引处置。",
+    "runner 已停止自动重派集成——契约漂移/merge 冲突的处置需要语义判断，由你按下述指引处置。",
     "",
     "### 集成失败事实（最近一次集成报告）",
     ...factLines,

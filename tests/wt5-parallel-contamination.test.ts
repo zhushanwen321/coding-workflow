@@ -298,12 +298,14 @@ if (role === "builder") {
     join(barrierDir, "window-" + unitId + ".json"),
     JSON.stringify({ start, end: Date.now(), commit }),
   );
-  // 真实证据链：evidence submit（内联前缀）→ verify（干净重跑，pass 使 unit verified）
+  // 真实证据链：evidence submit（内联前缀）→ verify（干净重跑，pass 使 unit verified）。
+  // rv-4 语义迁移：fixture 的 marker 验收是内联恒真形态（不引用实现产物），红阶段
+  // 默认执行下无区分力必挂——wt5 关注并发污染对抗，用 --no-red-phase 逃生口
   runCw([
     "evidence", "submit", "--kind", "build", "--unit", unitId,
     "--commit", commit, "--run-id", "run-" + unitId + "-1", "--file", "src/app.ts",
   ]);
-  runCw(["verify", "--unit", unitId]);
+  runCw(["verify", "--unit", unitId, "--no-red-phase"]);
   console.log("wt5-worker-done builder " + unitId + " commit " + commit);
 } else if (role === "reviewer") {
   // rv-2 exec-review refs 必填适配（方案 C）：从账本读该 unit 真实入账的 runId 后
@@ -586,8 +588,10 @@ describe("wt5 C2 verify 真值与 cwd 状态无关（场景 3，G3/P7）", () =>
     expect(porcelainBefore).toContain("M tracked.txt"); // 前提：脏状态真实成立
     expect(porcelainBefore).toContain("?? untracked-note.txt");
 
-    // 子进程跑真实 cw verify（exit 0 pass）
-    const res = spawnSync(process.execPath, [CLI_PATH, "verify", "--unit", C2_UNIT_ID], {
+    // 子进程跑真实 cw verify（exit 0 pass）。rv-4 语义迁移：C2 验收是「树内容
+    // 自证」型命令（在检出树与父树上都 pass = 无区分力），本用例锁定的是
+    // 「verify 真值与 cwd 脏状态无关」——用 --no-red-phase 逃生口保持原语义
+    const res = spawnSync(process.execPath, [CLI_PATH, "verify", "--unit", C2_UNIT_ID, "--no-red-phase"], {
       cwd: repoDir,
       encoding: "utf-8",
       env: { ...process.env, CW_HOME: cwHome },

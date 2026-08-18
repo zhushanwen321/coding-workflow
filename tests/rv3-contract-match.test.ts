@@ -2,6 +2,10 @@
  * rv3 单测：契约比对强化——文档宿主排除 + 归一化比对
  * （docs/rewrite/acceptance/rv3-acceptance.md §5 条款 T1-T8）。
  *
+ * rv-4 语义迁移：契约输入结构改带 owner（OwnedContract[]，废除同 id root 优先
+ * 去重）；本文件锁定的树内验证语义不传 frozenByUnit（配对第一道由
+ * tests/rv4-contract-pairing.test.ts 专项覆盖——rv-3 行为零回退的回归锚点在此）。
+ *
  * 真实 tmp 目录树（零 mock，无 git 依赖——matchContracts 只读文件系统）。
  * 用例编号 T1-T8 逐条对应验收文档 §5：
  *   T1 → README 作弊封堵；T2 → docs/ 目录排除；T3 → 显式 file 指向文档的两态区分；
@@ -15,7 +19,7 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import type { Contract } from "../src/events/types.js";
-import { matchContracts } from "../src/verify/contract-match.js";
+import { matchContracts, type OwnedContract } from "../src/verify/contract-match.js";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-rv3-cm-"));
 
@@ -42,6 +46,11 @@ function contract(fields: Partial<Contract> = {}): Contract {
   };
 }
 
+/** rv-4 输入形态：契约带 owner（owner=root = consumer 声明视角，与旧语义等价） */
+function owned(c: Contract): OwnedContract {
+  return { contract: c, ownerUnitId: "root" };
+}
+
 // ── T1：README 作弊封堵 ──────────────────────────────────────
 
 describe("T1：README.md 含 signature 全文、代码不含 → 全树搜索不命中；签名进代码文件 → 命中", () => {
@@ -52,7 +61,7 @@ describe("T1：README.md 含 signature 全文、代码不含 → 全树搜索不
     put(tree, "README.md", `# demo\n\n契约签名：${SIG}s) { return s; }\n`);
     put(tree, "src/util.ts", "export const version = 1;\n");
 
-    const result = matchContracts({ contracts: [contract()], checkoutDir: tree });
+    const result = matchContracts({ contracts: [owned(contract())], checkoutDir: tree });
     expect(result.ok).toBe(false);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]).toContain("C1");
@@ -64,7 +73,7 @@ describe("T1：README.md 含 signature 全文、代码不含 → 全树搜索不
     put(tree, "README.md", "# demo\n");
     put(tree, "src/foo.ts", `${SIG}s: string) { return s; }\n`);
 
-    const result = matchContracts({ contracts: [contract()], checkoutDir: tree });
+    const result = matchContracts({ contracts: [owned(contract())], checkoutDir: tree });
     expect(result.ok).toBe(true);
     expect(result.failures).toEqual([]);
   });
@@ -79,7 +88,7 @@ describe("T2：签名只出现在 docs/guide.md → 全树搜索不命中", () =
     put(tree, "docs/guide.md", `# 集成指南\n\n${SIG}s) { ... }\n`);
     put(tree, "src/util.ts", "export const version = 1;\n");
 
-    const result = matchContracts({ contracts: [contract()], checkoutDir: tree });
+    const result = matchContracts({ contracts: [owned(contract())], checkoutDir: tree });
     expect(result.ok).toBe(false);
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]).toContain("C1");
@@ -95,7 +104,7 @@ describe("T3：显式 file 指向文档类 → 「不是契约宿主」形态而
     put(tree, "README.md", `${SIG}s) { return s; }\n`);
 
     const result = matchContracts({
-      contracts: [contract({ file: "README.md" })],
+      contracts: [owned(contract({ file: "README.md" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(false);
@@ -111,7 +120,7 @@ describe("T3：显式 file 指向文档类 → 「不是契约宿主」形态而
     put(tree, "src/util.ts", "export const version = 1;\n");
 
     const result = matchContracts({
-      contracts: [contract({ file: "docs/guide.md" })],
+      contracts: [owned(contract({ file: "docs/guide.md" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(false);
@@ -125,7 +134,7 @@ describe("T3：显式 file 指向文档类 → 「不是契约宿主」形态而
     put(tree, "src/api.ts", `${SIG}s: string) { return s; }\n`);
 
     const result = matchContracts({
-      contracts: [contract({ file: "src/api.ts" })],
+      contracts: [owned(contract({ file: "src/api.ts" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(true);
@@ -148,7 +157,7 @@ describe("T4：代码中签名为多行形态、契约 signature 为单行形态
     put(tree, "src/calc.ts", CODE_MULTI_LINE);
 
     const result = matchContracts({
-      contracts: [contract({ signature: SIG_SINGLE_LINE, file: "src/calc.ts" })],
+      contracts: [owned(contract({ signature: SIG_SINGLE_LINE, file: "src/calc.ts" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(true);
@@ -161,7 +170,7 @@ describe("T4：代码中签名为多行形态、契约 signature 为单行形态
     put(tree, "README.md", "# demo\n");
 
     const result = matchContracts({
-      contracts: [contract({ signature: SIG_SINGLE_LINE })],
+      contracts: [owned(contract({ signature: SIG_SINGLE_LINE }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(true);
@@ -177,7 +186,7 @@ describe("T5：大小写差异与 token 差异 → 仍不命中", () => {
     put(tree, "src/util.ts", "export function foobar(s: string) { return s; }\n");
 
     const result = matchContracts({
-      contracts: [contract({ signature: "export function fooBar(" })],
+      contracts: [owned(contract({ signature: "export function fooBar(" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(false);
@@ -189,7 +198,7 @@ describe("T5：大小写差异与 token 差异 → 仍不命中", () => {
     put(tree, "src/sluggify.ts", "export function sluggify(a, c,b) { return b; }\n");
 
     const result = matchContracts({
-      contracts: [contract({ signature: "sluggify(a,b)", file: "src/sluggify.ts" })],
+      contracts: [owned(contract({ signature: "sluggify(a,b)", file: "src/sluggify.ts" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(false);
@@ -206,7 +215,7 @@ describe("T6：代码 foo(a,  b)（多空格）vs 契约 foo(a, b) → 命中", 
     put(tree, "src/util.ts", "export function parse(foo(a,  b) { return b; })\n");
 
     const result = matchContracts({
-      contracts: [contract({ signature: "foo(a, b)", file: "src/util.ts" })],
+      contracts: [owned(contract({ signature: "foo(a, b)", file: "src/util.ts" }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(true);
@@ -225,7 +234,7 @@ describe("T7：.json/.yaml 文件含签名（kind=schema）→ 仍命中", () =>
 
     const result = matchContracts({
       contracts: [
-        contract({ id: "S1", kind: "schema", signature: SIG, file: "schemas/config.json" }),
+        owned(contract({ id: "S1", kind: "schema", signature: SIG, file: "schemas/config.json" })),
       ],
       checkoutDir: tree,
     });
@@ -240,7 +249,7 @@ describe("T7：.json/.yaml 文件含签名（kind=schema）→ 仍命中", () =>
     put(tree, "src/util.ts", "export const version = 1;\n");
 
     const result = matchContracts({
-      contracts: [contract({ id: "S2", kind: "schema", signature: yamlSig })],
+      contracts: [owned(contract({ id: "S2", kind: "schema", signature: yamlSig }))],
       checkoutDir: tree,
     });
     expect(result.ok).toBe(true);
@@ -260,15 +269,15 @@ describe("T8：u8 契约单测核心场景在新语义下保持（u8 系既有�
     put(tree, "README.md", "# demo\n");
 
     const hit = matchContracts({
-      contracts: [contract({ file: "src/capitalize.js" })],
+      contracts: [owned(contract({ file: "src/capitalize.js" }))],
       checkoutDir: tree,
     });
     expect(hit.ok).toBe(true);
 
     const multi = matchContracts({
       contracts: [
-        contract({ id: "C1", file: "src/capitalize.js" }),
-        contract({ id: "C2", signature: "export function sluggify(", file: "src/nope.js" }),
+        owned(contract({ id: "C1", file: "src/capitalize.js" })),
+        owned(contract({ id: "C2", signature: "export function sluggify(", file: "src/nope.js" })),
       ],
       checkoutDir: tree,
     });
@@ -286,7 +295,7 @@ describe("T8：u8 契约单测核心场景在新语义下保持（u8 系既有�
     const deepTree = join(tmpRoot, "t8-deep");
     put(deepTree, "src/util.ts", "export const version = 1;\n");
     put(deepTree, "pkg/deep/hidden.dat", `promise: ${SIG}\n`);
-    const deep = matchContracts({ contracts: [contract()], checkoutDir: deepTree });
+    const deep = matchContracts({ contracts: [owned(contract())], checkoutDir: deepTree });
     expect(deep.ok).toBe(true);
 
     // 跳过：签名只出现在 node_modules 诱饵与二进制中 → 不命中
@@ -298,7 +307,7 @@ describe("T8：u8 契约单测核心场景在新语义下保持（u8 系既有�
       "asset.bin",
       Buffer.concat([Buffer.from([0x00, 0x01, 0x02, 0x00]), Buffer.from(`\n${SIG}\n`)]),
     );
-    const skipped = matchContracts({ contracts: [contract()], checkoutDir: skipTree });
+    const skipped = matchContracts({ contracts: [owned(contract())], checkoutDir: skipTree });
     expect(skipped.ok).toBe(false);
     expect(skipped.failures[0]).toContain("C1");
   });

@@ -214,7 +214,8 @@ describe("E2E 1：适配器判定全链（create → spec → build → review �
       expect(runs[0]?.result).toBe("pass");
       expect(runs[0]?.acceptanceIds).toEqual(["A1", "A2", "A3", "M1"]);
 
-      // 红阶段：A1/A2 的 e2e/run.sh 被 patch 进父树（command 引用它），真测试
+      // 红阶段（rv-4 起默认执行，--red-phase 是显式同义——每次 verify 都跑三道
+      // gate）：A1/A2 的 e2e/run.sh 被 patch 进父树（command 引用它），真测试
       // 因 c1 无 impl.js 而挂；A3 的 vitest 全量跑不引用具体测试文件（无可 patch），
       // c1 无 tests/ → no test files → exit 1——三条机器验收都有区分力
       const red = runCli(repo, ["verify", "--unit", UNIT, "--red-phase"]);
@@ -222,8 +223,10 @@ describe("E2E 1：适配器判定全链（create → spec → build → review �
       expect(red.stdout).toContain("A1 有区分力");
       expect(red.stdout).toContain("A2 有区分力");
       expect(red.stdout).toContain("A3 有区分力");
-      // 红阶段不写 VerifyRan（它不是验证结论）
-      expect(verifyRans(repo, UNIT)).toHaveLength(1);
+      // rv-4 语义迁移：--red-phase = 完整 verify（常规 + 红阶段），总是入账——
+      // 旧 standalone「红阶段不写 VerifyRan」废除，第二次 verify 追加第 2 条
+      expect(verifyRans(repo, UNIT)).toHaveLength(2);
+      expect(verifyRans(repo, UNIT)[1]?.result).toBe("pass");
     },
   );
 });
@@ -268,13 +271,14 @@ describe("E2E 2：假命令防线全链（command=echo ok）", () => {
     expect(runs[0]?.result).toBe("fail");
     expect(runs[0]?.acceptanceIds).toEqual([]);
 
-    // 红阶段：echo ok 在父 commit（brief-only）上也过 → 无区分力
+    // 红阶段（rv-4 起默认执行；--red-phase 显式同义）：echo ok 在父 commit
+    // （brief-only）上也过 → 无区分力（第二次 verify 同样 fail 并入账）
     const red = runCli(repo, ["verify", "--unit", UNIT, "--red-phase"]);
     expect(red.code).toBe(1);
     expect(red.stderr).toContain("A1");
     expect(red.stderr).toContain("无区分力");
     expect(red.stderr).toContain("修测试而非修 gate");
-    // 红阶段不写 VerifyRan
-    expect(verifyRans(repo, UNIT)).toHaveLength(1);
+    // rv-4 语义迁移：verify 总是入账（第二次 verify 追加第 2 条 fail）
+    expect(verifyRans(repo, UNIT)).toHaveLength(2);
   });
 });

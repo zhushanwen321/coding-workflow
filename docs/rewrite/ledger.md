@@ -60,11 +60,11 @@
 | rv-1 | spawn/loop 健壮性（EPERM 兜底 + Ctrl-C 孤儿清理） | committed | 9023076 | verifier PASS（sha256 3449be0a…，报告 rv1-report.md：runLoopMain 外壳化重构核实零行为变化 + 红灯复核两形态命中含 EPERM 原始缺陷独立复现 + 160 次竞态加量零未捕获 + 双 SIGINT/极早期/空 inFlight 窗口对抗 5 项全过）。瑕疵不阻塞：验收 §6 文件名笔误待终验勘误；T2 单轮 EPERM 检出概率性（口径已覆盖） |
 | rv-2 | engine 小修包（id 字符集 gate⑦ + marker 同源 + exec-review refs 必填 + replan 文案 + parse exitCode 落盘 + checkout 根解析） | committed | 9023076 | verifier PASS（sha256 ec8ca4e6…，报告 rv2-report.md：干净副本全验 + 对抗 18/18 + 三裁决全过——剥锚派生合规/方案C 证据集扩展复核通过（fail runId 可入账但 fold verified 需 pass 兜底，边际作弊面≈0）/wt5 fixture 诚实）。打回修复：3 处范围外机械适配 + 方案 C（exec-review 证据 = EvidenceSubmitted ∪ VerifyRan，内部节点形态 T3b 锁定——wt5 场景 1 打回实锤的设计缺口）。建议级：T3b 补「fail runId 引用」锁定测试 |
 | rv-3 | 契约比对强化（文档宿主排除 + 归一化比对） | committed | 9023076 | verifier PASS（sha256 bf449ea3…，报告 rv3-report.md：T1-T8 全实质 + 18 条对抗探针全过含大小写绕过/symlink 逃逸/8KB 嗅探边界）。2 裁量裁决合规（宿主判定大小写不敏感 fail-closed、文档判定先于存在性）；u8 适配仅 hidden.txt→.dat 换宿主。「≡ 冻结配对比对」归 rv-4。残余备案：contract.file 含 ../ 可逃逸 checkoutDir（基线行为，输入来自冻结可信层） |
-| rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | building | <本 commit> | 依赖 rv-1+rv-3 已满足；canon D5「三道 gate」+ 审查 A-2/A3/A-7 残余；MAX=1 语义（fx-2 时代 MAX=2 作废） |
-| rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | pending | — | 依赖 rv-4 |
+| rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | committed | f8aaa0c | verifier PASS（sha256 24f76f4b…，报告 rv4-report.md：红性双命中——MAX→2 则 T4/T5/T6 红、红阶段→opt-in 则 T1/T2/T3 红；对抗 31/31；四裁决全过——frozenByUnit 可选无漏配对路径/flag 反序 minimist last-wins 记 minor 建议补互斥校验/failures 双视图各有锚定/HELP 无同步对象）。全量 428 绿（58 文件）。三道 gate 常开（恒真测试自动链路必死）、MAX=1 首败转处置、契约配对+树内两道。迁移 14 测试文件（语义反转处均标注） |
+| rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | building | <本 commit> | 依赖 rv-2+rv-4 已满足；canon §5.2「连挂 2 次转人工不自动豁免」+ 纪律②豁免名字比对 |
 | mx-1 | 异源 reviewer 派发机制（设计先行 + 对抗审查） | pending | — | critical A-1：spec-review 由 designer 自审 pass 违背「独立 reviewer」承诺 |
 | mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | committed | 6eb88c2 | verifier PASS（sha256 a5d4d277…，报告 mx2-report.md：79+55 测试全绿、6 组对抗全过含 flaky 重试序列折叠与 HEAD 等价性字节级验证、四冲突裁决全合理——pytest 行尾进度标记/playwright result 级词表（expected⟺全 result 通过实测成立）/name 拼接 suite+spec/零测试 exit 5 分档）。30 新测试（pytest 8 + playwright 8 + routing 14）全真实子进程。观察 2 非阻断：--reporter=json,line 组合 stdout 混合、runner:"" 双处语义张力（gate 拦截使链路不可达） |
-| doc-1 | AGENTS.md 重写 + DESIGN-LOG.md 重建 | pending | — | 审查 M11/D2：AGENTS.md 三条现状声明全失效、文档索引指向已归档文件 |
+| doc-1 | AGENTS.md 重写 + DESIGN-LOG.md 重建 | committed | 86d7714 | 2.0 实态全文重写（1.x 机制词零命中）+ DESIGN-LOG 80 行（28 hash 全核验）；进行中项三处显式标注 |
 | doc-2 | canon 回写（附录 B 契约 / M1 现状注 / D5 红阶段口径 / §6.1 消矛盾） | pending | — | 依赖 rv-4/mx-1/mx-2 定型 |
 | doc-3 | parent/spawn/testrun/wt 设计文档过时注回写 + fx-5 验收链补录 + fx-3 ledger 修复 + P1 探针 + 回收审计二跑 | pending | — | 审查 A-3/A-4/A-5/D1/D5/D10/D12 |
 
@@ -143,3 +143,4 @@
 - 2026-08-18 rv-2 committed（含一次打回修复 + 主 agent 裁决方案 C）：六项小修 + 规则⑦ + marker 同源 + exec-review 证据集扩展（EvidenceSubmitted ∪ VerifyRan，内部节点 exec-review 死锁缺口修复，T3b 4 条锁定）。verifier PASS（三裁决全过、干净副本 91/91、对抗 18/18）。mx-2 基线入 git，builder 派发。
 - 2026-08-18 mx-2 committed：pytest 适配器（-v --tb=no -p no:cacheprovider 零依赖文本行解析、PASSED→pass/skipped→fail、无区分力防线）+ playwright 适配器（--reporter=json、result 级词表 passed 唯一通过态、suite>spec name 拼接）+ AcceptanceItem.runner 显式声明路由（规则⑧ + knownAdapterTypes）。canon §6.1「显式声明 vs type 硬映射」矛盾消解（T7 显式优先 + T8 推导兜底字节级等价）。verifier 四裁决全合理。
 - 2026-08-18 doc-1 committed：AGENTS.md 全文重写（2.0 实态：9 命令面/事件账本+fold/八规则/三道 gate/四适配器/runner 循环/exec-review refs；进行中项三处显式标注；1.x 机制词零命中自查过）+ DESIGN-LOG.md 重建（主题台账 M0→M4 + ADR 索引，28 个 commit hash 逐条核验，80 行）。plan 审查 D2/M11 收口。
+- 2026-08-18 rv-4 committed（M4 最重 unit）：红阶段默认执行（--no-red-phase 逃生口，report 并 redPhase 节，无父 commit 合法跳过，standalone 废除总是入账）+ 集成首 fail 即转处置（MAX=1，mergeFailures 结构化入报告与 drift 任务书，人工窗口 WIP 不被销毁）+ 契约配对化（OwnedContract 带 owner 全量，配对≡冻结 + 树内两道独立）。verifier 红性双命中 + 对抗 31/31 + 四裁决全过。rv-5 基线入 git，builder 派发（最后实现 unit）。

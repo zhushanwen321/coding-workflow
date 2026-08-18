@@ -371,8 +371,10 @@ function performHumanStep(
       return submit;
     }
     // 60s 上限：满负载下 verify 内嵌的验收 vitest 可远超 humanDrive 的 90s 预算，
-    // 超限走 fail 可重试/可诊断，而不是无限等
-    return runCli(repoDir, ["verify", "--unit", unitId, "--timeout-ms", "60000"]);
+    // 超限走 fail 可重试/可诊断，而不是无限等。
+    // rv-4 语义迁移：u5b 同款 fixture 的验收命令为内联恒真形态，红阶段默认执行
+    // 下无区分力必挂——human 后端回归关注链路推进，用 --no-red-phase 逃生口
+    return runCli(repoDir, ["verify", "--unit", unitId, "--timeout-ms", "60000", "--no-red-phase"]);
   }
   if (kind === "exec-review") {
     // rv-2 exec-review refs 必填适配（引用 build 分支已入账的 runId run-<unitId>-1）

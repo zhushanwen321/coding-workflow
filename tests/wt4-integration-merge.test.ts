@@ -234,6 +234,8 @@ async function integrateOnce(fx: SplitFixture): Promise<IntegrateResult> {
 interface ReportShape {
   head: string;
   children: Array<{ unitId: string; commit: string; reachable: boolean }>;
+  /** rv-4：merge 失败独立成节（报告侧不再混在通用 failures——返回值 failures 仍是聚合视图） */
+  mergeFailures: string[];
   ok: boolean;
   failures: string[];
 }
@@ -349,9 +351,12 @@ describe("wt4 M2 merge 冲突：fail + abort 清现场 + 恢复指引", () => {
       encoding: "utf-8",
     });
     expect((porcelain.stdout ?? "").trim()).toBe("");
-    // 报告落盘且含冲突事实（fail VerifyRan 的 reportHash 有文件可指）
+    // 报告落盘且含冲突事实（fail VerifyRan 的 reportHash 有文件可指）。
+    // rv-4 语义迁移：merge 失败在报告侧独立成 mergeFailures 节（不再混在通用
+    // failures 里丢失结构）；返回值 failures 仍是含 merge 文本的聚合视图（stderr 消费）
     expect(existsSync(result.reportPath)).toBe(true);
-    expect(readReport(result).failures.some((f) => f.includes("merge 冲突"))).toBe(true);
+    expect(readReport(result).mergeFailures.some((f) => f.includes("merge 冲突"))).toBe(true);
+    expect(readReport(result).failures.some((f) => f.includes("merge 冲突"))).toBe(false);
     // 先 merge 的子不受牵连：unit-a 已汇聚、unit-b 未汇聚——两分支均保留（fx-5：
     // merge 点不删分支；unit-b 分支是修复后重试的现场，unit-a 分支由终态回收统一收）
     expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(false);

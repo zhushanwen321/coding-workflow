@@ -5,7 +5,8 @@
  * 叶子的 verify = 干净重跑自己的验收；内部节点的 verify = 子树集成：
  *   0. merge 汇聚（wt-4 J1/D6）——ensure root worktree，逐子把 cw/<rootId>/<unitId>
  *      merge --no-edit 进 root 分支 cw-root/<rootId>（已达则跳过，幂等；冲突
- *      abort 清现场收 failures 后继续）；
+ *      abort 清现场收 mergeFailures 后继续——rv-4 起独立成节，与可达性/验收/
+ *      契约失败分类，不再混在通用 failures 里丢失结构）；
  *   1. commit 可达性——每个子 build commit 在 root 分支可达（wt-4 J2 三处 HEAD
  *      锚定之一：可达性判定对 root 分支 ref，与项目 cwd HEAD 解耦）；
  *   2. 干净 checkout——root 分支 HEAD（集成时刻的最终树，子产出已并入）到一次性
@@ -17,15 +18,20 @@
  *      逐 unit 分批而非合并成一个列表：跨 unit 的验收 id 允许重名（id 仅 unit 内
  *      唯一），合并会让同名产物文件互相覆盖（run.ts 的 fileStem 落盘以 id 命名）；
  *      分批各得独立子目录，语义也回归「子验收在子树里各自成立」。
- *   4. 契约比对——matchContracts 在 checkout 树上执行（§1.3 机器验「契约配对」）。
+ *   4. 契约比对——matchContracts 两道独立比对（rv-4：第一道配对 consumer ≡
+ *      provider 冻结 + 第二道树内验证）在 checkout 树上执行（§1.3 机器验
+ *      「契约配对」）。
  *   5. 汇总——全部通过 ok=true；产物落 evidence/<rootId>/integrate-<runId>/
  *      （逐 unit 子目录逐验收产物 + integrate-report.json）。
  *
- * 失败语义：所有可检出问题（commit 不可达 / checkout 失败 / 验收红 / 契约漂移 /
- * 子无冻结 spec）都收进 failures 返回（不抛错、不短路——每多检出一项，下轮修复
- * 就少一次盲跑）；调用方（loop）据此写 fail 的 VerifyRan 留审计并重派。子节点验收
- * 从账本读取（children 参数只带 commit；acceptance 是 spec 冻结事实，账本是唯一
- * 权威源）。本函数不写任何账本事件——事件写入是调用方的编排职责。
+ * 失败语义：所有可检出问题（merge 冲突 / commit 不可达 / checkout 失败 / 验收红 /
+ * 契约漂移 / 子无冻结 spec）都收进返回（不抛错、不短路——每多检出一项，下轮修复
+ * 就少一次盲跑；merge 类在 mergeFailures 节，其余在 failures 节，返回值 failures
+ * 是两者的扁平聚合供 stderr 消费）；调用方（loop）据此写 fail 的 VerifyRan 留审计。
+ * 子节点验收从账本读取（children 参数只带 commit；acceptance 是 spec 冻结事实，
+ * 账本是唯一权威源）。本函数不写任何账本事件——事件写入是调用方的编排职责。
+ * 集成 verify 不跑红阶段（rv4-acceptance §4 锁定）：红阶段是 unit 层 gate（测试
+ * vs 自己的实现），集成是全量重跑语义，无红阶段对象。
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -36,7 +42,7 @@ import type { AcceptanceItem, Contract } from "../events/types.js";
 import { loadLedger } from "../readonly/load.js";
 import { evidenceDir, getCwHome, getCwWorktreeHome, worktreePath } from "../store/project.js";
 import { cleanCheckout, cleanupCheckout } from "../verify/checkout.js";
-import { type ContractMatchResult, matchContracts } from "../verify/contract-match.js";
+import { type ContractMatchResult, matchContracts, type OwnedContract } from "../verify/contract-match.js";
 import { type AcceptanceRunResult, runAcceptances, type RunOutcome } from "../verify/run.js";
 import { ensureUnitWorktree, unitBranchName } from "./worktree.js";
 
@@ -48,7 +54,14 @@ const REPORT_INDENT = 2;
 
 export interface IntegrateResult {
   ok: boolean;
+  /**
+   * 全部失败的扁平清单（stderr 消费视图）= mergeFailures + failures。报告侧两类
+   * 已结构化分节（rv-4：merge 冲突不再混在通用 failures 里丢失结构），返回值
+   * 保持单一清单供 loop 打印。
+   */
   failures: string[];
+  /** 步骤 0 merge 汇聚失败明细（结构化专节；与 failures 分类不混） */
+  mergeFailures: string[];
   runId: string;
   reportPath: string;
 }
@@ -74,6 +87,8 @@ export interface IntegrateReport {
   /** root 分支 cw-root/<rootId> 的 HEAD（wt-4 J2：集成锚点，非项目 cwd HEAD） */
   head: string;
   children: ChildReachability[];
+  /** 步骤 0 merge 汇聚失败明细（rv-4：独立成节——merge 冲突与可达性/验收/契约失败分类，不混入 failures） */
+  mergeFailures: string[];
   acceptanceBatches: AcceptanceBatchResult[];
   contracts: ContractMatchResult;
   ok: boolean;
@@ -91,7 +106,8 @@ export async function runIntegrationVerify(opts: {
   rootId: string;
   children: readonly { unitId: string; commit: string }[];
   rootAcceptance: AcceptanceItem[];
-  contracts: Contract[];
+  /** 集成契约全集（root ∪ 各子 spec 冻结，带 owner；rv-4 起废除同 id root 优先去重） */
+  contracts: readonly OwnedContract[];
   /** 省略 = 逐条按验收 type 分档（透传 runAcceptances 的可选语义）；显式值统一覆盖全部批次 */
   timeoutMs?: number;
 }): Promise<IntegrateResult> {
@@ -101,26 +117,28 @@ export async function runIntegrationVerify(opts: {
   const reportPath = join(evidenceBase, REPORT_FILE_NAME);
 
   const failures: string[] = [];
+  const mergeFailures: string[] = [];
   const childrenReachability: ChildReachability[] = [];
 
   // 步骤 0：merge 汇聚（wt-4 J1/D6）——子产出经显式 merge 汇入 root 分支
   // cw-root/<rootId>，集成语义从「隐式共享项目 HEAD」升级为「只信 root 分支」。
   // 内聚在本函数而非 loop：merge 失败也要落一份 integrate-report.json（VerifyRan
-  // 的 reportHash 必填约束才有文件可指），复用既有连续失败上限通道
+  // 的 reportHash 必填约束才有文件可指），复用既有连续失败上限通道。rv-4 起
+  // merge 类失败（HEAD 解析/worktree 就绪/merge 冲突）独立入 mergeFailures 节
   const rootBranch = unitBranchName(opts.rootId, opts.rootId);
   const rootWorktreeDir = worktreePath(getCwWorktreeHome(), opts.cwd, opts.rootId);
   const base = revParseHead(opts.cwd);
   if (base === null) {
-    failures.push(
+    mergeFailures.push(
       `无法解析项目 HEAD（仓库 "${opts.cwd}"）：merge 汇聚缺 base commit。` +
         "恢复动作：确认 cwd 是目标 git 仓库且有提交（git rev-parse HEAD 应输出 hash）后重试。",
     );
   } else {
     const ensured = ensureUnitWorktree(opts.cwd, rootWorktreeDir, opts.rootId, opts.rootId, base);
     if (!ensured.ok) {
-      failures.push(`root worktree 就绪失败（unit "${opts.rootId}"）：${ensured.error}`);
+      mergeFailures.push(`root worktree 就绪失败（unit "${opts.rootId}"）：${ensured.error}`);
     } else {
-      mergeChildrenIntoRoot(opts, rootWorktreeDir, rootBranch, failures);
+      mergeChildrenIntoRoot(opts, rootWorktreeDir, rootBranch, mergeFailures);
     }
   }
 
@@ -191,8 +209,15 @@ export async function runIntegrationVerify(opts: {
         }
       }
 
-      // 步骤 4：契约比对（跨节点承诺配对）
-      contracts = matchContracts({ contracts: opts.contracts, checkoutDir: checkout.dir });
+      // 步骤 4：契约比对（rv-4 两道：配对 consumer ≡ provider 冻结 + 树内验证）。
+      // 配对输入在此组装：contracts 已带 owner（loop 的 collectIntegrationContracts
+      // 全量保留），frozenByUnit 由同一入参按 owner 聚合还原——各 unit 冻结 spec 的
+      // 契约集无第二个数据源，避免 loop 与 integrate 各自读账本产生分叉口径
+      contracts = matchContracts({
+        contracts: opts.contracts,
+        frozenByUnit: frozenByUnitOf(opts.contracts),
+        checkoutDir: checkout.dir,
+      });
       failures.push(...contracts.failures);
     } finally {
       cleanupCheckout(checkout.dir);
@@ -204,7 +229,7 @@ export async function runIntegrationVerify(opts: {
 
   // 步骤 5：汇总 + 报告落盘（fx-2 R4a：失败汇总追加二选一恢复路径说明——契约
   // 漂移的归属判断与 loop 派 designer 处置任务书同口径，单一出处）
-  const ok = failures.length === 0;
+  const ok = mergeFailures.length === 0 && failures.length === 0;
   if (!ok) {
     failures.push(integrationRecoveryGuidance(opts.rootId));
   }
@@ -214,21 +239,38 @@ export async function runIntegrationVerify(opts: {
     runId,
     head: head ?? "",
     children: childrenReachability,
+    mergeFailures,
     acceptanceBatches: batchesReport,
     contracts,
     ok,
     failures,
   };
   writeFileSync(reportPath, `${JSON.stringify(report, null, REPORT_INDENT)}\n`, "utf-8");
-  return { ok, failures, runId, reportPath };
+  return { ok, failures: [...mergeFailures, ...failures], mergeFailures, runId, reportPath };
+}
+
+/**
+ * 配对第一道的比对基准：各 unit 冻结 spec 的契约集（unitId → 契约列表）。由集成
+ * 契约全集按 owner 聚合——全集本身就是各 owner 最后一条冻结 spec 的契约（loop
+ * collectIntegrationContracts 的收集口径）。
+ */
+function frozenByUnitOf(contracts: readonly OwnedContract[]): Map<string, Contract[]> {
+  const frozen = new Map<string, Contract[]>();
+  for (const { contract, ownerUnitId } of contracts) {
+    const list = frozen.get(ownerUnitId) ?? [];
+    list.push(contract);
+    frozen.set(ownerUnitId, list);
+  }
+  return frozen;
 }
 
 /**
  * 集成失败的恢复路径说明（fx-2 R4a，验收文档 fx-2-acceptance.md 锁定的二选一
- * 文案）：① 契约与实现语义等价但文本不等 → 修 spec 走重新过审链（fx-1 R2 第
- * 四分支已打通补审出口）；② 契约正确而实现跑偏 → 需 provider 修复，但 closed
- * 的 provider 无自动回退通道（状态机不重开 closed unit——已知边界，如实告知需
- * 人工介入）。loop 的 designer 处置任务书（integrationDriftTasks）引用同一出处。
+ * 文案；rv-4 按 MAX=1 对齐——首次 fail 即转处置，无自动重试）：① 契约与实现
+ * 语义等价但文本不等 → 修 spec 走重新过审链（fx-1 R2 第四分支已打通补审出口）；
+ * ② 契约正确而实现跑偏 → 需 provider 修复，但 closed 的 provider 无自动回退
+ * 通道（状态机不重开 closed unit——已知边界，如实告知需人工介入）。loop 的
+ * designer 处置任务书（integrationDriftTasks）引用同一出处。
  */
 export function integrationRecoveryGuidance(unitId: string): string {
   return [
@@ -236,7 +278,8 @@ export function integrationRecoveryGuidance(unitId: string): string {
     "① 实现与契约语义等价但文本不等（如 async 修饰差异）→ 修正 spec 的契约签名后重新提交并过审：",
     `   cw evidence submit --kind spec --unit ${unitId} --file spec.json`,
     `   cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass`,
-    "   （走既有重新过审链：过审后集成按正常路径重跑，连续 fail 计数随新 spec 提交清零）",
+    "   （走既有重新过审链：过审后集成按正常路径重跑，fail 计数随新 spec 提交清零——",
+    "   rv-4 起集成首次 fail 即转 designer 处置，处置完成前不再自动重试集成）",
     "② 契约本身正确而实现跑偏 → 需 provider 修复——closed 的 provider 无自动回退通道",
     "   （状态机不重开 closed unit，已知边界），需人工介入，不要试图绕过状态机改实现。",
   ].join("\n");
@@ -273,6 +316,8 @@ function isIntegrateReport(value: unknown): value is IntegrateReport {
     v.kind === "integrate" &&
     typeof v.rootId === "string" &&
     Array.isArray(v.children) &&
+    // rv-4 前落盘的旧报告无 mergeFailures 字段——缺失按空清单消费（历史报告可读）
+    (v.mergeFailures === undefined || Array.isArray(v.mergeFailures)) &&
     Array.isArray(v.acceptanceBatches) &&
     v.acceptanceBatches.every(
       (b) =>
@@ -385,8 +430,8 @@ function gitStep(cwd: string, args: readonly string[]): string | null {
 /**
  * 步骤 0 的逐子汇聚（J1）：已达则跳过（幂等重跑天然成立——可达性对 root 分支
  * 判定，与子分支存亡无关）；否则在 root worktree 执行 merge --no-edit（冲突则
- * merge --abort 清现场 + 收 failure，含 root worktree 路径与 CW_PROJECT_DIR
- * 内联前缀的恢复指引——与 human 指引口径一致）。
+ * merge --abort 清现场 + 收 mergeFailure，含冲突子 unitId 与 root worktree 路径
+ * 及 CW_PROJECT_DIR 内联前缀的恢复指引——与 human 指引口径一致）。
  * merge 点不删子分支（fx-5 成对回收）：此处曾是分支删除的唯一自动点，但「冲突
  * → 人工解 → 集成重跑」路径上子 commit 已可达、走开头的已达跳过，永久绕过删除
  * 造成分支残留（M3 gate 两次复现）；子分支统一由 unit 终态回收（延迟回收 /
@@ -396,7 +441,7 @@ function mergeChildrenIntoRoot(
   opts: { cwd: string; rootId: string; children: readonly { unitId: string; commit: string }[] },
   rootWorktreeDir: string,
   rootBranch: string,
-  failures: string[],
+  mergeFailures: string[],
 ): void {
   for (const child of opts.children) {
     if (isAncestorOf(opts.cwd, child.commit, rootBranch)) {
@@ -404,10 +449,10 @@ function mergeChildrenIntoRoot(
     }
     const childBranch = unitBranchName(opts.rootId, child.unitId);
     if (!branchRefExists(opts.cwd, childBranch)) {
-      failures.push(
+      mergeFailures.push(
         `子节点 ${child.unitId} 的 build commit ${child.commit} 不在 root 分支 ${rootBranch} 可达，` +
-          `且子分支 ${childBranch} 不存在——产出无处可汇聚。恢复动作：git -C "${opts.cwd}" branch ${childBranch} ${child.commit} ` +
-          `重建子分支后集成重试（若子产出已失效，在其 unit 重新提交 build 证据）。`,
+        `且子分支 ${childBranch} 不存在——产出无处可汇聚。恢复动作：git -C "${opts.cwd}" branch ${childBranch} ${child.commit} ` +
+        `重建子分支后集成重试（若子产出已失效，在其 unit 重新提交 build 证据）。`,
       );
       continue;
     }
@@ -419,11 +464,12 @@ function mergeChildrenIntoRoot(
     }
     // 清冲突现场（best-effort：merge 未真正启动时 abort 报错，忽略）
     gitStep(rootWorktreeDir, ["merge", "--abort"]);
-    failures.push(
+    mergeFailures.push(
       `子 ${child.unitId} merge 冲突（${rootBranch} ← ${childBranch}）：${mergeErr}。` +
         `恢复动作：cd "${rootWorktreeDir}" 人工解决冲突后 git commit，再以 ` +
         `CW_PROJECT_DIR="${opts.cwd}" cw evidence submit --kind build --unit ${opts.rootId} ` +
-        `--commit <hash> --run-id <runId> 提交推进，集成将按新证据重试。`,
+        `--commit <hash> --run-id <runId> 提交推进，集成将按新证据重跑` +
+        "（rv-4 起集成首次 fail 即转 designer 处置，人工窗口期间 loop 不重跑集成、不 reset root worktree）。",
     );
   }
 }

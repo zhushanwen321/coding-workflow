@@ -1,5 +1,6 @@
 /**
- * 红阶段 gate（canon §3.3 D5 三道 gate 之一；u4b 验收文档锁定语义）。
+ * 红阶段 gate（canon §3.3 D5 三道 gate 之一；u4b 验收文档锁定语义，rv-4 起由
+ * verify handler 默认接线执行——不再是 opt-in 的 standalone 模式）。
  *
  * 红阶段 = 测试区分力检查：把 build evidence 的 commit 回退到第一父（实现前的
  * 基线树）重跑同一套验收，逐条期望 fail——旧树 fail 才证明验收真的在检测实现，
@@ -8,10 +9,11 @@
  * 让父树命令因文件缺失 fail，被误判有区分力（对抗审查实测的穿透路径）——
  * 因此先把「验收 command 引用的变更文件」patch 进父树再跑。
  *
- * 它不是验证结论，不写 VerifyRan，产物落 red-phase 专属目录留审计（由 handler
- * 负责）。本模块只做可单测的纯判定/git 步骤：
+ * 本模块只做可单测的纯判定/git 步骤（入账与 report.json 的 redPhase 节组装由
+ * handler 负责；红阶段执行产物落 red-phase- 前缀 runId 目录留审计）：
  *   - firstParentOf：git rev-list --parents 解析第一父（`commit^` 语义），初始
- *     commit 无父时返回 noParent（调用方走 exit 2 环境错误路径）；
+ *     commit 无父时返回 noParent（rv-4 起调用方走「合法跳过」路径——单 commit
+ *     仓库 verify 必须可用，见 verify.ts executeRedPhase）；
  *   - changedFilesBetween / testFilesToPatch / patchAcceptanceFiles：patch 语义
  *     三步（变更集 → 验收引用文件 → checkout 进父树），在一次性 checkout 工作区
  *     内执行，不触碰原仓库；

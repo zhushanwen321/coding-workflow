@@ -232,7 +232,9 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     gitRun(implWt, ["commit", "-m", "impl: app.js"]);
     const head = gitRun(implWt, ["rev-parse", "HEAD"]);
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "impl", "--commit", head, "--run-id", "run-impl-1", "--file", join(implWt, "app.js")]).code).toBe(0);
-    const verifyImpl = runCli(repoDir, ["verify", "--unit", "impl"]);
+    // rv-4 语义迁移：fixture 验收为内联恒真形态，红阶段默认执行下无区分力必挂
+    //——本用例锁定 human 模式链路推进，用 --no-red-phase 逃生口保持原语义
+    const verifyImpl = runCli(repoDir, ["verify", "--unit", "impl", "--no-red-phase"]);
     expect(verifyImpl.code, `impl verify 应 pass（stdout: ${verifyImpl.stdout}，stderr: ${verifyImpl.stderr}）`).toBe(0);
 
     // 4) 子 unit 的 exec-review → closed（rv-2 适配：exec-review 必须携带
@@ -241,7 +243,7 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
 
     // 5) root 的 build：HEAD 已含全部实现，作为 root 的 build 证据 commit
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "demo", "--commit", head, "--run-id", "run-demo-1"]).code).toBe(0);
-    const verifyDemo = runCli(repoDir, ["verify", "--unit", "demo"]);
+    const verifyDemo = runCli(repoDir, ["verify", "--unit", "demo", "--no-red-phase"]);
     expect(verifyDemo.code, `demo verify 应 pass（stdout: ${verifyDemo.stdout}，stderr: ${verifyDemo.stderr}）`).toBe(0);
 
     // 6) root 的 exec-review → closed → runner 收敛自然退出（rv-2：refs 必填）

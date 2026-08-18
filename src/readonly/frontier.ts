@@ -63,12 +63,18 @@ const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
 ];
 
 /**
- * 同一内部节点集成的连续 fail 重派上限（fx-2 R4a，验收文档锁定 2 次）：达到后
+ * 同一内部节点集成的连续 fail 重派上限（fx-2 R4a 引入，rv-4 起改 1）：达到后
  * 不再自动重派集成（fail 的 VerifyRan 审计事件每轮喂活 idle 判定 = R4b 无限
  * 循环），改派 designer 处置契约漂移。loop 的 designer 处置任务书
  * （integrationDriftTasks）与派发日志引用同一常量。
+ *
+ * rv-4 语义迁移（rv4-acceptance §4）：集成 fail 是确定性失败（冲突/契约不匹配/
+ * 验收红），不存在「重试一次就好」的瞬时态——MAX=2 的第二次重试语义作废，首次
+ * fail 即转 drift（停自动重试、派 designer 处置、人工窗口不被销毁）。连续计数
+ * 语义结构不变（事件流重放、逐 unit，见 consecutiveIntegrationFails），仅上限
+ * 值改 1。
  */
-export const INTEGRATION_MAX_CONSECUTIVE_FAILS = 2;
+export const INTEGRATION_MAX_CONSECUTIVE_FAILS = 1;
 
 // ---- 判定辅助（loop 的派发分支与 computeFrontier 共用；从 loop.ts 收口至此） ----
 

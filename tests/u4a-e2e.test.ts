@@ -216,7 +216,10 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
       runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass"]).code,
     ).toBe(0);
 
-    const verify = runCli(["verify", "--unit", UNIT]);
+    // rv-4 语义迁移：本 fixture 的验收命令是内联恒真形态（不引用实现产物），
+    // 红阶段默认执行下无区分力必挂——u4a 的关注点（常规验证链路 + 状态推进）
+    // 用 --no-red-phase 逃生口保持原语义；红阶段行为由 rv4/u4b 系测试覆盖
+    const verify = runCli(["verify", "--unit", UNIT, "--no-red-phase"]);
     expect(verify.code, `全过应 exit 0（stderr: ${verify.stderr}）`).toBe(0);
     expect(verify.stdout).toContain("result=pass");
     expect(verify.stdout).toContain("M1 manual");
@@ -235,8 +238,10 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
   });
 
   it("P2：同 commit 连续两次 verify → report.json 的 cases 与 exitCode 逐字段全等", () => {
-    const v1 = runCli(["verify", "--unit", UNIT]);
-    const v2 = runCli(["verify", "--unit", UNIT]);
+    // rv-4 语义迁移：同上——恒真 fixture 用 --no-red-phase 逃生口（P2 锁定的
+    // 幂等重跑语义与红阶段无关；redPhase 节的幂等由 rv4 测试覆盖）
+    const v1 = runCli(["verify", "--unit", UNIT, "--no-red-phase"]);
+    const v2 = runCli(["verify", "--unit", UNIT, "--no-red-phase"]);
     expect(v1.code).toBe(0);
     expect(v2.code).toBe(0);
 
