@@ -63,7 +63,7 @@
 | rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | building | <本 commit> | 依赖 rv-1+rv-3 已满足；canon D5「三道 gate」+ 审查 A-2/A3/A-7 残余；MAX=1 语义（fx-2 时代 MAX=2 作废） |
 | rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | pending | — | 依赖 rv-4 |
 | mx-1 | 异源 reviewer 派发机制（设计先行 + 对抗审查） | pending | — | critical A-1：spec-review 由 designer 自审 pass 违背「独立 reviewer」承诺 |
-| mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | building | <本 commit> | 依赖 rv-2 已满足；~/Code 调研定案 pytest+playwright（jest 零使用）；本机 pytest 8.3.0 + playwright 1.62.1 + chromium 全可用（全真实验收） |
+| mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | committed | 6eb88c2 | verifier PASS（sha256 a5d4d277…，报告 mx2-report.md：79+55 测试全绿、6 组对抗全过含 flaky 重试序列折叠与 HEAD 等价性字节级验证、四冲突裁决全合理——pytest 行尾进度标记/playwright result 级词表（expected⟺全 result 通过实测成立）/name 拼接 suite+spec/零测试 exit 5 分档）。30 新测试（pytest 8 + playwright 8 + routing 14）全真实子进程。观察 2 非阻断：--reporter=json,line 组合 stdout 混合、runner:"" 双处语义张力（gate 拦截使链路不可达） |
 | doc-1 | AGENTS.md 重写 + DESIGN-LOG.md 重建 | pending | — | 审查 M11/D2：AGENTS.md 三条现状声明全失效、文档索引指向已归档文件 |
 | doc-2 | canon 回写（附录 B 契约 / M1 现状注 / D5 红阶段口径 / §6.1 消矛盾） | pending | — | 依赖 rv-4/mx-1/mx-2 定型 |
 | doc-3 | parent/spawn/testrun/wt 设计文档过时注回写 + fx-5 验收链补录 + fx-3 ledger 修复 + P1 探针 + 回收审计二跑 | pending | — | 审查 A-3/A-4/A-5/D1/D5/D10/D12 |
@@ -141,3 +141,4 @@
 - 2026-08-18 fx-5 事后验收 PASS（补录闭环，报告 fx5-report.md：187f7df 五文件核对 + 成对谓词逐项实证 + fx5 5/5 与 wt4 迁移 8/8 实跑 + 18 条行为对抗全过含 tip 不可达保留出声/亡在异常格/root 分支缺失保守保留）。plan 审查 D1 的验收链缺口收口。观察：fx5-2 出声断言在函数级，loop 层 stderr 出声由对抗抽查实证、套件内无直接覆盖（不阻塞）。
 - 2026-08-18 P1 探针落地（plan 审查 D10 收口，主 agent 复核通过）：tests/p1-fold-perf.test.ts——510 条真实事件（1 root + 8 叶多轮重试树）预热 10 次后采样 30 次，断言最大单次 < 50ms；实测 mean 0.012ms / worst 0.034ms（余量三个数量级，不 flaky）；正确性断言非空跑（全树 closed + 各数组长度按轮数对账）。规格 = 派发词内置（探针级补落地，未走 acceptance 基线，如实记录）。
 - 2026-08-18 rv-2 committed（含一次打回修复 + 主 agent 裁决方案 C）：六项小修 + 规则⑦ + marker 同源 + exec-review 证据集扩展（EvidenceSubmitted ∪ VerifyRan，内部节点 exec-review 死锁缺口修复，T3b 4 条锁定）。verifier PASS（三裁决全过、干净副本 91/91、对抗 18/18）。mx-2 基线入 git，builder 派发。
+- 2026-08-18 mx-2 committed：pytest 适配器（-v --tb=no -p no:cacheprovider 零依赖文本行解析、PASSED→pass/skipped→fail、无区分力防线）+ playwright 适配器（--reporter=json、result 级词表 passed 唯一通过态、suite>spec name 拼接）+ AcceptanceItem.runner 显式声明路由（规则⑧ + knownAdapterTypes）。canon §6.1「显式声明 vs type 硬映射」矛盾消解（T7 显式优先 + T8 推导兜底字节级等价）。verifier 四裁决全合理。

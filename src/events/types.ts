@@ -35,6 +35,14 @@ export interface AcceptanceItem {
   scenario?: string;
   /** mock 保真度说明；type = e2e-mock 时必填非空（spec gate 规则④） */
   mockFidelityNote?: string;
+  /**
+   * 测试框架显式声明（mx-2）：合法值来自 TestRun registry（knownAdapterTypes()：
+   * vitest / e2e-sh / pytest / playwright），大小写敏感，须与 registry key 完全
+   * 一致。缺省按 type 推导（unit/integration→vitest、e2e-real/e2e-mock→e2e-sh）。
+   * 显式声明优先于 type 推导——canon §6.1「适配器选择是确定性查找」裁决 A。
+   * 非法值由 spec gate 规则⑧在提交时拦（verify 侧不再二次校验，gate 是唯一入口）。
+   */
+  runner?: string;
 }
 
 /** 契约（Contract）——跨单元接口承诺，随 spec 一起 hash 冻结 */

@@ -23,6 +23,8 @@ export const AcceptanceItemSchema = Type.Object({
   command: Type.Optional(Type.String()),
   scenario: Type.Optional(Type.String()),
   mockFidelityNote: Type.Optional(Type.String()),
+  /** 测试框架显式声明（合法值由 spec gate 规则⑧校验；缺省按 type 推导——对齐领域类型 AcceptanceItem.runner） */
+  runner: Type.Optional(Type.String()),
 });
 
 export const ContractSchema = Type.Object({

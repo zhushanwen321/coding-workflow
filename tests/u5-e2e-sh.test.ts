@@ -103,12 +103,18 @@ describe("e2e-sh 适配器 parse（真实脚本 fixture）", () => {
 });
 
 describe("u5 注册表", () => {
-  it("验收#8 defaultRegistry 含 vitest + e2e-sh 两项，type 与 key 一致", () => {
+  it("验收#8 defaultRegistry 含 vitest + e2e-sh 两项，type 与 key 一致（mx-2 扩容后另含 pytest/playwright）", () => {
     const registry = defaultRegistry();
-    expect(registry.size).toBe(2);
+    // mx-2 registry 扩容适配：2 → 4（pytest/playwright 经 mx-2 验收文档背书追加）
+    expect(registry.size).toBe(4);
     expect(registry.has("vitest")).toBe(true);
     expect(registry.has("e2e-sh")).toBe(true);
     expect(registry.get("vitest")?.type).toBe("vitest");
     expect(registry.get("e2e-sh")?.type).toBe("e2e-sh");
+    // mx-2 扩容增量（验收文档 §2「路由断言增量」）
+    expect(registry.has("pytest")).toBe(true);
+    expect(registry.get("pytest")?.type).toBe("pytest");
+    expect(registry.has("playwright")).toBe(true);
+    expect(registry.get("playwright")?.type).toBe("playwright");
   });
 });

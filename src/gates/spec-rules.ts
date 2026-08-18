@@ -7,7 +7,9 @@
  * ③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 须附非空保真说明；
  * ⑤ 至少一条 unit 级用例；⑥ split 不得自引用（fx-1：终验 leaf-renderer 抄 root
  * 模板未改，split 含自身 → loop 判内部节点 → 等自己 verified → 确定性死锁）；
- * ⑦ 验收 id 字符集（rv-2：与 e2e-sh marker 同源正则，入口拦截非法 id）。
+ * ⑦ 验收 id 字符集（rv-2：与 e2e-sh marker 同源正则，入口拦截非法 id）；
+ * ⑧ runner 显式声明时必须在 knownAdapterTypes() 集合内（mx-2：gate 是唯一
+ * 入口，verify 侧 adapterTypeFor 不二次校验——非法 runner 靠此处拦截）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -22,6 +24,7 @@ import type {
   SpecSubmittedPayload,
 } from "../events/types.js";
 import { ACCEPTANCE_ID_RE } from "../events/types.js";
+import { knownAdapterTypes } from "../testrun/registry.js";
 
 /** 规则②③的作用域：e2e 级机器验证（区别于 unit/integration/manual） */
 function isE2eType(type: AcceptanceType): boolean {
@@ -29,9 +32,9 @@ function isE2eType(type: AcceptanceType): boolean {
 }
 
 /**
- * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加）。确定性检查（对
- * 同一 spec + 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立
- * reviewer 审，不在本函数职责内。
+ * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
+ * ⑧ 为 mx-2 追加）。确定性检查（对同一 spec + 同一 PATH 环境结果恒定），不做任何
+ * 主观判断——「验收强不强」由独立 reviewer 审，不在本函数职责内。
  */
 export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   const failures: string[] = [];
@@ -102,6 +105,24 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
         `规则⑦: 验收 id "${ac.id}" 不符字符集约束（须字母数字开头，后续可含 "." "_" "-"，禁空格与中文）。` +
           `id 是 e2e 标记行与名字比对的锚，字符集外 id 的 e2e 用例永远无法匹配。` +
           `恢复动作：修正该 id 后重新提交 spec。`,
+      );
+    }
+  }
+
+  // ⑧ runner 显式声明时必须在已注册适配器集合内（mx-2：唯一入口——verify 侧
+  // adapterTypeFor 对 runner 只做确定性查找不校验合法性，绕过 gate 的非法值
+  // 会路由不到适配器 fail，错误指向装配而非「runner 写错」，故在此前置拦截）。
+  // 大小写敏感：合法值与 registry key 逐字符一致（"pytest" 全小写）。
+  // 缺省不校验——走 type 推导路径（回归锁：存量无 runner 的 spec 行为不变）
+  const legalRunners = knownAdapterTypes();
+  for (const ac of spec.acceptance) {
+    if (ac.runner === undefined) {
+      continue;
+    }
+    if (!legalRunners.includes(ac.runner)) {
+      failures.push(
+        `规则⑧: 验收 ${ac.id} 的 runner "${ac.runner}" 不在合法值集合 [${legalRunners.join("/")}] 内（大小写敏感，须与 registry key 完全一致）。` +
+          `恢复动作：改用上述合法值之一，或删除 runner 字段走 type 默认推导（unit/integration→vitest、e2e-real/e2e-mock→e2e-sh）。`,
       );
     }
   }

@@ -160,8 +160,18 @@ export function runAcceptances(
   return { results, report, reportRaw };
 }
 
-/** 验收 type → 适配器 type 路由（u4b 验收文档规格锁定 1） */
-function adapterTypeFor(type: AcceptanceType): string {
+/**
+ * 验收 type/runner → 适配器 type 路由（u4b 验收文档规格锁定 1 + mx-2 runner
+ * 显式声明）。runner 非空优先返回（显式声明优先，canon §6.1「适配器选择是
+ * 确定性查找」裁决 A——type 不再独占路由决策）；空则按 type 现状推导（存量
+ * 验收行为逐字节不变，回归锁）。runner 的合法性由 spec gate 规则⑧在提交时
+ * 拦（gate 是唯一入口，verify 侧不二次校验）——绕过 gate 的非法 runner 在此
+ * 原样返回、registry 查不到，由 runOne 的「路由不到适配器」fail 分支显性暴露。
+ */
+export function adapterTypeFor(type: AcceptanceType, runner?: string): string {
+  if (runner !== undefined && runner !== "") {
+    return runner;
+  }
   switch (type) {
     case "unit":
     case "integration":
@@ -196,8 +206,9 @@ function runOne(
   const stderrPath = join(evidenceBaseDir, `${stem}.stderr`);
 
   // registry 来自 defaultRegistry（M0 装配），adapterTypeFor 的返回值恒有对应项；
-  // 缺项 = 装配缺陷，按该条 fail 显性暴露而非抛异常中断整轮 verify
-  const adapter = registry.get(adapterTypeFor(ac.type));
+  // 缺项 = 装配缺陷（或绕过 gate 规则⑧的非法 runner），按该条 fail 显性暴露
+  // 而非抛异常中断整轮 verify
+  const adapter = registry.get(adapterTypeFor(ac.type, ac.runner));
   if (adapter === undefined) {
     const reason = `验收 ${ac.id}（type=${ac.type}）路由不到适配器`;
     writeFileSync(stdoutPath, "");
@@ -259,9 +270,11 @@ function runOne(
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     // vitest 型的 parse 失败多为「command 非 vitest 兼容」——按验收文档规格锁定 1
-    // 附恢复方向；e2e 型的适配器错误自带恢复动作文案，原样透传
+    // 附恢复方向；e2e 型的适配器错误自带恢复动作文案，原样透传。runner 显式声明
+    // 时不加 vitest 提示（路由已由 runner 决定，pytest/playwright 适配器的错误
+    // 消息自带恢复动作，vitest 提示会误导）
     const hint =
-      ac.type === "unit" || ac.type === "integration"
+      (ac.type === "unit" || ac.type === "integration") && ac.runner === undefined
         ? "。unit/integration 验收的 command 须为 vitest 兼容命令（如 npx vitest run --reporter=json，产出 vitest JSON reporter 产物）"
         : "";
     const reason = `验收 ${ac.id} 产物解析失败：${detail}${hint}`;
