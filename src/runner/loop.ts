@@ -35,6 +35,12 @@
  *     worktree）。split 含自身
  *     unitId = 自引用（gate 规则⑥ fx-1 已拒新账本）→ 记 stderr 警告并按叶子语义
  *     参与派发，绝不作为内部节点等待子树（fx-1 R1 loop 级防御）
+ *   - spec-frozen 且当前 spec 周期内某 e2e 级验收连挂 ≥2 次（flakeReview，rv-5）
+ *     → 不派任何 agent（builder 打回循环对随机挂无解），stderr 转人工判定指引
+ *     （列出连挂用例 id 与逐次 fail 的 runId；处置 = 修稳定性 / 声明
+ *     nondeterministic 重提 spec / 修真 bug）。复用 fx-2 上限出口的审计-不喂
+ *     -idle 模式：停派后无新 VerifyRan，若树内无其他目标由 maxIdleMs 收束；
+ *     人工处置写入账本后投影自然消失，运行中的循环下轮自愈
  *   - verified 且未 closed   → reviewer（exec-review）
  *
  * 等待期间零锁（canon D4：等待 spawn 期间持锁会饿死子进程的账本写入）。
@@ -76,6 +82,8 @@ import type {
 import {
   computeFrontier,
   consecutiveIntegrationFails,
+  type FlakeReviewFact,
+  flakeReviewFacts,
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
   splitChildrenNotCreated,
@@ -253,8 +261,13 @@ function subtreeUnits(
   return units;
 }
 
-/** frontier 维度 → 派发形态（role 与集成直跑标记）。维度语义单一出处 = readonly/frontier.ts */
-const DISPATCH_SHAPE: Record<keyof FrontierGroups, { role: AgentRole; integration: boolean }> = {
+/** frontier 维度 → 派发形态（role 与集成直跑标记）。维度语义单一出处 = readonly/frontier.ts。
+ * flakeReview 无条目（rv-5）：它是转人工维度——不派任何 agent（打回循环对随机挂
+ * 无解），转人工指引由 runLoopMain 的 flakeEscalationMessage 出声。 */
+const DISPATCH_SHAPE: Record<
+  Exclude<keyof FrontierGroups, "flakeReview">,
+  { role: AgentRole; integration: boolean }
+> = {
   specReady: { role: "designer", integration: false },
   reReview: { role: "designer", integration: false },
   missingChildren: { role: "designer", integration: false },
@@ -269,18 +282,21 @@ const DISPATCH_SHAPE: Record<keyof FrontierGroups, { role: AgentRole; integratio
  * 命令同一就绪判定，A4「零上下文接手」场景输出与真实派发一致），限定 root
  * 子树、按 BFS 序展开为 (role, unitId, integration)。in-flight 的同
  * (unitId, role) 不重复派；excluded = 转人工 unit（连续 TIMEOUT 封顶后不再
- * 派发）。spec-frozen 自引用的 stderr 警告保持每轮可见——判定半边在共享函数
- * （按叶子语义入组），此处只保留可观测性半边（fx-1 R1 loop 级防御）。
+ * 派发）。flakeReview 维度（rv-5）同样不派发——转人工指引由 runLoopMain 出声，
+ * 此处只负责不进 targets。spec-frozen 自引用的 stderr 警告保持每轮可见——判定
+ * 半边在共享函数（按叶子语义入组），此处只保留可观测性半边（fx-1 R1 loop 级防御）。
  */
 function computeDispatchTargets(
   projection: SequencedProjection,
   rootId: string,
   inFlight: readonly InFlightSpawn[],
   consecutiveFails: ReadonlyMap<string, number>,
+  flakeFacts: ReadonlyMap<string, readonly FlakeReviewFact[]>,
   excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
   const groups = computeFrontier(projection, {
     consecutiveIntegrationFails: consecutiveFails,
+    flakeReviewFacts: flakeFacts,
   });
   const dimensionOf = new Map<string, keyof FrontierGroups>();
   for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
@@ -301,7 +317,8 @@ function computeDispatchTargets(
       continue;
     }
     const dimension = dimensionOf.get(unit.unitId);
-    if (dimension === undefined) {
+    if (dimension === undefined || dimension === "flakeReview") {
+      // flakeReview：e2e 连挂转人工（rv-5）——不派任何 agent，打回循环停摆等人工
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
@@ -986,8 +1003,40 @@ function escalationExitMessage(rootId: string, escalated: ReadonlyMap<string, Ag
     [...escalated]
       .map(([unitId, role]) => `  - ${unitId}（最后派发 role：${role}）`)
       .join("\n") +
-    `\n恢复动作：按各 unit 的转人工指引处理（cw run --root ${rootId} --spawn human 人工接手），` +
+    `\n恢复动作：按各 Unit 的转人工指引处理（cw run --root ${rootId} --spawn human 人工接手），` +
     "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。"
+  );
+}
+
+/**
+ * e2e 连挂转人工指引（rv-5，canon §5.2「连挂 2 次的 e2e 用例标 flake 转人工，
+ * 不自动豁免，防 Goodhart」）：列出连挂用例 id 与逐次 fail 的 runId，人工判定
+ * 动作二选一（判 flake → 修稳定性或声明 nondeterministic 重提 spec；判真 bug →
+ * 人工修复）。出口形态复用 fx-2 上限出口的「审计-不喂-idle」模式：停止派发后
+ * 不再产生新 VerifyRan 喂活 idle 判定——若树内无其他可推进目标，空转由
+ * maxIdleMs 收束退出；人工处置（新 verify pass / 新 spec 过审）写入账本后投影
+ * 自然消失，运行中的循环下轮自愈。
+ */
+function flakeEscalationMessage(
+  rootId: string,
+  unitId: string,
+  facts: readonly FlakeReviewFact[],
+): string {
+  const factLines = facts.map(
+    (f) =>
+      `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次 fail（runId：${f.runIds.join("、")}）`,
+  );
+  return (
+    `cw run: unit "${unitId}" 的 e2e 验收连挂 2 次以上（flake 疑似）——停止对该 unit 派发 builder（打回循环对随机挂无解），` +
+    "转人工判定（canon §5.2：不自动豁免，防 Goodhart；本循环继续处理其余 unit）：\n" +
+    factLines.join("\n") +
+    "\n人工判定动作（按序）：\n" +
+    `  1. 查看逐次产物：cw report --unit ${unitId}（各 runId 的 report.json 与 stdout/stderr）\n` +
+    "  2. 判定为 flake（测试随机性不稳定）→ 修测试稳定性，或声明 nondeterministic 后重提 spec 并重新过审：\n" +
+    `     cw evidence submit --kind spec --unit ${unitId} --file spec.json（新 spec 提交即清零连挂计数）\n` +
+    "  3. 判定为真 bug → 人工修复实现后重新提交 build 证据并 cw verify\n" +
+    "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
+    `cw run --root ${rootId} 即续。`
   );
 }
 
@@ -1094,6 +1143,10 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // 会与人工操作冲突；进展清零只作用于计数，不撤销转人工）
   const timeoutStreaks = new Map<string, TimeoutStreak>();
   const escalated = new Map<string, AgentRole>();
+  // rv-5 flake 转人工的出声去重：unitId → 最近一次已出声的连挂签名（各 fact 的
+  // acceptanceId@最新 runId）。投影事实每轮重算（账本即状态），同一连挂只出声
+  // 一次；人工处置后连挂消失、再连挂（新 runId）时签名变化重新出声
+  const announcedFlake = new Map<string, string>();
   let lastUnitSeqs = new Map<string, number>();
   // wt-4 J4 延迟回收：pendingReclaim = 本轮发现的 closed 子 unit（下轮开头回收，
   // debug 翻看现场留一轮窗口）；reclaimTried = 已尝试回收的（成败均不再重试——
@@ -1185,6 +1238,24 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
     }
 
+    // rv-5 flakeReview 出口：e2e 验收连挂 ≥2 的 root 子树 unit 转人工（不派
+    // builder）。事实来自账本重放（flakeReviewFacts），人工处置写入新事件
+    //（pass / 新 spec）后投影自然消失、循环自愈；出声按连挂签名去重
+    const flakes = flakeReviewFacts(events);
+    const subtreeIds = new Set(subtreeUnits(projection, opts.rootId).map((u) => u.unitId));
+    for (const [unitId, facts] of flakes) {
+      if (!subtreeIds.has(unitId)) {
+        continue; // 其他 root 的 unit（同一账本多 root）：不在本 run 职责内
+      }
+      const signature = facts
+        .map((f) => `${f.acceptanceId}@${f.runIds[f.runIds.length - 1] ?? ""}`)
+        .join("|");
+      if (announcedFlake.get(unitId) !== signature) {
+        announcedFlake.set(unitId, signature);
+        emitErr(flakeEscalationMessage(opts.rootId, unitId, facts));
+      }
+    }
+
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
     // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
     const targets = computeDispatchTargets(
@@ -1192,6 +1263,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       opts.rootId,
       inFlight,
       consecutiveIntegrationFails(events),
+      flakes,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {

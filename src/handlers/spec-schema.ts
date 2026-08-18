@@ -25,6 +25,12 @@ export const AcceptanceItemSchema = Type.Object({
   mockFidelityNote: Type.Optional(Type.String()),
   /** 测试框架显式声明（合法值由 spec gate 规则⑧校验；缺省按 type 推导——对齐领域类型 AcceptanceItem.runner） */
   runner: Type.Optional(Type.String()),
+  /**
+   * 随机性显式声明（rv-5，对齐领域类型 AcceptanceItem.nondeterministic?: true）：
+   * 仅接受字面 true——false 与缺省语义等价，写 false 属无意义输入，schema 直接拒
+   * （错误指向字段路径，spec 作者改为删字段或写 true）。
+   */
+  nondeterministic: Type.Optional(Type.Literal(true)),
 });
 
 export const ContractSchema = Type.Object({

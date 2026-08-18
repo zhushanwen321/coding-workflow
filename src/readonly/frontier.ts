@@ -14,6 +14,9 @@
  *     ——待 designer 处置契约漂移（fx-2 R4a）
  *   - integrationReady：spec-frozen 内部节点、子全 verified、未达 fail 上限——
  *     可执行集成（u8：不派 agent，loop 直接跑 runIntegrationVerify）
+ *   - flakeReview：spec-frozen 且当前 spec 周期内某 e2e 级验收连挂 ≥2 次——
+ *     待人工判定（rv-5，canon §5.2：不自动豁免防 Goodhart；机器派发无出口，
+ *     loop 停派该 unit 的 builder，其余 unit 照常）
  *   - buildReady：spec-frozen 叶子（split 空 ∨ 自引用按叶子语义）且子全部
  *     closed（rootLast）——待 builder
  *   - execReviewReady：verified 且未 closed——待 reviewer（exec-review）
@@ -47,17 +50,20 @@ export interface FrontierGroups {
   missingChildren: string[];
   integrationDrift: string[];
   integrationReady: string[];
+  /** rv-5：e2e 验收连挂 ≥2 的 unit（转人工判定，机器派发无出口） */
+  flakeReview: string[];
   buildReady: string[];
   execReviewReady: string[];
 }
 
-/** 组的展示序 = 生命周期推进序（spec → 审 → 子 → 集成 → build → 收尾审查） */
+/** 组的展示序 = 生命周期推进序（spec → 审 → 子 → 集成 → flake 转人工 → build → 收尾审查） */
 const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
   "specReady",
   "reReview",
   "missingChildren",
   "integrationDrift",
   "integrationReady",
+  "flakeReview",
   "buildReady",
   "execReviewReady",
 ];
@@ -182,15 +188,104 @@ export function consecutiveIntegrationFails(
   return counts;
 }
 
+// ---- rv-5：e2e 验收连挂投影（flakeReview 维度的判定输入，canon §5.2） ----
+
+/** e2e 用例连挂转人工阈值（canon §5.2 原文口径：连挂 2 次标 flake 转人工） */
+export const FLAKE_MIN_CONSECUTIVE_FAILS = 2;
+
+/** 单条验收的连挂事实（flakeReview 出口的转人工指引消费） */
+export interface FlakeReviewFact {
+  /** 连挂的验收 id（仅 e2e-real / e2e-mock 级条目参与计数） */
+  acceptanceId: string;
+  /** 当前 spec 周期内的连续 fail 次数（返回值恒 ≥ FLAKE_MIN_CONSECUTIVE_FAILS） */
+  consecutiveFails: number;
+  /** 构成连挂的 VerifyRan runId（账本序；转人工指引逐个列出供查产物） */
+  runIds: string[];
+}
+
+/**
+ * 各 unit 当前 spec 周期内 e2e 级验收的连挂事实（rv-5，纯投影——事件流重放，
+ * 零新事件类型、无内存态）。逐条 fail 的判定信号 = VerifyRan.acceptanceIds
+ * （聚合 pass 集）：当前 spec 的 e2e 条目在某次 unit 级 verify 中不在 pass 集
+ * 即该次 fail。口径锁定（rv5-acceptance §4）：
+ *   - 只认 e2e 级（e2e-real / e2e-mock）：unit/integration 连挂是稳定 bug，
+ *     走正常 fail 打回（builder 修），不转人工；
+ *   - 连续 = 当前 spec 周期内该条目在每次 unit 级 VerifyRan 中都 fail 且次数
+ *     ≥2；中间任何一次 pass 即清零（投影天然重算，无内存态）；
+ *   - 集成 verify（integrate- 前缀 runId）不参与计数也不清零（集成是全量重跑
+ *     语义，随机挂由重跑覆盖）；
+ *   - 新 SpecSubmitted 即周期重置（清零，锚 lastSpecSeq 语义）。
+ * 已知边界：nondeterministic 声明条目经 rv-5 豁免后恒在 pass 集内，其逐次
+ * fail 对本投影不可见（VerifyRan payload 零变更下的粒度边界，见 types.ts
+ * 的 nondeterministic 注释）。调用方 = computeFrontier（flakeReview 维度）与
+ * loop（每轮重读账本后计算，转人工指引）。
+ */
+export function flakeReviewFacts(
+  events: readonly LedgerEvent[],
+): Map<string, FlakeReviewFact[]> {
+  interface UnitFlakeState {
+    e2eIds: string[];
+    streaks: Map<string, { count: number; runIds: string[] }>;
+  }
+  const states = new Map<string, UnitFlakeState>();
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (event.type === "SpecSubmitted") {
+      // spec 变更即周期重置：连挂清零，e2e 条目集合按新 spec 重锚
+      states.set(event.payload.unitId, {
+        e2eIds: event.payload.acceptance
+          .filter((ac) => ac.type === "e2e-real" || ac.type === "e2e-mock")
+          .map((ac) => ac.id),
+        streaks: new Map(),
+      });
+    } else if (event.type === "VerifyRan") {
+      if (event.payload.runId.startsWith("integrate-")) {
+        continue;
+      }
+      const state = states.get(event.payload.unitId);
+      if (state === undefined) {
+        continue; // 无 spec 周期锚的 verify：正常流程不可达（handler 先查 spec）
+      }
+      for (const id of state.e2eIds) {
+        if (event.payload.acceptanceIds.includes(id)) {
+          state.streaks.delete(id); // 中间 pass 即清零
+        } else {
+          const previous = state.streaks.get(id) ?? { count: 0, runIds: [] };
+          state.streaks.set(id, {
+            count: previous.count + 1,
+            runIds: [...previous.runIds, event.payload.runId],
+          });
+        }
+      }
+    }
+  }
+  const facts = new Map<string, FlakeReviewFact[]>();
+  for (const [unitId, state] of states) {
+    const active = [...state.streaks.entries()]
+      .filter(([, streak]) => streak.count >= FLAKE_MIN_CONSECUTIVE_FAILS)
+      .map(([acceptanceId, streak]) => ({
+        acceptanceId,
+        consecutiveFails: streak.count,
+        runIds: streak.runIds,
+      }));
+    if (active.length > 0) {
+      facts.set(unitId, active);
+    }
+  }
+  return facts;
+}
+
 /**
  * 就绪集合计算（纯函数，维度语义见模块头）。consecutiveIntegrationFails 省略时
  * 上限判定退化为「无 fail 记录」——仅供无账本上下文的纯函数调用；命令与 loop
  * 消费时必须传入真实计数，否则 integrationDrift / integrationReady 判定分叉。
+ * flakeReviewFacts 同理：省略时 flakeReview 维度恒空（纯函数调用方）。
  */
 export function computeFrontier(
   projection: SequencedProjection,
   opts?: {
     consecutiveIntegrationFails?: ReadonlyMap<string, number>;
+    flakeReviewFacts?: ReadonlyMap<string, readonly FlakeReviewFact[]>;
   },
 ): FrontierGroups {
   const groups: FrontierGroups = {
@@ -199,10 +294,12 @@ export function computeFrontier(
     missingChildren: [],
     integrationDrift: [],
     integrationReady: [],
+    flakeReview: [],
     buildReady: [],
     execReviewReady: [],
   };
   const fails = opts?.consecutiveIntegrationFails;
+  const flakes = opts?.flakeReviewFacts;
   for (const unit of projection.units.values()) {
     const status = unitStatus(unit);
     if (status === "created") {
@@ -214,7 +311,12 @@ export function computeFrontier(
       // 已过审但 gate 红（弱 spec 停 created）：无组（模块头口径）
     } else if (status === "spec-frozen") {
       const selfReferencing = splitSelfReferences(unit);
-      if (!selfReferencing && splitOf(unit).length > 0) {
+      if ((flakes?.get(unit.unitId)?.length ?? 0) > 0) {
+        // rv-5 flakeReview 优先于推进组：e2e 连挂的判定权在人，机器继续派发
+        // （builder 打回 / 集成重跑）对随机挂无解——转人工期间该 unit 停止
+        // 自动推进，其余 unit 照常；人工处置后投影自然消失，自愈
+        groups.flakeReview.push(unit.unitId);
+      } else if (!selfReferencing && splitOf(unit).length > 0) {
         if (splitChildrenNotCreated(projection, unit).length > 0) {
           groups.missingChildren.push(unit.unitId);
         } else if (splitChildrenAllVerified(projection, unit)) {
@@ -248,13 +350,14 @@ export function renderFrontier(groups: FrontierGroups): string {
 const JSON_INDENT = 2;
 
 export async function frontierHandler(ctx: CommandContext): Promise<number> {
-  // 直接读原始事件流（loadLedger 只回投影；integrationDrift 维度需要事件重放的
-  // 连续 fail 计数）。existsSync 前置探测保持只读保证（不构造 EventLedger 建目录）
+  // 直接读原始事件流（loadLedger 只回投影；integrationDrift / flakeReview 两维度
+  // 需要事件重放的计数）。existsSync 前置探测保持只读保证（不构造 EventLedger 建目录）
   const path = ledgerPath(getCwHome(), ctx.cwd);
   const events = existsSync(path) ? new EventLedger(path).readAll() : [];
   const projection = fold(events);
   const groups = computeFrontier(projection, {
     consecutiveIntegrationFails: consecutiveIntegrationFails(events),
+    flakeReviewFacts: flakeReviewFacts(events),
   });
 
   if (ctx.argv.json === true) {

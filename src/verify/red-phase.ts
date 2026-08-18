@@ -17,7 +17,9 @@
  *   - changedFilesBetween / testFilesToPatch / patchAcceptanceFiles：patch 语义
  *     三步（变更集 → 验收引用文件 → checkout 进父树），在一次性 checkout 工作区
  *     内执行，不触碰原仓库；
- *   - judgeRedPhase：逐条判定有/无区分力。
+ *   - judgeRedPhase：逐条判定有/无区分力。rv-5：nondeterministic 声明条目跳过
+ *     判定（随机用例在旧树的 pass/fail 无区分力语义）——跳过条目 discriminative
+ *     恒 true、不参与整体 fail 判定，reason 注明跳过原因（报告侧显性）。
  */
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
@@ -170,6 +172,9 @@ export interface RedPhaseContext {
 /**
  * 逐条判定红阶段区分力（输入是父 commit 树——必要时已 patch 新测试——上的
  * 执行结果）：
+ *   - nondeterministic 声明条目 → 跳过判定（rv-5：随机用例在旧树的 pass/fail
+ *     本身无区分力语义——随机挂与随机过都不证明验收强弱；跳过条目
+ *     discriminative 恒 true 且不参与整体 fail 判定，reason 注明跳过原因）；
  *   - patch 树上 pass → 无区分力（新测试在基线代码树上也通过 = 恒真测试穿透，
  *     正是 patch 语义要堵的作弊路径：新建文件让父树命令因文件缺失而 fail）；
  *   - 未 patch 的旧树 pass → 无区分力（验收对新实现没有检测力）；
@@ -184,6 +189,15 @@ export function judgeRedPhase(
 ): RedPhaseVerdict[] {
   const patched = (ctx?.patchedFiles?.length ?? 0) > 0;
   return results.map((r) => {
+    if (r.nameSkipped === "nondeterministic") {
+      return {
+        id: r.id,
+        discriminative: true,
+        reason:
+          `跳过（nondeterministic 声明）：随机用例在旧树的 pass/fail 无区分力语义，` +
+          `验收 ${r.id} 不参与红阶段判定（执行产物照常落盘 red-phase- 目录留审计）。`,
+      };
+    }
     if (r.status === "pass") {
       return {
         id: r.id,

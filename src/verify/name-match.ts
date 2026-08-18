@@ -5,6 +5,10 @@
  * pass → pass；命中但任一 fail → fail（reason=「执行失败」）；无命中 → fail
  * （reason=「未出现在产物（用例未运行或标记缺失）」）。
  *
+ * rv-5 豁免点①：`nondeterministic: true` 的验收跳过名字比对（canon 纪律②
+ * 「声明随机性的用例不进名字比对必过集合」）——跳过不是 fail，结果携带
+ * nameSkipped 标记；原始执行结果的照录由 run.ts 的聚合层负责（豁免点②）。
+ *
  * 为什么按 name 而非 case.id 匹配：vitest 适配器折叠 cases 时 id 恒为当前验收 id
  * （u5 锁定语义），id 列对该验收无区分度——「测试名不含验收 id → 未出现在产物」
  * 这条判定只能落在 name 上；e2e-sh 的 name 是标记行原文（必含 id），同一规则天然
@@ -18,10 +22,28 @@ import type { EvidenceReport } from "../testrun/types.js";
 export interface NameMatchOutcome {
   pass: boolean;
   reason: string;
+  /**
+   * 名字比对跳过标记（rv-5，canon 纪律②）：nondeterministic 声明条目不进
+   * 必过集合——跳过不是 fail（pass=true + 本标记），豁免范围见调用方
+   * run.ts 的聚合判定（单次 fail 不计入整体，原始结果照录）。
+   */
+  nameSkipped?: "nondeterministic";
 }
 
 /** 单验收对单报告的名字级判定（纯函数，无 IO） */
 export function nameMatch(acceptance: AcceptanceItem, report: EvidenceReport): NameMatchOutcome {
+  // rv-5 豁免点①：声明随机性的用例不进名字比对必过集合。声明 ≠ 逃逸——
+  // 执行与产物照常（runOne 照跑命令、原始结果照录 report），此处只豁免比对
+  if (acceptance.nondeterministic === true) {
+    return {
+      pass: true,
+      reason:
+        `验收 ${acceptance.id} 声明 nondeterministic——名字比对跳过（不进必过集合）。` +
+        "声明 ≠ 逃逸：执行照跑、原始结果照录 report.json；豁免的另一处是单次 fail 不计入整体判定" +
+        "（连挂治理见 spec-review 与人工审计，声明不提供免死金牌）。",
+      nameSkipped: "nondeterministic",
+    };
+  }
   const matched = report.cases.filter((c) => nameContainsId(c.name, acceptance.id));
   if (matched.length === 0) {
     return {

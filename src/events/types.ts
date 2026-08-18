@@ -43,6 +43,18 @@ export interface AcceptanceItem {
    * 非法值由 spec gate 规则⑧在提交时拦（verify 侧不再二次校验，gate 是唯一入口）。
    */
   runner?: string;
+  /**
+   * 显式声明该用例含随机性（rv-5，canon 纪律②收口）。豁免且仅豁免两处：
+   * 名字比对必过集合（nameMatch 跳过，结果标注 nameSkipped）与单次 fail 的
+   * 整体判定（verify/集成的聚合 result 不因该条单次 fail 翻红）；执行照跑、
+   * 产物照落盘、原始结果照录 report.json——声明 ≠ 逃逸。
+   * 滥用防线 = spec-review 语义审查 + 永远不能自动豁免（flakeReview 转人工
+   * 通道不以声明为豁免条件；本字段不是 gate 规则——随机性判定是语义判断）。
+   * 已知边界（事件流粒度）：VerifyRan 只记录聚合 pass 集（acceptanceIds），
+   * 声明条目经豁免后恒在 pass 集内，其逐次 fail 不进入 flakeReview 的连挂
+   * 投影——声明条目的连挂治理依赖 spec-review 把关与人工审计 report.json。
+   */
+  nondeterministic?: true;
 }
 
 /** 契约（Contract）——跨单元接口承诺，随 spec 一起 hash 冻结 */

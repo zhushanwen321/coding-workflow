@@ -8,6 +8,12 @@
  *     该条 fail，reason 透传适配器错误（vitest 型另附「须为 vitest 兼容命令」）；
  *   - 判定事实 = nameMatch：验收 id 出现在 cases 的用例名中且全部 pass。
  *
+ * rv-5 豁免点②（聚合判定）：`nondeterministic: true` 的条目照常执行、产物照常
+ * 落盘，但其 fail **不计入整体 result**——status 恒为 pass（report.exitCode 与
+ * 调用方 handler 的 regularFailed/acceptanceIds 聚合都消费 status，豁免在此单点
+ * 生效）；原始 fail 事实由 rawStatus + reason + report.json cases 照录（审计完整）。
+ * 声明条目全 pass 也不额外加分（pass 判定只看未声明条目——聚合天然如此）。
+ *
  * 纪律落地（u4a 起保持）：
  *   - ③ 产物落盘：每条验收 `<id>.stdout`/`.stderr`（超时另加 `.timeout` 标记）+
  *     适配器折叠出的 `<id>.report.json`（nameMatch 的输入，审计可重放）+ 总报告
@@ -83,12 +89,24 @@ export interface AcceptanceRunResult {
   stderrPath: string;
   /** 该条是否因超时被 kill */
   timeout: boolean;
-  /** fail 的人可读原因（nameMatch / parse / 超时 / 适配器拒绝），pass 时无此字段 */
+  /**
+   * fail 的人可读原因（nameMatch / parse / 超时 / 适配器拒绝）。rv-5 起
+   * nondeterministic 条目经豁免 status=pass 时也照录原始 fail 原因（审计：
+   * 豁免改写的是聚合判定，不是抹掉失败事实）
+   */
   reason?: string;
   /** 命令进程 exit code（判定之前的事实；未执行 / 超时 / spawn 失败为 null） */
   commandExit: number | null;
   /** 适配器 translate/parse 是否抛错（无法产出可判定的 EvidenceReport） */
   parseError: boolean;
+  /** 名字比对跳过标记（rv-5 豁免点①）：nondeterministic 声明条目恒带 */
+  nameSkipped?: "nondeterministic";
+  /**
+   * 声明条目的原始执行结果（rv-5 照录）：status 经豁免点②改写为 pass 时，
+   * 原始 fail 事实由此字段保留（report.json cases 按它照录）。未声明条目
+   * 无此字段（status 即原始结果）。
+   */
+  rawStatus?: "pass" | "fail";
 }
 
 /**
@@ -98,6 +116,19 @@ export interface AcceptanceRunResult {
  * reportHash 一致 ⟹ 产物内容一致）——不改 VerifyRan 事件 payload schema。
  */
 interface VerifyReport extends EvidenceReport {
+  /**
+   * rv-5：声明条目（nondeterministic）的 case 携带 nameSkipped（名字比对跳过
+   * 标记）与 exitCode（真实执行的命令退出码——「非 skip 执行」的机器事实），
+   * status 按原始结果照录（豁免只作用于整体聚合，不改写条目审计事实）。
+   * 未声明条目的 case 形状不变（id/name/status 三字段，历史报告可比）。
+   */
+  cases: Array<{
+    id: string;
+    name: string;
+    status: "pass" | "fail";
+    nameSkipped?: "nondeterministic";
+    exitCode?: number;
+  }>;
   /** 逐条验收产物内容 hash（超时条目的 stderr 含超时标记，同样入 hash） */
   artifacts: Array<{ id: string; stdoutSha256: string; stderrSha256: string }>;
 }
@@ -150,8 +181,19 @@ export function runAcceptances(
   }));
   const report: VerifyReport = {
     exitCode: results.some((r) => r.status === "fail") ? 1 : 0,
-    // 总报告的 name 用验收 title（P2 稳定重跑比对口径）：用例级细节在 <id>.report.json
-    cases: results.map((r) => ({ id: r.id, name: titles.get(r.id) ?? "", status: r.status })),
+    // 总报告的 name 用验收 title（P2 稳定重跑比对口径）：用例级细节在 <id>.report.json。
+    // rv-5：声明条目的 case 按原始结果照录（rawStatus），豁免不改写审计事实
+    cases: results.map((r) =>
+      r.nameSkipped === "nondeterministic"
+        ? {
+            id: r.id,
+            name: titles.get(r.id) ?? "",
+            status: r.rawStatus ?? r.status,
+            nameSkipped: "nondeterministic" as const,
+            exitCode: r.commandExit ?? -1,
+          }
+        : { id: r.id, name: titles.get(r.id) ?? "", status: r.status },
+    ),
     artifacts,
     rawPath: join(evidenceBaseDir, REPORT_FILE_NAME),
   };
@@ -187,9 +229,48 @@ export function adapterTypeFor(type: AcceptanceType, runner?: string): string {
 }
 
 /**
+ * rv-5 豁免形态：声明条目（nondeterministic）的任一 fail 路径都不计入整体
+ * 判定（status=pass），原始失败事实全量照录（reason 进 stderr 与结果对象、
+ * commandExit/parseError/timeout 保持真实值、rawStatus="fail" 供 report 照录）。
+ * 各 fail 分支共用；豁免点①（名字比对跳过）由 nameMatch 承担。
+ */
+function exemptNondeterministic(
+  ac: AcceptanceItem,
+  fail: { reason: string; timeout: boolean; commandExit: number | null; parseError: boolean },
+  stdoutPath: string,
+  stderrPath: string,
+): AcceptanceRunResult {
+  return {
+    id: ac.id,
+    status: "pass",
+    stdoutPath,
+    stderrPath,
+    timeout: fail.timeout,
+    reason: fail.reason,
+    commandExit: fail.commandExit,
+    parseError: fail.parseError,
+    nameSkipped: "nondeterministic",
+    rawStatus: "fail",
+  };
+}
+
+/**
+ * 声明条目 parse 成功后的原始结果（照录口径）：名字比对已跳过（豁免点①），
+ * 剩余原始信号 = 进程退出码 + 适配器折叠出的用例级状态（任一 fail 即原始
+ * fail）。
+ */
+function rawOutcomeOf(report: EvidenceReport, exitCode: number): "pass" | "fail" {
+  if (exitCode !== 0) {
+    return "fail";
+  }
+  return report.cases.some((c) => c.status === "fail") ? "fail" : "pass";
+}
+
+/**
  * 执行单条非 manual 验收：适配器 translate → bash 执行 → 适配器 parse →
  * nameMatch 判定。任何一环失败都是该条 fail（verify 整体 exit 1 路径），
- * 不中断其余验收。
+ * 不中断其余验收。nondeterministic 声明条目的 fail 走豁免形态（见
+ * exemptNondeterministic）——声明 ≠ 逃逸：执行与产物照常，聚合不翻红。
  */
 function runOne(
   ac: AcceptanceItem,
@@ -213,6 +294,9 @@ function runOne(
     const reason = `验收 ${ac.id}（type=${ac.type}）路由不到适配器`;
     writeFileSync(stdoutPath, "");
     writeFileSync(stderrPath, `${reason}\n`);
+    if (ac.nondeterministic === true) {
+      return exemptNondeterministic(ac, { reason, timeout: false, commandExit: null, parseError: true }, stdoutPath, stderrPath);
+    }
     return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: true };
   }
 
@@ -223,6 +307,9 @@ function runOne(
     const reason = e instanceof Error ? e.message : String(e);
     writeFileSync(stdoutPath, "");
     writeFileSync(stderrPath, `${reason}\n`);
+    if (ac.nondeterministic === true) {
+      return exemptNondeterministic(ac, { reason, timeout: false, commandExit: null, parseError: true }, stdoutPath, stderrPath);
+    }
     return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: true };
   }
 
@@ -239,6 +326,9 @@ function runOne(
   if (exec.kind === "spawn-error") {
     const reason = `无法执行 bash -c：${exec.message}`;
     appendFile(stderrPath, `${reason}\n`);
+    if (ac.nondeterministic === true) {
+      return exemptNondeterministic(ac, { reason, timeout: false, commandExit: null, parseError: false }, stdoutPath, stderrPath);
+    }
     return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: null, parseError: false };
   }
 
@@ -247,16 +337,20 @@ function runOne(
     const timeoutNote = `command timed out after ${timeoutMs} ms, killed`;
     appendFile(stderrPath, `${timeoutNote}\n`);
     writeFileSync(join(evidenceBaseDir, `${stem}.timeout`), `${timeoutNote}\n`);
+    const reason =
+      `超时（>${timeoutMs}ms）被 kill。` +
+      `恢复动作：用 cw verify --unit <id> --timeout-ms <毫秒> 增大超时（默认 unit ${UNIT_ACCEPTANCE_TIMEOUT_MS}ms / e2e ${E2E_ACCEPTANCE_TIMEOUT_MS}ms），` +
+      "或拆分验收降低单条耗时。";
+    if (ac.nondeterministic === true) {
+      return exemptNondeterministic(ac, { reason, timeout: true, commandExit: null, parseError: false }, stdoutPath, stderrPath);
+    }
     return {
       id: ac.id,
       status: "fail",
       stdoutPath,
       stderrPath,
       timeout: true,
-      reason:
-        `超时（>${timeoutMs}ms）被 kill。` +
-        `恢复动作：用 cw verify --unit <id> --timeout-ms <毫秒> 增大超时（默认 unit ${UNIT_ACCEPTANCE_TIMEOUT_MS}ms / e2e ${E2E_ACCEPTANCE_TIMEOUT_MS}ms），` +
-        "或拆分验收降低单条耗时。",
+      reason,
       commandExit: null,
       parseError: false,
     };
@@ -287,6 +381,9 @@ function runOne(
       join(evidenceBaseDir, `${stem}.report.json`),
       `${JSON.stringify({ parseError: true, commandExit: exitCode, reason }, null, REPORT_INDENT)}\n`,
     );
+    if (ac.nondeterministic === true) {
+      return exemptNondeterministic(ac, { reason, timeout: false, commandExit: exitCode, parseError: true }, stdoutPath, stderrPath);
+    }
     return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: exitCode, parseError: true };
   }
 
@@ -297,6 +394,33 @@ function runOne(
   );
 
   const verdict = nameMatch(ac, report);
+  if (verdict.nameSkipped === "nondeterministic") {
+    // rv-5：声明条目——豁免点①已由 nameMatch 生效（比对跳过，verdict.pass 恒
+    // true），此处执行豁免点②（原始 fail 不计入整体）并照录原始结果
+    const rawStatus = rawOutcomeOf(report, exitCode);
+    const reason =
+      rawStatus === "fail"
+        ? `验收 ${ac.id} 原始执行失败（nondeterministic 声明豁免：单次 fail 不计入整体判定，原始结果照录 report）：` +
+          (exitCode !== 0
+            ? `exit ${exitCode}`
+            : `用例级 fail：${report.cases.filter((c) => c.status === "fail").map((c) => c.name).join("; ")}`)
+        : undefined;
+    if (reason !== undefined) {
+      appendFile(stderrPath, `${reason}\n`);
+    }
+    return {
+      id: ac.id,
+      status: "pass",
+      stdoutPath,
+      stderrPath,
+      timeout: false,
+      reason,
+      commandExit: exitCode,
+      parseError: false,
+      nameSkipped: "nondeterministic",
+      rawStatus,
+    };
+  }
   if (!verdict.pass) {
     appendFile(stderrPath, `${verdict.reason}\n`);
   }
