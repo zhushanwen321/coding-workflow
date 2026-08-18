@@ -684,6 +684,51 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
   }
 }
 
+// ---- rv-1：信号中断回收（Ctrl-C/SIGTERM 孤儿清理） ----
+
+/** 信号中断的约定退出码（shell 惯例 128+signum：SIGINT=2 → 130、SIGTERM=15 → 143） */
+const LOOP_SIGNAL_EXIT_CODES: Record<"SIGINT" | "SIGTERM", number> = {
+  SIGINT: 130,
+  SIGTERM: 143,
+};
+
+/**
+ * runLoop 的信号 handler（SIGINT/SIGTERM 共用，rv-1）：Ctrl-C/SIGTERM 后 agent
+ * 子进程会成孤儿继续写账本，用户重跑 `cw run` 对同一 worktree reset + 二次 spawn
+ * 就是双 agent 混卷——所以 runner 必须主动回收全部在飞 spawn 再退出，「重跑即续」
+ * 对进程维度也成立。只做回收：不写任何账本事件、不动 worktree/分支（回收 worktree
+ * 是既有延迟回收逻辑的事，信号路径不额外触发 reclaim）。
+ *
+ * 退出路径三步与顺序（验收锁定）：提示行先于 killAll 打印（writeSync 同步落 stderr，
+ * 用户立即看到响应——常规异步 write 在 process.exit 时可能被丢弃）→ best-effort
+ * killAll（沿用既有语义：单个 kill 失败记录继续，不因清理失败改变退出码）→
+ * process.exit(130|143)。
+ */
+function makeLoopSignalHandler(
+  rootId: string,
+  inFlight: readonly InFlightSpawn[],
+): (signal: NodeJS.Signals) => void {
+  return (signal) => {
+    const exitCode = signal === "SIGINT" ? LOOP_SIGNAL_EXIT_CODES.SIGINT : LOOP_SIGNAL_EXIT_CODES.SIGTERM;
+    try {
+      writeSync(
+        process.stderr.fd,
+        `[runner] 收到 ${signal}：回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。` +
+          `账本即状态——重跑 cw run --root ${rootId} 即续。\n`,
+      );
+    } catch (err) {
+      // writeSync 失败（fd 异常等）不能阻断回收——回收与退出码是承诺；降级为常规
+      // 异步 write 再试一次（尽力而为，即使 exit 时被队列丢弃也不影响回收路径）
+      process.stderr.write(
+        `[runner] 收到 ${signal}（提示行 writeSync 失败：${err instanceof Error ? err.message : String(err)}）：` +
+          `回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。\n`,
+      );
+    }
+    killAll(inFlight);
+    process.exit(exitCode);
+  };
+}
+
 /** summaryText 的 unit 资源回收统计（wt-4 J3/J4 + fx-5：run 生命周期内的回收清单） */
 interface ReclaimSummary {
   /** 本 run 目录回收成功的 unit id（启动孤儿清扫 + 循环延迟回收 + 退出清尾；分支保守保留的情形经 stderr 指引人工确认） */
@@ -966,13 +1011,36 @@ function assertPositive(name: string, value: number): void {
 }
 
 /**
+ * runLoop 导出入口（rv-1 起是主循环体的信号处理外壳）：入口即注册 SIGINT/SIGTERM
+ * handler（早于参数校验与首个派发——校验/清扫阶段的信号同样有回收出口），
+ * try/finally 保证全部正常出口与异常出口（throw）都 process.off 移除——runLoop
+ * 是库化函数（tests 直接调用），handler 泄漏会把下一次 Ctrl-C 变成本 run 的退出。
+ * 信号到达时 handler 自行 writeSync + killAll + process.exit，不经过 finally
+ * （process.exit 不回卷栈），这是设计行为而非泄漏。
+ */
+export async function runLoop(opts: RunLoopOptions): Promise<number> {
+  // inFlight 提升到外壳：信号 handler 需要在主循环体启动前就持有同一引用
+  //（循环未起来时的信号 → killAll 空集 no-op，同样打印提示行并按约定码退出）
+  const inFlight: InFlightSpawn[] = [];
+  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight);
+  process.on("SIGINT", signalHandler);
+  process.on("SIGTERM", signalHandler);
+  try {
+    return await runLoopMain(opts, inFlight);
+  } finally {
+    process.off("SIGINT", signalHandler);
+    process.off("SIGTERM", signalHandler);
+  }
+}
+
+/**
  * 通用调度循环：root closed → 汇总返回 0；无进展超 maxIdleMs → stderr + 返回 1；
  * SPAWN_ERROR（配置错误）→ kill 全部 in-flight + stderr + 返回 1；连续 TIMEOUT
  * 封顶的 unit 转人工（不再派发），无可自动推进且存在转人工 unit → stderr 汇总 +
  * 返回 1。
  * root 不在账本 → 抛可操作错误（调用方负责转 exit 1）。
  */
-export async function runLoop(opts: RunLoopOptions): Promise<number> {
+async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Promise<number> {
   const pollMs = opts.pollMs ?? DEFAULT_LOOP_POLL_MS;
   const maxIdleMs = opts.maxIdleMs ?? DEFAULT_LOOP_MAX_IDLE_MS;
   const maxConcurrency = opts.maxConcurrency ?? DEFAULT_LOOP_MAX_CONCURRENCY;
@@ -1007,7 +1075,6 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
       `poll=${pollMs}ms max-idle=${maxIdleMs}ms max-concurrency=${maxConcurrency}`,
   ]);
 
-  const inFlight: InFlightSpawn[] = [];
   let lastTotalEvents = initial.projection.totalEvents;
   let lastProgressAt = Date.now();
   // 连续 TIMEOUT 计数（单进程内存态；语义见 AGENT_TIMEOUT_ESCALATION_AFTER 注释）。

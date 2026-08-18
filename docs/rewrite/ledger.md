@@ -57,10 +57,10 @@
 
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| rv-1 | spawn/loop 健壮性（EPERM 兜底 + Ctrl-C 孤儿清理） | building | <本 commit> | 审查 A1/A2：timer 回调裸 killTree（EPERM crash）+ 信号处理缺失（「重跑即续」对进程维度不成立） |
+| rv-1 | spawn/loop 健壮性（EPERM 兜底 + Ctrl-C 孤儿清理） | committed | 9023076 | verifier PASS（sha256 3449be0a…，报告 rv1-report.md：runLoopMain 外壳化重构核实零行为变化 + 红灯复核两形态命中含 EPERM 原始缺陷独立复现 + 160 次竞态加量零未捕获 + 双 SIGINT/极早期/空 inFlight 窗口对抗 5 项全过）。瑕疵不阻塞：验收 §6 文件名笔误待终验勘误；T2 单轮 EPERM 检出概率性（口径已覆盖） |
 | rv-2 | engine 小修包（id 字符集 gate⑦ + marker 同源 + exec-review refs 必填 + replan 文案 + parse exitCode 落盘 + checkout 根解析） | building | <本 commit> | 审查 M4/D6/D13/D20/m6；与 rv-3 并行（领地不相交） |
 | rv-3 | 契约比对强化（文档宿主排除 + 归一化比对） | committed | 9023076 | verifier PASS（sha256 bf449ea3…，报告 rv3-report.md：T1-T8 全实质 + 18 条对抗探针全过含大小写绕过/symlink 逃逸/8KB 嗅探边界）。2 裁量裁决合规（宿主判定大小写不敏感 fail-closed、文档判定先于存在性）；u8 适配仅 hidden.txt→.dat 换宿主。「≡ 冻结配对比对」归 rv-4。残余备案：contract.file 含 ../ 可逃逸 checkoutDir（基线行为，输入来自冻结可信层） |
-| rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | pending | — | 依赖 rv-1（loop.ts/integrate.ts 领地） |
+| rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | building | <本 commit> | 依赖 rv-1+rv-3 已满足；canon D5「三道 gate」+ 审查 A-2/A3/A-7 残余；MAX=1 语义（fx-2 时代 MAX=2 作废） |
 | rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | pending | — | 依赖 rv-4 |
 | mx-1 | 异源 reviewer 派发机制（设计先行 + 对抗审查） | pending | — | critical A-1：spec-review 由 designer 自审 pass 违背「独立 reviewer」承诺 |
 | mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | pending | — | 依赖 rv-2；canon §6.1「显式声明 vs type 硬映射」矛盾消解 |
@@ -136,3 +136,4 @@
 - 2026-08-18 M4 启动：五角度对抗审查（设计 vs 实现）驱动修复轮。认知外改动经用户授权提交（807cafa：错误消息可操作化 + skill 重写，tsc+受影响 31 测试验证）。~/Code 框架调研定案多语言目标 = pytest + playwright（vitest 已有）。rv-1/rv-2/rv-3 验收基线入 git，三 builder 并行派发（领地不相交：lifecycle+loop / engine 层 / contract-match）。
 - 2026-08-18 rv-3 committed：builder 交付文档宿主排除（.md/.txt/.rst/.adoc + README*/CONTRIBUTING*/CHANGELOG* + docs/，封闭集合）+ 双侧空白折叠归一化 + 失败消息两态分立；verifier PASS（15 新测试 + u8 适配 1 处；18 条对抗探针：大小写绕过/深层 docs/symlink 逃逸/md+ts 并存/8KB 边界/CRLF 全过）。基线 9023076。
 - 2026-08-18 ledger 结构修复（doc-3 提前项）：①fx-3 行从「里程碑 gate」表移入 M2 表（unit 行混入 gate 表的结构错位，plan 审查 D5）②M2 段加归段说明（fx-1/2/3 为终验返工波）③fx-5 补 M3 表行 + fx5-acceptance.md 事后补录（plan 审查 D1：fx-5 未走基线先行流程，验收对象 = 187f7df 已交付行为，verifier 事后验收随 doc-3）。事件流水不改动。
+- 2026-08-18 rv-1 committed：builder 交付 killTree 豁免 {ESRCH,EPERM} + timer 回调 try/catch + runLoop 信号外壳（SIGINT/SIGTERM → 提示行 → killAll → exit 130/143，全出口 process.off）；verifier PASS（重构零行为变化核实、EPERM 缺陷独立复现、160 次竞态加量、对抗 5 项）。rv-4 基线入 git（依赖 rv-1+rv-3 均已 committed），builder 派发。

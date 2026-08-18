@@ -181,16 +181,34 @@ export function spawnProcess(req: SpawnProcessRequest): SpawnHandle {
     try {
       process.kill(-pgid, "SIGKILL");
     } catch (err) {
-      // ESRCH = 进程组已消亡（进程恰好先退 / kill 幂等重入）——静默是幂等语义的一部分
-      if (errnoCode(err) !== "ESRCH") {
+      // 「目标已死」的两种 errno 形态都视为已清理、幂等成功（rv-1 口径）：
+      //   - ESRCH = 进程组已消亡（进程恰好先退 / kill 幂等重入）；
+      //   - EPERM = macOS 对「已退出/僵尸进程组」的 kill(-pgid) 形态（该事实由
+      //     src/runner/loop.ts killAll 注释实测记录：killAll 的兜底清理目标常为
+      //     已自然退出但 race 未结算的 flight）。
+      // 其余 errno（如 EACCES 于无关进程）仍 rethrow——手动 kill() 调用方保留可观测性
+      const code = errnoCode(err);
+      if (code !== "ESRCH" && code !== "EPERM") {
         throw err;
       }
     }
   }
 
   const timer = setTimeout(() => {
-    timeoutKillInitiated = true;
-    killTree();
+    // timer 回调整体 try/catch 兜底（rv-1）：killTree 已豁免已知两码（ESRCH/EPERM），
+    // 这里兜住其余未知失败——timer 回调抛出 = 进程级 uncaught（src 全库无
+    // process.on 兜底），任何失败模式都不允许炸 runner。失败只记 stderr 一行后放行：
+    // 目标进程未被杀死的场景由其自身后续的自然退出 / 外部 kill 收敛
+    try {
+      timeoutKillInitiated = true;
+      killTree();
+    } catch (err) {
+      process.stderr.write(
+        `[lifecycle] 超时 kill 失败（pgid=${String(pgid)}，目标进程可能已退出）：` +
+          `${err instanceof Error ? err.message : String(err)}——放弃本次 kill，` +
+          "不影响 wait() 结算。\n",
+      );
+    }
   }, req.timeoutMs);
 
   function releaseStreams(): void {
