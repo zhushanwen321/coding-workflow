@@ -45,6 +45,8 @@
 
 ```
 cd <仓库根> && npm run check
-npx vitest run tests/rv1-spawn-robustness.test.ts tests/u6a-lifecycle.test.ts tests/u6b-human.test.ts tests/u7-loop.test.ts tests/u7b-timeout.test.ts tests/u5b-e2e.test.ts
+npx vitest run tests/rv1-spawn-robustness.test.ts tests/u6a-lifecycle.test.ts tests/u6b-human-adapter.test.ts tests/u7-loop.test.ts tests/u7b-loop-timeout-reset.test.ts tests/u5b-e2e.test.ts
 npx eslint src/runner/spawn/lifecycle.ts src/runner/loop.ts tests/rv1-spawn-robustness.test.ts
 ```
+
+> 勘误（2026-08-19 回收审计二跑备案，主 agent 修订）：§6 第二行两个测试文件名笔误——`u6b-human.test.ts` 实为 `u6b-human-adapter.test.ts`、`u7b-timeout.test.ts` 实为 `u7b-loop-timeout-reset.test.ts`。verifier 实跑时已按正确文件名执行（报告不受影响）。修订后 sha256 以 ledger 此勘误事件记录为准。

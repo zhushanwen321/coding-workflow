@@ -19,7 +19,7 @@ spec-review 的 VerdictSubmitted 由独立 reviewer spawn 提交（不同进程�
 | `src/handlers/run.ts` | 修改 | `--reviewer-model <m>` 可选参数 → RunLoopOptions.reviewerModel；进程环境 CW_REVIEWER_MODEL 启动时读取（flag 优先） |
 | `src/handlers/review-submit.ts` | 修改 | `--role` 可选 flag（reviewer/designer/builder/human 枚举校验）→ payload.role |
 | `src/events/types.ts` | +字段 | `VerdictSubmittedPayload.role?: "reviewer" \| "designer" \| "builder" \| "human"`（注释：提交者自报、可伪造、审计载体非信任边界——canon :221 落地为弱声明） |
-| `src/handlers/spec-schema.ts` | 修改 | role 可选字段 schema 同步 |
+| `src/handlers/spec-schema.ts` | ~~修改~~ | **勘误（2026-08-19 回收审计二跑备案，主 agent 修订）**：本行为笔误——该文件只含 spec 文件 TypeBox schema，VerdictSubmitted 的 role 校验实际在 `src/handlers/review-submit.ts` 内联实现（见上两行）；本行作废 |
 | `tests/mx1-independent-review.test.ts` | 新建 | §5 A 系条款的测试化（A1-A5） |
 | `tests/mx1-model-chain.test.ts` | 新建 | A4 模型链（spawn 命令行断言） |
 | `tests/u7*.test.ts`、`tests/u5b*.test.ts`、`tests/fx3*.test.ts` | 迁移 | designer 任务书断言反转（不再含 review submit）；reviewer 派发新增断言；fx3 R5.3 兜底出口与 specFixPending 的交互核对 |
@@ -59,6 +59,6 @@ spec-review 的 VerdictSubmitted 由独立 reviewer spawn 提交（不同进程�
 ```
 cd <仓库根> && npm run check && npm run check:tests
 npx vitest run tests/mx1-independent-review.test.ts tests/mx1-model-chain.test.ts tests/u7*.test.ts tests/u5b*.test.ts tests/fx3*.test.ts
-npx eslint src/readonly/frontier.ts src/runner/loop.ts src/runner/human-loop.ts src/runner/spawn/human.ts src/handlers/{run,review-submit,spec-schema}.ts src/events/types.ts tests/mx1-*.test.ts
+npx eslint src/readonly/frontier.ts src/runner/loop.ts src/runner/human-loop.ts src/runner/spawn/human.ts src/handlers/{run,review-submit}.ts src/events/types.ts tests/mx1-*.test.ts
 全量 npx vitest run → 全绿
 ```
