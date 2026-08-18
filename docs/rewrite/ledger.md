@@ -27,11 +27,15 @@
 
 ## M2 = L3（集成）+ 补齐
 
+> 归段说明（2026-08-18 补注）：fx-1/fx-2/fx-3 为终验 FAIL 触发的返工波（事件链见事件节 2026-08-16 各条），与 M2 的 L3 集成无隶属关系；历史记录于本表属当时口径，行不移动、以本注为准。fx-3 原误记于「里程碑 gate」表（unit 行混入 gate 表的结构错位），2026-08-18 移入本表。
+
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | u8 | 内部节点 verify（merge + 契约比对） | committed | 21da1e1 | 两任 builder（前任中断留五文件，续任保留+修 3 小处）；verifier PASS（sha256 d9254eda…，报告 u8-report.md，4 组 18 断言对抗）。契约集合 root∪子口径判定成立（验收文档注释已按实证修订）；u7-e2e 适配强度等价。观察：二进制嗅探 8KB 窗口、缺子 idle 出声（M2 口径内） |
 | fx-1 | 终验死锁三根因修复 | committed | 99f5fca | R1 三防线（规则⑥/叶子 split 拒/loop 防御）+ R2 文案与第四分支（同口径时间语义）+ R3 marker 显式化；10 回归红绿经 verifier 影子工程独立复现（8/10 红一致）。218 全绿。观察：O1 旧坏账旁路场景（终验重置后不发生）、O2 fail 后补审循环张力 |
 | fx-2 | 集成层死锁 R4 修复 | committed | ddc5a84 | 上限计数（事件流重放、逐 unit、无 off-by-one）+ designer 契约漂移出口（guidance 单一出处双出口）+ 上限切断审计喂 idle 回路；4 回归影子工程 4/4 红全超时（R4b 死锁现场直接复现）。222 全绿。minor：失败汇总 N 虚高 1（观感）；上限后 designer 重派至 idle 有界（与 u7 语义一致） |
+
+| fx-3 | 分解结构建立缺位 R5 修复 | committed | 528e9ff | R5.1 gate 收紧（先建子后提 spec，missing/mismatched 分类清单）+ R5.2 designer 第 0 步 + R5.3 兜底出口（拦截在集成等待之前，优先于 R4a）；verifier 22/22 对抗 PASS、越界适配 2 处裁决语义等价。230 全绿（行原误记于「里程碑 gate」表，2026-08-18 结构修复移入） |
 
 ## M3 = L2-F3（每 unit 独立 worktree 升级）
 
@@ -45,6 +49,7 @@
 | wt-4 | W4 集成汇聚与回流（子 closed → merge root 分支；集成 verify 三处锚 root 分支；孤儿清扫 + 延迟回收 + 回流指引） | committed | 917ac1e | verifier PASS（sha256 7bc77414…，报告 wt4-report.md：防篡改/321 全绿/M1-M8 真实性 5 点/对抗 8 条含冲突恢复闭环、跨 root 清扫、真实 home 零污染）。4 披露全接受（退出清尾回收、J3 排除本 rootId、branch -D 占用静默、u5b 形态适配经 A7 反证必要）。观察：真实链路首次集成分支残留常态（可达跳过 merge 即跳过 -D，无害设计权衡内） |
 | wt-5 | W5 测试迁移与终验（并发污染对抗测试 + canon P7 勾验 + 残余断言复核） | committed | 2a975d7 | verifier PASS（sha256 3f6ed093…，报告 wt5-report.md：323 全绿、真实性 4 点、对抗含混卷红性实证（共享 cwd 探针双标记同 commit）与 C2 反向隔离证明、C1 flake 3 连跑稳定）。C4 zero 残留（builder 自报 46 处与 verifier 实测 89 处口径差为清单条目数 vs grep 原始数，实质无差异）。canon P7 ⛔→✅（该文档被 gitignore，更新在磁盘）。终验靶子拆为 M3 gate |
 | fx-4 | spawn 产物收口 topic 目录（M3 终验观察①修复；worktree 纯化 + 三类原文副本入 evidence + 场景 4 反向断言补齐） | committed | 0642d15 | verifier PASS（sha256 f2b31528…，报告 fx4-report.md：331 全绿、T1-T5 真实性 5 点、对抗 7 条含 482 轮重派 append/覆盖写铁证、真实 home 零污染）。4 披露全接受（common.ts 公共函数、91/88 计数口径、字面量 4 文件 tsc 无缺口三重验证、幂等分支补 copy）。minor 4 项不阻断（lifecycle 注释过时、escalation 硬编码路径、幂等 copy 探针补验、密集重派语义 u7 既有）。设计 design-topic-artifacts.md v1.1（f301420） |
+| fx-5 | 观察③收口：成对 unit 资源回收 + merge 点去副作用（336 全绿 = 331+5） | committed | 187f7df（事后补录） | **验收链缺口（2026-08-18 plan 审查 D1 实锤）：实现 commit 无 acceptance 基线/verifier 报告/表行，绕过防篡改机制**。fx5-acceptance.md 为事后补录（验收对象 = 187f7df 已交付行为），verifier 事后验收随 doc-3 波次执行。内容：reclaimUnit 成对唯一入口（终态 × tip 可达谓词，不可达保守保留+出声）+ merge 成功路径去 branch -D + 孤儿清扫目录+ref 双扫 + wt4「分支已删」断言迁移「保留」。设计勘误 v3.2 |
 
 ## M4 = 设计-实现一致性修复轮（2026-08-18 五角度对抗审查驱动）
 
@@ -71,7 +76,6 @@
 | M0 gate | A1 人肉全流程 + A3 补录攻击 | done |
 | M1 gate | pi E2E（微任务 + 并行）+ 探针 P3/P4/P6/P8 | done |
 | 终验 | markdown-reader 全流程无人干预 | PASS | — | 第 4 次（commit 见 final-gate-4-report）：45.1min 自然完成零人工、全树 3 unit closed、7/7 机器验证 manual=0、10 spawn（1 TIMEOUT 重派——超时机制首次真实触发）、靶子全绿（install/build/vitest/渲染/HTTP 200）。fx-2 R4a 首次现场闭环（契约漂移→2 fail 封顶→designer 仲裁→65s 恢复）；fx-3 children-first 现场证据成立。四次卡点：分解层→集成层→建子→无 |
-| fx-3 | 分解结构建立缺位 R5 修复 | committed | 528e9ff | R5.1 gate 收紧（先建子后提 spec，missing/mismatched 分类清单）+ R5.2 designer 第 0 步 + R5.3 兜底出口（拦截在集成等待之前，优先于 R4a）；verifier 22/22 对抗 PASS、越界适配 2 处裁决语义等价。230 全绿 |
 | M3 gate | worktree 隔离全链 E2E（真实 pi 靶子无人干预） | PASS | — | 第 5 次终验（报告 m3-gate-report.md）：26min52s 零人工、9 spawn / 0 重派 / 0 TIMEOUT、全树 3 unit closed、六条通过标准机器判定 6/6（worktree 回收清单、cw-root/md-reader 干净回流、靶子 master 零污染、CW_PROJECT_DIR 无分裂账本、323 全绿）。**集成 merge 真实冲突首次现场再现并经 R4a 处置出口闭环恢复**（designer 按 fail 文案指引解决冲突 commit → 第 3 跑集成 pass → root closed；设计待验证检查点②现场验证）。观察 4 条不阻塞：① agent `git add -A` 把 .cw-spawn 产物卷入 commit 随 merge 进 root 分支（设计层缺口，回流会带产物文件，待立项 fx-4）② root closed 后 killAll 收尾无退出行（cosmetic）③ u5b-e2e 既有并发 flaky（4 次全量 2 红 2 绿，与 M3 无关，待独立跟进）④ reset/clean 对「未打靶分支」的覆盖未现场触发（wt 系单测已覆盖）。起跑态偏离已记理由（snapshotHeadCommit fail-fast → 单 README 存档 commit；--max-idle-ms 2700000 防默认值 idle 误杀竞态） |
 
 ## 事件
@@ -131,3 +135,4 @@
 - 测试基线：273 → 282 全绿（41 文件）。
 - 2026-08-18 M4 启动：五角度对抗审查（设计 vs 实现）驱动修复轮。认知外改动经用户授权提交（807cafa：错误消息可操作化 + skill 重写，tsc+受影响 31 测试验证）。~/Code 框架调研定案多语言目标 = pytest + playwright（vitest 已有）。rv-1/rv-2/rv-3 验收基线入 git，三 builder 并行派发（领地不相交：lifecycle+loop / engine 层 / contract-match）。
 - 2026-08-18 rv-3 committed：builder 交付文档宿主排除（.md/.txt/.rst/.adoc + README*/CONTRIBUTING*/CHANGELOG* + docs/，封闭集合）+ 双侧空白折叠归一化 + 失败消息两态分立；verifier PASS（15 新测试 + u8 适配 1 处；18 条对抗探针：大小写绕过/深层 docs/symlink 逃逸/md+ts 并存/8KB 边界/CRLF 全过）。基线 9023076。
+- 2026-08-18 ledger 结构修复（doc-3 提前项）：①fx-3 行从「里程碑 gate」表移入 M2 表（unit 行混入 gate 表的结构错位，plan 审查 D5）②M2 段加归段说明（fx-1/2/3 为终验返工波）③fx-5 补 M3 表行 + fx5-acceptance.md 事后补录（plan 审查 D1：fx-5 未走基线先行流程，验收对象 = 187f7df 已交付行为，verifier 事后验收随 doc-3）。事件流水不改动。
