@@ -1,6 +1,7 @@
 /**
  * `cw review submit --unit <id> --verdict-kind <spec-review|exec-review> --verdict <pass|fail>
- * [--comment <text>] [--evidence-refs <runId,...>]`（u2 验收文档锁定的 M0 规格）。
+ * [--comment <text>] [--evidence-refs <runId,...>] [--role <reviewer|designer|builder|human>]`
+ * （u2 验收文档锁定的 M0 规格；mx-1 增补可选 --role 自报字段）。
  *
  * verdict append-only 一次写入不可改；--evidence-refs 的每个 runId 必须已存在于
  * 该 unit 的 EvidenceSubmitted（引用不存在 → 列出缺失项 exit 1）。rv-2 起
@@ -36,6 +37,16 @@ function verifyRunIds(ledger: EventLedger, unitId: string): Set<string> {
     }
   }
   return runIds;
+}
+
+/** --role 的合法值集（mx-1：提交者自报身份的枚举域，对齐 VerdictSubmittedPayload.role） */
+const VERDICT_ROLES = ["reviewer", "designer", "builder", "human"] as const;
+
+/** 自报 role 的枚举判定（类型守卫：payload 的 role 字段收窄到字面量联合） */
+function isVerdictRole(
+  value: string,
+): value is NonNullable<VerdictSubmittedPayload["role"]> {
+  return (VERDICT_ROLES as readonly string[]).includes(value);
 }
 
 /**
@@ -119,12 +130,23 @@ export async function handleReviewSubmit(ctx: CommandContext): Promise<number> {
   }
 
   const comment = stringArg(ctx.argv, "comment");
+  // mx-1：--role 可选自报字段（弱声明——只记录不信任，审计载体非信任边界）。
+  // 枚举校验只拦手滑（拼错/大小写），不提供任何授权语义；缺省不入 payload
+  const role = stringArg(ctx.argv, "role");
+  if (role !== undefined && !isVerdictRole(role)) {
+    return fail(
+      `cw review submit: 非法 --role "${role}"：合法值 ${VERDICT_ROLES.join(" | ")}。` +
+        "恢复动作：按你的实际身份选（reviewer=独立审查者 / designer / builder / human=人工），" +
+        "或去掉 --role（自报字段可选，缺省不入账）。",
+    );
+  }
   const payload: VerdictSubmittedPayload = {
     unitId,
     verdictKind,
     verdict,
     ...(comment !== undefined ? { comment } : {}),
     ...(evidenceRefs !== undefined ? { evidenceRefs } : {}),
+    ...(role !== undefined ? { role } : {}),
   };
   const result = tryAppend(ledger, "VerdictSubmitted", payload);
   if (!result.ok) {

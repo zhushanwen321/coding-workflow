@@ -109,6 +109,13 @@ export interface VerdictSubmittedPayload {
   comment?: string;
   /** 引用的证据 id（EvidenceSubmitted.runId），必须已存在 */
   evidenceRefs?: string[];
+  /**
+   * 提交者自报 role（mx-1，canon :221「VerdictSubmitted ← 独立 reviewer」的落地
+   * 弱声明）：可选、自报、可伪造——是审计载体不是信任边界（cw review submit 的
+   * --role flag 枚举校验只拦手滑不拦伪造）。信任增强来自结构隔离：spec-review
+   * 由独立 reviewer spawn 提交（mx-1），role 字段是其旁证之一。
+   */
+  role?: "reviewer" | "designer" | "builder" | "human";
 }
 
 export interface EvidenceSubmittedPayload {

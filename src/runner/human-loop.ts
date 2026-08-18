@@ -16,6 +16,10 @@
  * evidence-refs 引用的 runId 必须已在该 unit 的 EvidenceSubmitted 中，照文档原样
  * 执行会被拒。故本指令组的 spec-review 命令不带 --evidence-refs（该 flag 可选），
  * 与 u2 真实行为一致。
+ *
+ * mx-1 后本循环的 spec-review / exec-review 指令由人扮演 reviewer 角色执行
+ * （语义上不是 designer 自审——pi 模式下同结论由独立 reviewer spawn 提交），
+ * 指令统一带 `--role reviewer` 自报，账本 verdict 的 role 字段可审计。
  */
 import type {
   SequencedProjection,
@@ -97,8 +101,8 @@ function specInstruction(unit: SequencedUnitProjection): StepInstruction {
       `[human]      ${SPEC_SKELETON}`,
       "[human]      规则：验收非空；core 用例 type 须 e2e-real/e2e-mock 且带可执行 command；至少一条 unit 级用例",
       `[human]   3. cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
-      `[human]   4. cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass`,
-      "[human]   （human 模式无自动 reviewer：你自任 reviewer——这是信任边界；spec 入账与审查通过后 unit 进入 spec-frozen）",
+      `[human]   4. cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass --role reviewer`,
+      "[human]   （human 模式无自动 reviewer：你扮演 reviewer——这是信任边界；spec 入账与审查通过后 unit 进入 spec-frozen）",
     ],
   };
 }
@@ -109,7 +113,7 @@ function specReviewInstruction(unit: SequencedUnitProjection): StepInstruction {
     unitId: unit.unitId,
     lines: [
       `[human] 待人工步骤：为 unit "${unit.unitId}" 补 spec-review（spec 已提交，状态仍 created——尚未通过 spec 审查）`,
-      `[human]   cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass`,
+      `[human]   cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass --role reviewer`,
       `[human]   （若 spec 需要修改：改 spec.json 后重新 cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json，再审查）`,
     ],
   };
@@ -134,7 +138,10 @@ function execReviewInstruction(unit: SequencedUnitProjection): StepInstruction {
     unitId: unit.unitId,
     lines: [
       `[human] 待人工步骤：为 unit "${unit.unitId}" 提交 exec-review（当前 verified）`,
-      `[human]   cw review submit --unit ${unit.unitId} --verdict-kind exec-review --verdict pass`,
+      // rv-2 起 exec-review 必填 --evidence-refs（≥1 个已入账 runId；可用 runId 见
+      // cw report --unit 的输出）——mx-1 随本单元补齐此命令模板，照抄执行不再被
+      // refs 校验卡住
+      `[human]   cw review submit --unit ${unit.unitId} --verdict-kind exec-review --verdict pass --role reviewer --evidence-refs <已入账 runId,...>`,
     ],
   };
 }

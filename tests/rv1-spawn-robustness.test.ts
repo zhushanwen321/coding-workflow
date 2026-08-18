@@ -422,7 +422,10 @@ describe("rv-1 T5：runLoop 信号 handler 注册与清理", () => {
       specHash: sha(JSON.stringify(spec)),
       ...spec,
     });
-    ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass" });
+    // mx-1：spec 入账后循环派独立 reviewer（human spawn 打印 spec-review 指令并
+    // 等待 VerdictSubmitted）——等指令落盘再以人扮演 reviewer 提交结论
+    await waitFileExists(join(topic, "root.reviewer.stdout"), 10_000);
+    ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass", role: "human" });
 
     await waitFileExists(join(topic, "root.builder.stdout"), 10_000);
     const runId = "run-t5-root";
@@ -442,7 +445,19 @@ describe("rv-1 T5：runLoop 信号 handler 注册与清理", () => {
       acceptanceIds: FIXTURE_ACCEPTANCE.map((ac) => ac.id),
     });
 
-    await waitFileExists(join(topic, "root.reviewer.stdout"), 10_000);
+    // mx-1：exec-review 的 reviewer 是同 unit 的第二次 reviewer 派发（spec-review
+    // 的指令块已 append 过同一路径）——等第二次指令块出现再提交结论，避免
+    // 「verdict 早于 spawn 起始、hasProgressSince 不认账」的竞态
+    const REVIEWER_HEADER = '[human] reviewer 指令：unit "root"';
+    const execReviewerDeadline = Date.now() + 10_000;
+    while (
+      readFileSync(join(topic, "root.reviewer.stdout"), "utf-8").split(REVIEWER_HEADER).length - 1 < 2
+    ) {
+      if (Date.now() > execReviewerDeadline) {
+        throw new Error("exec-review reviewer 指令未在 10s 内出现（第二次 reviewer 派发）");
+      }
+      await sleep(50);
+    }
     ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "root", verdictKind: "exec-review", verdict: "pass" });
 
     const captured = await loopPromise;

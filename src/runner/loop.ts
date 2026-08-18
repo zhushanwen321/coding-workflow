@@ -16,11 +16,22 @@
  * 派发对象规则（每轮对投影重算，子树 BFS 序；就绪判定输入 = readonly/frontier.ts
  * 的 computeFrontier——与 `cw frontier` 命令同一出处，维度 → 派发形态的映射见
  * DISPATCH_SHAPE）：
- *   - created 且无 spec      → designer（一次完成建子（root 无子时，fx-3 R5.2
- *     任务书第 0 步）+ spec 提交 + spec-review）
- *   - created 且有 spec 且最后一条 SpecSubmitted 之后无 spec-review pass → designer
- *     （fx-1 R2 第四分支：重提 spec / 提交后未审 → 派 designer 补审——不依赖 agent
- *     记性去补 review 事件，消除「created + specs>0」派发真空导致的死区）
+ *   - created 且无 spec      → designer（建子（root 无子时，fx-3 R5.2 任务书第
+ *     0 步）+ spec 提交；完成标志 = spec 入账——spec-review 由下轮独立 reviewer 接手）
+ *   - created 且有 spec 且最后一条 SpecSubmitted 之后无任何 spec-review verdict
+ *     → reviewer（mx-1 specReviewPending：spec-review 一律由独立 reviewer spawn
+ *     提交——审查视角 brief + 可选异源模型，canon §1.3 信任链的结构隔离落地）
+ *   - created 且有 spec 且最后 spec 后最近的 spec-review verdict 是 fail → designer
+ *     （mx-1 specFixPending：修 spec 重提——任务书内嵌 reviewer fail verdict 的
+ *     comment 全文作失败事实；重提后自然回流 specReviewPending 由 reviewer 再审）
+ *   - created 且账本内 spec-review fail 累计 ≥2（mx-1 specReviewDeadlock，MF2：
+ *     不因新 SpecSubmitted 清零）→ 不派任何 agent（打回循环活锁对机器无解），
+ *     stderr 转人工 escalation（两次 fail 的 comment 摘要 + 人工处置动作）；
+ *     复用 fx-2 上限出口的审计-不喂-idle 模式，人工 pass verdict 后投影自然消失
+ *   - 派发 gate（mx-1 S1）：同 unit 存在任意 role 的 in-flight spawn 时本轮缓派
+ *     该 unit 的全部新派发（reviewer 派发的 worktree reset 会清在飞 designer 的
+ *     现场；同时修复既有 designer→builder 转换竞态）。等待窗口 ≤ 一个 poll 周期
+ *     （in-flight spawn 必然 wait() 结算或 TIMEOUT，无死等路径）
  *   - spec-frozen 内部节点（split 非空且不含自身）且 split 声明的子有未 created
  *     者 → designer（fx-3 R5.3 派发兜底：补建子任务书——处理 R5.1 gate 生效前
  *     的历史账本/旁路数据；先于集成等待分支拦截，子不齐不集成）
@@ -41,7 +52,18 @@
  *     nondeterministic 重提 spec / 修真 bug）。复用 fx-2 上限出口的审计-不喂
  *     -idle 模式：停派后无新 VerifyRan，若树内无其他目标由 maxIdleMs 收束；
  *     人工处置写入账本后投影自然消失，运行中的循环下轮自愈
- *   - verified 且未 closed   → reviewer（exec-review）
+ *   - verified 且未 closed   → reviewer（exec-review；任务书含 rv-2 必填的
+ *     --evidence-refs 与 mx-1 的 --role reviewer 自报）
+ *
+ * 抢答可见性（mx-1 S7）：轮次内新入账的 spec-review VerdictSubmitted，若该 unit
+ * 无 in-flight reviewer spawn、本 run 也从未派发过其 reviewer、且非 specFixPending
+ * 流转 → stderr 一行警告（不阻断不入账——role 自报可伪造，结构隔离之外的唯一
+ * 可见性增强；正常 reviewer 流的 verdict 由「本 run 派发过 reviewer」记忆豁免）。
+ *
+ * 异源模型链（mx-1 S3，pi.ts 零改动）：RunLoopOptions.reviewerModel（cw run
+ * --reviewer-model）> 进程环境 CW_REVIEWER_MODEL > 不注入（reviewer spawn 回落
+ * builder 同款模型链）。注入点 = reviewer role 的 spawn req.env.CW_AGENT_MODEL，
+ * 复用 resolvePiModel 既有四级链的 req.env 级。
  *
  * 等待期间零锁（canon D4：等待 spawn 期间持锁会饿死子进程的账本写入）。
  * 失败语义只看四态退出（types.ts）：exit≠0 / CRASH 可重派（下轮重算自然再次
@@ -68,7 +90,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import { fold } from "../core/fold.js";
@@ -86,6 +108,9 @@ import {
   flakeReviewFacts,
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
+  latestSpecReviewAfterLastSpec,
+  SPEC_REVIEW_DEADLOCK_FAILS,
+  specReviewFailCounts,
   splitChildrenNotCreated,
   splitOf,
   splitSelfReferences,
@@ -100,7 +125,8 @@ import {
   worktreePath,
 } from "../store/project.js";
 import type { OwnedContract } from "../verify/contract-match.js";
-import { integrationRecoveryGuidance, readIntegrateReport, runIntegrationVerify } from "./integrate.js";
+import { type DispatchDimension, writeBriefFile } from "./brief.js";
+import { runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
   AgentSpawnAdapter,
@@ -152,9 +178,16 @@ export interface RunLoopOptions {
   pollMs?: number;
   maxIdleMs?: number;
   maxConcurrency?: number;
+  /**
+   * reviewer spawn 的异源模型（mx-1 S3，可选项——未配置时回落 builder 同款模型链，
+   * 结构隔离不依赖模型异源）。CLI 来源 = --reviewer-model flag（优先）或进程环境
+   * CW_REVIEWER_MODEL；注入点 = reviewer role 的 spawn req.env.CW_AGENT_MODEL
+   * （复用 pi 适配器 resolvePiModel 既有四级链，pi.ts 零改动）。
+   */
+  reviewerModel?: string;
 }
 
-/** in-flight 派发（同 unitId 不同 role 可并存——canon「每单元最多 1 builder + 1 reviewer」） */
+/** in-flight 派发（mx-1 派发 gate 后同 unit 任意时刻至多一个在飞 spawn） */
 interface InFlightSpawn {
   role: AgentRole;
   unitId: string;
@@ -164,6 +197,8 @@ interface InFlightSpawn {
 interface DispatchTarget {
   role: AgentRole;
   unitId: string;
+  /** 派发依据的 frontier 维度（任务书模板按维度选择，mx-1 起 reviewer 有两种形态） */
+  dimension: DispatchDimension;
   /**
    * u8（canon D6）：内部节点（spec.split 非空）的 builder 不派 agent，由循环直接
    * 执行 runIntegrationVerify（确定性代码）。不占 in-flight 并发额度（不是 spawn）。
@@ -262,14 +297,18 @@ function subtreeUnits(
 }
 
 /** frontier 维度 → 派发形态（role 与集成直跑标记）。维度语义单一出处 = readonly/frontier.ts。
- * flakeReview 无条目（rv-5）：它是转人工维度——不派任何 agent（打回循环对随机挂
- * 无解），转人工指引由 runLoopMain 的 flakeEscalationMessage 出声。 */
+ * specReviewDeadlock / flakeReview 无条目（mx-1 / rv-5）：两者都是转人工维度——
+ * 不派任何 agent（打回循环对活锁/随机挂无解），转人工指引由 runLoopMain 的
+ * specDeadlockEscalationMessage / flakeEscalationMessage 出声。
+ * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
+ * 但任务书形态不同（renderBrief 按 dimension 区分）。 */
 const DISPATCH_SHAPE: Record<
-  Exclude<keyof FrontierGroups, "flakeReview">,
+  DispatchDimension,
   { role: AgentRole; integration: boolean }
 > = {
   specReady: { role: "designer", integration: false },
-  reReview: { role: "designer", integration: false },
+  specReviewPending: { role: "reviewer", integration: false },
+  specFixPending: { role: "designer", integration: false },
   missingChildren: { role: "designer", integration: false },
   integrationDrift: { role: "designer", integration: false },
   integrationReady: { role: "builder", integration: true },
@@ -280,11 +319,14 @@ const DISPATCH_SHAPE: Record<
 /**
  * 派发对象集合：消费 readonly/frontier.ts 的 computeFrontier（与 `cw frontier`
  * 命令同一就绪判定，A4「零上下文接手」场景输出与真实派发一致），限定 root
- * 子树、按 BFS 序展开为 (role, unitId, integration)。in-flight 的同
- * (unitId, role) 不重复派；excluded = 转人工 unit（连续 TIMEOUT 封顶后不再
- * 派发）。flakeReview 维度（rv-5）同样不派发——转人工指引由 runLoopMain 出声，
- * 此处只负责不进 targets。spec-frozen 自引用的 stderr 警告保持每轮可见——判定
- * 半边在共享函数（按叶子语义入组），此处只保留可观测性半边（fx-1 R1 loop 级防御）。
+ * 子树、按 BFS 序展开为 (role, unitId, dimension, integration)。派发 gate
+ * （mx-1 S1）：同 unit 存在任意 role 的 in-flight spawn 时本轮缓派该 unit 的
+ * 全部新角色——reviewer 派发前的 worktree reset 会清在飞 designer 的现场，
+ * 同理修复既有 designer→builder 转换竞态；等待窗口 ≤ 一个 poll 周期。
+ * excluded = 转人工 unit（连续 TIMEOUT 封顶后不再派发）。specReviewDeadlock /
+ * flakeReview 维度同样不派发——转人工指引由 runLoopMain 出声，此处只负责不进
+ * targets。spec-frozen 自引用的 stderr 警告保持每轮可见——判定半边在共享函数
+ * （按叶子语义入组），此处只保留可观测性半边（fx-1 R1 loop 级防御）。
  */
 function computeDispatchTargets(
   projection: SequencedProjection,
@@ -292,11 +334,13 @@ function computeDispatchTargets(
   inFlight: readonly InFlightSpawn[],
   consecutiveFails: ReadonlyMap<string, number>,
   flakeFacts: ReadonlyMap<string, readonly FlakeReviewFact[]>,
+  specFails: ReadonlyMap<string, number>,
   excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
   const groups = computeFrontier(projection, {
     consecutiveIntegrationFails: consecutiveFails,
     flakeReviewFacts: flakeFacts,
+    specReviewFailCounts: specFails,
   });
   const dimensionOf = new Map<string, keyof FrontierGroups>();
   for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
@@ -317,18 +361,28 @@ function computeDispatchTargets(
       continue;
     }
     const dimension = dimensionOf.get(unit.unitId);
-    if (dimension === undefined || dimension === "flakeReview") {
-      // flakeReview：e2e 连挂转人工（rv-5）——不派任何 agent，打回循环停摆等人工
+    if (
+      dimension === undefined ||
+      dimension === "flakeReview" ||
+      dimension === "specReviewDeadlock"
+    ) {
+      // 转人工维度（rv-5 flake / mx-1 spec 打回复审活锁）——不派任何 agent，
+      // 打回循环停摆等人工处置后投影自然消失
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
-    const alreadyInFlight = inFlight.some(
-      (flight) => flight.unitId === unit.unitId && flight.role === shape.role,
+    const unitInFlight = inFlight.some(
+      (flight) => flight.unitId === unit.unitId,
     );
-    if (alreadyInFlight) {
+    if (unitInFlight) {
       continue;
     }
-    targets.push({ role: shape.role, unitId: unit.unitId, integration: shape.integration });
+    targets.push({
+      role: shape.role,
+      unitId: unit.unitId,
+      dimension,
+      integration: shape.integration,
+    });
   }
   return targets;
 }
@@ -459,235 +513,6 @@ async function runIntegrationDispatch(
 
 function sha256OfFile(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
-// ---- brief 生成（循环六步之 2：unit 上下文 + role 任务书模板，file-based 传递） ----
-
-const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => string> = {
-  builder: (unitId) => [
-    "## 你的任务（builder）",
-    "1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。",
-    `2. 提交 build 证据：cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <自拟唯一 runId> [--file <产物路径>...]`,
-    `3. 触发干净重跑验证：cw verify --unit ${unitId}（默认含红阶段检查——新测试在旧代码树必须 fail，恒真测试会被拒）。`,
-    "完成标志：unit 进入 verified。",
-  ].join("\n"),
-  reviewer: (unitId) => [
-    "## 你的任务（reviewer）",
-    `对该 unit 提交 exec-review 结论（审查依据：cw report --unit ${unitId} 的证据链与 verify 结果）：`,
-    `cw review submit --unit ${unitId} --verdict-kind exec-review --verdict pass|fail [--comment <意见>]`,
-    "完成标志：verdict 为 pass 时 unit 进入 closed。",
-  ].join("\n"),
-};
-
-/**
- * designer 首派任务书（created 且 specs===0）。fx-3 R5.2：root 无子时追加第 0 步
- * 建子指令——建子职责从 brief 实施建议的「建议」措辞（print 模式 agent 会停下
- * 询问，终验第 3 次现场）升级为系统任务书的指令化步骤，与 fx-3 R5.1 gate
- * （先建子后提 spec）口径对齐。条件收窄到 root 无子：已有子的 root 重派 /
- * 叶子首派不重复教建子。
- */
-function designerFirstTasks(unit: SequencedUnitProjection, projection: SequencedProjection): string {
-  const isRootWithoutChildren =
-    unit.parentId === null &&
-    ![...projection.units.values()].some((candidate) => candidate.parentId === unit.unitId);
-  const stepZero = isRootWithoutChildren
-    ? [
-        `0. 本 unit 是根节点且尚无子 unit——若任务书/brief 含拆分建议：先为每个子执行`,
-        `   cw create --id <slug> --brief <子brief文件> --parent ${unit.unitId}（子 brief 可为占位文件），`,
-        "   再进入第 1 步（spec.split 声明的子必须已创建，否则提交会被拒）。",
-      ]
-    : [];
-  return [
-    "## 你的任务（designer）",
-    ...stepZero,
-    `1. 撰写该 unit 的 spec.json。验收五规则（src/gates/spec-rules.ts）：验收非空；`,
-    "   核心 case 的 type 须为 e2e-real / e2e-mock 且带可执行 command；含 mock 须附",
-    "   mock 保真度说明；至少一条 unit 级用例。",
-    `2. 提交 spec：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
-    `3. 提交 spec 审查：cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass`,
-    "完成标志：unit 进入 spec-frozen（cw status 可查）。",
-  ].join("\n");
-}
-
-/**
- * fx-3 R5.3 兜底出口的任务书（spec-frozen 且 split 子未建的 designer）：清单式
- * 建子指令。designer 建完子即完成本任务书退出——子 unit 的 spec 由下轮首派的
- * designer 撰写，本 unit 的冻结 spec 无需改动。
- */
-function missingChildrenTasks(unit: SequencedUnitProjection, missing: readonly string[]): string {
-  return [
-    "## 你的任务（designer：补建 split 子 unit）",
-    "",
-    `unit "${unit.unitId}" 的冻结 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missing.length} 个未创建`,
-    "（子不齐则集成永不发生，分解树无法建立）——请先创建缺失子：",
-    ...missing.map((childId) => `  cw create --id ${childId} --brief <文件> --parent ${unit.unitId}`),
-    "",
-    "子 brief 可为占位文件；建完即完成本任务书，无需改动本 unit 的冻结 spec。",
-    `完成标志：cw status 中上述子 unit 均为 created。`,
-  ].join("\n");
-}
-
-/**
- * fx-1 R2 第四分支的任务书（spec 已提交待审时的 designer）：只审不重写——重新
- * 撰写并提交新 spec 会再次触发「新 spec 无过审」回到同态状态，补审才是出口。
- */
-function reReviewTasks(unitId: string): string {
-  return [
-    "## 你的任务（designer：spec 补审）",
-    "spec 已提交待审——请审查该 spec 并执行 cw review submit --verdict-kind spec-review --verdict pass|fail",
-    `（审查对象：cw report --unit ${unitId} 中最后一条 SpecSubmitted；pass 后 unit 进入 spec-frozen，勿重新提交 spec）`,
-  ].join("\n");
-}
-
-/**
- * fx-2 R4a 上限出口的任务书（集成连续 fail 达上限后的 designer）：内嵌最近一次
- * 集成报告的失败事实（merge 冲突清单 + 契约清单 + 失败验收 id）与二选一处置指引
- * ——契约漂移/冲突的归属（改 spec 契约还是修实现/人工解冲突）需要语义判断，是
- * designer 的职责而非 runner 的（canon D4：runner 无智能）。报告不可读时降级为
- * 冻结 spec 的契约全集 + 指向查证命令（错误可操作闭环）。rv-4 起 MAX=1：首次
- * fail 即进入本出口（确定性失败无瞬时态可重试），且 merge 冲突事实（报告
- * mergeFailures 节）不再退化为「契约比对无失败项」类笼统文案。
- */
-function integrationDriftTasks(unit: SequencedUnitProjection, cwd: string): string {
-  const lastFailRun = [...unit.verifyRuns]
-    .reverse()
-    .find((run) => run.result === "fail" && run.runId.startsWith("integrate-"));
-  const read =
-    lastFailRun === undefined
-      ? null
-      : readIntegrateReport(cwd, unit.unitId, lastFailRun.runId);
-
-  const factLines: string[] = [];
-  if (read === null) {
-    const contracts = unit.specs[unit.specs.length - 1]?.contracts ?? [];
-    factLines.push(
-      `- 最近一次集成报告不可读——失败明细见 cw report --unit ${unit.unitId}；当前冻结 spec 的契约全集：`,
-      ...(contracts.length === 0
-        ? ["  （无契约——fail 来自 merge 冲突、验收红或 commit 可达性，见失败明细）"]
-        : contracts.map(
-            (c) => `  - ${c.id}: signature "${c.signature}" 期望文件 ${c.file ?? "（全树搜索）"}`,
-          )),
-    );
-  } else {
-    // rv-4：merge 冲突事实独立提取（报告 mergeFailures 节；旧报告无该节按空清单）
-    const mergeFailures = read.report.mergeFailures ?? [];
-    if (mergeFailures.length > 0) {
-      factLines.push(
-        "- merge 冲突清单（步骤 0 汇聚失败原文，含冲突子 unitId 与 root worktree 路径）：",
-        ...mergeFailures.map((f) => `  - ${f}`),
-      );
-    }
-    const contractFailures = read.report.contracts.failures;
-    factLines.push(
-      ...(contractFailures.length === 0
-        ? [
-            mergeFailures.length > 0
-              ? "- 契约比对无失败项（fail 的机器事实见上方 merge 冲突清单与失败验收）"
-              : "- 契约比对无失败项（fail 来自验收红或 commit 可达性，见失败明细）",
-          ]
-        : [
-            "- 契约比对失败清单（机器判定原文，含 id + signature + 期望文件）：",
-            ...contractFailures.map((f) => `  - ${f}`),
-          ]),
-    );
-    const failedAcceptances = read.report.acceptanceBatches.flatMap((batch) =>
-      batch.results
-        .filter((r) => r.status === "fail")
-        .map((r) => `${r.id}（unit ${batch.unitId}）`),
-    );
-    factLines.push(
-      failedAcceptances.length === 0
-        ? "- 失败验收：无（验收批次全绿，fail 全部来自契约比对）"
-        : `- 失败验收：${failedAcceptances.join("、")}`,
-    );
-    factLines.push(`- 完整报告：${read.reportPath}`);
-  }
-
-  return [
-    "## 你的任务（designer：集成契约漂移处置）",
-    "",
-    `unit "${unit.unitId}" 的集成已连续 fail ${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次（重派上限），`,
-    "runner 已停止自动重派集成——契约漂移/merge 冲突的处置需要语义判断，由你按下述指引处置。",
-    "",
-    "### 集成失败事实（最近一次集成报告）",
-    ...factLines,
-    "",
-    "### 处置指引（二选一）",
-    integrationRecoveryGuidance(unit.unitId),
-  ].join("\n");
-}
-
-function renderBrief(
-  projection: SequencedProjection,
-  unit: SequencedUnitProjection,
-  role: AgentRole,
-  rootId: string,
-  projectCwd: string,
-  workdir: string,
-): string {
-  let briefContent: string;
-  try {
-    briefContent = readFileSync(unit.briefRef, "utf-8");
-  } catch {
-    briefContent = `(原始任务书文件不可读：${unit.briefRef})`;
-  }
-  // 四类 designer 任务书按派发分支的入口状态区分（口径与 computeDispatchTargets
-  // 同一投影）：spec-frozen + split 子未建 = fx-3 R5.3 兜底出口（补建子）；其余
-  // spec-frozen = fx-2 R4a 集成上限出口（契约漂移处置）；created 且 specs>0 =
-  // fx-1 R2 第四分支（补审）；created 且 specs===0 = 首派（撰写 spec，root 无子
-  // 时含 fx-3 R5.2 第 0 步建子指令）
-  const roleTasks =
-    role === "designer" && unitStatus(unit) === "spec-frozen"
-      ? splitChildrenNotCreated(projection, unit).length > 0
-        ? missingChildrenTasks(unit, splitChildrenNotCreated(projection, unit))
-        : integrationDriftTasks(unit, projectCwd)
-      : role === "designer" && unit.specs.length > 0
-        ? reReviewTasks(unit.unitId)
-        : role === "designer"
-          ? designerFirstTasks(unit, projection)
-          : ROLE_TASKS[role](unit.unitId);
-  return [
-    `# ${role} 任务书：unit "${unit.unitId}"`,
-    "",
-    "## Unit 上下文",
-    `- unitId: ${unit.unitId}`,
-    `- parentId: ${unit.parentId ?? "（根节点）"}`,
-    `- 当前状态: ${unitStatus(unit)}`,
-    `- 原始任务书: ${unit.briefRef}`,
-    "",
-    "### 原始任务书内容",
-    briefContent,
-    "",
-    roleTasks,
-    "",
-    "## 环境约定",
-    `- workdir: ${workdir}（unit 专属 git worktree，分支 ${unitBranchName(rootId, unit.unitId)}）`,
-    `- 账本命令：直接在 workdir 下执行 cw …（CW_PROJECT_DIR 已注入 env，自动锚定项目账本 ${projectCwd}）`,
-    "",
-  ].join("\n");
-}
-
-/**
- * brief 落盘到 <artifactDir>/<unitId>.<role>.brief.md（fx-4：产物根随 run 级 topic
- * 目录，worktree 内不再有任何 cw 自身文件）。覆盖写语义不变——brief 内容随投影
- * 变化，append 会拼接出多版本任务书（设计 D2）。
- */
-function writeBriefFile(
-  artifactDir: string,
-  target: DispatchTarget,
-  unit: SequencedUnitProjection,
-  projection: SequencedProjection,
-  rootId: string,
-  projectCwd: string,
-  workdir: string,
-): string {
-  const path = join(artifactDir, `${target.unitId}.${target.role}.brief.md`);
-  mkdirSync(artifactDir, { recursive: true });
-  writeFileSync(
-    path,
-    renderBrief(projection, unit, target.role, rootId, projectCwd, workdir),
-  );
-  return path;
 }
 
 // ---- 终止与汇总 ----
@@ -1041,6 +866,61 @@ function flakeEscalationMessage(
 }
 
 /**
+ * spec-review 打回活锁转人工指引（mx-1 MF2，防 ping-pong：fail → designer 修 →
+ * fail → 修 → … 的无限循环对机器无解）。列出累计的各次 fail verdict comment
+ * 摘要（审计事实）与人工处置动作。出口形态复用 fx-2 上限出口的「审计-不喂
+ * -idle」模式：停止派发后不再产生新事件——若树内无其他可推进目标，空转由
+ * maxIdleMs 收束退出；人工处置（人工提交 pass verdict，或改写后人工过审）写入
+ * 账本后 unit 离开 created 态，投影自然消失，运行中的循环下轮自愈。
+ */
+function specDeadlockEscalationMessage(
+  rootId: string,
+  unitId: string,
+  failComments: readonly string[],
+): string {
+  const commentLines = failComments.map(
+    (comment, i) => `  - 第 ${i + 1} 次 fail 的打回意见：${comment}`,
+  );
+  return (
+    `cw run: unit "${unitId}" 的 spec-review fail 已累计 ${failComments.length} 次（≥${SPEC_REVIEW_DEADLOCK_FAILS}，重提 spec 不清零）` +
+    "——判定 designer-reviewer 打回循环活锁，停止对该 unit 派发（继续循环只会重演），转人工处置" +
+    "（canon：不自动换模型重试，防静默降级；本循环继续处理其余 unit）：\n" +
+    commentLines.join("\n") +
+    "\n人工处置动作（按序）：\n" +
+    `  1. 人工接手该 unit：cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
+    `  2. 人工审查该 spec：cw report --unit ${unitId}（原文副本见 evidence 目录 attachments/）\n` +
+    `  3. 处置三选一：人工修 spec 重提后由你本人判定（cw evidence submit --kind spec --unit ${unitId} --file spec.json + ` +
+    `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role human）；` +
+    "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工提交 pass verdict\n" +
+    "处置完成（unit 离开 created 态）投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
+    `cw run --root ${rootId} 即续。`
+  );
+}
+
+/** 该 unit 账本内全部 spec-review fail verdict 的 comment（缺 comment 时给可定位占位） */
+function specReviewFailComments(unit: SequencedUnitProjection): string[] {
+  return unit.verdicts
+    .filter((verdict) => verdict.verdictKind === "spec-review" && verdict.verdict === "fail")
+    .map(
+      (verdict) =>
+        verdict.comment ?? "（该次 fail 未附 comment——按 cw report --unit 的 verdict 时间线核对）",
+    );
+}
+
+/**
+ * 抢答警告行（mx-1 S7）：spec-review verdict 入账轮次，该 unit 无 in-flight
+ * reviewer、本 run 从未派发过其 reviewer、且非 specFixPending 流转（fail 的
+ * 打回修复有 loop 的收敛出口）——唯一可见性增强，不阻断不入账。
+ */
+function prematureVerdictWarningLine(unitId: string): string {
+  return (
+    `[runner] 警告：unit "${unitId}" 出现新的 spec-review verdict，但该 unit 此刻无 in-flight reviewer ` +
+    "spawn（本 run 也未派发过其 reviewer）且非 fail 打回流转——疑似非独立 reviewer 提交（designer 自审 / 人工抢答）。" +
+    "role 字段是自报弱声明可伪造；本警告仅审计可见性，不阻断。\n"
+  );
+}
+
+/**
  * R1（D2）：run 启动时项目 HEAD 一次性快照——本轮全部 unit 的 worktree 同 base
  * （兄弟并行、集成兜底一致性；run 期间项目 cwd 无人 commit，快照恒定）。
  * 非 git 仓库 / 无 HEAD → throw 可操作错误：git 是证据链硬依赖，fail-fast 优于
@@ -1117,6 +997,14 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
     );
   }
 
+  // mx-1 S3：reviewer 异源模型链——flag（--reviewer-model）优先于进程环境
+  // CW_REVIEWER_MODEL，都未设则不注入（reviewer 回落 builder 同款模型链）。
+  // 读取点在启动时一次性定格（与 CW_HOME 等环境语义一致，运行中改 env 不生效）
+  const envReviewerModel = process.env.CW_REVIEWER_MODEL;
+  const reviewerModel =
+    opts.reviewerModel ??
+    (envReviewerModel !== undefined && envReviewerModel !== "" ? envReviewerModel : undefined);
+
   // R1：base 快照在 root 存在性检查之后、首个派发之前一次性取得（全部 unit 同 base）
   const baseCommit = snapshotHeadCommit(opts.cwd);
 
@@ -1147,6 +1035,26 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // acceptanceId@最新 runId）。投影事实每轮重算（账本即状态），同一连挂只出声
   // 一次；人工处置后连挂消失、再连挂（新 runId）时签名变化重新出声
   const announcedFlake = new Map<string, string>();
+  // mx-1 MF2 spec 打回活锁转人工的出声去重：unitId → 已出声时的签名
+  // （fail 总数 @ 最后 spec seq——新 fail 或新 spec 周期重入死锁时重新出声；
+  // 人工 pass 推进状态不触发重播）
+  const announcedDeadlock = new Map<string, string>();
+  // mx-1 S7 抢答警告的去重水位：unitId → 已评估过的最高 spec-review verdict seq。
+  // 初始值取本 run 启动时的账本现状（重跑场景下历史 verdict 不追警告，只看本
+  // run 期间新入账的）
+  const seenSpecVerdictSeq = new Map<string, number>();
+  for (const unit of initial.projection.units.values()) {
+    for (let i = 0; i < unit.verdicts.length; i += 1) {
+      const verdict = unit.verdicts[i];
+      if (verdict?.verdictKind === "spec-review") {
+        const seq = unit.verdictSeqs[i] ?? 0;
+        seenSpecVerdictSeq.set(unit.unitId, Math.max(seenSpecVerdictSeq.get(unit.unitId) ?? 0, seq));
+      }
+    }
+  }
+  // mx-1 S7：本 run 内派发过 reviewer 的 unit（正常 reviewer 流的 verdict 在 spawn
+  // 结算后到达——此刻已不在 in-flight，凭该记忆豁免抢答警告，防正常流误报）
+  const specReviewerDispatched = new Set<string>();
   let lastUnitSeqs = new Map<string, number>();
   // wt-4 J4 延迟回收：pendingReclaim = 本轮发现的 closed 子 unit（下轮开头回收，
   // debug 翻看现场留一轮窗口）；reclaimTried = 已尝试回收的（成败均不再重试——
@@ -1256,6 +1164,59 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
     }
 
+    // mx-1 MF2 specReviewDeadlock 出口：spec-review fail 累计 ≥ 阈值的 root 子树
+    // unit 转人工（computeDispatchTargets 同口径不派）。事实来自账本重放
+    //（specReviewFailCounts，不因新 SpecSubmitted 清零），人工 pass verdict 写入
+    // 后 unit 离开 created 态、投影自然消失；出声按 fail 总数去重
+    const specFails = specReviewFailCounts(events);
+    for (const [unitId, failCount] of specFails) {
+      if (!subtreeIds.has(unitId) || failCount < SPEC_REVIEW_DEADLOCK_FAILS) {
+        continue;
+      }
+      const unit = projection.units.get(unitId);
+      if (unit === undefined) {
+        continue; // 不可达（specFails 的 unitId 来自账本事件）
+      }
+      const signature = `${failCount}@${unit.lastSpecSeq ?? 0}`;
+      if (announcedDeadlock.get(unitId) !== signature) {
+        announcedDeadlock.set(unitId, signature);
+        emitErr(
+          specDeadlockEscalationMessage(opts.rootId, unitId, specReviewFailComments(unit)),
+        );
+      }
+    }
+
+    // mx-1 S7 抢答可见性：本 run 期间新入账的 spec-review verdict，若该 unit 无
+    // in-flight reviewer、本 run 未派发过其 reviewer、且非 fail 打回流转（fail 有
+    // specFixPending 收敛出口）→ stderr 一行警告（不阻断不入账）
+    for (const unit of subtreeUnits(projection, opts.rootId)) {
+      const watermark = seenSpecVerdictSeq.get(unit.unitId) ?? 0;
+      let latestSeq = watermark;
+      let hasNew = false;
+      for (let i = 0; i < unit.verdicts.length; i += 1) {
+        const verdict = unit.verdicts[i];
+        const seq = unit.verdictSeqs[i] ?? 0;
+        if (verdict?.verdictKind === "spec-review" && seq > watermark) {
+          hasNew = true;
+          latestSeq = Math.max(latestSeq, seq);
+        }
+      }
+      if (!hasNew) {
+        continue;
+      }
+      seenSpecVerdictSeq.set(unit.unitId, latestSeq);
+      const reviewerInFlight = inFlight.some(
+        (flight) => flight.unitId === unit.unitId && flight.role === "reviewer",
+      );
+      const failRecoveryFlow =
+        unitStatus(unit) === "created" &&
+        unit.specs.length > 0 &&
+        latestSpecReviewAfterLastSpec(unit) === "fail";
+      if (!reviewerInFlight && !specReviewerDispatched.has(unit.unitId) && !failRecoveryFlow) {
+        emitErr(prematureVerdictWarningLine(unit.unitId));
+      }
+    }
+
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
     // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
     const targets = computeDispatchTargets(
@@ -1264,6 +1225,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       inFlight,
       consecutiveIntegrationFails(events),
       flakes,
+      specFails,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {
@@ -1304,6 +1266,16 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
               "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
           ]);
         }
+      } else if (target.dimension === "specReviewPending") {
+        // mx-1：spec-review 独立 reviewer 派发的可观测性（信任链关键跳变）
+        emit([
+          `[runner] unit "${target.unitId}" 的 spec 待审——派独立 reviewer 执行 spec-review（designer 不自审）`,
+        ]);
+      } else if (target.dimension === "specFixPending") {
+        // mx-1 MF1：fail 打回后的修复出口（brief 内嵌 fail comment 全文）
+        emit([
+          `[runner] unit "${target.unitId}" 的 spec-review fail——派 designer 按打回意见修 spec 重提（重提后由 reviewer 再审）`,
+        ]);
       }
       // wt-2（D5 四格矩阵）：派发前确保 unit worktree 就绪；失败不炸循环——error 原文
       // （含恢复指引）落 stderr，跳过该 unit 本轮派发（不 push inFlight），其余
@@ -1323,6 +1295,13 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         continue;
       }
       const briefPath = writeBriefFile(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir);
+      // mx-1 S3：reviewer role 注入异源模型（复用 pi 的 CW_AGENT_MODEL → --model
+      // 翻译链，req.env 级；未配置时不注入——reviewer 与 builder 同模型链）。
+      // specReviewerDispatched 记录（S7 抢答豁免）：正常 reviewer 流的 verdict 在
+      // spawn 结算后到达，此刻已不在 in-flight，凭该记忆免误报
+      if (target.role === "reviewer") {
+        specReviewerDispatched.add(target.unitId);
+      }
       const handle = await opts.adapter.spawn({
         role: target.role,
         unitId: target.unitId,
@@ -1330,6 +1309,9 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         projectCwd: opts.cwd,
         artifactDir: artifactsDir,
         briefPath,
+        ...(target.role === "reviewer" && reviewerModel !== undefined
+          ? { env: { CW_AGENT_MODEL: reviewerModel } }
+          : {}),
         timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
       });
       inFlight.push({ role: target.role, unitId: target.unitId, handle });

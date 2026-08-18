@@ -115,9 +115,11 @@ const ROOT_ACCEPTANCE: readonly AcceptanceItem[] = [
 /**
  * argv: <role> <unitId> <cwd> <mode> <briefPath>
  * mode=noop：designer 不写任何事件（模拟无人应答 brief——R4b idle 兜底场景）。
- * mode=contract-fix：designer 重提修正契约签名（async 差异）的 spec 并过审
+ * mode=contract-fix：designer 重提修正契约签名（async 差异）的 spec
  * （R4a 处置路径①：实现与契约语义等价但文本不等 → 修 spec 走重新过审链）。
- * 幂等：最后一条 spec 契约已含 async 时只补 verdict，不重复提交 spec。
+ * mx-1：designer 不自审——重提后由独立 reviewer 分支按 unit 现状过审
+ * （幂等：最后一条 spec 契约已含 async 时不再重复提交）。
+ * reviewer：created（spec 待审）→ spec-review pass；verified → exec-review pass。
  */
 function writeWorkerScript(): string {
   const script = `// tests/fx2-integration-recovery.test.ts 生成的测试专用 agent worker（真实进程，非 mock）
@@ -126,7 +128,7 @@ const DIST = ${JSON.stringify(DIST_ROOT)};
 const [role, unitId, cwd, mode] = process.argv.slice(2);
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 const { ledgerForCwd } = await import(DIST + "/handlers/common.js");
-const { loadLedger } = await import(DIST + "/readonly/load.js");
+const { loadLedger, unitStatus } = await import(DIST + "/readonly/load.js");
 console.log("fx2-worker " + role + " " + unitId + " mode=" + mode + " pid=" + process.pid);
 
 if (role === "designer" && mode === "noop") {
@@ -135,7 +137,6 @@ if (role === "designer" && mode === "noop") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   const lastSpec = unit?.specs[unit.specs.length - 1];
   if (lastSpec === undefined) throw new Error("fx2-worker: unit " + unitId + " 无 spec");
-  const ledger = ledgerForCwd(cwd);
   const alreadyFixed = (lastSpec.contracts[0]?.signature ?? "").includes("async");
   if (!alreadyFixed) {
     const contracts = lastSpec.contracts.map((c) => ({
@@ -143,7 +144,7 @@ if (role === "designer" && mode === "noop") {
       signature: c.signature.replace("export function", "export async function"),
     }));
     const spec = { acceptance: lastSpec.acceptance, contracts, split: lastSpec.split };
-    ledger.append("SpecSubmitted", {
+    ledgerForCwd(cwd).append("SpecSubmitted", {
       unitId,
       specHash: sha(JSON.stringify(spec)),
       acceptance: lastSpec.acceptance,
@@ -151,11 +152,13 @@ if (role === "designer" && mode === "noop") {
       split: lastSpec.split,
     });
   }
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
   console.log("fx2-worker-done contract-fix " + unitId);
 } else if (role === "reviewer") {
-  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
-  console.log("fx2-worker-done reviewer " + unitId);
+  const unit = loadLedger(cwd).projection.units.get(unitId);
+  if (unit === undefined) throw new Error("fx2-worker: unit " + unitId + " 不在账本");
+  const kind = unitStatus(unit) === "verified" ? "exec-review" : "spec-review";
+  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: kind, verdict: "pass", role: "reviewer" });
+  console.log("fx2-worker-done reviewer " + kind + " " + unitId);
 } else {
   throw new Error("fx2-worker: 未知组合 role=" + role + " mode=" + mode);
 }
@@ -424,9 +427,12 @@ describe("fx-2 R4a 回归2（rv-4 语义迁移：上限 1 次）：首 fail 达�
     expect(brief).toContain(CONTRACT_SIGNATURE);
     expect(brief).toContain("src/renderer.js");
     expect(brief).toContain("失败验收：无（验收批次全绿，fail 全部来自契约比对）");
-    // 处置路径①：修 spec 走重新过审链（命令原文可照抄执行）
+    // 处置路径①（mx-1 语义迁移）：修 spec 重提的命令原文可照抄执行；过审半边改由
+    // 独立 reviewer 承载——任务书不再教 designer 自行 review submit（A2 精神：
+    // designer 任务书全文不含 review submit 字样）
     expect(brief).toContain(`cw evidence submit --kind spec --unit ${ROOT_ID} --file spec.json`);
-    expect(brief).toContain(`cw review submit --unit ${ROOT_ID} --verdict-kind spec-review --verdict pass`);
+    expect(brief).toContain("由 loop 自动派发独立 reviewer 执行 spec-review");
+    expect(brief).not.toContain("review submit");
     // 处置路径②：provider 修复 + 已知边界如实告知（closed 无自动回退通道）
     expect(brief).toContain("closed 的 provider 无自动回退通道");
     expect(brief).toContain("人工介入");

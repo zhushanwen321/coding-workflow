@@ -164,13 +164,18 @@ describe("u6b human 适配器", () => {
 
     const designerOut = readFileSync(artifactPath(scenario, "instr", "designer", "stdout"), "utf8");
     expect(designerOut).toContain("cw evidence submit --kind spec");
-    expect(designerOut).toContain("cw review submit");
+    // mx-1：designer 指令不再含任何 review submit 步骤（spec-review 归独立 reviewer）
+    expect(designerOut).not.toContain("review submit");
     const builderOut = readFileSync(artifactPath(scenario, "instr", "builder", "stdout"), "utf8");
     expect(builderOut).toContain("git commit");
     expect(builderOut).toContain("cw evidence submit --kind build");
     expect(builderOut).toContain("cw verify");
     const reviewerOut = readFileSync(artifactPath(scenario, "instr", "reviewer", "stdout"), "utf8");
     expect(reviewerOut).toContain("cw review submit");
+    expect(reviewerOut).toContain("--verdict-kind spec-review");
+    expect(reviewerOut).toContain("--verdict-kind exec-review");
+    // mx-1：reviewer 指令内嵌 --role reviewer 自报（任务书模板与 CLI flag 对齐）
+    expect(reviewerOut).toContain("--role reviewer");
     // 信任边界提示（human 无自动 reviewer，人自任）三 role 共有
     for (const role of ["designer", "builder", "reviewer"] as const) {
       expect(readFileSync(artifactPath(scenario, "instr", role, "stdout"), "utf8")).toContain(
@@ -252,17 +257,25 @@ describe("u6b human 适配器", () => {
   });
 });
 
-// ---- designer 完成信号按任务书分支扩展（fx 失配修复回归） ----
-// 修复前 designer 完成信号唯一映射 SpecSubmitted：spec 补审分支（人提交的是
-// VerdictSubmitted）与补建子分支（产出是子 unitId 的 UnitCreated）都不匹配，
-// `cw run` 缺省 human 后端下这两个分支必然空转满 30min TIMEOUT。
+// ---- designer 完成信号按任务书分支扩展（fx 失配修复回归；mx-1 口径重排） ----
+// 修复前 designer 完成信号唯一映射 SpecSubmitted：补建子分支（产出是子 unitId 的
+// UnitCreated）不匹配，`cw run` 缺省 human 后端下必然空转满 30min TIMEOUT。
+// mx-1 起 spec 补审分支删除（spec-review 归独立 reviewer，designer 遇
+// VerdictSubmitted 不结算——结算了 loop 会在任务未完成时重算重派）。
 
 describe("u6b human 适配器：designer 完成信号按任务书分支扩展", () => {
-  it("designer + VerdictSubmitted（spec 补审分支）→ wait 正常返回 exitCode 0，非 TIMEOUT", async () => {
-    const scenario = makeScenario("designer-rereview", "drr");
+  it("designer + VerdictSubmitted → 不触发（mx-1：spec-review 归独立 reviewer，verdict 不是 designer 的完成信号）", async () => {
+    const scenario = makeScenario("designer-verdict", "drr");
     const handle = await humanAdapter.spawn(spawnRequest(scenario, "drr", "designer", 15_000));
     const waitPromise = handle.wait();
     appendEventFromRealChild(scenario.ledgerFile, "VerdictSubmitted", verdictPayload("drr"));
+    const state = await Promise.race([
+      waitPromise.then(() => "resolved" as const),
+      sleep(1_500).then(() => "pending" as const),
+    ]);
+    expect(state, "designer wait() 对 spec-review verdict 不应结算（观察窗 1.5s）").toBe("pending");
+    // designer 的真完成信号（SpecSubmitted）到达后正常结算
+    appendEventFromRealChild(scenario.ledgerFile, "SpecSubmitted", specPayload("drr"));
     const result = await waitPromise;
     expect(result.exitCode).toBe(0);
   });

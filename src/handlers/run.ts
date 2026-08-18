@@ -1,6 +1,7 @@
 /**
- * `cw run --root <unitId> [--spawn human|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>]`
- * （u7 验收文档锁定：--spawn 路由到后端无关调度循环 src/runner/loop.ts + AgentSpawn 适配器）。
+ * `cw run --root <unitId> [--spawn human|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>]
+ * [--reviewer-model <m>]`（u7 验收文档锁定：--spawn 路由到后端无关调度循环
+ * src/runner/loop.ts + AgentSpawn 适配器；mx-1 增补 --reviewer-model）。
  *
  * M1 起 --spawn 缺省 human 的语义 = 循环 + humanAdapter（u6b）；M0 的 human-loop.ts
  * 直连路径退役（文件与导出保留兼容既有单测，本文件不再调用）。
@@ -133,6 +134,17 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
     return fail(maxConcurrency.error);
   }
 
+  // mx-1：reviewer 异源模型（可选）。flag 优先于进程环境 CW_REVIEWER_MODEL
+  //（runLoop 启动时按同一优先级读取）；未配置时 reviewer spawn 回落 builder
+  // 同款模型链——结构隔离不依赖模型异源，异源是配置项（设计 D1/D2）
+  const reviewerModel = stringArg(ctx.argv, "reviewer-model");
+  if (reviewerModel === "") {
+    return fail(
+      "cw run: --reviewer-model 需要一个模型名参数（如 --reviewer-model provider/model）。" +
+        "恢复动作：补上模型名，或去掉该 flag（回退 CW_REVIEWER_MODEL 环境变量 / builder 同款模型）。",
+    );
+  }
+
   // root 前置校验（runLoop 直调路径也会校验并抛错；CLI 层先转 exit 1 的可操作输出）
   const { projection } = loadLedger(ctx.cwd);
   if (!projection.units.has(rootId)) {
@@ -154,6 +166,7 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
     pollMs: poll.value,
     maxIdleMs: maxIdle.value,
     maxConcurrency: maxConcurrency.value,
+    ...(reviewerModel !== undefined ? { reviewerModel } : {}),
   });
 }
 

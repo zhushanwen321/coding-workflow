@@ -289,23 +289,23 @@ function writeWorkerScript(): string {
   const script = `// tests/u8-e2e.test.ts 生成的测试专用 agent worker（真实进程，非 mock）
 // argv: <role> <unitId> <cwd>
 // rv-4 语义迁移（MAX=1）：契约违背首次集成 fail 即转 drift——designer 分支按
-// 处置指引重提同内容 spec 并过审（fail 计数随新 spec 提交清零 → 集成按正常
-// 路径重跑；首轮集成时 AR1 脚本的 heal 已把修复提交进 root 分支，重跑轮锚定
-// 的 root 分支 HEAD 已含修复）。幂等：specs 已重提过（>1 条）只补 verdict。
+// 处置指引重提同内容 spec（fail 计数随新 spec 提交清零 → 集成按正常路径
+// 重跑；首轮集成时 AR1 脚本的 heal 已把修复提交进 root 分支，重跑轮锚定
+// 的 root 分支 HEAD 已含修复）。mx-1：designer 不自审——重提后由独立
+// reviewer 按 unit 现状过审。幂等：specs 已重提过（>1 条）不再重复提交。
 const DIST = ${JSON.stringify(DIST_ROOT)};
 const [role, unitId, cwd] = process.argv.slice(2);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const { ledgerForCwd } = await import(DIST + "/handlers/common.js");
-const { loadLedger } = await import(DIST + "/readonly/load.js");
+const { loadLedger, unitStatus } = await import(DIST + "/readonly/load.js");
 console.log("worker " + role + " " + unitId + " pid=" + process.pid);
 if (role === "designer") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   const lastSpec = unit?.specs[unit.specs.length - 1];
   if (unit === undefined || lastSpec === undefined) throw new Error("u8 fixture: unit " + unitId + " 无 spec");
-  const ledger = ledgerForCwd(cwd);
   if (unit.specs.length === 1) {
     const spec = { acceptance: lastSpec.acceptance, contracts: lastSpec.contracts, split: lastSpec.split };
-    ledger.append("SpecSubmitted", {
+    ledgerForCwd(cwd).append("SpecSubmitted", {
       unitId,
       specHash: "rv4-disposal-" + spec.contracts.length + "-" + spec.acceptance.length,
       acceptance: lastSpec.acceptance,
@@ -313,12 +313,16 @@ if (role === "designer") {
       split: lastSpec.split,
     });
   }
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
   console.log("worker-done designer " + unitId);
 } else if (role === "reviewer") {
   await sleep(50);
-  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
-  console.log("worker-done reviewer " + unitId);
+  const unit = loadLedger(cwd).projection.units.get(unitId);
+  if (unit === undefined) throw new Error("u8 fixture: unit " + unitId + " 不在账本");
+  // mx-1：reviewer 按 unit 现状二选一（created 待审 → spec-review；verified →
+  // exec-review），verdict 带自报 role=reviewer
+  const kind = unitStatus(unit) === "verified" ? "exec-review" : "spec-review";
+  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: kind, verdict: "pass", role: "reviewer" });
+  console.log("worker-done reviewer " + kind + " " + unitId);
 } else {
   console.error("u8 fixture: 内部节点集成不派 agent，收到未预期的派发 " + role);
   process.exit(3);

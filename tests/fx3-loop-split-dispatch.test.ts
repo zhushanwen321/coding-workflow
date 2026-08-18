@@ -105,7 +105,8 @@ const ACCEPTANCE: readonly AcceptanceItem[] = [
  * mode=idle：挂住不写账本（R5.2/R5.3 判定窗口——brief 已落盘即可断言）。
  * mode=work：按 role 全程推进（全链）。designer 首派时 root 场景先按 brief
  * 第 0 步真实走 dispatch create 建两子（占位 brief 文件），再经 dispatch 提交
- * spec（R5.1 校验真实走通）与 spec-review——完整复现终验现场修复后的 agent 行为。
+ * spec（R5.1 校验真实走通；mx-1：不自审——spec-review 由 reviewer 分支按
+ * unit 现状提交）。
  */
 function writeWorkerScript(): string {
   const script = `// tests/fx3-loop-split-dispatch.test.ts 生成的测试专用 agent worker（真实进程，非 mock）
@@ -160,7 +161,7 @@ if (mode === "idle") {
     );
     await run(["evidence", "submit", "--kind", "spec", "--unit", unitId, "--file", specName]);
   }
-  await run(["review", "submit", "--unit", unitId, "--verdict-kind", "spec-review", "--verdict", "pass"]);
+  // mx-1：designer 不自审——spec-review 由独立 reviewer spawn 提交
   console.log("fx3-worker-done designer " + unitId);
 } else if (role === "builder") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
@@ -172,8 +173,14 @@ if (mode === "idle") {
   ledger.append("VerifyRan", { unitId, runId, reportHash: sha("evidence-report:" + runId), result: "pass", acceptanceIds });
   console.log("fx3-worker-done builder " + unitId);
 } else if (role === "reviewer") {
-  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
-  console.log("fx3-worker-done reviewer " + unitId);
+  // mx-1：reviewer 按 unit 现状二选一（created 待审 → spec-review；verified →
+  // exec-review），verdict 带自报 role=reviewer
+  const unit = loadLedger(cwd).projection.units.get(unitId);
+  const { unitStatus } = await import(DIST + "/readonly/load.js");
+  const status = unit === undefined ? "created" : unitStatus(unit);
+  const kind = status === "verified" ? "exec-review" : "spec-review";
+  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: kind, verdict: "pass", role: "reviewer" });
+  console.log("fx3-worker-done reviewer " + kind + " " + unitId);
 } else {
   throw new Error("fx3-worker: 未知 role " + role);
 }
@@ -349,10 +356,11 @@ describe("fx-3 R5.2 回归3：root 无子 → designer brief 含第 0 步建子�
     expect(brief).toContain("本 unit 是根节点且尚无子 unit");
     expect(brief).toContain(`cw create --id <slug> --brief <子brief文件> --parent ${ROOT_ID}`);
     expect(brief).toContain("占位文件");
-    // 既有三步不回退（fx-3 只追加第 0 步）
+    // 既有两步不回退（mx-1 断言迁移：删自审第 3 步——spec-review 归独立 reviewer，
+    // 任务书全文不含任何 review submit 字样）
     expect(brief).toContain("撰写该 unit 的 spec.json");
     expect(brief).toContain(`cw evidence submit --kind spec --unit ${ROOT_ID} --file spec.json`);
-    expect(brief).toContain(`cw review submit --unit ${ROOT_ID} --verdict-kind spec-review --verdict pass`);
+    expect(brief).not.toContain("review submit");
   }, 30_000);
 
   it("root 已有子（账本 parentId 指向它）→ designer 首派 brief 不含第 0 步", async () => {
@@ -498,10 +506,12 @@ describe("fx-3 全链回归5：root 首派 → 建子 → R5.1 过审 → 子链
     expect(rootVerify?.runId).toMatch(/^integrate-/);
     expect(rootVerify?.result).toBe("pass");
 
-    // 派发形态：root designer 一次完成建子 + spec + review；两子全 role 推进；
-    // root 无 builder spawn（内部节点不派 agent）
+    // 派发形态（mx-1）：root designer 一次完成建子 + spec 提交（不自审）；
+    // root 的 spec-review 与两叶的全部推进各由独立 spawn 承担；root 无 builder
+    // spawn（内部节点不派 agent）
     const spawned = script.spawned();
     expect(spawned.filter((r) => r.unitId === ROOT_ID && r.role === "designer").length).toBe(1);
+    expect(spawned.some((r) => r.unitId === ROOT_ID && r.role === "reviewer")).toBe(true);
     expect(spawned.some((r) => r.unitId === ROOT_ID && r.role === "builder")).toBe(false);
     for (const leaf of LEAF_IDS) {
       for (const role of ["designer", "builder", "reviewer"] as const) {

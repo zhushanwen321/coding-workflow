@@ -21,7 +21,7 @@ import type {
   SpecSubmittedPayload,
 } from "../src/events/types.js";
 import type { UnitStatus } from "../src/events/types.js";
-import { computeFrontier, consecutiveIntegrationFails, renderFrontier } from "../src/readonly/frontier.js";
+import { computeFrontier, consecutiveIntegrationFails, renderFrontier, specReviewFailCounts } from "../src/readonly/frontier.js";
 import { treeStatuses } from "../src/readonly/load.js";
 import { renderStatusDetail, renderStatusList, statusJson, unitJson } from "../src/readonly/status.js";
 import { EventLedger } from "../src/store/events-log.js";
@@ -322,8 +322,11 @@ describe("frontier（验收#2）", () => {
     expect(groups.specReady).toEqual(["f-created"]);
     expect(groups.buildReady).toEqual(["f-frozen"]);
     expect(groups.execReviewReady).toEqual(["f-verified"]);
-    // 其余维度（本账本无对应形态）为空
-    expect(groups.reReview).toEqual([]);
+    // 其余维度（本账本无对应形态）为空（mx-1 起 created+spec 维度重排为
+    // specReviewPending / specFixPending / specReviewDeadlock 三组）
+    expect(groups.specReviewPending).toEqual([]);
+    expect(groups.specFixPending).toEqual([]);
+    expect(groups.specReviewDeadlock).toEqual([]);
     expect(groups.missingChildren).toEqual([]);
     expect(groups.integrationDrift).toEqual([]);
     expect(groups.integrationReady).toEqual([]);
@@ -348,10 +351,11 @@ describe("frontier（验收#2）", () => {
     const proj = fold(ledger.readAll());
     expect(renderStatusList(proj)).toContain("w-weak  created  specs:1");
     const groups = computeFrontier(proj);
-    // 弱 spec 已提交且已过审（gate 红）：既非首派也非补审出口——重派 designer 只会
-    // 重提交-重审-仍弱循环，与 runner 派发口径一致地不入组（需人工修 spec）
+    // 弱 spec 已提交且已过审（gate 红）：既非首派也非待审/修复出口——重派 designer
+    // 只会重提交-仍弱循环，与 runner 派发口径一致地不入组（需人工修 spec）
     expect(groups.specReady).not.toContain("w-weak");
-    expect(groups.reReview).not.toContain("w-weak");
+    expect(groups.specReviewPending).not.toContain("w-weak");
+    expect(groups.specFixPending).not.toContain("w-weak");
     expect(groups.buildReady).not.toContain("w-weak");
     expect(groups.buildReady).toEqual(["w-frozen"]);
   });
@@ -380,11 +384,15 @@ describe("frontier（验收#2）", () => {
     expect(groups.integrationReady).not.toContain("mc-root");
   });
 
-  it("fx 维度：created 且有 spec 未审 → reReview；内部节点子全 verified → integrationReady；连续 fail 达上限 → integrationDrift", () => {
+  it("fx/mx 维度：created 且有 spec 未审 → specReviewPending（独立 reviewer）；连续 2 次 fail → specFixPending / specReviewDeadlock；内部节点子全 verified → integrationReady；连续 fail 达上限 → integrationDrift", () => {
     const { ledger } = makeProject("p-frontier-integration");
-    // rr：spec 已提交、无 spec-review → 补审出口
+    // rr：spec 已提交、无 spec-review → 独立 reviewer 待审出口（mx-1：specReviewPending）
     ledger.append("UnitCreated", { unitId: "rr", parentId: null, briefRef: "b-rr.md" });
     ledger.append("SpecSubmitted", strongSpec("rr"));
+    // sf：spec 已提交且最近 spec-review verdict 是 fail → designer 修 spec 出口（mx-1）
+    ledger.append("UnitCreated", { unitId: "sf", parentId: null, briefRef: "b-sf.md" });
+    ledger.append("SpecSubmitted", strongSpec("sf"));
+    ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", comment: "不合格项：X" });
 
     // ig-root：spec-frozen 内部节点，两个子全部 verified → 集成就绪
     ledger.append("UnitCreated", { unitId: "ig-root", parentId: null, briefRef: "b-ig.md" });
@@ -412,8 +420,12 @@ describe("frontier（验收#2）", () => {
 
     const events = ledger.readAll();
     const proj = fold(events);
-    const ready = computeFrontier(proj);
-    expect(ready.reReview).toContain("rr");
+    const ready = computeFrontier(proj, {
+      specReviewFailCounts: specReviewFailCounts(events),
+    });
+    expect(ready.specReviewPending).toContain("rr");
+    expect(ready.specFixPending).toContain("sf");
+    expect(ready.specReviewDeadlock).toEqual([]); // 各 1 次 fail < 阈值 2
     expect(ready.specReady).not.toContain("rr");
     expect(ready.integrationReady).toContain("ig-root");
     expect(ready.buildReady).not.toContain("ig-root");
@@ -429,6 +441,16 @@ describe("frontier（验收#2）", () => {
     });
     expect(drifted.integrationDrift).toContain("ig-root");
     expect(drifted.integrationReady).not.toContain("ig-root");
+
+    // mx-1 MF2：sf 的第二次 fail（重提 1 字节 spec 后再 fail——重提不清零计数）
+    // → specReviewDeadlock 出现、specFixPending 消失（转人工维度取代推进维度）
+    ledger.append("SpecSubmitted", strongSpec("sf"));
+    ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", comment: "仍不合格" });
+    const deadlocked = computeFrontier(fold(ledger.readAll()), {
+      specReviewFailCounts: specReviewFailCounts(ledger.readAll()),
+    });
+    expect(deadlocked.specReviewDeadlock).toContain("sf");
+    expect(deadlocked.specFixPending).not.toContain("sf");
   });
 
   it("dispatch 级：frontier 与 frontier --json 均 exit 0，账本只读", async () => {

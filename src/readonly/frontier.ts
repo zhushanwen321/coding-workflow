@@ -6,8 +6,20 @@
  * loop 派 designer 补建子，A4「零上下文接手」场景输出与真实派发行为不一致。现
  * 派发就绪计算收口于此，loop 的 computeDispatchTargets 与本命令消费同一结果）：
  *   - specReady：created 且无 spec——待 designer 撰写 spec（首派）
- *   - reReview：created 且有 spec，但最后一条 SpecSubmitted 之后无 spec-review
- *     pass——待 designer 补审（fx-1 R2 第四分支）
+ *   - specReviewPending：created 且有 spec，最后一条 SpecSubmitted 之后无任何
+ *     spec-review verdict——待独立 reviewer 审查（mx-1：spec-review 的
+ *     VerdictSubmitted 一律由 reviewer spawn 提交，designer 不自审）
+ *   - specFixPending：created 且有 spec，最后一条 SpecSubmitted 之后最近的
+ *     spec-review verdict 是 fail——待 designer 修 spec 重提（mx-1 MF1：fail 后
+ *     的修复出口；fail verdict 的 comment 是任务书的失败事实来源）
+ *   - specReviewDeadlock：created 且本账本内该 unit 的 spec-review fail verdict
+ *     总数 ≥2（mx-1 MF2：账本重放计数，不因新 SpecSubmitted 清零）——防
+ *     ping-pong 活锁的转人工维度，机器派发无出口（loop 停派 + stderr 转人工；
+ *     人工 pass verdict 使 unit 离开 created 态后投影自然消失）
+ *     （reReview 维度已删除：其谓词「最后 spec 后无 pass」被 specReviewPending
+ *     （无任何 verdict）∪ specFixPending（有 verdict 且全 fail）精确剖分，
+ *     剩余形态「有 pass 但仍 created」= 弱 spec 停 created 的无组态——推导见
+ *     computeFrontier 内注释）
  *   - missingChildren：spec-frozen 内部节点（split 非空非自引用）且 split 声明的
  *     子有未创建者——待 designer 补建子（fx-3 R5.3）
  *   - integrationDrift：spec-frozen 内部节点、子全 verified、集成连续 fail 达上限
@@ -46,7 +58,10 @@ import { EMPTY_LEDGER_HINT, unitStatus } from "./load.js";
 /** frontier 全维度分组（维度语义见模块头；组内序 = 投影插入序 = 账本创建序） */
 export interface FrontierGroups {
   specReady: string[];
-  reReview: string[];
+  specReviewPending: string[];
+  specFixPending: string[];
+  /** mx-1：spec-review fail 总数 ≥2 的 created unit（转人工，机器派发无出口） */
+  specReviewDeadlock: string[];
   missingChildren: string[];
   integrationDrift: string[];
   integrationReady: string[];
@@ -56,10 +71,12 @@ export interface FrontierGroups {
   execReviewReady: string[];
 }
 
-/** 组的展示序 = 生命周期推进序（spec → 审 → 子 → 集成 → flake 转人工 → build → 收尾审查） */
+/** 组的展示序 = 生命周期推进序（spec → 审 → 修 → 审死锁转人工 → 子 → 集成 → flake 转人工 → build → 收尾审查） */
 const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
   "specReady",
-  "reReview",
+  "specReviewPending",
+  "specFixPending",
+  "specReviewDeadlock",
   "missingChildren",
   "integrationDrift",
   "integrationReady",
@@ -130,21 +147,33 @@ export function splitChildrenNotCreated(
 }
 
 /**
- * 最后一条 SpecSubmitted 之后是否存在 spec-review pass verdict。与 deriveStatus
- * 的「之后存在」语义同口径（fold.ts 禁改，此处按 SequencedUnitProjection 的顺序
- * 锚点重算）——fx-1 R2 第四分支的判定输入：重提 spec = 打回重审，旧 pass 不计数。
+ * 最后一条 SpecSubmitted 之后最近一条 spec-review verdict 的结论（mx-1 维度重排
+ * 的判定输入）："pass" | "fail" | null（无任何 spec-review verdict）。与
+ * deriveStatus 的「之后存在」语义同口径（fold.ts 禁改，此处按
+ * SequencedUnitProjection 的顺序锚点重算）——重提 spec = 打回重审，旧 verdict
+ * 不计数。verdicts 数组按账本序追加，逆序首条命中即最近——specReviewPending
+ * （null → reviewer 首审）与 specFixPending（fail → designer 修 spec）的分维依据。
  */
-function hasSpecReviewPassAfterLastSpec(unit: SequencedUnitProjection): boolean {
+export function latestSpecReviewAfterLastSpec(
+  unit: SequencedUnitProjection,
+): "pass" | "fail" | null {
   const lastSpecSeq = unit.lastSpecSeq;
   if (lastSpecSeq === null) {
-    return false;
+    return null;
   }
-  return unit.verdicts.some(
-    (verdict, i) =>
+  for (let i = unit.verdicts.length - 1; i >= 0; i -= 1) {
+    const verdict = unit.verdicts[i];
+    if (verdict === undefined || unit.verdictSeqs[i] === undefined) {
+      continue;
+    }
+    if (
       unit.verdictSeqs[i] > lastSpecSeq &&
-      verdict.verdictKind === "spec-review" &&
-      verdict.verdict === "pass",
-  );
+      verdict.verdictKind === "spec-review"
+    ) {
+      return verdict.verdict;
+    }
+  }
+  return null;
 }
 
 /**
@@ -182,6 +211,45 @@ export function consecutiveIntegrationFails(
       counts.set(
         event.payload.unitId,
         event.payload.result === "fail" ? previous + 1 : 0,
+      );
+    }
+  }
+  return counts;
+}
+
+// ---- mx-1：spec-review 打回循环的防活锁投影（specReviewDeadlock 维度判定输入） ----
+
+/**
+ * spec-review fail 累计的转人工阈值（mx-1 MF2）：同一 unit 在账本内累计 2 次
+ * spec-review fail 即判 designer-reviewer 打回循环活锁，停止机器派发转人工。
+ * 取 2 而非 3+：第二次 fail 已证明「修一轮仍不过」——继续循环只会烧 token。
+ */
+export const SPEC_REVIEW_DEADLOCK_FAILS = 2;
+
+/**
+ * 各 unit 的 spec-review fail verdict 累计总数（mx-1，纯投影——事件流重放，
+ * 范式对齐 consecutiveIntegrationFails）。口径锁定（mx1-acceptance §4）：
+ * **不因新 SpecSubmitted 清零**——designer 重提 1 字节新 spec 不能清零计数
+ * （MF2 教训：清零语义下 streak 永远到不了阈值，ping-pong 活锁无出口）；fail
+ * verdict 是账本事件，跨进程累计物理可得。转人工出口的「人工处置后自然重算」
+ * 指人工提交 pass verdict 使 unit 离开 created 态（deadlock 组只装 created 态
+ * unit），不是计数回落。调用方 = computeFrontier（specReviewDeadlock 维度）与
+ * loop（每轮重读账本后计算，转人工指引）。
+ */
+export function specReviewFailCounts(
+  events: readonly LedgerEvent[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (
+      event.type === "VerdictSubmitted" &&
+      event.payload.verdictKind === "spec-review" &&
+      event.payload.verdict === "fail"
+    ) {
+      counts.set(
+        event.payload.unitId,
+        (counts.get(event.payload.unitId) ?? 0) + 1,
       );
     }
   }
@@ -279,18 +347,29 @@ export function flakeReviewFacts(
  * 就绪集合计算（纯函数，维度语义见模块头）。consecutiveIntegrationFails 省略时
  * 上限判定退化为「无 fail 记录」——仅供无账本上下文的纯函数调用；命令与 loop
  * 消费时必须传入真实计数，否则 integrationDrift / integrationReady 判定分叉。
- * flakeReviewFacts 同理：省略时 flakeReview 维度恒空（纯函数调用方）。
+ * flakeReviewFacts 同理：省略时 flakeReview 维度恒空；specReviewFailCounts 同理：
+ * 省略时 specReviewDeadlock 维度恒空（纯函数调用方）。
+ *
+ * created 态内 spec 相关维度的互斥推导（mx-1 重排，if/else 序保证单组归属）：
+ * specs===0 → specReady；failCount ≥ 阈值 → specReviewDeadlock（优先于审/修，
+ * 死锁后两个推进维度都不再派）；无 spec-review verdict → specReviewPending；
+ * 最近 verdict 是 fail → specFixPending；剩余 = 「有 pass 但仍 created」——
+ * deriveStatus 下这只能是 gate 红（弱 spec），无组（机器派发无出口，需人工修
+ * spec）。旧 reReview 谓词「最后 spec 后无 pass」= 前两个维度的并集，故删除。
  */
 export function computeFrontier(
   projection: SequencedProjection,
   opts?: {
     consecutiveIntegrationFails?: ReadonlyMap<string, number>;
     flakeReviewFacts?: ReadonlyMap<string, readonly FlakeReviewFact[]>;
+    specReviewFailCounts?: ReadonlyMap<string, number>;
   },
 ): FrontierGroups {
   const groups: FrontierGroups = {
     specReady: [],
-    reReview: [],
+    specReviewPending: [],
+    specFixPending: [],
+    specReviewDeadlock: [],
     missingChildren: [],
     integrationDrift: [],
     integrationReady: [],
@@ -300,13 +379,20 @@ export function computeFrontier(
   };
   const fails = opts?.consecutiveIntegrationFails;
   const flakes = opts?.flakeReviewFacts;
+  const specFails = opts?.specReviewFailCounts;
   for (const unit of projection.units.values()) {
     const status = unitStatus(unit);
     if (status === "created") {
       if (unit.specs.length === 0) {
         groups.specReady.push(unit.unitId);
-      } else if (!hasSpecReviewPassAfterLastSpec(unit)) {
-        groups.reReview.push(unit.unitId);
+      } else if (
+        (specFails?.get(unit.unitId) ?? 0) >= SPEC_REVIEW_DEADLOCK_FAILS
+      ) {
+        groups.specReviewDeadlock.push(unit.unitId);
+      } else if (latestSpecReviewAfterLastSpec(unit) === null) {
+        groups.specReviewPending.push(unit.unitId);
+      } else if (latestSpecReviewAfterLastSpec(unit) === "fail") {
+        groups.specFixPending.push(unit.unitId);
       }
       // 已过审但 gate 红（弱 spec 停 created）：无组（模块头口径）
     } else if (status === "spec-frozen") {
@@ -358,6 +444,7 @@ export async function frontierHandler(ctx: CommandContext): Promise<number> {
   const groups = computeFrontier(projection, {
     consecutiveIntegrationFails: consecutiveIntegrationFails(events),
     flakeReviewFacts: flakeReviewFacts(events),
+    specReviewFailCounts: specReviewFailCounts(events),
   });
 
   if (ctx.argv.json === true) {

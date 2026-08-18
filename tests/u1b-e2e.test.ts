@@ -192,10 +192,13 @@ describe("E2E real：flag 端到端（--unit / --json）", () => {
     const f = await runCli(["frontier", "--json"], projDir);
     expect(f.code).toBe(0);
     // 全维度（与 runner 派发同口径）：本账本 root 待 spec、leaf 待 build，其余组空
-    // （rv-5 起含 flakeReview 维度——e2e 连挂转人工组）
+    // （rv-5 起含 flakeReview 维度；mx-1 起 created+spec 维度重排为
+    // specReviewPending / specFixPending / specReviewDeadlock 三组）
     expect(JSON.parse(f.stdout)).toEqual({
       specReady: ["root"],
-      reReview: [],
+      specReviewPending: [],
+      specFixPending: [],
+      specReviewDeadlock: [],
       missingChildren: [],
       integrationDrift: [],
       integrationReady: [],
@@ -241,7 +244,9 @@ describe("E2E real：空账本目录", () => {
     expect(f.code).toBe(0);
     expect(JSON.parse(f.stdout)).toEqual({
       specReady: [],
-      reReview: [],
+      specReviewPending: [],
+      specFixPending: [],
+      specReviewDeadlock: [],
       missingChildren: [],
       integrationDrift: [],
       integrationReady: [],

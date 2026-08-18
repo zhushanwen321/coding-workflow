@@ -50,18 +50,20 @@ type ProgressMatcher = (event: DiscriminatedEvent, req: AgentSpawnRequest) => bo
 /**
  * role → wait() 的完成信号匹配器。完成信号与任务书最后一步对齐（提前 resolve
  * 会让 loop 在任务未完成时重算重派，最后一步永远无人执行）：
- *   - designer：三类任务书的完成信号并集——首派 = SpecSubmitted（新 spec；过审
- *     由下轮补审派发接手）；spec 补审（fx-1 R2 第四分支）= VerdictSubmitted
- *     （spec-review）；补建子（fx-3 R5.3）= UnitCreated 且 parentId === 本 unit
- *     （事件的 unitId 是新建子、parentId 才指向本 unit——按 parent 维度匹配）。
+ *   - designer：mx-1 后全部任务书的完成信号 = 自己的产出事件——首派 / specFix
+ *     修 spec 重提 = SpecSubmitted（过审由独立 reviewer spawn 接手）；补建子
+ *     （fx-3 R5.3）= UnitCreated 且 parentId === 本 unit（事件的 unitId 是新建
+ *     子、parentId 才指向本 unit——按 parent 维度匹配）。spec-review verdict
+ *     一律归 reviewer spawn——designer 遇 VerdictSubmitted 不结算（mx-1：designer
+ *     不自审，verdict 不是 designer 任务书的完成信号）。
  *   - builder：任务书共 3 步，最后一步 cw verify 产出 VerifyRan——若按第 2 步
  *     的 EvidenceSubmitted 判完成，第 3 步 verify 无人执行。
- *   - reviewer：任务书唯一产出 = VerdictSubmitted（exec-review）。
+ *   - reviewer：任务书唯一产出 = VerdictSubmitted（spec-review 与 exec-review
+ *     两形态共用——loop 按 frontier 维度选择任务书，完成信号同类）。
  */
 const PROGRESS_MATCHERS: Record<AgentRole, readonly ProgressMatcher[]> = {
   designer: [
     (event, req) => event.type === "SpecSubmitted" && event.payload.unitId === req.unitId,
-    (event, req) => event.type === "VerdictSubmitted" && event.payload.unitId === req.unitId,
     (event, req) => event.type === "UnitCreated" && event.payload.parentId === req.unitId,
   ],
   builder: [
@@ -72,9 +74,14 @@ const PROGRESS_MATCHERS: Record<AgentRole, readonly ProgressMatcher[]> = {
   ],
 };
 
-/** 信任边界提示（三 role 共用）：human 无自动 reviewer，执行者自任审查者 */
+/**
+ * 信任边界提示（三 role 共用）：mx-1 起 spec-review / exec-review 由独立的
+ * reviewer 派发承载（本指令之外会单独打印 reviewer 指令）——你作为 designer /
+ * builder 不自审；reviewer 指令的执行者仍是你时，审查责任在人（human 无自动
+ * agent，这是 human 模式的固有边界）
+ */
 function trustBoundaryLine(): string {
-  return "[human] 信任边界：human 适配器无自动 reviewer——你自任 reviewer（human 模式的审查责任由人承担）";
+  return "[human] 信任边界：review 结论由独立的 reviewer 派发指令提交（mx-1：designer/builder 不自审）——human 无自动 reviewer，执行 reviewer 指令的人自任审查者";
 }
 
 /**
@@ -89,10 +96,12 @@ function cwCommand(req: AgentSpawnRequest, args: string): string {
 function roleStepLines(req: AgentSpawnRequest): string[] {
   switch (req.role) {
     case "designer":
+      // mx-1：不含任何 review submit 步骤——spec-review 由独立 reviewer spawn
+      // 提交（designer 自审是本单元修复的 critical 缺陷，指令区同步删除）
       return [
         "[human]   1. 写 spec.json（字段契约见 src/events/types.ts；验收非空，core 用例须 e2e 级且带可执行 command）",
         `[human]   2. ${cwCommand(req, `evidence submit --kind spec --unit ${req.unitId} --file spec.json`)}`,
-        `[human]   3. ${cwCommand(req, `review submit --unit ${req.unitId} --verdict-kind spec-review --verdict pass`)}`,
+        "[human]   （spec 入账即完成——spec-review 由独立 reviewer 在下轮接手，无需自审）",
       ];
     case "builder":
       return [
@@ -102,8 +111,10 @@ function roleStepLines(req: AgentSpawnRequest): string[] {
       ];
     case "reviewer":
       return [
-        `[human]   1. 审查该 unit 的 spec / 实现 / 证据（可先 ${cwCommand(req, `report --unit ${req.unitId}`)}）`,
-        `[human]   2. ${cwCommand(req, `review submit --unit ${req.unitId} --verdict-kind <spec-review|exec-review> --verdict <pass|fail>`)}`,
+        `[human]   1. 审查该 unit 的 spec / 实现 / 证据（可先 ${cwCommand(req, `report --unit ${req.unitId}`)}；spec 原文副本见 evidence 目录 attachments/）`,
+        `[human]   2. spec-review 形态（spec 待审）：${cwCommand(req, `review submit --unit ${req.unitId} --verdict-kind spec-review --verdict pass|fail --role reviewer --comment <依据>`)}`,
+        "[human]      （fail 时 --comment 逐条列出不合格项与恢复动作——它是 designer 修 spec 任务书的失败事实来源）",
+        `[human]   3. exec-review 形态（verified 未 closed）：${cwCommand(req, `review submit --unit ${req.unitId} --verdict-kind exec-review --verdict pass|fail --role reviewer --comment <意见> --evidence-refs <已入账 runId,...>`)}`,
       ];
     default: {
       const _exhaustive: never = req.role;
@@ -145,11 +156,28 @@ function readLedgerEvents(req: AgentSpawnRequest): LedgerEvent[] {
   }
 }
 
-/** 该 unit 是否已出现 role 对应的「新」完成信号（ts 晚于 spawn 起始才算——旧事件不触发） */
-function hasProgressSince(req: AgentSpawnRequest, startedAtMs: number): boolean {
+/**
+ * 「新」完成信号的判定基线：spawn 时账本内已见的最高事件 seq。append-only
+ * 账本的 seq 单调递增，是「spawn 之后新入账」的精确判据（mx-1 前用事件 ts >
+ * spawn 起始时刻判定——ms 精度下「同一毫秒内入账的进展事件」被永久排除：
+ * reviewer spawn 后人毫秒级响应提交 verdict 时 adapter 永不结算，在 mx-1
+ * 派发 gate（同 unit 在飞缓派）下升级为整 unit 永久停摆，实测复现）。
+ */
+function maxEventSeq(events: readonly LedgerEvent[]): number {
+  let max = 0;
+  for (const record of events) {
+    if (record.seq > max) {
+      max = record.seq;
+    }
+  }
+  return max;
+}
+
+/** 该 unit 是否已出现 role 对应的「新」完成信号（seq 晚于 spawn 基线才算——旧事件不触发） */
+function hasProgressSince(req: AgentSpawnRequest, baselineSeq: number): boolean {
   const matchers = PROGRESS_MATCHERS[req.role];
   return readLedgerEvents(req).some((record) => {
-    if (Date.parse(record.ts) <= startedAtMs) {
+    if (record.seq <= baselineSeq) {
       return false;
     }
     const event = record as DiscriminatedEvent;
@@ -167,6 +195,9 @@ export const humanAdapter: AgentSpawnAdapter = {
   name: "human",
   async spawn(req: AgentSpawnRequest): Promise<SpawnHandle> {
     const startedAt = Date.now();
+    // 完成信号基线 = spawn 时已见的最高事件 seq（旧事件不触发；同毫秒新入账的
+    // 事件不再被 ms 粒度误排除——见 maxEventSeq 注释）
+    const baselineSeq = maxEventSeq(readLedgerEvents(req));
     // fx-4：产物根 = req.artifactDir（run 级 topic 目录），workdir 不再承载 cw 文件
     const stdoutPath = join(req.artifactDir, `${req.unitId}.${req.role}.stdout`);
     const stderrPath = join(req.artifactDir, `${req.unitId}.${req.role}.stderr`);
@@ -207,7 +238,7 @@ export const humanAdapter: AgentSpawnAdapter = {
     // kill() 抢先 settle 后，循环在下一轮 while 条件检查处退出（「置停止标志」的落点）
     void (async () => {
       while (!settled) {
-        if (hasProgressSince(req, startedAt)) {
+        if (hasProgressSince(req, baselineSeq)) {
           settle(0);
           return;
         }

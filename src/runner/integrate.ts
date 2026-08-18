@@ -266,8 +266,10 @@ function frozenByUnitOf(contracts: readonly OwnedContract[]): Map<string, Contra
 
 /**
  * 集成失败的恢复路径说明（fx-2 R4a，验收文档 fx-2-acceptance.md 锁定的二选一
- * 文案；rv-4 按 MAX=1 对齐——首次 fail 即转处置，无自动重试）：① 契约与实现
- * 语义等价但文本不等 → 修 spec 走重新过审链（fx-1 R2 第四分支已打通补审出口）；
+ * 文案；rv-4 按 MAX=1 对齐——首次 fail 即转处置，无自动重试；mx-1 语义迁移：
+ * ① 的过审半边改由独立 reviewer 承载——designer 只重提 spec，loop 自动派发
+ * specReviewPending 的 reviewer，任务书不再教 designer 自行 review submit）：
+ * ① 契约与实现语义等价但文本不等 → 修 spec 重提，由独立 reviewer 重新过审；
  * ② 契约正确而实现跑偏 → 需 provider 修复，但 closed 的 provider 无自动回退
  * 通道（状态机不重开 closed unit——已知边界，如实告知需人工介入）。loop 的
  * designer 处置任务书（integrationDriftTasks）引用同一出处。
@@ -275,11 +277,11 @@ function frozenByUnitOf(contracts: readonly OwnedContract[]): Map<string, Contra
 export function integrationRecoveryGuidance(unitId: string): string {
   return [
     "集成失败恢复路径（二选一）：",
-    "① 实现与契约语义等价但文本不等（如 async 修饰差异）→ 修正 spec 的契约签名后重新提交并过审：",
+    "① 实现与契约语义等价但文本不等（如 async 修饰差异）→ 修正 spec 的契约签名后重新提交：",
     `   cw evidence submit --kind spec --unit ${unitId} --file spec.json`,
-    `   cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass`,
-    "   （走既有重新过审链：过审后集成按正常路径重跑，fail 计数随新 spec 提交清零——",
-    "   rv-4 起集成首次 fail 即转 designer 处置，处置完成前不再自动重试集成）",
+    "   （mx-1：spec 提交后由 loop 自动派发独立 reviewer 执行 spec-review——你无需",
+    "   也不得自行提交 review 结论；reviewer 过审后集成按正常路径重跑，fail 计数随",
+    "   新 spec 提交清零——rv-4 起集成首次 fail 即转 designer 处置，处置完成前不再自动重试集成）",
     "② 契约本身正确而实现跑偏 → 需 provider 修复——closed 的 provider 无自动回退通道",
     "   （状态机不重开 closed unit，已知边界），需人工介入，不要试图绕过状态机改实现。",
   ].join("\n");

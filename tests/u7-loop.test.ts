@@ -118,10 +118,9 @@ if (mode === "idle") {
   setInterval(() => {}, 1000);
 } else if (role === "designer") {
   await sleep(workMs);
+  // mx-1：designer 只提交 spec——spec-review 由独立 reviewer spawn 提交（不自审）
   const specHash = sha(JSON.stringify({ acceptance: ACCEPTANCE, contracts: [], split: [] }));
-  const ledger = ledgerForCwd(cwd);
-  ledger.append("SpecSubmitted", { unitId, specHash, acceptance: ACCEPTANCE, contracts: [], split: [] });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledgerForCwd(cwd).append("SpecSubmitted", { unitId, specHash, acceptance: ACCEPTANCE, contracts: [], split: [] });
   console.log("worker-done designer " + unitId);
 } else if (role === "builder") {
   await sleep(workMs);
@@ -136,8 +135,14 @@ if (mode === "idle") {
   console.log("worker-done builder " + unitId);
 } else if (role === "reviewer") {
   await sleep(workMs);
-  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
-  console.log("worker-done reviewer " + unitId);
+  // mx-1：reviewer 按 unit 现状二选一——spec 待审（created）→ spec-review；
+  // verified 未 closed → exec-review。两种 verdict 都带自报 role=reviewer
+  const unit = loadLedger(cwd).projection.units.get(unitId);
+  const { unitStatus } = await import(DIST + "/readonly/load.js");
+  const status = unit === undefined ? "created" : unitStatus(unit);
+  const kind = status === "verified" ? "exec-review" : "spec-review";
+  ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: kind, verdict: "pass", role: "reviewer" });
+  console.log("worker-done reviewer " + kind + " " + unitId);
 } else {
   throw new Error("worker: 未知 role " + role);
 }
@@ -341,7 +346,7 @@ async function waitPidGone(pid: number, timeoutMs: number): Promise<boolean> {
 // ---- 验收#1：测试适配器本身（真实进程 + 真实账本写入 + brief 传递） ----
 
 describe("u7 验收#1 测试专用适配器：真实 node 进程 + dist EventLedger 真实写账本", () => {
-  it("designer spawn → exit 0 → 账本真实出现 SpecSubmitted + spec-review，unit 进入 spec-frozen", async () => {
+  it("designer spawn → exit 0 → 账本真实出现 SpecSubmitted 且无自审 verdict（mx-1：designer 不自审，unit 停 created）", async () => {
     const { repoDir, head } = makeRepo("adapter-sanity");
     appendUnitCreated(repoDir, "sanity", null);
     const { adapter } = makeScriptAdapter({ mode: "work", workMs: 50, commit: head });
@@ -364,12 +369,13 @@ describe("u7 验收#1 测试专用适配器：真实 node 进程 + dist EventLed
     expect(out).toContain("worker designer sanity");
     expect(out).toContain("brief-head=# u7 fixture 任务书");
     expect(out).toContain("worker-done designer sanity");
-    // 真实账本断言：SpecSubmitted（验收 id 与 fixture 一致）+ spec-review pass
+    // 真实账本断言（mx-1 断言反转）：SpecSubmitted 入账 + 无任何 spec-review
+    // verdict（独立 reviewer 的职责）+ unit 停在 created 待审
     const unit = loadLedger(repoDir).projection.units.get("sanity");
     expect(unit?.specs.length).toBe(1);
     expect(unit?.specs[0]?.acceptance.map((a) => a.id)).toEqual(["A1", "A2"]);
-    expect(unit?.verdicts.some((v) => v.verdictKind === "spec-review" && v.verdict === "pass")).toBe(true);
-    expect(statusOf(repoDir, "sanity")).toBe("spec-frozen");
+    expect(unit?.verdicts.some((v) => v.verdictKind === "spec-review")).toBe(false);
+    expect(statusOf(repoDir, "sanity")).toBe("created");
   }, 30_000);
 });
 
@@ -387,8 +393,14 @@ describe("u7 验收#2 单 unit 全链", () => {
 
     expect(captured.code).toBe(0);
     expect(statusOf(repoDir, "root")).toBe("closed");
-    // 派发顺序：designer → builder → reviewer（同一 unit 状态机串行推进）
-    expect(script.spawned().map((r) => r.role)).toEqual(["designer", "builder", "reviewer"]);
+    // 派发顺序（mx-1）：designer（提 spec）→ reviewer（spec-review）→ builder →
+    // reviewer（exec-review）——spec-review 是独立 reviewer spawn，不再由 designer 自审
+    expect(script.spawned().map((r) => r.role)).toEqual(["designer", "reviewer", "builder", "reviewer"]);
+    // reviewer 的 spec-review verdict 带自报 role=reviewer（弱声明审计载体）
+    const verdict = loadLedger(repoDir)
+      .projection.units.get("root")
+      ?.verdicts.find((v) => v.verdictKind === "spec-review");
+    expect(verdict?.role).toBe("reviewer");
     // 循环六步之 2：每次派发的 brief 落盘 run 级 topic 目录（fx-4：<cwHome>/topic/
     // <encoded>/<runTs>-root/<unitId>.<role>.brief.md；存在性在派发时点断言——brief
     // 覆盖写，同 unit 换角色重派只留最新版）
@@ -427,9 +439,10 @@ describe("u7 验收#3 并发上限", () => {
     }
     const script = makeScriptAdapter({ mode: "work", workMs: 200, commit: head });
 
-    // work 模式下 worker 按 role 全程推进：5 designer（并发受限）→ 5 builder →
-    // 5 reviewer → root builder → root reviewer → root closed 返回 0。
-    // 并发上限的主断言是适配器内 in-flight 峰值（验收文档锁定方式）。
+    // work 模式下 worker 按 role 全程推进（mx-1：spec-review 由独立 reviewer
+    // spawn 提交）：5 designer（并发受限）→ 5 reviewer（spec-review）→ 5 builder
+    // → 5 reviewer（exec-review）→ root 集成（直跑）→ root reviewer → closed
+    // 返回 0。并发上限的主断言是适配器内 in-flight 峰值（验收文档锁定方式）。
     const captured = await captureStd(() =>
       runLoop({
         rootId: "root",

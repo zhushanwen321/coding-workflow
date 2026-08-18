@@ -190,7 +190,9 @@ async function run(args: readonly string[]): Promise<Captured> {
 
 interface FrontierJson {
   specReady: string[];
-  reReview: string[];
+  specReviewPending: string[];
+  specFixPending: string[];
+  specReviewDeadlock: string[];
   missingChildren: string[];
   integrationDrift: string[];
   integrationReady: string[];

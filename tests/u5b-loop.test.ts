@@ -182,7 +182,8 @@ describe("验收1：指令生成（buildStepInstruction 逐状态）", () => {
     const text = step.lines.join("\n");
     expect(text).toContain("cat brief-u-spec.md");
     expect(text).toContain("cw evidence submit --kind spec --unit u-spec --file spec.json");
-    expect(text).toContain("cw review submit --unit u-spec --verdict-kind spec-review --verdict pass");
+    // mx-1 语义：human 模式人扮演 reviewer 角色，指令带 --role reviewer 自报可审计
+    expect(text).toContain("cw review submit --unit u-spec --verdict-kind spec-review --verdict pass --role reviewer");
     expect(text).toContain("信任边界");
   });
 
@@ -203,7 +204,8 @@ describe("验收1：指令生成（buildStepInstruction 逐状态）", () => {
     expect(step.kind).toBe("exec-review");
     expect(step.unitId).toBe("u-exec");
     const text = step.lines.join("\n");
-    expect(text).toContain("cw review submit --unit u-exec --verdict-kind exec-review --verdict pass");
+    // mx-1 语义：exec-review 指令含 --role reviewer 自报 + rv-2 必填 --evidence-refs
+    expect(text).toContain("cw review submit --unit u-exec --verdict-kind exec-review --verdict pass --role reviewer --evidence-refs <已入账 runId,...>");
   });
 
   it("无待办（root closed 且子树全 closed）→ 空指令", () => {
@@ -221,7 +223,8 @@ describe("验收1：指令生成（buildStepInstruction 逐状态）", () => {
     expect(step.kind).toBe("spec-review");
     expect(step.unitId).toBe("u-review");
     const text = step.lines.join("\n");
-    expect(text).toContain("cw review submit --unit u-review --verdict-kind spec-review --verdict pass");
+    // mx-1 语义：spec-review 补齐指令带 --role reviewer 自报（人扮演 reviewer 角色）
+    expect(text).toContain("cw review submit --unit u-review --verdict-kind spec-review --verdict pass --role reviewer");
   });
 
   it("root 与子 unit 同 spec-frozen → build 目标是子 unit（子的产出是 root 验收的输入）；子 verified 未 closed 时 exec-review 同理子优先", () => {
