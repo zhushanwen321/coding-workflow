@@ -242,7 +242,10 @@ function runOne(
       stdoutPath,
       stderrPath,
       timeout: true,
-      reason: `超时（>${timeoutMs}ms）被 kill`,
+      reason:
+        `超时（>${timeoutMs}ms）被 kill。` +
+        `恢复动作：用 cw verify --unit <id> --timeout-ms <毫秒> 增大超时（默认 unit ${UNIT_ACCEPTANCE_TIMEOUT_MS}ms / e2e ${E2E_ACCEPTANCE_TIMEOUT_MS}ms），` +
+        "或拆分验收降低单条耗时。",
       commandExit: null,
       parseError: false,
     };

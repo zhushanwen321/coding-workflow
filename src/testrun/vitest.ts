@@ -83,7 +83,8 @@ function parse(stdoutPath: string, exitCode: number, acceptance: AcceptanceItem)
   } catch (error) {
     throw new Error(
       `vitest 适配器 parse 失败：${stdoutPath} 不是合法 JSON（${error instanceof Error ? error.message : String(error)}）。` +
-        `确认命令含 --reporter=json（translate 会自动追加）；默认 reporter 的人类可读输出无法折叠 cases`,
+        "恢复动作：确认验收 command 是有效的 vitest 命令——cw 会自动追加 --reporter=json（不要手动加，重复 flag 可能被 vitest 忽略或报错）。" +
+        "非 vitest 测试应把 type 改为 e2e-real 或 e2e-mock 走 e2e-sh 适配器。",
     );
   }
   const cases: EvidenceReport["cases"] = flattenAssertions(raw, stdoutPath).map((a) => ({

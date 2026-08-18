@@ -187,8 +187,11 @@ export function judgeRedPhase(
         id: r.id,
         discriminative: false,
         reason: patched
-          ? "测试无区分力：新测试在基线代码树（父 commit + patch 后的测试文件）上也通过——疑似恒真测试，修测试而非新建文件绕过"
-          : "旧树（父 commit）上即 pass——验收对新实现无区分力",
+          ? "测试无区分力：新测试在基线代码树（父 commit + patch 后的测试文件）上也通过——疑似恒真测试。" +
+            "恢复动作：加强验收断言（assert 实现产物的具体特征，而非仅 assert 存在）；" +
+            "或把 type 改为 e2e-real/e2e-mock 走适配器路由（标记行 + exit code 天然有区分力）；修测试而非新建文件绕过。"
+          : "旧树（父 commit）上即 pass——验收对新实现无区分力。" +
+            "恢复动作：加强验收断言让它在无实现时 fail；或把 type 改为 e2e-real/e2e-mock。",
       };
     }
     if (r.parseError && (r.commandExit === null || r.commandExit === 0)) {

@@ -26,7 +26,12 @@ export function nameMatch(acceptance: AcceptanceItem, report: EvidenceReport): N
   if (matched.length === 0) {
     return {
       pass: false,
-      reason: `验收 ${acceptance.id} 未出现在产物（用例未运行或标记缺失）`,
+      reason:
+        `验收 ${acceptance.id} 未出现在产物（用例未运行或标记缺失）。` +
+        "匹配规则：vitest 适配器要求测试的 fullName/describe 以词边界包含验收 id" +
+        "（如 describe('${acceptance.id} xxx') 或 it('${acceptance.id} xxx')）；" +
+        "e2e-sh 适配器要求脚本输出标记行 '<验收id> PASS|FAIL'。" +
+        "修复后重新 cw evidence submit --kind build 再 cw verify。",
     };
   }
   const failed = matched.filter((c) => c.status === "fail");

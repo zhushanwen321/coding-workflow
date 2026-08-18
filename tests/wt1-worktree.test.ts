@@ -158,7 +158,7 @@ describe("B 组：worktree 生命周期", () => {
     const second = addUnitWorktree(repoDir, join(tmpRoot, "wts", "b3-second"), "r-b3", "u-b3", head);
     expect(second.ok).toBe(false);
     if (!second.ok) {
-      expect(second.error).toContain("already exists");
+      expect(second.error).toMatch(/already exists|已经存在/);
       expect(second.error).toContain("恢复动作");
     }
   });

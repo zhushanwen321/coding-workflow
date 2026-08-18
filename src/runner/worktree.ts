@@ -347,7 +347,7 @@ export function reclaimUnit(repoDir: string, rootId: string, unitId: string): Un
   const worktreeDir = worktreePath(getCwWorktreeHome(), repoDir, unitId);
   const worktree: WorktreeOutcome = existsSync(worktreeDir)
     ? removeWorktree(repoDir, worktreeDir)
-    : { ok: true };
+    : { ok: true } as const;
   return { worktree, branch: removeUnitBranch(repoDir, rootId, unitId) };
 }
 
