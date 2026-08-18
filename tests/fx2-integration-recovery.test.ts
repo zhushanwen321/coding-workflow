@@ -297,11 +297,11 @@ function seedDriftFixture(name: string): string {
 
   ledger.append("UnitCreated", { unitId: ROOT_ID, parentId: null, briefRef: join(repoDir, "brief.md") });
   appendSpec(ROOT_ID, ROOT_ACCEPTANCE, [contract], split);
-  ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
   ledger.append("UnitCreated", { unitId: LEAF_ID, parentId: ROOT_ID, briefRef: join(repoDir, "brief.md") });
   appendSpec(LEAF_ID, LEAF_ACCEPTANCE, [leafContract], []);
-  ledger.append("VerdictSubmitted", { unitId: LEAF_ID, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: LEAF_ID, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   const runId = `run-${LEAF_ID}-1`;
   ledger.append("EvidenceSubmitted", {
     unitId: LEAF_ID,

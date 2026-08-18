@@ -247,7 +247,7 @@ function seedFixture(name: string, broken: boolean): string {
       { unitId: "leaf-b", briefRef: "brief-leaf-b.md", dependsOn: [] },
     ],
   });
-  ledger.append("VerdictSubmitted", { unitId: "feat", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "feat", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
   const leafSeeds: Array<{ unitId: string; acceptance: AcceptanceItem[]; commit: string; contracts: Contract[] }> = [
     { unitId: "leaf-a", acceptance: LEAF_A_ACCEPTANCE, commit: leafACommit, contracts: [CONTRACT_C1] },
@@ -256,7 +256,7 @@ function seedFixture(name: string, broken: boolean): string {
   for (const { unitId, acceptance, commit: leafCommit, contracts } of leafSeeds) {
     ledger.append("UnitCreated", { unitId, parentId: "feat", briefRef: join(repoDir, `brief-${unitId}.md`) });
     appendSpec(unitId, { acceptance, contracts, split: [] });
-    ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     const runId = `run-${unitId}-1`;
     ledger.append("EvidenceSubmitted", {
       unitId,

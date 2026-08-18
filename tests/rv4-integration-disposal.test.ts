@@ -210,7 +210,7 @@ function seedUnit(
     contracts,
     split,
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 /** 预置 verified 子（seedUnit + build 证据 + pass VerifyRan） */

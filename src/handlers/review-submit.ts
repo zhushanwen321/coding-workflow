@@ -3,6 +3,9 @@
  * [--comment <text>] [--evidence-refs <runId,...>] [--role <reviewer|designer|builder|human>]`
  * （u2 验收文档锁定的 M0 规格；mx-1 增补可选 --role 自报字段）。
  *
+ * mx-3 起 spec-review 的 --role 收紧为必填且必须 reviewer（缺/错 → exit 1 纯拒绝，
+ * 见 handleReviewSubmit 内注释）；exec-review 的 role 保持可选。
+ *
  * verdict append-only 一次写入不可改；--evidence-refs 的每个 runId 必须已存在于
  * 该 unit 的 EvidenceSubmitted（引用不存在 → 列出缺失项 exit 1）。rv-2 起
  * exec-review 的 --evidence-refs 必填且清洗后 ≥1 条（exec-review pass 是 closed
@@ -138,6 +141,24 @@ export async function handleReviewSubmit(ctx: CommandContext): Promise<number> {
       `cw review submit: 非法 --role "${role}"：合法值 ${VERDICT_ROLES.join(" | ")}。` +
         "恢复动作：按你的实际身份选（reviewer=独立审查者 / designer / builder / human=人工），" +
         "或去掉 --role（自报字段可选，缺省不入账）。",
+    );
+  }
+  // mx-3：spec-review 结论的身份强校验（入账层，双层防线第一层——M4 gate §5.1
+  // builder 自审 pass 绕过独立审查的现场）。缺/错 role 一律纯拒绝（不产生任何
+  // 事件），提交者按文案补 role 重试；reviewer brief 与 human 指令模板均已含
+  // --role reviewer，正常链路零影响。防的是无意识自审（builder/designer 按自己
+  // 知道的命令形态提交，不带 role）；不防有意谎报——role 是自报字段可伪造，但
+  // 谎报者必须在账本留下显式 role=reviewer 声明（事后审计可对照 spawn 记录）。
+  // exec-review 不收紧：其前置 verified 由机器验证把关，M4 gate 发现的绕过路径
+  // 只有 spec-review
+  if (verdictKind === "spec-review" && role !== "reviewer") {
+    const roleDesc =
+      role === undefined ? "未携带 --role" : `携带的是 --role "${role}"`;
+    return fail(
+      `cw review submit: spec-review 结论必须由 reviewer 身份提交（当前${roleDesc}）——` +
+        "spec-review 是 spec 冻结的唯一闸门，非 reviewer 身份（designer 自审 / builder 越权）的结论不可入账。" +
+        `恢复动作：补 --role reviewer 重试——cw review submit --unit ${unitId} --verdict-kind spec-review --verdict ${verdict} --role reviewer` +
+        "（若你确非该 unit 的独立 reviewer，请勿提交，交由 runner 派发的 reviewer spawn 处理）。",
     );
   }
   const payload: VerdictSubmittedPayload = {

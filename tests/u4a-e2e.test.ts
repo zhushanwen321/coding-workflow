@@ -172,7 +172,7 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
       runCli(["evidence", "submit", "--kind", "build", "--unit", UNIT, "--commit", head1, "--run-id", "run-1"]).code,
     ).toBe(0);
     expect(
-      runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass"]).code,
+      runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code,
     ).toBe(0);
 
     const verify = runCli(["verify", "--unit", UNIT]);
@@ -213,7 +213,7 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
       runCli(["evidence", "submit", "--kind", "build", "--unit", UNIT, "--commit", head2, "--run-id", "run-2"]).code,
     ).toBe(0);
     expect(
-      runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass"]).code,
+      runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code,
     ).toBe(0);
 
     // rv-4 语义迁移：本 fixture 的验收命令是内联恒真形态（不引用实现产物），
@@ -265,7 +265,7 @@ describe("E2E real：verify 全链（create → spec → build → review → ve
       runCli(["evidence", "submit", "--kind", "build", "--unit", UNIT, "--commit", head3, "--run-id", "run-3"]).code,
     ).toBe(0);
     expect(
-      runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass"]).code,
+      runCli(["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code,
     ).toBe(0);
 
     // minimist 把 "500" 解析为 number——修复前该值被 stringArg 丢弃、静默回退 600000ms，

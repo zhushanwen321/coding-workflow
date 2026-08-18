@@ -70,7 +70,7 @@ function specVerdictEvent(
   unitId: string,
   verdict: "pass" | "fail",
 ): LedgerEvent {
-  return makeEvent(seq, "VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict });
+  return makeEvent(seq, "VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict, role: "reviewer" });
 }
 
 function execVerdictEvent(

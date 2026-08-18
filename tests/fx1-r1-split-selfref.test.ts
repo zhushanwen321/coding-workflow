@@ -76,7 +76,7 @@ describe("fx-1 R1.1 fold 集成：自引用 spec 无法达到 spec-frozen", () =
     ledger.append("UnitCreated", { unitId: "leaf-renderer", parentId: "md-reader", briefRef: "brief.md" });
     // 终验 seq6/seq7 同款形状：自引用 spec + spec-review pass（旁路写入的坏账本）
     ledger.append("SpecSubmitted", makeSpec([{ unitId: "leaf-renderer", dependsOn: [] }], "leaf-renderer"));
-    ledger.append("VerdictSubmitted", { unitId: "leaf-renderer", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "leaf-renderer", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
     const unit = loadLedger(cwd).projection.units.get("leaf-renderer");
     expect(unit).toBeDefined();

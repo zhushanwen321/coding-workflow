@@ -154,7 +154,7 @@ function seedSplitFixture(name: string, children: readonly ChildSeed[]): SplitFi
     contracts: [],
     split: rootSpec.split,
   });
-  ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
   const childCommits = new Map<string, string>();
   for (const child of children) {
@@ -175,6 +175,7 @@ function seedSplitFixture(name: string, children: readonly ChildSeed[]): SplitFi
       unitId: child.unitId,
       verdictKind: "spec-review",
       verdict: "pass",
+      role: "reviewer",
     });
 
     const childWt = worktreePath(WT_HOME, repoDir, child.unitId);
@@ -458,7 +459,7 @@ describe("wt4 M5 启动孤儿清扫（J3 跨 run 兜底）", () => {
       contracts: [],
       split: [],
     });
-    ledger.append("VerdictSubmitted", { unitId: "unit-closed", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "unit-closed", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     ledger.append("EvidenceSubmitted", {
       unitId: "unit-closed",
       runId: "run-closed-1",
@@ -558,7 +559,7 @@ function makeProgressAdapter(unitAId: string, rootCommit: string): {
             contracts: [],
             split: [],
           });
-          ledger.append("VerdictSubmitted", { unitId: req.unitId, verdictKind: "spec-review", verdict: "pass" });
+          ledger.append("VerdictSubmitted", { unitId: req.unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
         } else if (req.role === "reviewer") {
           if (req.unitId === ROOT_ID) {
             obs.reviewerSawUnitA = existsSync(worktreePath(WT_HOME, req.projectCwd, unitAId));
@@ -637,7 +638,7 @@ function seedLoopFixture(name: string): { repoDir: string; head: string } {
     contracts: [],
     split: [],
   });
-  ledger.append("VerdictSubmitted", { unitId: "unit-a", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "unit-a", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("EvidenceSubmitted", {
     unitId: "unit-a",
     runId: "run-unit-a-1",

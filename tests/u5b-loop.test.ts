@@ -134,10 +134,10 @@ function appendSpecOnly(unitId: string, split: SpecSubmittedPayload["split"] = [
   ledger.append("SpecSubmitted", strongSpec(unitId, split));
 }
 
-/** spec-frozen：spec 过 gate + spec-review pass */
+/** spec-frozen：spec 过 gate + role=reviewer 的 spec-review pass（mx3：fold 只认 reviewer） */
 function appendFrozen(unitId: string, split: SpecSubmittedPayload["split"] = [], parentId: string | null = null): void {
   appendSpecOnly(unitId, split, parentId);
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 /** verified：frozen + build 证据 + pass 的 VerifyRan 覆盖全部验收 id */

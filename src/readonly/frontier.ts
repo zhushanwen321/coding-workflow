@@ -10,11 +10,15 @@
  *     spec-review verdict——待独立 reviewer 审查（mx-1：spec-review 的
  *     VerdictSubmitted 一律由 reviewer spawn 提交，designer 不自审）
  *   - specFixPending：created 且有 spec，最后一条 SpecSubmitted 之后最近的
- *     spec-review verdict 是 fail——待 designer 修 spec 重提（mx-1 MF1：fail 后
- *     的修复出口；fail verdict 的 comment 是任务书的失败事实来源）
- *   - specReviewDeadlock：created 且本账本内该 unit 的 spec-review fail verdict
- *     总数 ≥2（mx-1 MF2：账本重放计数，不因新 SpecSubmitted 清零）——防
- *     ping-pong 活锁的转人工维度，机器派发无出口（loop 停派 + stderr 转人工；
+ *     role=reviewer spec-review verdict 是 fail——待 designer 修 spec 重提
+ *     （mx-1 MF1：fail 后的修复出口；fail verdict 的 comment 是任务书的失败事实
+ *     来源；同代后续 fail 不改变本谓词——mx-3 按代计数后同代双 fail 仍是
+ *     specFixPending 派 designer，不再误判 deadlock）
+ *   - specReviewDeadlock：created 且本账本内该 unit 的 spec-review 打回代数 ≥2
+ *     （mx-3 语义迁移：从「fail 总数」改「打回代数」——同条 SpecSubmitted 之后
+ *     多条 role=reviewer fail 只计 1 代；MF2 教训由代数累计保持：重提不清零，
+ *     fail → 重提 → fail = 2 代 = deadlock）——防 ping-pong 活锁的转人工维度，
+ *     机器派发无出口（loop 停派 + stderr 转人工；
  *     人工 pass verdict 使 unit 离开 created 态后投影自然消失）
  *     （reReview 维度已删除：其谓词「最后 spec 后无 pass」被 specReviewPending
  *     （无任何 verdict）∪ specFixPending（有 verdict 且全 fail）精确剖分，
@@ -60,7 +64,7 @@ export interface FrontierGroups {
   specReady: string[];
   specReviewPending: string[];
   specFixPending: string[];
-  /** mx-1：spec-review fail 总数 ≥2 的 created unit（转人工，机器派发无出口） */
+  /** mx-1/mx-3：spec-review 打回代数 ≥2 的 created unit（转人工，机器派发无出口） */
   specReviewDeadlock: string[];
   missingChildren: string[];
   integrationDrift: string[];
@@ -147,12 +151,14 @@ export function splitChildrenNotCreated(
 }
 
 /**
- * 最后一条 SpecSubmitted 之后最近一条 spec-review verdict 的结论（mx-1 维度重排
- * 的判定输入）："pass" | "fail" | null（无任何 spec-review verdict）。与
- * deriveStatus 的「之后存在」语义同口径（fold.ts 禁改，此处按
- * SequencedUnitProjection 的顺序锚点重算）——重提 spec = 打回重审，旧 verdict
- * 不计数。verdicts 数组按账本序追加，逆序首条命中即最近——specReviewPending
- * （null → reviewer 首审）与 specFixPending（fail → designer 修 spec）的分维依据。
+ * 最后一条 SpecSubmitted 之后最近一条 role=reviewer 的 spec-review verdict 结论
+ * （mx-1 维度重排的判定输入；mx-3 起只认 reviewer，与 deriveStatus 的消费口径
+ * 同步）："pass" | "fail" | null（无可消费的 spec-review verdict）。与
+ * deriveStatus 的「之后存在」语义同口径——重提 spec = 打回重审，旧 verdict
+ * 不计数。非 reviewer 的 spec-review verdict 被无视（designer 自审无效，unit
+ * 回 specReviewPending 等待真正的独立审查）。verdicts 数组按账本序追加，逆序
+ * 首条命中即最近——specReviewPending（null → reviewer 首审）与 specFixPending
+ * （fail → designer 修 spec）的分维依据。
  */
 export function latestSpecReviewAfterLastSpec(
   unit: SequencedUnitProjection,
@@ -168,7 +174,8 @@ export function latestSpecReviewAfterLastSpec(
     }
     if (
       unit.verdictSeqs[i] > lastSpecSeq &&
-      verdict.verdictKind === "spec-review"
+      verdict.verdictKind === "spec-review" &&
+      verdict.role === "reviewer"
     ) {
       return verdict.verdict;
     }
@@ -220,37 +227,47 @@ export function consecutiveIntegrationFails(
 // ---- mx-1：spec-review 打回循环的防活锁投影（specReviewDeadlock 维度判定输入） ----
 
 /**
- * spec-review fail 累计的转人工阈值（mx-1 MF2）：同一 unit 在账本内累计 2 次
- * spec-review fail 即判 designer-reviewer 打回循环活锁，停止机器派发转人工。
- * 取 2 而非 3+：第二次 fail 已证明「修一轮仍不过」——继续循环只会烧 token。
+ * spec-review 打回代数的转人工阈值（mx-1 MF2 引入，mx-3 改按代数）：同一 unit
+ * 累计 2 个打回代数（designer 修出的第二版 spec 仍被打回）即判 designer-reviewer
+ * 打回循环活锁，停止机器派发转人工。取 2 而非 3+：第二代的 fail 已证明「修一轮
+ * 仍不过」——继续循环只会烧 token。
  */
 export const SPEC_REVIEW_DEADLOCK_FAILS = 2;
 
 /**
- * 各 unit 的 spec-review fail verdict 累计总数（mx-1，纯投影——事件流重放，
- * 范式对齐 consecutiveIntegrationFails）。口径锁定（mx1-acceptance §4）：
- * **不因新 SpecSubmitted 清零**——designer 重提 1 字节新 spec 不能清零计数
- * （MF2 教训：清零语义下 streak 永远到不了阈值，ping-pong 活锁无出口）；fail
- * verdict 是账本事件，跨进程累计物理可得。转人工出口的「人工处置后自然重算」
- * 指人工提交 pass verdict 使 unit 离开 created 态（deadlock 组只装 created 态
- * unit），不是计数回落。调用方 = computeFrontier（specReviewDeadlock 维度）与
- * loop（每轮重读账本后计算，转人工指引）。
+ * 各 unit 的 spec-review 打回代数（mx-3 语义迁移：从「fail verdict 总数」改为
+ * 「打回代数」，纯投影——事件流重放，范式对齐 consecutiveIntegrationFails）。
+ * 一条「打回」= 某条 SpecSubmitted 之后的首条 role=reviewer fail verdict；
+ * 同一 SpecSubmitted 之后的后续 fail（reviewer 试探、重复提交）不重复计数——
+ * 消解 M4 gate §5.3「单 spawn 内试探性 verdict 耗尽 2 额度误杀 designer」。
+ * MF2 教训由「代数累计」保持：重提（新 SpecSubmitted）不清零——fail → 重提 →
+ * fail = 2 代打回 = deadlock（真 ping-pong）。代数锚点 = SpecSubmitted 事件边界
+ * （specHash 变化必然伴随新 SpecSubmitted）。只消费 role=reviewer 的 fail
+ * （与 fold/deriveStatus 的消费口径同步）。调用方 = computeFrontier
+ * （specReviewDeadlock 维度）与 loop（每轮重读账本后计算，转人工指引）。
  */
 export function specReviewFailCounts(
   events: readonly LedgerEvent[],
 ): Map<string, number> {
   const counts = new Map<string, number>();
+  const countedInGeneration = new Set<string>();
   for (const record of events) {
     const event = record as DiscriminatedEvent;
-    if (
+    if (event.type === "SpecSubmitted") {
+      countedInGeneration.delete(event.payload.unitId);
+    } else if (
       event.type === "VerdictSubmitted" &&
       event.payload.verdictKind === "spec-review" &&
-      event.payload.verdict === "fail"
+      event.payload.verdict === "fail" &&
+      event.payload.role === "reviewer"
     ) {
-      counts.set(
-        event.payload.unitId,
-        (counts.get(event.payload.unitId) ?? 0) + 1,
-      );
+      if (!countedInGeneration.has(event.payload.unitId)) {
+        counts.set(
+          event.payload.unitId,
+          (counts.get(event.payload.unitId) ?? 0) + 1,
+        );
+        countedInGeneration.add(event.payload.unitId);
+      }
     }
   }
   return counts;

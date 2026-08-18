@@ -140,7 +140,7 @@ function childCreatedPayload(unitId: string, parentId: string): UnitCreatedPaylo
 }
 
 function verdictPayload(unitId: string): VerdictSubmittedPayload {
-  return { unitId, verdictKind: "spec-review", verdict: "pass" };
+  return { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" };
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

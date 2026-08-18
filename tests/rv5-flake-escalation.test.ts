@@ -242,7 +242,7 @@ function appendFrozenSpec(unitId: string, acceptance: AcceptanceItem[]): void {
     contracts: [],
     split: [],
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 /** 入账 build 证据（commit 锚 = 当前 HEAD；runId 递增唯一） */
@@ -365,7 +365,7 @@ function submitScenarioSpec(repoDir: string, e1Command: string): void {
   };
   writeFileSync(join(repoDir, "spec-fdemo.json"), `${JSON.stringify(spec, null, 2)}\n`);
   expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "fdemo", "--file", "spec-fdemo.json"]).code).toBe(0);
-  expect(runCli(repoDir, ["review", "submit", "--unit", "fdemo", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
+  expect(runCli(repoDir, ["review", "submit", "--unit", "fdemo", "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code).toBe(0);
 }
 
 /** 人在 root unit 的 worktree 里提交一批文件，返回新 commit hash */
@@ -673,7 +673,7 @@ describe("T7 spec 变更清零", () => {
       contracts: [],
       split: [],
     });
-    ledger.append("VerdictSubmitted", { unitId: "u-1", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "u-1", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
     const v2 = await run(["verify", "--unit", "u-1"]);
     expect(v2.code).toBe(1); // 周期 2 连挂 1 次——旧周期的 1 次不累计

@@ -285,7 +285,8 @@ function appendSpecFrozen(repoDir: string, unitId: string, split: SplitEntry[] =
     contracts: [],
     split,
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  // mx3 迁移：fold 只认 role=reviewer——fixture 的 spec-review pass 补自报 role
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 function statusOf(repoDir: string, unitId: string): string {
@@ -526,7 +527,7 @@ const ACCEPTANCE = [
 const ledger = ledgerForCwd(cwd);
 const specHash = sha(JSON.stringify({ acceptance: ACCEPTANCE, contracts: [], split: [] }));
 ledger.append("SpecSubmitted", { unitId, specHash, acceptance: ACCEPTANCE, contracts: [], split: [] });
-ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 ledger.append("EvidenceSubmitted", { unitId, runId: "run-stale-1", commit, paths: ["app.js"], sha256: [sha("app.js")], exitCode: 0 });
 ledger.append("VerifyRan", { unitId, runId: "run-stale-1", reportHash: sha("evidence-report:run-stale-1"), result: "pass", acceptanceIds: ACCEPTANCE.map((a) => a.id) });
 ledger.append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });

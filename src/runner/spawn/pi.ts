@@ -5,13 +5,22 @@
  * 差异只在 spawn 内部的命令拼装与 env 翻译层；进程级语义（stdio 落盘 / 超时整树
  * kill / 四态归因）全部经 u6a lifecycle.spawnProcess，本模块不复刻。
  *
- * 实测事实（2026-08-15 已核实，命令形态以此为准）：
+ * 实测事实（2026-08-15 已核实，命令形态以此为准；2026-08-19 mx-3 探针增补
+ * session 参数实测）：
  *   - pi 无 PI_MODEL 环境变量（源码 grep 确认）、-m 简写不存在 → 模型只能走
  *     --model 参数，三级取值优先级见 resolvePiModel；
- *   - 无头形态 `pi --model <provider/id> -p --no-session @<briefPath>`；
+ *   - 无头形态 `pi --model <provider/id> -p --session-dir <dir> --name <n>
+ *     @<briefPath>`（mx-3 前为 --no-session：M4 gate 追查 agent 行为链时发现无
+ *     session 零痕迹，改为落盘保留——session JSONL 随 spawn 产物落 topic 目录，
+ *     内含 toolCall 事件与命令原文逐字可查；文件名 <时间戳>_<uuid>.jsonl 天然
+ *     不冲突，同 artifactDir 多次 spawn 各自新文件）；
  *   - brief 用 @file 位置参数传递（file-based，防 prompt 注入），不走 stdin / $(cat)；
  *   - 本地扩展可能向 stderr 写报错噪音，但 exitCode 与 stdout 不受影响 →
  *     本层不解读 stderr，判定只看 exitCode + stdout。
+ *
+ * mx-3 边界注记：本文件仅 session 参数行改动（mx-1「pi.ts 零改动」锁定的显式
+ * 解除），模型注入链（req.env CW_AGENT_MODEL → --model）零变更；session 文件
+ * 是纯审计载体，不参与任何 gate 判定（fx-4 P2 永久保留策略的延续）。
  */
 import { join } from "node:path";
 
@@ -65,7 +74,9 @@ export interface PiCommand {
 
 /**
  * 命令拼装（纯函数，验收文档锁定签名 buildPiCommand(req, model)；extraArgs 可选追加）：
- * `pi --model <model> -p --no-session @<briefPath>`。
+ * `pi --model <model> -p --session-dir <req.artifactDir> --name <unitId>-<role> @<briefPath>`。
+ * mx-3：--no-session 改为 --session-dir + --name（session 落盘随 spawn 产物保留，
+ * agent 行为链可追查；--name 用于 pi session 列表可辨识）。
  */
 export function buildPiCommand(
   req: AgentSpawnRequest,
@@ -74,7 +85,17 @@ export function buildPiCommand(
 ): PiCommand {
   return {
     command: "pi",
-    args: ["--model", model, "-p", "--no-session", `@${req.briefPath}`, ...extraArgs],
+    args: [
+      "--model",
+      model,
+      "-p",
+      "--session-dir",
+      req.artifactDir,
+      "--name",
+      `${req.unitId}-${req.role}`,
+      `@${req.briefPath}`,
+      ...extraArgs,
+    ],
   };
 }
 

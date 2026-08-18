@@ -130,7 +130,7 @@ function seedVerifiedUnit(unitId: string, runIds: readonly string[]): void {
   const spec = legalSpec(unitId);
   ledger.append("UnitCreated", { unitId, parentId: null, briefRef: "brief.md" });
   ledger.append("SpecSubmitted", spec);
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   for (const runId of runIds) {
     ledger.append("EvidenceSubmitted", {
       unitId,
@@ -353,7 +353,7 @@ describe("T3 exec-review 必填 --evidence-refs（dispatch 层完整路径）", 
 
   it("spec-review 无 refs 维持可选 → exit 0（不回归）", async () => {
     seedVerifiedUnit("u-1", ["run-1"]);
-    const res = await run(["review", "submit", "--unit", "u-1", "--verdict-kind", "spec-review", "--verdict", "pass"]);
+    const res = await run(["review", "submit", "--unit", "u-1", "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]);
     expect(res.code).toBe(0);
   });
 });

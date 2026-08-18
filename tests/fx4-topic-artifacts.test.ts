@@ -146,7 +146,7 @@ function appendSpecFrozen(repoDir: string, unitId: string, acceptance: Acceptanc
     contracts: [],
     split: [],
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 function statusOf(repoDir: string, unitId: string): string {

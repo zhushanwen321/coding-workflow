@@ -21,13 +21,15 @@
  *   - created 且有 spec 且最后一条 SpecSubmitted 之后无任何 spec-review verdict
  *     → reviewer（mx-1 specReviewPending：spec-review 一律由独立 reviewer spawn
  *     提交——审查视角 brief + 可选异源模型，canon §1.3 信任链的结构隔离落地）
- *   - created 且有 spec 且最后 spec 后最近的 spec-review verdict 是 fail → designer
- *     （mx-1 specFixPending：修 spec 重提——任务书内嵌 reviewer fail verdict 的
- *     comment 全文作失败事实；重提后自然回流 specReviewPending 由 reviewer 再审）
- *   - created 且账本内 spec-review fail 累计 ≥2（mx-1 specReviewDeadlock，MF2：
- *     不因新 SpecSubmitted 清零）→ 不派任何 agent（打回循环活锁对机器无解），
- *     stderr 转人工 escalation（两次 fail 的 comment 摘要 + 人工处置动作）；
- *     复用 fx-2 上限出口的审计-不喂-idle 模式，人工 pass verdict 后投影自然消失
+ *   - created 且有 spec 且最后 spec 后最近的 role=reviewer spec-review verdict
+ *     是 fail → designer（mx-1 specFixPending：修 spec 重提——任务书内嵌 reviewer
+ *     fail verdict 的 comment 全文作失败事实；重提后自然回流 specReviewPending
+ *     由 reviewer 再审）
+ *   - created 且账本内 spec-review 打回代数 ≥2（mx-1 specReviewDeadlock；mx-3 起
+ *     按代数计数——同条 SpecSubmitted 后多条 fail 只计 1 代，MF2 教训由代数累计
+ *     保持：重提不清零）→ 不派任何 agent（打回循环活锁对机器无解），stderr
+ *     转人工 escalation（各代打回意见摘要 + 人工处置动作）；复用 fx-2 上限出口
+ *     的审计-不喂-idle 模式，人工 pass verdict 后投影自然消失
  *   - 派发 gate（mx-1 S1）：同 unit 存在任意 role 的 in-flight spawn 时本轮缓派
  *     该 unit 的全部新派发（reviewer 派发的 worktree reset 会清在飞 designer 的
  *     现场；同时修复既有 designer→builder 转换竞态）。等待窗口 ≤ 一个 poll 周期
@@ -55,10 +57,13 @@
  *   - verified 且未 closed   → reviewer（exec-review；任务书含 rv-2 必填的
  *     --evidence-refs 与 mx-1 的 --role reviewer 自报）
  *
- * 抢答可见性（mx-1 S7）：轮次内新入账的 spec-review VerdictSubmitted，若该 unit
- * 无 in-flight reviewer spawn、本 run 也从未派发过其 reviewer、且非 specFixPending
- * 流转 → stderr 一行警告（不阻断不入账——role 自报可伪造，结构隔离之外的唯一
- * 可见性增强；正常 reviewer 流的 verdict 由「本 run 派发过 reviewer」记忆豁免）。
+ * 抢答可见性（mx-1 S7；mx-3 豁免收紧）：本 run 期间新入账的 spec-review
+ * VerdictSubmitted，若其入账时刻不在该 unit 任何 reviewer flight 的存活窗口
+ * （spawn→结算）内、且非 specFixPending 流转 → stderr 一行警告（不阻断不入账
+ * ——role 自报可伪造，结构隔离之外的唯一可见性增强）。原「本 run 派发过该
+ * unit 的 reviewer 即永久豁免」已废除（M4 gate §5.1 的绕过正是被它吞掉警告）；
+ * 正常 reviewer spawn 内的提交豁免不误报，晚到提交 / builder in-flight 期间的
+ * 自审提交告警。
  *
  * 异源模型链（mx-1 S3，pi.ts 零改动）：RunLoopOptions.reviewerModel（cw run
  * --reviewer-model）> 进程环境 CW_REVIEWER_MODEL > 不注入（reviewer spawn 回落
@@ -192,6 +197,12 @@ interface InFlightSpawn {
   role: AgentRole;
   unitId: string;
   handle: SpawnHandle;
+  /**
+   * reviewer flight 的存活窗口（mx-3 抢答豁免收紧）：role=reviewer 的 flight
+   * 在派发时创建并挂到本对象，结算时填 settledAt——窗口登记表与 flight 生命
+   * 周期一对一同步。非 reviewer 的 flight 恒 undefined。
+   */
+  reviewerWindow?: ReviewerFlightWindow;
 }
 
 interface DispatchTarget {
@@ -866,12 +877,13 @@ function flakeEscalationMessage(
 }
 
 /**
- * spec-review 打回活锁转人工指引（mx-1 MF2，防 ping-pong：fail → designer 修 →
- * fail → 修 → … 的无限循环对机器无解）。列出累计的各次 fail verdict comment
- * 摘要（审计事实）与人工处置动作。出口形态复用 fx-2 上限出口的「审计-不喂
- * -idle」模式：停止派发后不再产生新事件——若树内无其他可推进目标，空转由
- * maxIdleMs 收束退出；人工处置（人工提交 pass verdict，或改写后人工过审）写入
- * 账本后 unit 离开 created 态，投影自然消失，运行中的循环下轮自愈。
+ * spec-review 打回活锁转人工指引（mx-1 MF2 引入，mx-3 计数改按打回代数，防
+ * ping-pong：fail → designer 修 → fail → 修 → … 的无限循环对机器无解）。列出
+ * 各代打回的首条 fail verdict comment 摘要（审计事实，同代试探性提交不重复
+ * 列出）与人工处置动作。出口形态复用 fx-2 上限出口的「审计-不喂-idle」模式：
+ * 停止派发后不再产生新事件——若树内无其他可推进目标，空转由 maxIdleMs 收束
+ * 退出；人工处置（人工以 reviewer 身份提交 pass verdict，或改写后人工过审）
+ * 写入账本后 unit 离开 created 态，投影自然消失，运行中的循环下轮自愈。
  */
 function specDeadlockEscalationMessage(
   rootId: string,
@@ -879,45 +891,104 @@ function specDeadlockEscalationMessage(
   failComments: readonly string[],
 ): string {
   const commentLines = failComments.map(
-    (comment, i) => `  - 第 ${i + 1} 次 fail 的打回意见：${comment}`,
+    (comment, i) => `  - 第 ${i + 1} 代打回的意见：${comment}`,
   );
   return (
-    `cw run: unit "${unitId}" 的 spec-review fail 已累计 ${failComments.length} 次（≥${SPEC_REVIEW_DEADLOCK_FAILS}，重提 spec 不清零）` +
+    `cw run: unit "${unitId}" 的 spec-review 已打回 ${failComments.length} 代（≥${SPEC_REVIEW_DEADLOCK_FAILS}，重提 spec 不清零代数累计）` +
     "——判定 designer-reviewer 打回循环活锁，停止对该 unit 派发（继续循环只会重演），转人工处置" +
     "（canon：不自动换模型重试，防静默降级；本循环继续处理其余 unit）：\n" +
     commentLines.join("\n") +
     "\n人工处置动作（按序）：\n" +
     `  1. 人工接手该 unit：cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
     `  2. 人工审查该 spec：cw report --unit ${unitId}（原文副本见 evidence 目录 attachments/）\n` +
-    `  3. 处置三选一：人工修 spec 重提后由你本人判定（cw evidence submit --kind spec --unit ${unitId} --file spec.json + ` +
-    `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role human）；` +
+    `  3. 处置三选一：人工修 spec 重提后由你以 reviewer 身份判定（cw evidence submit --kind spec --unit ${unitId} --file spec.json + ` +
+    `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer——mx-3 起 spec-review 必须携带 --role reviewer）；` +
     "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工提交 pass verdict\n" +
     "处置完成（unit 离开 created 态）投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
     `cw run --root ${rootId} 即续。`
   );
 }
 
-/** 该 unit 账本内全部 spec-review fail verdict 的 comment（缺 comment 时给可定位占位） */
-function specReviewFailComments(unit: SequencedUnitProjection): string[] {
-  return unit.verdicts
-    .filter((verdict) => verdict.verdictKind === "spec-review" && verdict.verdict === "fail")
-    .map(
-      (verdict) =>
-        verdict.comment ?? "（该次 fail 未附 comment——按 cw report --unit 的 verdict 时间线核对）",
-    );
+/**
+ * 该 unit 各打回代数的首条 fail comment（mx-3：只认 role=reviewer 的 fail、按
+ * SpecSubmitted 代数取每代首条——与 specReviewFailCounts 的计数口径完全同构，
+ * 转人工指引列出的意见数 = 打回代数；缺 comment 时给可定位占位）。需原始事件
+ * 流（fold 投影的平行数组丢失跨类型顺序）。
+ */
+function specReviewFailComments(
+  events: readonly LedgerEvent[],
+  unitId: string,
+): string[] {
+  const comments: string[] = [];
+  let countedInGeneration = false;
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (event.type === "SpecSubmitted" && event.payload.unitId === unitId) {
+      countedInGeneration = false;
+    } else if (
+      event.type === "VerdictSubmitted" &&
+      event.payload.unitId === unitId &&
+      event.payload.verdictKind === "spec-review" &&
+      event.payload.verdict === "fail" &&
+      event.payload.role === "reviewer"
+    ) {
+      if (!countedInGeneration) {
+        comments.push(
+          event.payload.comment ??
+            "（该次 fail 未附 comment——按 cw report --unit 的 verdict 时间线核对）",
+        );
+        countedInGeneration = true;
+      }
+    }
+  }
+  return comments;
 }
 
 /**
- * 抢答警告行（mx-1 S7）：spec-review verdict 入账轮次，该 unit 无 in-flight
- * reviewer、本 run 从未派发过其 reviewer、且非 specFixPending 流转（fail 的
- * 打回修复有 loop 的收敛出口）——唯一可见性增强，不阻断不入账。
+ * 抢答警告行（mx-1 S7；mx-3 豁免收紧）：spec-review verdict 入账时刻，该 unit
+ * 无在场的 reviewer spawn（in-flight 或其 spawn 窗口内）且非 specFixPending 流转
+ * （fail 的打回修复有 loop 的收敛出口）——唯一可见性增强，不阻断不入账。
+ * mx-3 收紧点：原「本 run 派发过该 unit 的 reviewer 即永久豁免」废除（M4 gate
+ * §5.1 三因之一——builder 重提 spec 后的自审被该豁免吞掉警告）；正常 reviewer
+ * spawn 内的提交（verdict ts 落在该 reviewer flight 的 spawn→结算窗口内）豁免
+ * 不误报。
  */
 function prematureVerdictWarningLine(unitId: string): string {
   return (
-    `[runner] 警告：unit "${unitId}" 出现新的 spec-review verdict，但该 unit 此刻无 in-flight reviewer ` +
-    "spawn（本 run 也未派发过其 reviewer）且非 fail 打回流转——疑似非独立 reviewer 提交（designer 自审 / 人工抢答）。" +
-    "role 字段是自报弱声明可伪造；本警告仅审计可见性，不阻断。\n"
+    `[runner] 警告：unit "${unitId}" 出现新的 spec-review verdict，但该 verdict 入账时该 unit 无在场的 ` +
+    "reviewer spawn（不在任何 reviewer flight 的存活窗口内）且非 fail 打回流转——疑似非独立 reviewer 提交（designer 自审 / " +
+    "builder 越权 / 人工抢答）。role 字段是自报弱声明可伪造；本警告仅审计可见性，不阻断。\n"
   );
+}
+
+/**
+ * reviewer flight 的存活窗口（mx-3 抢答豁免收紧的判定输入）：spawnedAt = 派发
+ * 时刻，settledAt = wait() 结算时刻（null = 仍在飞）。verdict 的入账 ts 落在
+ * [spawnedAt, settledAt] 内即视为「reviewer 在场期间提交」——正常 reviewer 流
+ * （worker 在 spawn 内写完 verdict 再退出）不误报；reviewer 已结算后的晚到提交、
+ * builder in-flight 期间的自审提交（无匹配窗口）都会告警。
+ */
+interface ReviewerFlightWindow {
+  spawnedAt: number;
+  settledAt: number | null;
+}
+
+/**
+ * VerdictSubmitted 的 seq → 入账时刻映射（mx-3 S7 抢答检查的输入）：fold 投影
+ * 不含 ts，从原始事件流提取；ts 不可解析的条目不入表（消费侧保守告警）。
+ */
+function specVerdictTsBySeq(events: readonly LedgerEvent[]): Map<number, number> {
+  const tsBySeq = new Map<number, number>();
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (event.type === "VerdictSubmitted") {
+      const ts = Date.parse(event.ts);
+      if (Number.isFinite(ts)) {
+        tsBySeq.set(event.seq, ts);
+      }
+    }
+  }
+  return tsBySeq;
 }
 
 /**
@@ -1031,13 +1102,12 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // 会与人工操作冲突；进展清零只作用于计数，不撤销转人工）
   const timeoutStreaks = new Map<string, TimeoutStreak>();
   const escalated = new Map<string, AgentRole>();
-  // rv-5 flake 转人工的出声去重：unitId → 最近一次已出声的连挂签名（各 fact 的
-  // acceptanceId@最新 runId）。投影事实每轮重算（账本即状态），同一连挂只出声
-  // 一次；人工处置后连挂消失、再连挂（新 runId）时签名变化重新出声
+  // rv-5 flake 转人工的出声去重（mx-3 改按「消息文本 + unitId」复合签名——文本
+  // 含 unitId 与连挂事实，同签名不重播；人工处置后连挂消失、再连挂（新事实改变
+  // 文本）时重新出声。修复 M4 gate §5.5：in-flight builder 的第三次连挂使旧
+  // runId 签名失效导致整段消息重复打印）
   const announcedFlake = new Map<string, string>();
-  // mx-1 MF2 spec 打回活锁转人工的出声去重：unitId → 已出声时的签名
-  // （fail 总数 @ 最后 spec seq——新 fail 或新 spec 周期重入死锁时重新出声；
-  // 人工 pass 推进状态不触发重播）
+  // mx-1 MF2 spec 打回活锁转人工的出声去重（mx-3 同样改消息文本签名，语义同上）
   const announcedDeadlock = new Map<string, string>();
   // mx-1 S7 抢答警告的去重水位：unitId → 已评估过的最高 spec-review verdict seq。
   // 初始值取本 run 启动时的账本现状（重跑场景下历史 verdict 不追警告，只看本
@@ -1052,9 +1122,11 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
     }
   }
-  // mx-1 S7：本 run 内派发过 reviewer 的 unit（正常 reviewer 流的 verdict 在 spawn
-  // 结算后到达——此刻已不在 in-flight，凭该记忆豁免抢答警告，防正常流误报）
-  const specReviewerDispatched = new Set<string>();
+  // mx-3 S7 豁免收紧：reviewer flight 存活窗口登记表（unitId → 本 run 全部
+  // reviewer flight 的窗口）。取代原「本 run 派发过即永久豁免」的 Set——豁免
+  // 只认「verdict 入账时刻 reviewer 在场」，builder in-flight 期间的自审提交、
+  // reviewer 结算后的晚到提交都会告警（可见性增强，不阻断）
+  const reviewerFlightWindows = new Map<string, ReviewerFlightWindow[]>();
   let lastUnitSeqs = new Map<string, number>();
   // wt-4 J4 延迟回收：pendingReclaim = 本轮发现的 closed 子 unit（下轮开头回收，
   // debug 翻看现场留一轮窗口）；reclaimTried = 已尝试回收的（成败均不再重试——
@@ -1148,71 +1220,81 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
 
     // rv-5 flakeReview 出口：e2e 验收连挂 ≥2 的 root 子树 unit 转人工（不派
     // builder）。事实来自账本重放（flakeReviewFacts），人工处置写入新事件
-    //（pass / 新 spec）后投影自然消失、循环自愈；出声按连挂签名去重
+    //（pass / 新 spec）后投影自然消失、循环自愈；出声按「消息文本 + unitId」
+    // 复合签名去重（mx-3：修复 M4 gate §5.5 消息重复打印——in-flight builder
+    // 追加的连挂事实不改变已出声消息时不再重播）
     const flakes = flakeReviewFacts(events);
     const subtreeIds = new Set(subtreeUnits(projection, opts.rootId).map((u) => u.unitId));
     for (const [unitId, facts] of flakes) {
       if (!subtreeIds.has(unitId)) {
         continue; // 其他 root 的 unit（同一账本多 root）：不在本 run 职责内
       }
-      const signature = facts
-        .map((f) => `${f.acceptanceId}@${f.runIds[f.runIds.length - 1] ?? ""}`)
-        .join("|");
-      if (announcedFlake.get(unitId) !== signature) {
-        announcedFlake.set(unitId, signature);
-        emitErr(flakeEscalationMessage(opts.rootId, unitId, facts));
+      const message = flakeEscalationMessage(opts.rootId, unitId, facts);
+      if (announcedFlake.get(unitId) !== message) {
+        announcedFlake.set(unitId, message);
+        emitErr(message);
       }
     }
 
-    // mx-1 MF2 specReviewDeadlock 出口：spec-review fail 累计 ≥ 阈值的 root 子树
+    // mx-1 MF2 specReviewDeadlock 出口：spec-review 打回代数 ≥ 阈值的 root 子树
     // unit 转人工（computeDispatchTargets 同口径不派）。事实来自账本重放
-    //（specReviewFailCounts，不因新 SpecSubmitted 清零），人工 pass verdict 写入
-    // 后 unit 离开 created 态、投影自然消失；出声按 fail 总数去重
+    //（specReviewFailCounts——mx-3 起按打回代数计数，重提不清零），人工 pass
+    // verdict 写入后 unit 离开 created 态、投影自然消失；出声按消息文本签名去重
     const specFails = specReviewFailCounts(events);
     for (const [unitId, failCount] of specFails) {
       if (!subtreeIds.has(unitId) || failCount < SPEC_REVIEW_DEADLOCK_FAILS) {
         continue;
       }
-      const unit = projection.units.get(unitId);
-      if (unit === undefined) {
-        continue; // 不可达（specFails 的 unitId 来自账本事件）
-      }
-      const signature = `${failCount}@${unit.lastSpecSeq ?? 0}`;
-      if (announcedDeadlock.get(unitId) !== signature) {
-        announcedDeadlock.set(unitId, signature);
-        emitErr(
-          specDeadlockEscalationMessage(opts.rootId, unitId, specReviewFailComments(unit)),
-        );
+      const message = specDeadlockEscalationMessage(
+        opts.rootId,
+        unitId,
+        specReviewFailComments(events, unitId),
+      );
+      if (announcedDeadlock.get(unitId) !== message) {
+        announcedDeadlock.set(unitId, message);
+        emitErr(message);
       }
     }
 
-    // mx-1 S7 抢答可见性：本 run 期间新入账的 spec-review verdict，若该 unit 无
-    // in-flight reviewer、本 run 未派发过其 reviewer、且非 fail 打回流转（fail 有
-    // specFixPending 收敛出口）→ stderr 一行警告（不阻断不入账）
+    // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
+    // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
+    // fail 打回流转（fail 有 specFixPending 收敛出口）→ stderr 一行警告（不阻断
+    // 不入账）。verdict 的入账 ts 取自原始事件流（fold 投影不含 ts），与本进程的
+    // 窗口时刻同机同钟可比
+    // verdict 的入账 ts 取自原始事件流（fold 投影不含 ts），与本进程的
+    // 窗口时刻同机同钟可比
+    const verdictTsBySeq = specVerdictTsBySeq(events);
     for (const unit of subtreeUnits(projection, opts.rootId)) {
       const watermark = seenSpecVerdictSeq.get(unit.unitId) ?? 0;
       let latestSeq = watermark;
-      let hasNew = false;
+      const newSpecVerdictSeqs: number[] = [];
       for (let i = 0; i < unit.verdicts.length; i += 1) {
         const verdict = unit.verdicts[i];
         const seq = unit.verdictSeqs[i] ?? 0;
         if (verdict?.verdictKind === "spec-review" && seq > watermark) {
-          hasNew = true;
+          newSpecVerdictSeqs.push(seq);
           latestSeq = Math.max(latestSeq, seq);
         }
       }
-      if (!hasNew) {
+      if (newSpecVerdictSeqs.length === 0) {
         continue;
       }
       seenSpecVerdictSeq.set(unit.unitId, latestSeq);
-      const reviewerInFlight = inFlight.some(
-        (flight) => flight.unitId === unit.unitId && flight.role === "reviewer",
-      );
+      const windows = reviewerFlightWindows.get(unit.unitId) ?? [];
+      const inReviewerWindow = (seq: number): boolean => {
+        const ts = verdictTsBySeq.get(seq);
+        if (ts === undefined) {
+          return false; // ts 不可解析的 verdict 保守告警（可见性优先）
+        }
+        return windows.some(
+          (w) => ts >= w.spawnedAt && (w.settledAt === null || ts <= w.settledAt),
+        );
+      };
       const failRecoveryFlow =
         unitStatus(unit) === "created" &&
         unit.specs.length > 0 &&
         latestSpecReviewAfterLastSpec(unit) === "fail";
-      if (!reviewerInFlight && !specReviewerDispatched.has(unit.unitId) && !failRecoveryFlow) {
+      if (!newSpecVerdictSeqs.every(inReviewerWindow) && !failRecoveryFlow) {
         emitErr(prematureVerdictWarningLine(unit.unitId));
       }
     }
@@ -1297,10 +1379,14 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       const briefPath = writeBriefFile(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir);
       // mx-1 S3：reviewer role 注入异源模型（复用 pi 的 CW_AGENT_MODEL → --model
       // 翻译链，req.env 级；未配置时不注入——reviewer 与 builder 同模型链）。
-      // specReviewerDispatched 记录（S7 抢答豁免）：正常 reviewer 流的 verdict 在
-      // spawn 结算后到达，此刻已不在 in-flight，凭该记忆免误报
+      // mx-3 S7：reviewer flight 的存活窗口登记（抢答豁免收紧后，豁免只认
+      // 「verdict 入账时刻 reviewer 在场」——本窗口是唯一豁免依据）
+      let reviewerWindow: ReviewerFlightWindow | undefined;
       if (target.role === "reviewer") {
-        specReviewerDispatched.add(target.unitId);
+        reviewerWindow = { spawnedAt: Date.now(), settledAt: null };
+        const windows = reviewerFlightWindows.get(target.unitId) ?? [];
+        windows.push(reviewerWindow);
+        reviewerFlightWindows.set(target.unitId, windows);
       }
       const handle = await opts.adapter.spawn({
         role: target.role,
@@ -1314,7 +1400,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
           : {}),
         timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
       });
-      inFlight.push({ role: target.role, unitId: target.unitId, handle });
+      inFlight.push({ role: target.role, unitId: target.unitId, handle, reviewerWindow });
       emit([
         `[runner] ${new Date().toISOString()} 派发 ${target.role} → unit "${target.unitId}"（worktree: ${wtDir}，brief: ${briefPath}）`,
       ]);
@@ -1328,6 +1414,11 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
 
     if (finished !== null) {
       inFlight.splice(inFlight.indexOf(finished.flight), 1);
+      // mx-3 S7：reviewer flight 结算时刻封窗（此后到达的 verdict 属「晚到提交」，
+      // 抢答检查按窗口判定会告警）
+      if (finished.flight.reviewerWindow !== undefined) {
+        finished.flight.reviewerWindow.settledAt = Date.now();
+      }
       emit([
         `[runner] ${new Date().toISOString()} ${finished.flight.role} unit "${finished.flight.unitId}" 退出 ${describeExit(finished.result.exitCode)}`,
       ]);

@@ -93,7 +93,7 @@ function buildLedger(): LedgerEvent[] {
     // root spec 携带 8 叶分解（真实内部节点形态；fold 不消费 split，仅丰富事件形状）
     split: leafIds().map((unitId) => ({ unitId, briefRef: "docs/brief-leaf.md", dependsOn: [] })),
   });
-  push("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass" });
+  push("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
   for (const leafId of leafIds()) {
     push("UnitCreated", { unitId: leafId, parentId: ROOT_ID, briefRef: "docs/brief-leaf.md" });
@@ -103,6 +103,7 @@ function buildLedger(): LedgerEvent[] {
         unitId: leafId,
         verdictKind: "spec-review",
         verdict: round === SPEC_ROUNDS ? "pass" : "fail",
+        role: "reviewer",
       });
     }
     for (let round = 1; round <= VERIFY_ROUNDS; round += 1) {

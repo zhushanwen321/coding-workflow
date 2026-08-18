@@ -8,8 +8,10 @@
  *      含 attachments 绝对路径可解析）→ 人扮演 reviewer 提交 fail → specFixPending
  *      派 designer（任务书含 fail comment 全文、不含 review submit）→ 新 spec →
  *      reviewer pass → spec-frozen；verdict 事件 ts 晚于 reviewer brief mtime
- *   T2 deadlock 两种形态：①不重提的两连 fail ②fail → 重提（改 1 字节）→ fail
- *      ——都触发 specReviewDeadlock + escalation 含两次 fail comment 摘要 + 停止派发
+ *   T2 deadlock（mx3 语义变化：按打回代数计数）——形态①「不重提的两连 fail」
+ *      同代只计 1 次打回，不再 deadlock（specFixPending 正常派 designer，见
+ *      mx3-generation-count G1）；形态②「fail → 重提（改 1 字节）→ fail」= 2 代
+ *      打回，保持 specReviewDeadlock + escalation 含各代 comment 摘要 + 停止派发
  *   T3 抢答警告：无 in-flight reviewer 时人为提交 spec-review verdict → stderr
  *      警告行（不阻断，循环继续）
  *   T4 派发 gate：designer spawn 存活期间（慢完成信号）frontier 已出现
@@ -368,10 +370,10 @@ describe("mx-1 T1 打回循环全链：reviewer fail → specFixPending 派 desi
 });
 
 // ================================================================
-// T2：deadlock 两种形态（MF2：计数不因新 SpecSubmitted 清零）
+// T2：deadlock（mx3 语义变化：按打回代数计数——同代双 fail 只计 1 代）
 // ================================================================
 
-/** T2 共用断言：escalation 出声（含两次 comment 摘要）+ frontier 可见 + 停止派发 */
+/** T2 形态②共用断言：escalation 出声（含各代 comment 摘要）+ frontier 可见 + 停止派发 */
 async function assertDeadlock(
   repoDir: string,
   runner: RunnerCapture,
@@ -396,8 +398,8 @@ async function assertDeadlock(
   expect(countDispatches(), "deadlock 后应停止该 unit 的一切新派发").toBe(before);
 }
 
-describe("mx-1 T2 deadlock 形态①：不重提的两连 fail", () => {
-  distIt("fail ×2（无重提）→ specReviewDeadlock + escalation 含两次 comment + 停止派发", async () => {
+describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打回代数只计 1 代，不再 deadlock）", () => {
+  distIt("fail ×2（无重提）→ 不 deadlock、specFixPending 正常派 designer，无 escalation", async () => {
     const repoDir = makeScenario("t2-two-fails", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
@@ -414,7 +416,18 @@ describe("mx-1 T2 deadlock 形态①：不重提的两连 fail", () => {
       expect(
         runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态一第2次fail：仍未补A3", "--role", "reviewer"]).code,
       ).toBe(0);
-      await assertDeadlock(repoDir, runner, ["形态一第1次fail：缺A3", "形态一第2次fail：仍未补A3"]);
+      // mx3 语义变化（原断言反转）：同一版 spec 的第二条 fail 仍是 1 代打回（<2 阈值）
+      // ——designer 不被试探性提交误杀，specFixPending 出口继续有效
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      expect(runner.stderrText(), "同代双 fail 不触发 deadlock escalation").not.toContain("打回循环活锁");
+      const frontier = runCli(repoDir, ["frontier", "--json"]);
+      const groups = JSON.parse(frontier.stdout) as { specReviewDeadlock: string[]; specFixPending: string[] };
+      expect(groups.specReviewDeadlock).not.toContain("demo");
+      expect(groups.specFixPending).toContain("demo");
+      // designer 未被停派：第二条 fail 后 designer 仍是该 unit 的推进出口（此处
+      // designer#2 尚在飞等待重提，无新派发是 gate 语义——断言 reviewer/builder
+      // 均未被派发即可证停派未发生之外的通道未打开）
+      expect(runner.stdoutText()).not.toContain('派发 builder → unit "demo"');
     } finally {
       runner.child.kill("SIGTERM");
       await waitExit(runner, 10_000);
@@ -422,8 +435,8 @@ describe("mx-1 T2 deadlock 形态①：不重提的两连 fail", () => {
   }, 60_000);
 });
 
-describe("mx-1 T2 deadlock 形态②：fail → 重提（改 1 字节）→ fail（计数不清零）", () => {
-  distIt("fail → designer 重提 1 字节新 spec → 再 fail → specReviewDeadlock（重提不清零计数）", async () => {
+describe("mx-1 T2 deadlock 形态②：fail → 重提（改 1 字节）→ fail（代数累计不清零）", () => {
+  distIt("fail → designer 重提 1 字节新 spec → 再 fail → specReviewDeadlock（2 代打回，重提不清零）", async () => {
     const repoDir = makeScenario("t2-resubmit-fail", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
@@ -464,16 +477,16 @@ describe("mx-1 T2 deadlock 形态②：fail → 重提（改 1 字节）→ fail
 // T3：抢答警告（S7：审计可见性，不阻断）
 // ================================================================
 
-describe("mx-1 T3 抢答警告：无 in-flight reviewer 时提交 spec-review verdict", () => {
-  distIt("designer 形态的自审 pass（spec+verdict 单写者一次入账，无 reviewer 派发）→ stderr 警告行；循环不阻断继续派 builder", async () => {
+describe("mx-1 T3 抢答警告：无在场 reviewer 时提交 spec-review verdict（mx3 迁移：designer 自审不驱动冻结）", () => {
+  distIt("designer 形态的自审 pass（spec+verdict 单写者一次入账）→ stderr 警告行；fold 不消费 → 派独立 reviewer 而非 builder", async () => {
     const repoDir = makeScenario("t3-premature", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
       await waitText(runner.stdoutText, '派发 designer → unit "demo"', 10_000);
       // 抢答现场（mx-1 修复的 critical 缺陷形态）：单一写者把 spec 与 spec-review
       // pass 一次入账（同进程两次 append 合一写入——runner 轮询读到的要么全无
-      // 要么全有，消灭「spec 先到 → 派 reviewer」的竞态窗口）。此刻无 in-flight
-      // reviewer、本 run 未派发过 reviewer、verdict 非 fail → 必须出警告
+      // 要么全有，消灭「spec 先到 → 派 reviewer」的竞态窗口）。此刻无在场
+      // reviewer flight、verdict 非 fail → 必须出警告
       const ledgerFile = ledgerPath(cwHome, repoDir);
       const lines = readFileSync(ledgerFile, "utf8").split("\n").filter((l) => l !== "");
       const specHash = String(ACCEPTANCE.length) + "-mx1-t3";
@@ -503,10 +516,12 @@ describe("mx-1 T3 抢答警告：无 in-flight reviewer 时提交 spec-review ve
       expect(res.status, `单写者追加应成功（stderr: ${res.stderr}）`).toBe(0);
 
       await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 10_000);
-      // 不阻断：循环继续推进（spec-frozen → 派 builder；警告只是审计信号）
-      await waitText(runner.stdoutText, '派发 builder → unit "demo"', 10_000);
-      // designer 的 spawn 也正常结算（spec 入账是其完成信号，抢答不影响）
-      expect(runCli(repoDir, ["status"]).stdout).toMatch(/demo\s+spec-frozen/);
+      // mx3 语义变化：fold 只认 role=reviewer——designer 的自审 pass 不驱动冻结，
+      // unit 回 specReviewPending，循环改派独立 reviewer（不再派 builder）
+      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 10_000);
+      expect(runner.stdoutText()).not.toContain('派发 builder → unit "demo"');
+      // 状态锚：designer 自审后 unit 仍是 created（待独立审查）
+      expect(runCli(repoDir, ["status"]).stdout).toMatch(/demo\s+created/);
     } finally {
       runner.child.kill("SIGTERM");
       await waitExit(runner, 10_000);
@@ -530,7 +545,8 @@ describe("mx-1 T5 exec-review 文案修复回归", () => {
       contracts: [],
       split: [],
     });
-    ledger.append("VerdictSubmitted", { unitId: "u-exec", verdictKind: "spec-review", verdict: "pass" });
+    // mx3 迁移：fold 只认 role=reviewer——fixture 的 spec-review pass 补自报 role
+    ledger.append("VerdictSubmitted", { unitId: "u-exec", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     ledger.append("EvidenceSubmitted", {
       unitId: "u-exec",
       runId: "run-exec-1",
@@ -608,21 +624,45 @@ describe("mx-1 T6 role 字段", () => {
     expect(ledgerOf(repoDir).readAll().some((ev) => ev.type === "VerdictSubmitted")).toBe(false);
   });
 
-  distIt("缺省 → payload 无 role 键（可选自报，缺省不入账）", () => {
+  distIt("缺省（mx3 迁移：spec-review 已强制 --role reviewer，可选性断言保留于 exec-review）→ payload 无 role 键", () => {
+    // 构造 verified 前置（exec-review 的 --evidence-refs 须引用已入账 runId）
+    const ledger = ledgerOf(repoDir);
+    ledger.append("VerdictSubmitted", { unitId: "u-role", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
+    ledger.append("EvidenceSubmitted", {
+      unitId: "u-role",
+      runId: "run-t6-default",
+      commit: "c" + "3".repeat(39),
+      paths: ["app.js"],
+      sha256: ["d" + "3".repeat(63)],
+      exitCode: 0,
+    });
+    ledger.append("VerifyRan", {
+      unitId: "u-role",
+      runId: "run-t6-default",
+      reportHash: "rh-t6-default",
+      result: "pass",
+      acceptanceIds: ACCEPTANCE.map((a) => a.id),
+    });
     const res = runCli(repoDir, [
       "review",
       "submit",
       "--unit",
       "u-role",
       "--verdict-kind",
-      "spec-review",
+      "exec-review",
       "--verdict",
       "pass",
+      "--evidence-refs",
+      "run-t6-default",
     ]);
-    expect(res.code).toBe(0);
+    expect(res.code, `exec-review 无 role 应入账（stderr: ${res.stderr}）`).toBe(0);
     const payload = ledgerOf(repoDir)
       .readAll()
-      .find((ev) => ev.type === "VerdictSubmitted")
+      .find(
+        (ev) =>
+          ev.type === "VerdictSubmitted" &&
+          (ev.payload as { verdictKind: string }).verdictKind === "exec-review",
+      )
       ?.payload as unknown as Record<string, unknown>;
     expect(Object.prototype.hasOwnProperty.call(payload, "role")).toBe(false);
   });

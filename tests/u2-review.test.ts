@@ -146,7 +146,7 @@ describe("验收4：cw review submit（dispatch 层）", () => {
     expect(ledger.readAll()).toHaveLength(2);
   });
 
-  it("合法（spec-review + comment + evidence-refs）→ VerdictSubmitted 入账", async () => {
+  it("合法（spec-review + comment + evidence-refs + role）→ VerdictSubmitted 入账（mx3 迁移：spec-review 必带 --role reviewer）", async () => {
     seedUnitWithEvidence("u-1", ["run-1", "run-2"]);
     const res = await run([
       "review",
@@ -161,6 +161,8 @@ describe("验收4：cw review submit（dispatch 层）", () => {
       "验收可冻结",
       "--evidence-refs",
       "run-1,run-2",
+      "--role",
+      "reviewer",
     ]);
     expect(res.code).toBe(0);
     expect(res.stdout).toContain("u-1");
@@ -174,10 +176,11 @@ describe("验收4：cw review submit（dispatch 层）", () => {
       verdict: "pass",
       comment: "验收可冻结",
       evidenceRefs: ["run-1", "run-2"],
+      role: "reviewer",
     });
   });
 
-  it("合法（spec-review、无可选字段）→ payload 不含 comment/evidenceRefs 键", async () => {
+  it("合法（spec-review、无可选字段）→ payload 不含 comment/evidenceRefs 键（mx3 迁移：role 已是 spec-review 必填项）", async () => {
     // rv-2 适配：exec-review 的 --evidence-refs 已改必填（rv2-engine-fixes.test.ts
     // T3 锁定），「无可选字段」的最小合法形态只剩 spec-review；本用例锁定的
     // payload 键省略行为与 verdict-kind 无关，载体换 spec-review 语义不变
@@ -191,6 +194,8 @@ describe("验收4：cw review submit（dispatch 层）", () => {
       "spec-review",
       "--verdict",
       "fail",
+      "--role",
+      "reviewer",
     ]);
     expect(res.code).toBe(0);
 
@@ -200,6 +205,7 @@ describe("验收4：cw review submit（dispatch 层）", () => {
       unitId: "u-1",
       verdictKind: "spec-review",
       verdict: "fail",
+      role: "reviewer",
     });
   });
 

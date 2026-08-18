@@ -69,7 +69,14 @@ describe("u6c pi 适配器：buildPiCommand 命令拼装与模型三级优先级
     expect(resolvePiModel(undefined, req)).toBe(DEFAULT_MODEL);
     expect(buildPiCommand(req, DEFAULT_MODEL)).toEqual({
       command: "pi",
-      args: ["--model", DEFAULT_MODEL, "-p", "--no-session", `@${req.briefPath}`],
+      // mx3 迁移：--no-session → --session-dir <artifactDir> + --name <unitId>-<role>
+      args: [
+        "--model", DEFAULT_MODEL,
+        "-p",
+        "--session-dir", req.artifactDir,
+        "--name", "u6c-unit-builder",
+        `@${req.briefPath}`,
+      ],
     });
   });
 
@@ -98,7 +105,10 @@ describe("u6c pi 适配器：buildPiCommand 命令拼装与模型三级优先级
     expect(joined).not.toContain("$(cat");
     expect(joined).not.toContain("<");
     expect(args).toContain("-p");
-    expect(args).toContain("--no-session");
+    // mx3 迁移：session 落盘参数取代 --no-session（S2 同款断言的 u6c 锚）
+    expect(args).toContain("--session-dir");
+    expect(args).toContain("--name");
+    expect(joined).not.toContain("--no-session");
   });
 
   it("opts.extraArgs 追加到命令尾部", () => {

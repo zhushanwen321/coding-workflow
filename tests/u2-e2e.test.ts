@@ -139,7 +139,7 @@ describe("E2E real：写命令完整序列（dist/cli.js 子进程）", () => {
     expect(r4.code, `build 提交应 exit 0（stderr: ${r4.stderr}）`).toBe(0);
     expect(r4.stdout).toContain("run-1");
 
-    // 5. review submit
+    // 5. review submit（mx3 迁移：spec-review 必带 --role reviewer）
     const r5 = runCli([
       "review",
       "submit",
@@ -149,6 +149,8 @@ describe("E2E real：写命令完整序列（dist/cli.js 子进程）", () => {
       "spec-review",
       "--verdict",
       "pass",
+      "--role",
+      "reviewer",
     ]);
     expect(r5.code, `review 提交应 exit 0（stderr: ${r5.stderr}）`).toBe(0);
 
@@ -185,6 +187,7 @@ describe("E2E real：写命令完整序列（dist/cli.js 子进程）", () => {
       unitId: "u-leaf",
       verdictKind: "spec-review",
       verdict: "pass",
+      role: "reviewer",
     });
   });
 });

@@ -63,7 +63,7 @@ function legalSpec(unitId: string, specHash: string): SpecSubmittedPayload {
 function seedClosedUnit(ledger: EventLedger): void {
   ledger.append("UnitCreated", { unitId: "u-1", parentId: null, briefRef: "brief-u1.md" });
   ledger.append("SpecSubmitted", legalSpec("u-1", "spec-hash-v1"));
-  ledger.append("VerdictSubmitted", { unitId: "u-1", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "u-1", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("VerifyRan", {
     unitId: "u-1",
     runId: "run-1",
@@ -171,7 +171,7 @@ describe("closed 不可逆三段场景（命令面拒绝 + fold 时序收紧）"
 
     // 只补审不重验：spec-frozen 可达（新 pass verdict 晚于新 spec），但 verified
     // 需要晚于新 spec 的 pass VerifyRan——旧 run（seq 更小）不计数
-    ledger.append("VerdictSubmitted", { unitId: "u-1", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "u-1", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     expect(treeStatusOf(cwd, "u-1")).toBe("spec-frozen");
     expect(treeStatusOf(cwd, "u-1")).not.toBe("verified");
     expect(treeStatusOf(cwd, "u-1")).not.toBe("closed");

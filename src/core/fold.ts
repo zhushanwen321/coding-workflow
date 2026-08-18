@@ -9,8 +9,9 @@
  * deriveStatus（proj 为 fold 输出 units 中该 unit 的投影）：
  *   - created     = UnitCreated 存在（unit 投影存在即存在）
  *   - spec-frozen = 最后一条 spec 过 specGate ∧ 该 spec 之后存在 verdictKind=spec-review
- *                   且 verdict=pass 的 VerdictSubmitted（重新提交 spec = 打回重审，
- *                   新 spec 之前的旧 pass verdict 不计数）
+ *                   且 verdict=pass 且 role=reviewer 的 VerdictSubmitted（重新提交
+ *                   spec = 打回重审，新 spec 之前的旧 pass verdict 不计数；mx-3 起
+ *                   非 reviewer 的 spec-review verdict 不驱动转换）
  *   - verified    = spec-frozen ∧ 最后一条「seq 晚于当前 spec」的 pass VerifyRan
  *                   覆盖当前 spec 全部验收 id（时序收紧：重提 spec 后旧 pass run
  *                   不复用——验的必须是当前 spec）
@@ -128,13 +129,17 @@ export function deriveStatus(
   const spec = proj.specs[proj.specs.length - 1];
 
   // spec-frozen：最后一条 spec 过 gate ∧ 它之后有 spec-review pass verdict
+  // （mx-3：只消费 role === "reviewer" 的 verdict——入账层已拦截无 role/错 role 的
+  // 新事件，此处是纵深第二层，兜住任何绕过入账层的路径（历史事件 / 手改账本）；
+  // 非 reviewer 的 spec-review verdict 不驱动状态转换，防御性兼容不抛错）
   const specFrozen =
     specGate(spec).ok &&
     proj.verdicts.some(
       (verdict, i) =>
         proj.verdictSeqs[i] > lastSpecSeq &&
         verdict.verdictKind === "spec-review" &&
-        verdict.verdict === "pass",
+        verdict.verdict === "pass" &&
+        verdict.role === "reviewer",
     );
   if (!specFrozen) {
     return "created";

@@ -208,7 +208,7 @@ function seedVerifiedUnit(
     contracts: [],
     split: [],
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("EvidenceSubmitted", {
     unitId,
     runId: `run-${unitId}-1`,
@@ -416,7 +416,7 @@ describe("fx5-5 M3 gate 全链：merge 冲突 → 人工解 → 集成重跑 pas
       contracts: [],
       split: rootSpec.split,
     });
-    ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: ROOT_ID, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     seedVerifiedUnit(repoDir, "unit-a", ROOT_ID, childA.tip);
     seedVerifiedUnit(repoDir, "unit-b", ROOT_ID, childB.tip);
 

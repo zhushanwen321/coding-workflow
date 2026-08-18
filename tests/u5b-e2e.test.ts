@@ -194,12 +194,12 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     expect(runCli(repoDir, ["create", "--id", "impl", "--brief", "brief-impl.md", "--parent", "demo"]).code).toBe(0);
     writeFileSync(join(repoDir, "spec-demo.json"), specJson([{ unitId: "impl", briefRef: "brief-impl.md", dependsOn: [] }]));
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "demo", "--file", "spec-demo.json"]).code).toBe(0);
-    expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
+    expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code).toBe(0);
 
     // 2) 子 unit 的 spec
     writeFileSync(join(repoDir, "spec-impl.json"), specJson());
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "impl", "--file", "spec-impl.json"]).code).toBe(0);
-    expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "spec-review", "--verdict", "pass"]).code).toBe(0);
+    expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code).toBe(0);
 
     // 3) 子 unit 的 build：实现 + commit + build 证据 + verify（干净重跑真实执行验收命令）
     //    （wt-4 迁移：人按 human 指引在 impl 的 unit worktree（分支 cw/demo/impl）

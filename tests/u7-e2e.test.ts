@@ -322,6 +322,7 @@ function performHumanStep(
     if (submit.code !== 0) {
       return submit;
     }
+    // mx3 迁移：spec-review 必须携带 --role reviewer（人扮演 reviewer 自报身份）
     return runCli(repoDir, [
       "review",
       "submit",
@@ -331,6 +332,8 @@ function performHumanStep(
       "spec-review",
       "--verdict",
       "pass",
+      "--role",
+      "reviewer",
     ]);
   }
   if (kind === "spec-review") {
@@ -343,6 +346,8 @@ function performHumanStep(
       "spec-review",
       "--verdict",
       "pass",
+      "--role",
+      "reviewer",
     ]);
   }
   if (kind === "build") {
@@ -564,7 +569,7 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
       contracts: [],
       split: rootSpec.split,
     });
-    ledger.append("VerdictSubmitted", { unitId: "feat", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "feat", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     for (const leaf of ["leaf1", "leaf2"]) {
       ledger.append("UnitCreated", {
         unitId: leaf,
@@ -579,7 +584,7 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
         contracts: [],
         split: [],
       });
-      ledger.append("VerdictSubmitted", { unitId: leaf, verdictKind: "spec-review", verdict: "pass" });
+      ledger.append("VerdictSubmitted", { unitId: leaf, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     }
 
     const { adapter, spawned } = makeParallelAdapter(head, 500);

@@ -313,7 +313,7 @@ describe("fx-1 R2.2 loop 级（mx-1 形态）：重提 spec 后无过审 → 派
     const { repoDir, head } = makeRepo("r2-resubmit");
     appendUnitCreated(repoDir, "u");
     appendSpec(repoDir, "u", []); // spec1（初版）
-    ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "u", verdictKind: "spec-review", verdict: "pass" });
+    ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "u", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     appendSpec(repoDir, "u", []); // spec2（builder 重提——终验 seq13 同款状态）
     expect(statusOf(repoDir, "u")).toBe("created"); // 重提 = 打回重审，旧 pass 不计数
 

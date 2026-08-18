@@ -425,7 +425,7 @@ describe("rv-1 T5：runLoop 信号 handler 注册与清理", () => {
     // mx-1：spec 入账后循环派独立 reviewer（human spawn 打印 spec-review 指令并
     // 等待 VerdictSubmitted）——等指令落盘再以人扮演 reviewer 提交结论
     await waitFileExists(join(topic, "root.reviewer.stdout"), 10_000);
-    ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass", role: "human" });
+    ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
     await waitFileExists(join(topic, "root.builder.stdout"), 10_000);
     const runId = "run-t5-root";

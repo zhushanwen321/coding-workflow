@@ -89,7 +89,7 @@ function strongSpec(unitId: string): SpecSubmittedPayload {
 function appendPrematureExecLedger(ledger: EventLedger): void {
   ledger.append("UnitCreated", { unitId: "u-pm", parentId: null, briefRef: "b-pm.md" });
   ledger.append("SpecSubmitted", strongSpec("u-pm"));
-  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("VerifyRan", {
     unitId: "u-pm",
     runId: "vr-pm-1",
@@ -100,7 +100,7 @@ function appendPrematureExecLedger(ledger: EventLedger): void {
   ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "exec-review", verdict: "pass" });
   ledger.append("UnitCreated", { unitId: "u-pm-c", parentId: "u-pm", briefRef: "b-pmc.md" });
   ledger.append("SpecSubmitted", strongSpec("u-pm-c"));
-  ledger.append("VerdictSubmitted", { unitId: "u-pm-c", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "u-pm-c", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("VerifyRan", {
     unitId: "u-pm-c",
     runId: "vr-pmc-1",
@@ -178,7 +178,7 @@ describe("report（验收#4）", () => {
     const { ledger } = makeProject("p-report");
     ledger.append("UnitCreated", { unitId: "r-full", parentId: null, briefRef: "brief-r.md" });
     ledger.append("SpecSubmitted", strongSpec("r-full"));
-    ledger.append("VerdictSubmitted", { unitId: "r-full", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "r-full", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     ledger.append("EvidenceSubmitted", {
       unitId: "r-full",
       runId: "run-r-1",
@@ -274,6 +274,7 @@ describe("report --root 子树（验收#4 扩展）", () => {
       unitId: "sub-root",
       verdictKind: "spec-review",
       verdict: "pass",
+      role: "reviewer",
     });
     return proj;
   }

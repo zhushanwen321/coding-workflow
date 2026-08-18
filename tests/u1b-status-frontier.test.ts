@@ -102,14 +102,14 @@ function weakSpec(unitId: string): SpecSubmittedPayload {
 function appendFrozenSequence(ledger: EventLedger, unitId: string): void {
   ledger.append("UnitCreated", { unitId, parentId: null, briefRef: `brief-${unitId}.md` });
   ledger.append("SpecSubmitted", strongSpec(unitId));
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 /** 同上但 parentId 指向指定 root（分解树内的子 unit 形态） */
 function appendFrozenChild(ledger: EventLedger, unitId: string, parentId: string): void {
   ledger.append("UnitCreated", { unitId, parentId, briefRef: `brief-${unitId}.md` });
   ledger.append("SpecSubmitted", strongSpec(unitId));
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 /**
@@ -120,7 +120,7 @@ function appendFrozenChild(ledger: EventLedger, unitId: string, parentId: string
 function appendPrematureExecLedger(ledger: EventLedger): void {
   ledger.append("UnitCreated", { unitId: "u-pm", parentId: null, briefRef: "b-pm.md" });
   ledger.append("SpecSubmitted", strongSpec("u-pm"));
-  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("VerifyRan", {
     unitId: "u-pm",
     runId: "vr-pm-1",
@@ -131,7 +131,7 @@ function appendPrematureExecLedger(ledger: EventLedger): void {
   ledger.append("VerdictSubmitted", { unitId: "u-pm", verdictKind: "exec-review", verdict: "pass" });
   ledger.append("UnitCreated", { unitId: "u-pm-c", parentId: "u-pm", briefRef: "b-pmc.md" });
   ledger.append("SpecSubmitted", strongSpec("u-pm-c"));
-  ledger.append("VerdictSubmitted", { unitId: "u-pm-c", verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId: "u-pm-c", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
   ledger.append("VerifyRan", {
     unitId: "u-pm-c",
     runId: "vr-pmc-1",
@@ -191,10 +191,11 @@ describe("status 渲染（验收#1）", () => {
       unitId: "u-full",
       verdictKind: "spec-review",
       verdict: "fail",
+      role: "reviewer",
       comment: "首轮验收偏弱",
     });
     ledger.append("SpecSubmitted", strongSpec("u-full"));
-    ledger.append("VerdictSubmitted", { unitId: "u-full", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "u-full", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     ledger.append("EvidenceSubmitted", {
       unitId: "u-full",
       runId: "run-full-1",
@@ -346,7 +347,7 @@ describe("frontier（验收#2）", () => {
     ledger.append("UnitCreated", { unitId: "w-weak", parentId: null, briefRef: "b-weak.md" });
     ledger.append("SpecSubmitted", weakSpec("w-weak"));
     // 审查通过也无效：gate 挂在 spec 本身（rule① 验收为空）
-    ledger.append("VerdictSubmitted", { unitId: "w-weak", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "w-weak", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
     const proj = fold(ledger.readAll());
     expect(renderStatusList(proj)).toContain("w-weak  created  specs:1");
@@ -374,7 +375,7 @@ describe("frontier（验收#2）", () => {
         { unitId: "mc-c2", dependsOn: [] },
       ],
     });
-    ledger.append("VerdictSubmitted", { unitId: "mc-root", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "mc-root", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     appendFrozenChild(ledger, "mc-c1", "mc-root");
 
     const proj = fold(ledger.readAll());
@@ -392,7 +393,7 @@ describe("frontier（验收#2）", () => {
     // sf：spec 已提交且最近 spec-review verdict 是 fail → designer 修 spec 出口（mx-1）
     ledger.append("UnitCreated", { unitId: "sf", parentId: null, briefRef: "b-sf.md" });
     ledger.append("SpecSubmitted", strongSpec("sf"));
-    ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", comment: "不合格项：X" });
+    ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", role: "reviewer", comment: "不合格项：X" });
 
     // ig-root：spec-frozen 内部节点，两个子全部 verified → 集成就绪
     ledger.append("UnitCreated", { unitId: "ig-root", parentId: null, briefRef: "b-ig.md" });
@@ -406,7 +407,7 @@ describe("frontier（验收#2）", () => {
         { unitId: "ig-c2", dependsOn: [] },
       ],
     });
-    ledger.append("VerdictSubmitted", { unitId: "ig-root", verdictKind: "spec-review", verdict: "pass" });
+    ledger.append("VerdictSubmitted", { unitId: "ig-root", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
     for (const child of ["ig-c1", "ig-c2"]) {
       appendFrozenChild(ledger, child, "ig-root");
       ledger.append("VerifyRan", {
@@ -445,7 +446,7 @@ describe("frontier（验收#2）", () => {
     // mx-1 MF2：sf 的第二次 fail（重提 1 字节 spec 后再 fail——重提不清零计数）
     // → specReviewDeadlock 出现、specFixPending 消失（转人工维度取代推进维度）
     ledger.append("SpecSubmitted", strongSpec("sf"));
-    ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", comment: "仍不合格" });
+    ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", role: "reviewer", comment: "仍不合格" });
     const deadlocked = computeFrontier(fold(ledger.readAll()), {
       specReviewFailCounts: specReviewFailCounts(ledger.readAll()),
     });

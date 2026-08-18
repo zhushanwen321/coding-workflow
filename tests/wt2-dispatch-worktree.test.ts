@@ -623,6 +623,7 @@ describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
     expect(submit.code, `evidence submit 应成功（stderr: ${submit.stderr}）`).toBe(0);
 
     // 3. 补 spec-review（推到 spec-frozen，循环即可派 builder——「推进到下一状态」）
+    // （mx3 迁移：spec-review 必须携带 --role reviewer）
     const review = runCliInWorktree([
       "review",
       "submit",
@@ -632,6 +633,8 @@ describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
       "spec-review",
       "--verdict",
       "pass",
+      "--role",
+      "reviewer",
     ]);
     expect(review.code, `review submit 应成功（stderr: ${review.stderr}）`).toBe(0);
 

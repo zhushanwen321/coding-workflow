@@ -223,7 +223,7 @@ function appendSpecFrozen(
     contracts: [],
     split: [...split],
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 // ---- C1 测试专用 worker（真实 node 子进程，spawnProcess 起在各自 worktree） ----

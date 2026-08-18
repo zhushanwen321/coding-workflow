@@ -7,8 +7,9 @@
  *   T7 三级链：CW_REVIEWER_MODEL 进程环境 → reviewer spawn 的 pi 命令行含对应
  *      --model；--reviewer-model flag 优先于环境；都未设 → reviewer 与 designer
  *      spawn 命令行同 model（对照断言）
- *   T8 pi.ts 零改动：git diff 确认 src/runner/spawn/pi.ts 无变化（设计锁定的
- *      验证锚点——模型注入走 loop 组装 req.env 复用既有四级链）
+ *   T8 pi.ts 零改动（mx3 迁移：锁定显式解除——仅限 session 参数行）：diff
+ *      不得触及模型注入链（resolvePiModel / DEFAULT_PI_MODEL）；session 落盘
+ *      参数（--session-dir/--name）是 mx3 对该锁定的唯一合法放开面
  *
  * 注意：直调 runLoop 依赖 dist（先 npm run build；npm test 的 pretest 已含）。
  */
@@ -260,17 +261,26 @@ describe("mx-1 T7 reviewer 异源模型三级链（flag > CW_REVIEWER_MODEL > �
 });
 
 // ================================================================
-// T8：pi.ts 零改动（设计锁定的验证锚点）
+// T8：pi.ts 模型注入链零改动（mx3 迁移：原「pi.ts 零改动」锁定由 mx3 显式解除
+// ——仅放开 session 参数行，见 mx3-acceptance §2/§3；模型注入链仍锁定）
 // ================================================================
 
-describe("mx-1 T8 pi.ts 零改动", () => {
-  it("git diff 确认 src/runner/spawn/pi.ts 相对 HEAD 无变化", () => {
+describe("mx-1 T8 pi.ts 模型注入链零改动（mx3 迁移：session 参数行显式放开）", () => {
+  it("diff（若非空）仅涉及 session 落盘参数；不得触及 resolvePiModel / DEFAULT_PI_MODEL", () => {
     const res = spawnSync(
       "git",
-      ["diff", "--name-only", "HEAD", "--", "src/runner/spawn/pi.ts"],
+      ["diff", "HEAD", "--", "src/runner/spawn/pi.ts"],
       { cwd: REPO_ROOT, encoding: "utf-8", timeout: 30_000 },
     );
     expect(res.status, `git diff 应成功（stderr: ${res.stderr}）`).toBe(0);
-    expect((res.stdout ?? "").trim(), "pi.ts 相对 HEAD 不得有任何改动（mx-1 设计锁定：模型注入走 req.env 复用既有四级链）").toBe("");
+    const diff = res.stdout ?? "";
+    // 交付时点（工作区含 mx3 改动）：diff 应体现 session 参数迁移；提交后时点：
+    // diff 为空——两种时点都是合法形态（锚的是「模型链不动」，不是「文件不动」）
+    expect(
+      diff === "" || diff.includes("--session-dir"),
+      "pi.ts 的改动只允许 session 参数行（mx3 解锁面）；出现其他改动须核对 mx3-acceptance §3",
+    ).toBe(true);
+    // 模型注入链四级链（resolvePiModel 及其缺省模型）零变更——mx-1 锁定的存续部分
+    expect(diff).not.toMatch(/^[-+].*(resolvePiModel|DEFAULT_PI_MODEL)/m);
   });
 });

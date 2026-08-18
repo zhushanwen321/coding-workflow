@@ -292,7 +292,8 @@ function appendSpecFrozen(repoDir: string, unitId: string, split: readonly Split
     contracts: [],
     split: [...split],
   });
-  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass" });
+  // mx3 迁移：fold 只认 role=reviewer——fixture 的 spec-review pass 补自报 role
+  ledger.append("VerdictSubmitted", { unitId, verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 }
 
 function statusOf(repoDir: string, unitId: string): string {

@@ -197,7 +197,7 @@ describe("E2E 1：适配器判定全链（create → spec → build → review �
         ]).code,
       ).toBe(0);
       expect(
-        runCli(repo, ["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass"]).code,
+        runCli(repo, ["review", "submit", "--unit", UNIT, "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code,
       ).toBe(0);
 
       // 常规 verify：e2e 标记行 + vitest 测试名（A3）双路由判定全 pass

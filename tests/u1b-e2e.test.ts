@@ -99,6 +99,7 @@ beforeAll(() => {
     unitId: "leaf",
     verdictKind: "spec-review",
     verdict: "pass",
+    role: "reviewer",
   });
   ledger.append("EvidenceSubmitted", {
     unitId: "leaf",
