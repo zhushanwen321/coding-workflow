@@ -1,6 +1,6 @@
 # 设计：独立 spec-review 派发（异源 reviewer）——信任链结构隔离
 
-> 状态：v1.1（对抗审查修复版）。来源：2026-08-18 五角度对抗审查 critical A-1 + 用户裁决「补异源派发机制」。
+> 状态：v1.1（对抗审查修复版）**已实现交付**——mx-1 committed 59cca38（全量 61 文件 450 测试绿），verifier 验收 PASS（报告 docs/rewrite/acceptance/mx1-report.md）。来源：2026-08-18 五角度对抗审查 critical A-1 + 用户裁决「补异源派发机制」。
 > v1.1 变更：吸收设计对抗审查 MF1-MF3 + S1-S7 全部（审查报告存档于主 agent 会话；MF 摘要——①fail 后状态独立成 specFixPending 维度派 designer（v1 的 reReview 改派使 fail 后无人修 spec）②fail 计数改账本重放且不因新 spec 清零（v1 清零语义致 ping-pong 活锁）③canon 失实引用更正 + role 字段落地）。
 > canon 依据：design-rewrite-architecture.md §1.3 信任链、§3.3 D3、:221（VerdictSubmitted {unitId, role, verdict, evidenceRefs} ← 独立 reviewer）、:229-233（spec-frozen 时序锚）。
 

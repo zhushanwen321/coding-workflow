@@ -15,7 +15,7 @@
 | 2026-08-16~17 | M3 worktree 隔离 | wt-1~wt-5：每 unit 独立 worktree + 双空间分支 + 集成汇聚锚 root 分支 + 并发污染对抗测试 | c0f9f29、075c1e9、e1a8b8f、917ac1e、2a975d7 | 323 全绿；M3 gate PASS——真实 pi 全链 26min52s 零人工，集成 merge 真实冲突经处置出口现场闭环（报告 acceptance/m3-gate-report.md） |
 | 2026-08-17 | fx-4 spawn 产物收口 | 产物迁 topic 目录 + worktree 纯化（删 clean -e）+ 三类原文副本入 attachments；设计 v1.1 | 0642d15、f301420 | 331 全绿；gate PASS——`add -A` 卷产物缺口 by construction 关闭（报告 acceptance/fx4-gate-report.md） |
 | 2026-08-17~18 | flaky 修复 + fx-5 成对回收 | u5b-e2e flaky（弱屏障撞 clean 窗口，测试侧非产品缺陷）；fx-5 = unit 资源成对回收 + merge 点去副作用 | 8b1c1bf、187f7df | 336 全绿；fx-5 验收链缺口（无基线先行）事后补录闭环（acceptance/fx5-report.md） |
-| 2026-08-18~ | M4 设计-实现一致性修复轮（**进行中**） | 五角度对抗审查驱动：rv-1 spawn 健壮性 / rv-2 engine 小修包 / rv-3 契约比对强化 / mx-2 pytest+playwright 已 committed；rv-4（红阶段默认接线 + 集成 MAX=1 + 契约配对两道）building；rv-5 / mx-1 / doc-1~3 pending | 9023076、6eb88c2、807cafa、0372b42 | 修复轮进行中，波次状态以 ledger.md M4 段为唯一权威 |
+| 2026-08-18~ | M4 设计-实现一致性修复轮（实现 unit 全部定型，收尾中） | 五角度对抗审查驱动，实现 unit 全部 committed：rv-1 spawn 健壮性（3256bcf）/ rv-2 engine 小修包（1af974a）/ rv-3 契约比对强化（1bbbf4d）/ rv-4 红阶段默认接线 + 集成 MAX=1 + 契约配对两道（145ee96）/ rv-5 flake 转人工 + nondeterministic 豁免（ef4ee67）/ mx-2 pytest+playwright（edae57f）/ mx-1 异源 reviewer 派发收官（59cca38）；doc-1 committed（86d7714）、doc-3 部分提前项已交付（539371c / 59c8c01 / 6705a71）、doc-2 canon 回写进行中 | 9023076、3256bcf、1af974a、1bbbf4d、145ee96、ef4ee67、edae57f、59cca38、86d7714 | 全量 61 文件 450 测试绿；收尾三步（doc-2 / 回收审计二跑 / M4 gate）进行中，波次状态以 ledger.md M4 段为唯一权威 |
 
 ## ADR 索引
 
@@ -60,7 +60,7 @@
 
 ### 独立 reviewer 八决策（D1-D8，v1.1）
 
-出处：`docs/rewrite/design-independent-review.md` §4（设计已定稿；mx-1 实现进行中，以交付后实态为准）。
+出处：`docs/rewrite/design-independent-review.md` §4（v1.1 已实现交付：mx-1 committed 59cca38，报告 mx1-report.md PASS）。
 
 | 决策 | 结论 |
 |------|------|
