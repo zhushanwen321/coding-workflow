@@ -46,6 +46,23 @@
 | wt-5 | W5 测试迁移与终验（并发污染对抗测试 + canon P7 勾验 + 残余断言复核） | committed | 2a975d7 | verifier PASS（sha256 3f6ed093…，报告 wt5-report.md：323 全绿、真实性 4 点、对抗含混卷红性实证（共享 cwd 探针双标记同 commit）与 C2 反向隔离证明、C1 flake 3 连跑稳定）。C4 zero 残留（builder 自报 46 处与 verifier 实测 89 处口径差为清单条目数 vs grep 原始数，实质无差异）。canon P7 ⛔→✅（该文档被 gitignore，更新在磁盘）。终验靶子拆为 M3 gate |
 | fx-4 | spawn 产物收口 topic 目录（M3 终验观察①修复；worktree 纯化 + 三类原文副本入 evidence + 场景 4 反向断言补齐） | committed | 0642d15 | verifier PASS（sha256 f2b31528…，报告 fx4-report.md：331 全绿、T1-T5 真实性 5 点、对抗 7 条含 482 轮重派 append/覆盖写铁证、真实 home 零污染）。4 披露全接受（common.ts 公共函数、91/88 计数口径、字面量 4 文件 tsc 无缺口三重验证、幂等分支补 copy）。minor 4 项不阻断（lifecycle 注释过时、escalation 硬编码路径、幂等 copy 探针补验、密集重派语义 u7 既有）。设计 design-topic-artifacts.md v1.1（f301420） |
 
+## M4 = 设计-实现一致性修复轮（2026-08-18 五角度对抗审查驱动）
+
+> 来源：5 reviewer 对「2.0 设计文档 vs 实现」五角度对抗审查（canon 主设计 / parent / spawn+worktree / testrun / plan 完成度）。用户裁决：异源 reviewer 补实现、红阶段接自动链路、多语言适配做（~/Code 调研定案：pytest 4/4 全覆盖 + playwright ts 侧第二、jest 零使用）、其余直接修复、文档对齐全做、认知外改动授权提交（807cafa 已入）。依赖链：rv-1 → rv-4 → rv-5（loop.ts 领地串行）；mx-1 设计先行；mx-2 依赖 rv-2（testrun 领地）；doc 系列最后。
+
+| unit | 模块 | 状态 | 验收基线 commit | 备注 |
+|------|------|------|----------------|------|
+| rv-1 | spawn/loop 健壮性（EPERM 兜底 + Ctrl-C 孤儿清理） | building | <本 commit> | 审查 A1/A2：timer 回调裸 killTree（EPERM crash）+ 信号处理缺失（「重跑即续」对进程维度不成立） |
+| rv-2 | engine 小修包（id 字符集 gate⑦ + marker 同源 + exec-review refs 必填 + replan 文案 + parse exitCode 落盘 + checkout 根解析） | building | <本 commit> | 审查 M4/D6/D13/D20/m6；与 rv-3 并行（领地不相交） |
+| rv-3 | 契约比对强化（文档宿主排除 + 归一化比对） | building | <本 commit> | 审查 A-7 收窄版；「≡ 冻结配对比对」需 loop 收集点改造，归 rv-4 |
+| rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | pending | — | 依赖 rv-1（loop.ts/integrate.ts 领地） |
+| rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | pending | — | 依赖 rv-4 |
+| mx-1 | 异源 reviewer 派发机制（设计先行 + 对抗审查） | pending | — | critical A-1：spec-review 由 designer 自审 pass 违背「独立 reviewer」承诺 |
+| mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | pending | — | 依赖 rv-2；canon §6.1「显式声明 vs type 硬映射」矛盾消解 |
+| doc-1 | AGENTS.md 重写 + DESIGN-LOG.md 重建 | pending | — | 审查 M11/D2：AGENTS.md 三条现状声明全失效、文档索引指向已归档文件 |
+| doc-2 | canon 回写（附录 B 契约 / M1 现状注 / D5 红阶段口径 / §6.1 消矛盾） | pending | — | 依赖 rv-4/mx-1/mx-2 定型 |
+| doc-3 | parent/spawn/testrun/wt 设计文档过时注回写 + fx-5 验收链补录 + fx-3 ledger 修复 + P1 探针 + 回收审计二跑 | pending | — | 审查 A-3/A-4/A-5/D1/D5/D10/D12 |
+
 ## 里程碑 gate
 
 | gate | 内容 | 状态 |
@@ -112,3 +129,4 @@
 - 例外：L2-F3 独立 worktree 未修——升级路线交接 `handoff-worktree-isolation.md`（本目录），用户单独处理。
 - 缺失项处置：u5 JSON 配置模板兜底适配器未实现（M1 仅 TS 接口形态 human/pi）——与 u9 跳过同理，无真实需求不立项；canon 已标注待立项。
 - 测试基线：273 → 282 全绿（41 文件）。
+- 2026-08-18 M4 启动：五角度对抗审查（设计 vs 实现）驱动修复轮。认知外改动经用户授权提交（807cafa：错误消息可操作化 + skill 重写，tsc+受影响 31 测试验证）。~/Code 框架调研定案多语言目标 = pytest + playwright（vitest 已有）。rv-1/rv-2/rv-3 验收基线入 git，三 builder 并行派发（领地不相交：lifecycle+loop / engine 层 / contract-match）。
