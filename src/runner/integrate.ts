@@ -383,11 +383,14 @@ function gitStep(cwd: string, args: readonly string[]): string | null {
 }
 
 /**
- * 步骤 0 的逐子汇聚（J1）：已达则跳过（幂等重跑天然成立——集成 pass 后子分支已
- * 删，可达性对 root 分支成立，不会再次触 merge）；否则在 root worktree 执行
- * merge --no-edit，成功后 best-effort 静默删子分支（P-wt5：commit 经 root 分支
- * 可达，GC 安全）；冲突则 merge --abort 清现场 + 收 failure（含 root worktree
- * 路径与 CW_PROJECT_DIR 内联前缀的恢复指引——与 human 指引口径一致）。
+ * 步骤 0 的逐子汇聚（J1）：已达则跳过（幂等重跑天然成立——可达性对 root 分支
+ * 判定，与子分支存亡无关）；否则在 root worktree 执行 merge --no-edit（冲突则
+ * merge --abort 清现场 + 收 failure，含 root worktree 路径与 CW_PROJECT_DIR
+ * 内联前缀的恢复指引——与 human 指引口径一致）。
+ * merge 点不删子分支（fx-5 成对回收）：此处曾是分支删除的唯一自动点，但「冲突
+ * → 人工解 → 集成重跑」路径上子 commit 已可达、走开头的已达跳过，永久绕过删除
+ * 造成分支残留（M3 gate 两次复现）；子分支统一由 unit 终态回收（延迟回收 /
+ * 启动清扫，runner/worktree.ts reclaimUnit）在确认 tip 经 root 分支可达后删除。
  */
 function mergeChildrenIntoRoot(
   opts: { cwd: string; rootId: string; children: readonly { unitId: string; commit: string }[] },
@@ -410,9 +413,8 @@ function mergeChildrenIntoRoot(
     }
     const mergeErr = gitStep(rootWorktreeDir, ["merge", "--no-edit", childBranch]);
     if (mergeErr === null) {
-      // best-effort 静默：子 commit 已 merge 进 root 分支，分支删除失败（如被
-      // 其他 worktree 占用）不构成集成失败，残留分支无害
-      gitStep(opts.cwd, ["branch", "-D", childBranch]);
+      // 子 commit 已 merge 进 root 分支即完成本步职责；子分支保留（回收统一走
+      // unit 终态成对回收，见函数头注释）
       continue;
     }
     // 清冲突现场（best-effort：merge 未真正启动时 abort 报错，忽略）

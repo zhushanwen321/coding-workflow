@@ -2,7 +2,8 @@
  * wt-4 单测：集成汇聚与回流（W4）。
  *
  * 用例 M1-M8 逐条对应 docs/rewrite/acceptance/wt4-acceptance.md §6：
- *   - M1 汇聚：双子分支 commit → merge 进 root 分支、子分支删除、报告 head=root 分支 HEAD
+ *   - M1 汇聚：双子分支 commit → merge 进 root 分支、子分支保留（fx-5：merge 点无资源回收
+ *     副作用，分支由 unit 终态成对回收）、报告 head=root 分支 HEAD
  *   - M2 merge 冲突：同文件同区域 → fail + 恢复指引（root worktree 路径 + 内联前缀）+ abort 清现场
  *   - M3 锚定解耦：项目 cwd HEAD 领先且不含子 commit → 可达性检查仍 pass
  *   - M4 root worktree 重建：目录亡分支在 → 集成内自动重建（D5「亡/在」格）
@@ -83,7 +84,7 @@ function gitRun(dir: string, args: readonly string[]): string {
   return (res.stdout ?? "").trim();
 }
 
-/** 命令期望失败的形态（分支已删等）；exit 0 反而抛错（断言前提被破坏） */
+/** 命令期望失败的形态（引用不存在等）；exit 0 反而抛错（断言前提被破坏） */
 function gitFails(dir: string, args: readonly string[]): boolean {
   const res = spawnSync("git", ["-C", dir, ...args], { encoding: "utf-8" });
   return res.error !== undefined || res.status !== 0;
@@ -186,10 +187,9 @@ function seedSplitFixture(name: string, children: readonly ChildSeed[]): SplitFi
     gitRun(childWt, ["commit", "-m", `build(${child.unitId}): wt4 fixture 产出`]);
     const commit = gitRun(childWt, ["rev-parse", "HEAD"]);
     childCommits.set(child.unitId, commit);
-    // 子交付后回收其 worktree（J4/J3 语义先行一步）：真实链路中首次集成时子
-    // worktree 仍在、branch -D 因「分支被 worktree 占用」静默失败（残留分支无害，
-    // 重跑集成时子 worktree 已回收才删得掉）——本 fixture 构造「已回收」的常态
-    // 现场，让 M1「子分支已删」断言落在可成立的前提下
+    // 子交付后回收其 worktree（模拟 fx-5 终态回收的目录侧已执行）：分支按 fx-5
+    // 由回收谓词统一处理（tip 经 root 分支可达才删），集成 merge 点不再删分支；
+    // 拆掉目录也解除「分支被 worktree 占用」，让回收路径上的 branch -D 可执行
     const removed = removeWorktree(repoDir, childWt);
     if (!removed.ok) {
       throw new Error(`fixture：子 worktree 回收失败（${child.unitId}）：${removed.error}`);
@@ -272,7 +272,7 @@ async function captureStd(fn: () => Promise<number>): Promise<{ code: number; ou
 // ================================================================
 
 describe("wt4 M1 汇聚：子分支 commit 经 merge 显式汇入 root 分支", () => {
-  it("集成 pass → root 分支 HEAD 对两子 commit 均 isAncestor；报告 head=root 分支 HEAD（≠项目 HEAD）；两子分支已删；log 含子 commit", async () => {
+  it("集成 pass → root 分支 HEAD 对两子 commit 均 isAncestor；报告 head=root 分支 HEAD（≠项目 HEAD）；两子分支保留（fx-5：merge 点不删分支）；log 含子 commit", async () => {
     const fx = seedSplitFixture("m1", [
       { unitId: "unit-a", mutate: (wt) => writeFileSync(join(wt, "a.txt"), "a\n") },
       { unitId: "unit-b", mutate: (wt) => writeFileSync(join(wt, "b.txt"), "b\n") },
@@ -289,9 +289,10 @@ describe("wt4 M1 汇聚：子分支 commit 经 merge 显式汇入 root 分支", 
     const rootBranchHead = gitRun(fx.repoDir, ["rev-parse", ROOT_BRANCH]);
     expect(readReport(result).head).toBe(rootBranchHead);
     expect(rootBranchHead).not.toBe(gitRun(fx.repoDir, ["rev-parse", "HEAD"]));
-    // 两子分支已删（merge 成功后 best-effort branch -D）
-    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(true);
-    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-b`])).toBe(true);
+    // 两子分支保留（fx-5 行为变更回归锚点：merge 成功不再删分支，回收统一走
+    // unit 终态成对回收——fx5-unit-reclaim.test.ts 验证后续回收）
+    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(false);
+    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-b`])).toBe(false);
     // root 分支历史含子 commit
     const log = gitRun(fx.repoDir, ["log", "--format=%s", ROOT_BRANCH]);
     expect(log).toContain("build(unit-a): wt4 fixture 产出");
@@ -315,8 +316,8 @@ describe("wt4 M8 幂等重跑：子 commit 已达 → 跳过 merge", () => {
     expect(second.ok, `failures: ${second.failures.join(" | ")}`).toBe(true);
     // 已达跳过 merge：root 分支 HEAD 不动（若误 merge 会产生新 merge commit 或至少动 HEAD）
     expect(gitRun(fx.repoDir, ["rev-parse", ROOT_BRANCH])).toBe(headAfterFirst);
-    // 子分支仍不存在（跳过路径不会撞「分支不存在」失败）
-    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(true);
+    // 子分支仍在（fx-5：merge 点不删分支；跳过路径在可达性判定处短路，不依赖分支存亡）
+    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(false);
     expect(existsSync(second.reportPath)).toBe(true);
     expect(readReport(second).children.every((c) => c.reachable)).toBe(true);
   }, 30_000);
@@ -351,8 +352,9 @@ describe("wt4 M2 merge 冲突：fail + abort 清现场 + 恢复指引", () => {
     // 报告落盘且含冲突事实（fail VerifyRan 的 reportHash 有文件可指）
     expect(existsSync(result.reportPath)).toBe(true);
     expect(readReport(result).failures.some((f) => f.includes("merge 冲突"))).toBe(true);
-    // 先 merge 的子不受牵连：unit-a 已汇聚（其分支已删），unit-b 分支保留（修复后重试的现场）
-    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(true);
+    // 先 merge 的子不受牵连：unit-a 已汇聚、unit-b 未汇聚——两分支均保留（fx-5：
+    // merge 点不删分支；unit-b 分支是修复后重试的现场，unit-a 分支由终态回收统一收）
+    expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-a`])).toBe(false);
     expect(gitFails(fx.repoDir, ["rev-parse", "--verify", "--quiet", `cw/${ROOT_ID}/unit-b`])).toBe(false);
   }, 30_000);
 });
@@ -672,7 +674,7 @@ describe("wt4 M6 延迟回收（J4：closed 当轮仍在、下轮开头回收；
 });
 
 describe("wt4 M7 汇总输出（G5 回流指引）", () => {
-  it("root closed 的 summary 含「已回收 worktree × N；保留 × M」清单与 git merge cw-root/<rootId> 回流指引行", async () => {
+  it("root closed 的 summary 含「已回收 unit 资源（worktree 目录+子分支）× N；保留 worktree × M」清单与 git merge cw-root/<rootId> 回流指引行", async () => {
     const { repoDir, head } = seedLoopFixture("m7");
     const { adapter } = makeProgressAdapter("unit-a", head);
 
@@ -682,9 +684,10 @@ describe("wt4 M7 汇总输出（G5 回流指引）", () => {
 
     expect(captured.code).toBe(0);
     expect(captured.out).toContain('root "root" 已 closed');
-    // 回收清单：unit-a 已回收；root worktree 保留（回流载体）
-    expect(captured.out).toContain("已回收 worktree × 1（unit-a）");
-    expect(captured.out).toContain("保留 × 1（root）");
+    // 回收清单（fx-5 措辞：unit 资源 = worktree 目录 + 子分支成对）：unit-a 已
+    // 回收；root worktree 保留（回流载体）
+    expect(captured.out).toContain("已回收 unit 资源（worktree 目录+子分支）× 1（unit-a）");
+    expect(captured.out).toContain("保留 worktree × 1（root）");
     // 回流指引：一条 git merge 命令直接可抄
     expect(captured.out).toContain(`git merge ${ROOT_BRANCH}`);
     expect(captured.out).toContain(`成果分支：${ROOT_BRANCH}`);

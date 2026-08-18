@@ -1,6 +1,12 @@
 /**
  * worktree 生命周期封装（design-worktree-isolation.md §3.3 D2/D4/D5、探针 P-wt1~P-wt6）。
  *
+ * fx-5 起本模块是 unit 资源（worktree 目录 + 子分支）生命周期的唯一 owner：回收
+ * 是状态驱动的成对动作（unit 终态 × 分支 tip 可达性，见 reclaimUnit / removeUnitBranch
+ * 的谓词），集成 merge 点不再携带任何资源回收副作用——此前 merge 成功即 best-effort
+ * 删子分支，而「merge 冲突 → 人工解 → 集成重跑」路径上子 commit 已可达、走已达
+ * 跳过分支，永久绕过删除点，分支残留（M3 gate 两次复现的根因）。
+ *
  * 每 unit 一个 git worktree（~/.cw-worktrees/<encoded-cwd>/<unitId>）+ 独立分支
  * （双空间命名：root unit = cw-root/<rootId>，子 unit = cw/<rootId>/<unitId>。
  * unitId 唯一性是账本级——cw create 查同账本全集唯一（不分 root 子树），同项目
@@ -20,7 +26,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { encodeCwd } from "../store/project.js";
+import { encodeCwd, getCwWorktreeHome, worktreePath } from "../store/project.js";
 
 /** 单步 git 操作超时（本地 worktree 操作通常毫秒级；上限仅防外部仓库挂死 runner） */
 const GIT_STEP_TIMEOUT_MS = 120_000;
@@ -33,6 +39,9 @@ const ROOT_BRANCH_PREFIX = "cw-root/";
 
 /** unitId slug 规则（与 src/handlers/create.ts 的 SLUG_RE 同规则）：防路径逃逸与分支名注入 */
 const UNIT_ID_RE = /^[a-z][a-z0-9-]*$/;
+
+/** 合法子分支 ref 段数：cw/<rootId>/<unitId> 去 cw/ 前缀后恒两段（slug 不含 /） */
+const UNIT_REF_SEGMENTS = 2;
 
 /** worktree 操作结果：成功无返回值；失败 error 含原始失败原因与恢复指引 */
 export type WorktreeOutcome = { ok: true } | { ok: false; error: string };
@@ -221,11 +230,142 @@ export function removeWorktree(repoDir: string, worktreeDir: string): WorktreeOu
   return { ok: true };
 }
 
+// ---- fx-5：unit 资源（目录 + 子分支）状态驱动成对回收 ----
+
+/** ref 扫描条目（fx-5：启动孤儿清扫的分支侧输入——「目录已亡分支残留」的发现源） */
+export interface UnitBranchRef {
+  rootId: string;
+  unitId: string;
+  /** 完整分支名（cw/<rootId>/<unitId>） */
+  branch: string;
+}
+
+/**
+ * 扫描仓库内全部子 unit 分支 ref（fx-5 回收谓词的分支侧输入）：for-each-ref 列
+ * refs/heads/cw/ 命名空间。slug 规则（^[a-z][a-z0-9-]*$）保证 rootId/unitId 不含
+ * "/"，合法 ref 恒两段；解析失败（旁路创建的多段 / 大写 ref）跳过不报错——扫描
+ * 是回收的输入而非 ref 完整性检查。root 成果分支（cw-root/ 前缀）不在本命名空间，
+ * 天然不会被扫出（成果分支永不自动回收）。排序保证确定性（与
+ * listUnitWorktreeIds 同口径，回收日志可复现）。
+ */
+export function listUnitBranchRefs(repoDir: string): UnitBranchRef[] {
+  const res = spawnSync(
+    "git",
+    ["-C", repoDir, "for-each-ref", `--format=%(refname:short)`, `refs/heads/${UNIT_BRANCH_PREFIX}`],
+    { encoding: "utf-8", timeout: GIT_STEP_TIMEOUT_MS },
+  );
+  if (res.error !== undefined || res.status !== 0) {
+    return [];
+  }
+  const refs: UnitBranchRef[] = [];
+  for (const line of (res.stdout ?? "").split("\n")) {
+    const refname = line.trim();
+    if (!refname.startsWith(UNIT_BRANCH_PREFIX)) {
+      continue;
+    }
+    const segments = refname.slice(UNIT_BRANCH_PREFIX.length).split("/");
+    const [rootId, unitId] = segments;
+    if (
+      segments.length !== UNIT_REF_SEGMENTS ||
+      rootId === undefined ||
+      unitId === undefined ||
+      !UNIT_ID_RE.test(rootId) ||
+      !UNIT_ID_RE.test(unitId)
+    ) {
+      continue;
+    }
+    refs.push({ rootId, unitId, branch: refname });
+  }
+  return refs.sort((a, b) => (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
+}
+
+/**
+ * 回收子 unit 分支（fx-5 谓词的分支侧，单一正确性条件）：
+ *   - root unit（unitId === rootId）：分支即 root 成果分支 cw-root/<rootId>（回流
+ *     载体，git merge 回主分支的锚点）——不在自动回收范围，直接视为无需回收；
+ *   - 分支不存在 → 幂等 ok（视为已回收）；
+ *   - 分支 tip 经 root 分支可达（merge-base --is-ancestor）→ 产出已回流，删除
+ *     GC 安全；root 分支不存在或 tip 不可达 → 保守保留——分支是未回流产出的唯一
+ *     ref 锚点，删了产出只剩裸 commit object（hash 只活在账本证据里），error 含
+ *     保留原因与人工确认后的手动清理命令。
+ */
+export function removeUnitBranch(repoDir: string, rootId: string, unitId: string): WorktreeOutcome {
+  if (unitId === rootId) {
+    return { ok: true };
+  }
+  const branch = unitBranchName(rootId, unitId);
+  if (!branchRefExists(repoDir, branch)) {
+    return { ok: true };
+  }
+  const rootBranch = unitBranchName(rootId, rootId);
+  if (!branchRefExists(repoDir, rootBranch)) {
+    return {
+      ok: false,
+      error:
+        `子分支 ${branch} 保留：root 分支 ${rootBranch} 不存在，无法确认其 tip 的产出已回流` +
+        `（仓库 "${repoDir}"）。恢复动作：确认产出已回流（或已失效）后手动清理 ` +
+        `git -C "${repoDir}" branch -D ${branch}。`,
+    };
+  }
+  if (!isAncestor(repoDir, branch, rootBranch)) {
+    return {
+      ok: false,
+      error:
+        `子分支 ${branch} 保留：其 tip 不在 root 分支 ${rootBranch} 可达（产出未确认回流，` +
+        `删除将丢失其唯一 ref 锚点）。恢复动作：在 root worktree merge 该分支使产出回流后` +
+        `重跑回收，或确认产出已失效后手动清理 git -C "${repoDir}" branch -D ${branch}。`,
+    };
+  }
+  const err = git(["-C", repoDir, "branch", "-D", branch]);
+  if (err !== null) {
+    return {
+      ok: false,
+      error:
+        `git branch -D ${branch} 失败（仓库 "${repoDir}"）：${err}。` +
+        `恢复动作：分支被其他 worktree 占用时先回收该 worktree ` +
+        `（git -C "${repoDir}" worktree remove --force <路径>）后重试。`,
+    };
+  }
+  return { ok: true };
+}
+
+/** unit 成对回收结果：目录与分支各自独立成败（分支保守保留不算目录失败，反之亦然） */
+export interface UnitReclaimResult {
+  worktree: WorktreeOutcome;
+  branch: WorktreeOutcome;
+}
+
+/**
+ * unit 资源成对回收（fx-5 唯一回收入口：目录 + 分支一起处理；merge 点无副作用，
+ * 两条既有回收通道——closed 延迟回收与启动孤儿清扫——统一走这里）。worktree 路径
+ * 由 CW_WORKTREE_HOME + repoDir（项目 cwd）解析，与 loop 派发 / 清扫同源。目录已
+ * 不存在视为已回收（ok 不报错）——「孤儿分支而目录已亡」正是 M3 gate 残留的实际
+ * 形态，目录侧必须幂等；分支侧谓词见 removeUnitBranch。顺序先目录后分支：分支若
+ * 被目录内 worktree 占用，`branch -D` 会失败，先拆目录才能删分支。
+ */
+export function reclaimUnit(repoDir: string, rootId: string, unitId: string): UnitReclaimResult {
+  const worktreeDir = worktreePath(getCwWorktreeHome(), repoDir, unitId);
+  const worktree: WorktreeOutcome = existsSync(worktreeDir)
+    ? removeWorktree(repoDir, worktreeDir)
+    : { ok: true };
+  return { worktree, branch: removeUnitBranch(repoDir, rootId, unitId) };
+}
+
+/** 分支 tip 是否经 ref 可达（merge-base --is-ancestor；ref 缺失时 exit≠0 视为不可达） */
+function isAncestor(repoDir: string, branch: string, ref: string): boolean {
+  const res = spawnSync("git", ["-C", repoDir, "merge-base", "--is-ancestor", branch, ref], {
+    encoding: "utf-8",
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
+  return res.error === undefined && res.status === 0;
+}
+
 /**
  * 扫描项目 worktree 根 <cwWorktreeHome>/<encodeCwd(projectCwd)>/ 下的全部 unit
- * 目录名（wt-4 J3：runLoop 启动孤儿清扫的输入）。非目录项忽略；不判定状态——
- * closed / 账本存在性判定由调用方查账本（worktree 目录名只承载 unitId，状态是
- * 账本的事实）。排序保证扫描顺序确定性（回收日志可复现）。
+ * 目录名（wt-4 J3：runLoop 启动孤儿清扫的目录侧输入；fx-5 起与 listUnitBranchRefs
+ * 的 ref 侧并扫）。非目录项忽略；不判定状态——closed / 账本存在性判定由调用方查
+ * 账本（worktree 目录名只承载 unitId，状态是账本的事实）。排序保证扫描顺序确定性
+ * （回收日志可复现）。
  */
 export function listUnitWorktreeIds(cwWorktreeHome: string, projectCwd: string): string[] {
   const root = join(cwWorktreeHome, encodeCwd(projectCwd));
