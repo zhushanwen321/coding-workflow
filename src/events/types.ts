@@ -12,6 +12,14 @@
 /** 验收用例 type 枚举（canon D3 唯一权威，核心 case 禁 manual 由 spec gate 规则②执行） */
 export type AcceptanceType = "unit" | "integration" | "e2e-real" | "e2e-mock" | "manual";
 
+/**
+ * 验收 id 字符集（rv-2 规则⑦与 e2e-sh marker 的同源锚）：字母数字开头，后续可含
+ * `.` `_` `-`；禁空格与中文。id 是 e2e-sh 标记行第一列与 nameMatch 名字比对的锚，
+ * 字符集外的 id 产出的 e2e 用例永远无法匹配标记行。spec gate（规则⑦）与 e2e-sh
+ * 的 MARKER_RE 均由本常量派生——两路合法集同源，禁止各自手写正则漂移。
+ */
+export const ACCEPTANCE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 /** 验收（Acceptance）——unit「完成」的可运行定义的原子条目 */
 export interface AcceptanceItem {
   /** 验收 id，unit 内唯一，如 "A1" */

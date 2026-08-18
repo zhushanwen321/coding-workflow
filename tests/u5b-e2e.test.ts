@@ -235,16 +235,17 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     const verifyImpl = runCli(repoDir, ["verify", "--unit", "impl"]);
     expect(verifyImpl.code, `impl verify 应 pass（stdout: ${verifyImpl.stdout}，stderr: ${verifyImpl.stderr}）`).toBe(0);
 
-    // 4) 子 unit 的 exec-review → closed
-    expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "exec-review", "--verdict", "pass"]).code).toBe(0);
+    // 4) 子 unit 的 exec-review → closed（rv-2 适配：exec-review 必须携带
+    //    --evidence-refs ≥1 个已入账 runId，引用本 unit 的真实 build 证据）
+    expect(runCli(repoDir, ["review", "submit", "--unit", "impl", "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", "run-impl-1"]).code).toBe(0);
 
     // 5) root 的 build：HEAD 已含全部实现，作为 root 的 build 证据 commit
     expect(runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "demo", "--commit", head, "--run-id", "run-demo-1"]).code).toBe(0);
     const verifyDemo = runCli(repoDir, ["verify", "--unit", "demo"]);
     expect(verifyDemo.code, `demo verify 应 pass（stdout: ${verifyDemo.stdout}，stderr: ${verifyDemo.stderr}）`).toBe(0);
 
-    // 6) root 的 exec-review → closed → runner 收敛自然退出
-    expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "exec-review", "--verdict", "pass"]).code).toBe(0);
+    // 6) root 的 exec-review → closed → runner 收敛自然退出（rv-2：refs 必填）
+    expect(runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", "run-demo-1"]).code).toBe(0);
 
     const code = await waitExit(runner, WAIT_TIMEOUT_MS);
     expect(code).toBe(0);

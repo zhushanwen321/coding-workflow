@@ -306,8 +306,25 @@ if (role === "builder") {
   runCw(["verify", "--unit", unitId]);
   console.log("wt5-worker-done builder " + unitId + " commit " + commit);
 } else if (role === "reviewer") {
-  runCw(["review", "submit", "--unit", unitId, "--verdict-kind", "exec-review", "--verdict", "pass"]);
-  console.log("wt5-worker-done reviewer " + unitId);
+  // rv-2 exec-review refs 必填适配（方案 C）：从账本读该 unit 真实入账的 runId 后
+  // 引用——内部节点（root）无 EvidenceSubmitted，执行证据 = 集成 VerifyRan
+  //（cw status --unit 的 verifyRuns 段取最后一条），禁止硬编码假 runId
+  const statusRes = runCw(["status", "--unit", unitId]);
+  const lines = (statusRes.stdout ?? "").split("\\n");
+  const verifyIdx = lines.findIndex((l) => l.trim() === "verifyRuns:");
+  if (verifyIdx === -1) {
+    throw new Error("wt5-worker: status --unit " + unitId + " 无 verifyRuns 段（fixture 前置失败）");
+  }
+  const runIdLines = lines.slice(verifyIdx + 1).filter((l) => l.trim().startsWith("- runId="));
+  const lastRunId =
+    runIdLines.length > 0
+      ? runIdLines[runIdLines.length - 1].trim().slice("- runId=".length).split(" ")[0]
+      : undefined;
+  if (lastRunId === undefined) {
+    throw new Error("wt5-worker: unit " + unitId + " 无已入账 VerifyRan runId（refs 无从引用）");
+  }
+  runCw(["review", "submit", "--unit", unitId, "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", lastRunId]);
+  console.log("wt5-worker-done reviewer " + unitId + " refs " + lastRunId);
 } else {
   throw new Error("wt5-worker: 意外 role " + role + "（fixture 全部 unit 预置 spec-frozen，designer 不应被派发）");
 }

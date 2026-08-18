@@ -87,7 +87,7 @@ function submitSpec(
   if (status === "closed") {
     return fail(
       `cw evidence submit --kind spec: unit "${unitId}" 已 closed（树感知状态，含全部子节点 closed），不可逆——closed 是账本上的最终结论，重提 spec 会把投影拉回 created（篡改历史结论）。` +
-        "恢复动作：如需变更请新建 unit（cw create --id <slug> --brief <brief文件> --parent <父unitId>），或在父级 unit replan。",
+        "恢复动作：closed 不可逆，如需变更请新建后续 unit 承接（cw create --id <slug> --brief <brief文件> --parent <父unitId>）。",
     );
   }
 

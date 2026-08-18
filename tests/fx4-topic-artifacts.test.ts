@@ -616,7 +616,8 @@ describe("fx4 T5 human 接管 + 反向断言（场景 4）", () => {
 
     // 4. 循环消费账本事件 → 派 reviewer（指令落盘 topic）→ 人执行 exec-review → root closed
     await waitUntil(() => existsSync(join(topic, "t5.reviewer.brief.md")), 15_000, "reviewer 派发");
-    const review = runCliInWorktree(["review", "submit", "--unit", "t5", "--verdict-kind", "exec-review", "--verdict", "pass"]);
+    // rv-2 exec-review refs 必填适配（引用上方已入账的 build runId run-t5-1）
+    const review = runCliInWorktree(["review", "submit", "--unit", "t5", "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", "run-t5-1"]);
     expect(review.code, `review submit 应成功（stderr: ${review.stderr}）`).toBe(0);
     const captured = await runPromise;
     expect(captured.code).toBe(0);

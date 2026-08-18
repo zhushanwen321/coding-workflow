@@ -375,6 +375,7 @@ function performHumanStep(
     return runCli(repoDir, ["verify", "--unit", unitId, "--timeout-ms", "60000"]);
   }
   if (kind === "exec-review") {
+    // rv-2 exec-review refs 必填适配（引用 build 分支已入账的 runId run-<unitId>-1）
     return runCli(repoDir, [
       "review",
       "submit",
@@ -384,6 +385,8 @@ function performHumanStep(
       "exec-review",
       "--verdict",
       "pass",
+      "--evidence-refs",
+      `run-${unitId}-1`,
     ]);
   }
   return undefined; // "none"：调用方已排除

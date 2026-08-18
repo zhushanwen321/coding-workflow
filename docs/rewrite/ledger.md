@@ -58,12 +58,12 @@
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
 | rv-1 | spawn/loop 健壮性（EPERM 兜底 + Ctrl-C 孤儿清理） | committed | 9023076 | verifier PASS（sha256 3449be0a…，报告 rv1-report.md：runLoopMain 外壳化重构核实零行为变化 + 红灯复核两形态命中含 EPERM 原始缺陷独立复现 + 160 次竞态加量零未捕获 + 双 SIGINT/极早期/空 inFlight 窗口对抗 5 项全过）。瑕疵不阻塞：验收 §6 文件名笔误待终验勘误；T2 单轮 EPERM 检出概率性（口径已覆盖） |
-| rv-2 | engine 小修包（id 字符集 gate⑦ + marker 同源 + exec-review refs 必填 + replan 文案 + parse exitCode 落盘 + checkout 根解析） | building | <本 commit> | 审查 M4/D6/D13/D20/m6；与 rv-3 并行（领地不相交） |
+| rv-2 | engine 小修包（id 字符集 gate⑦ + marker 同源 + exec-review refs 必填 + replan 文案 + parse exitCode 落盘 + checkout 根解析） | committed | 9023076 | verifier PASS（sha256 ec8ca4e6…，报告 rv2-report.md：干净副本全验 + 对抗 18/18 + 三裁决全过——剥锚派生合规/方案C 证据集扩展复核通过（fail runId 可入账但 fold verified 需 pass 兜底，边际作弊面≈0）/wt5 fixture 诚实）。打回修复：3 处范围外机械适配 + 方案 C（exec-review 证据 = EvidenceSubmitted ∪ VerifyRan，内部节点形态 T3b 锁定——wt5 场景 1 打回实锤的设计缺口）。建议级：T3b 补「fail runId 引用」锁定测试 |
 | rv-3 | 契约比对强化（文档宿主排除 + 归一化比对） | committed | 9023076 | verifier PASS（sha256 bf449ea3…，报告 rv3-report.md：T1-T8 全实质 + 18 条对抗探针全过含大小写绕过/symlink 逃逸/8KB 嗅探边界）。2 裁量裁决合规（宿主判定大小写不敏感 fail-closed、文档判定先于存在性）；u8 适配仅 hidden.txt→.dat 换宿主。「≡ 冻结配对比对」归 rv-4。残余备案：contract.file 含 ../ 可逃逸 checkoutDir（基线行为，输入来自冻结可信层） |
 | rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | building | <本 commit> | 依赖 rv-1+rv-3 已满足；canon D5「三道 gate」+ 审查 A-2/A3/A-7 残余；MAX=1 语义（fx-2 时代 MAX=2 作废） |
 | rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | pending | — | 依赖 rv-4 |
 | mx-1 | 异源 reviewer 派发机制（设计先行 + 对抗审查） | pending | — | critical A-1：spec-review 由 designer 自审 pass 违背「独立 reviewer」承诺 |
-| mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | pending | — | 依赖 rv-2；canon §6.1「显式声明 vs type 硬映射」矛盾消解 |
+| mx-2 | pytest + playwright 适配器 + 框架显式声明（testRunner 路由） | building | <本 commit> | 依赖 rv-2 已满足；~/Code 调研定案 pytest+playwright（jest 零使用）；本机 pytest 8.3.0 + playwright 1.62.1 + chromium 全可用（全真实验收） |
 | doc-1 | AGENTS.md 重写 + DESIGN-LOG.md 重建 | pending | — | 审查 M11/D2：AGENTS.md 三条现状声明全失效、文档索引指向已归档文件 |
 | doc-2 | canon 回写（附录 B 契约 / M1 现状注 / D5 红阶段口径 / §6.1 消矛盾） | pending | — | 依赖 rv-4/mx-1/mx-2 定型 |
 | doc-3 | parent/spawn/testrun/wt 设计文档过时注回写 + fx-5 验收链补录 + fx-3 ledger 修复 + P1 探针 + 回收审计二跑 | pending | — | 审查 A-3/A-4/A-5/D1/D5/D10/D12 |
@@ -140,3 +140,4 @@
 - 2026-08-18 doc-3 设计文档回写（worker 交付，主 agent 抽查通过）：wt 设计 v3.3（-e .cw-spawn 全语义反转注/D4 裸 clean/指引 topic 路径口径）；spawn 设计（产物 topic 迁移注/AgentSpawnRequest 契约对齐/human 完成信号账本事件口径）；testrun 设计 v6（parse 三参/marker id 全文/字段表/VerifyRanPayload/execBashTree/实参数面 + mx-2、rv-5 待回写注）；parent 设计头部 [SUPERSEDED] 终局处置声明（1.x 渐进视角已被重写取代，仅存历史价值）。.xyz-harness 三份按 gitignore 惯例仅磁盘更新不入 git；docs/rewrite/ 一份入 git。
 - 2026-08-18 fx-5 事后验收 PASS（补录闭环，报告 fx5-report.md：187f7df 五文件核对 + 成对谓词逐项实证 + fx5 5/5 与 wt4 迁移 8/8 实跑 + 18 条行为对抗全过含 tip 不可达保留出声/亡在异常格/root 分支缺失保守保留）。plan 审查 D1 的验收链缺口收口。观察：fx5-2 出声断言在函数级，loop 层 stderr 出声由对抗抽查实证、套件内无直接覆盖（不阻塞）。
 - 2026-08-18 P1 探针落地（plan 审查 D10 收口，主 agent 复核通过）：tests/p1-fold-perf.test.ts——510 条真实事件（1 root + 8 叶多轮重试树）预热 10 次后采样 30 次，断言最大单次 < 50ms；实测 mean 0.012ms / worst 0.034ms（余量三个数量级，不 flaky）；正确性断言非空跑（全树 closed + 各数组长度按轮数对账）。规格 = 派发词内置（探针级补落地，未走 acceptance 基线，如实记录）。
+- 2026-08-18 rv-2 committed（含一次打回修复 + 主 agent 裁决方案 C）：六项小修 + 规则⑦ + marker 同源 + exec-review 证据集扩展（EvidenceSubmitted ∪ VerifyRan，内部节点 exec-review 死锁缺口修复，T3b 4 条锁定）。verifier PASS（三裁决全过、干净副本 91/91、对抗 18/18）。mx-2 基线入 git，builder 派发。

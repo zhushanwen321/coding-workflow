@@ -266,6 +266,14 @@ function runOne(
         : "";
     const reason = `验收 ${ac.id} 产物解析失败：${detail}${hint}`;
     appendFile(stderrPath, `${reason}\n`);
+    // rv-2 审计增量：parse 失败条目的 command exit code 此前只存内存（调用方拿
+    // 到 AcceptanceRunResult），审计 <id>.report.json 时须从 stderr 文本反推——
+    // 落盘最小 JSON 补齐产物事实。不改判定语义（fail + reason 进 stderr 照旧），
+    // 文件与正常条目同目录同命名规则（<id-stem>.report.json）
+    writeFileSync(
+      join(evidenceBaseDir, `${stem}.report.json`),
+      `${JSON.stringify({ parseError: true, commandExit: exitCode, reason }, null, REPORT_INDENT)}\n`,
+    );
     return { id: ac.id, status: "fail", stdoutPath, stderrPath, timeout: false, reason, commandExit: exitCode, parseError: true };
   }
 

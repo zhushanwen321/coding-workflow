@@ -5,7 +5,8 @@
  * translate：command 原样返回（e2e 脚本自写标记行，适配器不改写）；缺失抛错——
  * e2e-real 验收的 command 是 spec gate 规则③的必填项，这里不代拟。
  * parse：逐行扫描 `^<id> (PASS|FAIL)$` 标记行 → cases（标记行第一列 = 验收 id
- * 全文，不要求任何前缀；name 记标记行原文）；同一 id 多次出现以最后一次为准。
+ * 全文，不要求任何前缀；id 可含 `.` `_` `-`——与 spec gate 规则⑦同源字符集；
+ * name 记标记行原文）；同一 id 多次出现以最后一次为准。
  * 防伪造语义（验收文档同节）：
  *   - 标记缺失 + exitCode≠0 → 该验收整体 fail（name="no-markers"），不抛错；
  *   - 标记缺失 + exitCode=0 → 抛错（无区分力——echo ok 类假命令在旧树新树都绿，
@@ -16,11 +17,22 @@
  */
 import { readFileSync } from "node:fs";
 
-import type { AcceptanceItem } from "../events/types.js";
+import { ACCEPTANCE_ID_RE, type AcceptanceItem } from "../events/types.js";
 import type { EvidenceReport, TestRunAdapter } from "./types.js";
 
-/** 标记行约定：`<验收id原文> PASS|FAIL`，id 为字母数字连字符（第一列 = 验收 id 全文） */
-const MARKER_RE = /^([A-Za-z0-9-]+) (PASS|FAIL)$/;
+/**
+ * ACCEPTANCE_ID_RE 的字符集主体（剥去 ^ $ 行锚）。源常量自带行锚，直接嵌入
+ * 分组会产出 `^([A-Za-z0-9…$) (PASS|FAIL)$`——内嵌 $ 在非行尾恒不匹配，marker
+ * 行全部失配。派生前必须剥锚（rv-2 两路同源：合法 id 集与 spec gate 规则⑦一致，
+ * 禁止两处手写正则漂移）。
+ */
+const ID_CHARSET_SOURCE = ACCEPTANCE_ID_RE.source.replace(/^\^/, "").replace(/\$$/, "");
+/**
+ * 标记行约定：`<验收id原文> PASS|FAIL`，id 字母数字开头、可含 `.` `_ `-`（第一列 =
+ * 验收 id 全文；与 spec gate 规则⑦的 ACCEPTANCE_ID_RE 同源派生，vitest 路径的
+ * id 不经标记行，不受此正则约束）
+ */
+const MARKER_RE = new RegExp(`^(${ID_CHARSET_SOURCE}) (PASS|FAIL)$`);
 const NO_MARKERS_NAME = "no-markers";
 /**
  * fx-1 R3：marker 约定的显式格式说明，追加在两类 parse 错误的 message 里——

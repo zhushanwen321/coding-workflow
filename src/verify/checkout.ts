@@ -21,22 +21,37 @@ export type CheckoutOutcome = { ok: true; dir: string } | { ok: false; error: st
 
 /**
  * 把 repoDir 的目标 commit 检出到一次性干净工作区。
+ * repoDir 可以是仓库内任意目录（rv-2：先用 `git rev-parse --show-toplevel` 在
+ * repoDir 解析仓库根，再以仓库根为 clone 源——此前直接 clone repoDir，agent 在
+ * 子目录运行 verify 时 clone 源是子目录，误报 clone 失败且无从恢复）。
  * 成功返回 { dir }（工作区绝对路径，即验收命令的 cwd）；失败返回 { error } 并清理临时目录。
  */
 export function cleanCheckout(repoDir: string, commit: string): CheckoutOutcome {
+  // 仓库根解析失败（非 git 仓库 / .git 损坏）在 clone 之前显性报错，附恢复动作
+  const toplevel = gitIn(repoDir, ["rev-parse", "--show-toplevel"]);
+  if (toplevel.status !== 0) {
+    return {
+      ok: false,
+      error:
+        `无法解析 "${repoDir}" 的 git 仓库根（git rev-parse --show-toplevel 失败）：${describeFailure(toplevel.error, toplevel.status, toplevel.stderr)}。` +
+        "恢复动作：确认在 git 仓库内运行 verify（仓库根或其子目录均可），或到仓库根检查 .git 目录完整性（git status 自检）后重试。",
+    };
+  }
+  const repoRoot = toplevel.stdout.trim();
+
   const base = mkdtempSync(join(tmpdir(), "cw-verify-checkout-"));
   const wsDir = join(base, "ws");
 
-  const clone = git(["clone", "--quiet", repoDir, wsDir]);
+  const clone = git(["clone", "--quiet", repoRoot, wsDir]);
   if (clone !== null) {
     rmSync(base, { recursive: true, force: true });
-    return { ok: false, error: `git clone "${repoDir}" 失败：${clone}` };
+    return { ok: false, error: `git clone "${repoRoot}" 失败：${clone}` };
   }
 
   const checkout = git(["-C", wsDir, "checkout", "--quiet", commit]);
   if (checkout !== null) {
     rmSync(base, { recursive: true, force: true });
-    return { ok: false, error: `git checkout ${commit} 失败（clone 自 "${repoDir}"）：${checkout}` };
+    return { ok: false, error: `git checkout ${commit} 失败（clone 自 "${repoRoot}"）：${checkout}` };
   }
 
   // P7 干净性自证：porcelain 非空 = 工作区与 commit 树不一致，重跑真值不可信
@@ -79,6 +94,19 @@ function git(args: readonly string[]): string | null {
     return null;
   }
   return describeFailure(res.error, res.status, res.stderr);
+}
+
+/**
+ * 在指定目录跑一条 git 命令（仓库根解析探针）：返回原始结果（exit code 与
+ * stdout/stderr 由调用方裁决），与 git() 的「人可读原因」出口不同——解析失败
+ * 需要区分「非 git 仓库」与「.git 损坏」以外的事实时不吞细节。
+ */
+function gitIn(
+  cwd: string,
+  args: readonly string[],
+): { status: number | null; stdout: string; stderr: string; error?: Error } {
+  const res = spawnSync("git", args, { cwd, encoding: "utf-8", timeout: GIT_STEP_TIMEOUT_MS });
+  return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "", ...(res.error !== undefined ? { error: res.error } : {}) };
 }
 
 function describeFailure(
