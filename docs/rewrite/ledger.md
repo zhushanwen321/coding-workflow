@@ -67,6 +67,7 @@
 | doc-1 | AGENTS.md 重写 + DESIGN-LOG.md 重建 | committed | 86d7714 | 2.0 实态全文重写（1.x 机制词零命中）+ DESIGN-LOG 80 行（28 hash 全核验）；进行中项三处显式标注 |
 | doc-2 | canon 回写（附录 B 契约 / M1 现状注 / D5 红阶段口径 / §6.1 消矛盾） | committed | <本 commit> | worker 回写 5 文件全部读 src 核实后落笔：canon v5（13 处——八规则/十维 frontier/topic 布局/D2 role 字段/D5 红阶段默认+flake/D6 MAX=1/B.1 契约实态/B.2 四适配器/§5 里程碑对应/探针 P1 ✅）+ CONTEXT.md（9 过时项全修 + 发现并修正原⑦错标 children-first 的编号错位）+ DESIGN-LOG（M4 台账 hash 逐一核验）+ AGENTS.md（进行中标注收口 2 处 + 联动矛盾 2 处）+ design-independent-review.md（头部已交付）。主 agent 核对：过时词 grep 零命中、v5 条目 11 面、AGENTS 零「进行中」残留；顺带更新 npm test 注释（61 文件 450 用例）。历史记录不回写（§5 阶段表/附录 A 对照/v1-v4 变更史保持原样） |
 | doc-3 | parent/spawn/testrun/wt 设计文档过时注回写 + fx-5 验收链补录 + fx-3 ledger 修复 + P1 探针 + 回收审计二跑 | committed | — | 审查 A-3/A-4/A-5/D1/D5/D10/D12。全部子项完成：设计文档回写（5 文件，事件 140）、fx-3 ledger 结构修复（事件 138）、fx-5 验收链补录（fx5-report.md）、P1 探针落地（0372b42，事件 142）、回收审计二跑 PASS（事件 2026-08-19 条 + 勘误 2 处例外备案） |
+| mx-3 | M4 gate 两缺口修复（spec-review role 强校验双层 + deadlock 代数计数 + escalation 去重 + spawn session 落盘） | building | <本 commit> | 用户 2026-08-19 确认立项并追加 session 保留要求（M4 gate 追查时 reviewer 试探提交在 stdout 零痕迹，无 session 无法追查 agent 行为链；探针实测 --session-dir + --name 可落 JSONL 含 toolCall 命令原文）。语义变化显式接受：形态①（不重提两连 fail）不再 deadlock、按打回代数计数。防线边界如实披露：防无意识自审不防有意谎报（spawn token 级认证列后续候选）。mx-1「pi.ts 零改动」锁定显式解除（仅 session 参数行，模型链零变更）。修完重跑 M4 gate |
 
 ## 里程碑 gate
 
