@@ -88,9 +88,11 @@ describe("验收2：契约含 file → 未命中 → 失败含契约 id、文件
 // ── 验收3：全树搜索命中（无 file 字段） ───────────────────────
 
 describe("验收3：契约缺 file → 全树文本搜索命中深层目录文件 → 过", () => {
-  it("签名在 pkg/deep/hidden.txt（非代码路径）中 → ok=true", () => {
+  it("签名在 pkg/deep/hidden.dat（非代码路径）中 → ok=true", () => {
     const tree = makeTree("tree-hit");
-    writeFileSync(join(tree, "pkg", "deep", "hidden.txt"), `promise: ${CAP_SIG}\n`);
+    // rv3 适配：原 fixture 为 hidden.txt——文档宿主排除上线后 .txt 是文档类宿主
+    // （全树搜索不再读它），换 .dat 保持「深层目录非文档文件命中」的语义不变
+    writeFileSync(join(tree, "pkg", "deep", "hidden.dat"), `promise: ${CAP_SIG}\n`);
     const result = matchContracts({ contracts: [contract()], checkoutDir: tree });
     expect(result.ok).toBe(true);
     expect(result.failures).toEqual([]);

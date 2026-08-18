@@ -54,7 +54,7 @@
 |------|------|------|----------------|------|
 | rv-1 | spawn/loop 健壮性（EPERM 兜底 + Ctrl-C 孤儿清理） | building | <本 commit> | 审查 A1/A2：timer 回调裸 killTree（EPERM crash）+ 信号处理缺失（「重跑即续」对进程维度不成立） |
 | rv-2 | engine 小修包（id 字符集 gate⑦ + marker 同源 + exec-review refs 必填 + replan 文案 + parse exitCode 落盘 + checkout 根解析） | building | <本 commit> | 审查 M4/D6/D13/D20/m6；与 rv-3 并行（领地不相交） |
-| rv-3 | 契约比对强化（文档宿主排除 + 归一化比对） | building | <本 commit> | 审查 A-7 收窄版；「≡ 冻结配对比对」需 loop 收集点改造，归 rv-4 |
+| rv-3 | 契约比对强化（文档宿主排除 + 归一化比对） | committed | 9023076 | verifier PASS（sha256 bf449ea3…，报告 rv3-report.md：T1-T8 全实质 + 18 条对抗探针全过含大小写绕过/symlink 逃逸/8KB 嗅探边界）。2 裁量裁决合规（宿主判定大小写不敏感 fail-closed、文档判定先于存在性）；u8 适配仅 hidden.txt→.dat 换宿主。「≡ 冻结配对比对」归 rv-4。残余备案：contract.file 含 ../ 可逃逸 checkoutDir（基线行为，输入来自冻结可信层） |
 | rv-4 | 红阶段自动接线 + 集成失败处置改进 + 契约配对化 | pending | — | 依赖 rv-1（loop.ts/integrate.ts 领地） |
 | rv-5 | flake 转人工 + 随机性豁免（纪律②后半） | pending | — | 依赖 rv-4 |
 | mx-1 | 异源 reviewer 派发机制（设计先行 + 对抗审查） | pending | — | critical A-1：spec-review 由 designer 自审 pass 违背「独立 reviewer」承诺 |
@@ -130,3 +130,4 @@
 - 缺失项处置：u5 JSON 配置模板兜底适配器未实现（M1 仅 TS 接口形态 human/pi）——与 u9 跳过同理，无真实需求不立项；canon 已标注待立项。
 - 测试基线：273 → 282 全绿（41 文件）。
 - 2026-08-18 M4 启动：五角度对抗审查（设计 vs 实现）驱动修复轮。认知外改动经用户授权提交（807cafa：错误消息可操作化 + skill 重写，tsc+受影响 31 测试验证）。~/Code 框架调研定案多语言目标 = pytest + playwright（vitest 已有）。rv-1/rv-2/rv-3 验收基线入 git，三 builder 并行派发（领地不相交：lifecycle+loop / engine 层 / contract-match）。
+- 2026-08-18 rv-3 committed：builder 交付文档宿主排除（.md/.txt/.rst/.adoc + README*/CONTRIBUTING*/CHANGELOG* + docs/，封闭集合）+ 双侧空白折叠归一化 + 失败消息两态分立；verifier PASS（15 新测试 + u8 适配 1 处；18 条对抗探针：大小写绕过/深层 docs/symlink 逃逸/md+ts 并存/8KB 边界/CRLF 全过）。基线 9023076。
