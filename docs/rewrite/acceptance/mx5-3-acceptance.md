@@ -57,4 +57,4 @@ npx eslint src/runner/brief.ts tests/mx5-3-reviewer-brief.test.ts
 
 ## 8. status
 
-pending → building（developer 派发时由主 agent 更新）
+pending → building（2026-08-19 developer 交付：brief.ts +32/-9 仅 reviewer 模板区两 hunk + 9 用例，全量 67 文件 510 绿；B3 以改动前 dist 渲染快照 6/6 逐字节一致佐证其余模板零变更；零偏离；待 verifier）

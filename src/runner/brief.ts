@@ -66,10 +66,16 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
 
 /**
  * mx-1：spec-review 的 reviewer 任务书（specReviewPending 派发形态）。审查语义
- * 按 canon §1.3 信任链与 D3「reviewer 第一审对象是验收集合」逐项列出（够不够 /
- * 真不真 / 有无区分力 / mock 保真度 / nondeterministic 声明把关）。spec 原文经
+ * 按 canon §1.3 信任链与 D3「reviewer 第一审对象是验收集合」逐项列出。spec 原文经
  * attachments 绝对路径内嵌（S2：渲染时由 attachmentsDir 计算，不依赖相对路径
  * 锚点——副本由 evidence submit --kind spec 落盘，内容寻址幂等）。
+ *
+ * mx5-3：审查清单升级为五维度对抗式核对（设计 mx-5 D3）——M4 gate 三跑实证
+ * reviewer 曾放行结构性不可通过的验收命令（pass 意见写「A3 区分力较弱……不
+ * 构成阻塞，pass」，而其 session 全程未接触机器 gate 硬约束清单；root designer
+ * 转述子任务书时又恰好丢掉被违反的两条）。清单进机制生成的任务书模板本体，
+ * 不再依赖人转述；输出分级（must-fix / suggestion / info）+ pass 逐项显式
+ * 「核过无问题」，针对性反制含糊放行。
  */
 function specReviewReviewerTasks(
   unit: SequencedUnitProjection,
@@ -82,13 +88,30 @@ function specReviewReviewerTasks(
     "",
     `1. 读 spec 原文：最后一条 SpecSubmitted 的原文副本在 ${attachDir}/ 下`,
     `   （内容寻址文件 = <sha256>.<原文件名>；结构化视图可 cw report --unit ${unit.unitId}）。`,
-    "2. 按 canon D3 审查语义逐项判定（reviewer 的第一审对象是验收集合，不是文风）：",
-    "   - 够不够：验收集合是否覆盖任务书（brief）的核心风险面；有无验收真空",
-    "   - 真不真：e2e 级用例的 command 是否真实可执行、断言是否指向行为而非实现细节",
-    "   - 有无区分力：用例在旧代码上是否必然 fail（恒真测试 = 无区分力，须拒）",
-    "   - mock 保真度：e2e-mock 用例的 mockFidelityNote 是否说明与真实环境的差异边界",
-    "   - nondeterministic 声明是否被滥用（声明 ≠ 逃逸执行，随机性判定是语义判断）",
-    `3. 提交结论：cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass|fail --role reviewer --comment <依据>`,
+    "2. 按五维度对抗式核对清单逐条核对（reviewer 的第一审对象是验收集合，不是文风；",
+    "   对 spec 的每条验收逐项过——任何一条不过即 fail，不得以「较弱/可补充」为由放行）：",
+    "   ① 验收命令契约逐条核对（cw verify 按适配器解析命令产物——契约错 = 实现再对也恒 fail）：",
+    "      - unit / integration 型逐条问：命令是否 vitest 兼容——--reporter 值若出现必须",
+    "        恰为 json（与 spec gate 规则⑨同口径：cw 自动追加 --reporter=json，命令里混入",
+    "        其他 reporter 值会让 stdout 变成文本+JSON 混合体、解析必挂）；install 步骤带 --silent。",
+    "      - e2e 型逐条问：stdout 从哪产出 `<验收id> PASS` 标记行？命令里指得出来吗？",
+    "        （e2e-sh 适配器靠该标记行判定——裸 build/test 命令 exit 0 也永不产出标记行，",
+    "        属结构性不可通过，必须打回）",
+    "   ② 覆盖度：brief 的核心风险面是否逐条映射到验收、有无验收真空；e2e 级用例的",
+    "      command 是否真实可执行、断言是否指向行为而非实现细节。",
+    "   ③ 区分力反例追问（每条验收问两个反例）：无实现时它必然挂吗？换一个实现它还过吗？",
+    "      （恒真测试 = 无区分力，须拒）",
+    "   ④ 契约（contracts）一致性：spec 声明的跨 unit 接口与冻结 hash 逐条对照关联 unit 的",
+    "      冻结契约——签名 / 期望文件任一不符，集成期必炸（不得只看本 unit 自身声明）。",
+    "   ⑤ 干净 checkout 可执行性：命令用到的依赖是否全在 package.json 声明、命令是否",
+    "      自带 install（verify 在一次性工作区重跑，没有提交者本机的全局依赖与环境）。",
+    "   语义关（canon D3 既有要求）：e2e-mock 用例的 mockFidelityNote 是否说明与真实环境的",
+    "   差异边界；nondeterministic 声明是否被滥用（声明 ≠ 逃逸执行，随机性判定是语义判断）。",
+    "3. 提交结论（输出分级格式约定——--comment 缺分级清单的 verdict 视为无效审查）：",
+    `   cw review submit --unit ${unit.unitId} --verdict-kind spec-review --verdict pass|fail --role reviewer --comment <依据>`,
+    "   --comment 中的问题逐条按三级列出：must-fix（不修不能过）/ suggestion（应修）/ info（仅记录）。",
+    "   verdict 为 pass 时必须对上述每条核对项逐项显式写明「核过无问题」——禁止",
+    "   「区分力较弱……不构成阻塞，pass」式含糊放行：未逐项核对的 pass 不被接受。",
     "4. fail 时 --comment 必须逐条列出不合格项与恢复动作（该 comment 会全文内嵌进",
     "   designer 的修 spec 任务书——是打回修复的唯一失败事实来源，勿写「见报告」类空引用）。",
     "完成标志：verdict 入账（pass → unit 进入 spec-frozen；fail → designer 修 spec 后你会再审）。",
