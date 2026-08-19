@@ -52,4 +52,6 @@ G1-G6 独立复跑 + 红性抽查（删签名去重改回文本比较 → G1 红
 
 ## 8. status
 
-pending → building（2026-08-20 developer 交付：4 文件 +123/-44 + 新测试 8 用例，全量 70 文件 551 绿；红性自验 = 改回文本比较 G1 红且「r3 追加重出」精确复现四跑异常-1 形态；rv5 套件零迁移；偏离 3 处备案——X4 措辞因 mx5-3 套件 B2 锁「恰为 json」采用等义精确句、G2 额外验证中间态增强断言、lint 1 warning 为 loop.ts max-lines 存量非本次引入；待 verifier）
+pending → building → **verified（2026-08-20：verifier 7/7 PASS，报告 fx6-report.md——红性复验精确复现四跑异常-1、X4 偏离裁定成立、X5 语义/消息零降级/判定零变更全核实；X3a 结算行模板逐字节一致 + wait() 缓存主张核实）**。**F1 备案更正（verifier 实测推翻 developer 备案）**：lint warning 非「存量」——基线 `239537c` 版 loop.ts eslint 零 warning，X5/X3a 使物理行 1521→1599（eslint 计 1038 > 1000）为**本次引入**。处置（主 agent 流转区授权）：escalation 出声函数族（escalationMessage / escalationExitMessage / flakeEscalationMessage / specDeadlockEscalationMessage / specContractDeadlockEscalationMessage / announceManualEscalations 及其类型）整体搬迁至新文件 `src/runner/escalations.ts`（单一职责：转人工出声；先例 = mx5-2 四函数迁 frontier），搬移逐字节语义零变化，loop.ts 回到 1000 行内、lint 零 warning。搬迁后 G1-G5 + 全量复跑。
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。

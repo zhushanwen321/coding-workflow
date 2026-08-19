@@ -108,7 +108,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeSync } from "node:fs";
-import { join } from "node:path";
 
 import { fold } from "../core/fold.js";
 import type {
@@ -121,16 +120,12 @@ import {
   computeFrontier,
   consecutiveIntegrationFails,
   type FlakeReviewFact,
-  flakeReviewFacts,
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
   latestSpecReviewAfterLastSpec,
   SPEC_CONTRACT_MAX_GENERATIONS,
   SPEC_REVIEW_DEADLOCK_FAILS,
   type SpecContractFacts,
-  specContractFacts,
-  specReviewFailComments,
-  specReviewFailCounts,
   specVerdictTsBySeq,
   splitChildrenNotCreated,
   splitOf,
@@ -150,6 +145,11 @@ import {
 } from "../store/project.js";
 import type { OwnedContract } from "../verify/contract-match.js";
 import { type DispatchDimension, writeBriefFile } from "./brief.js";
+import {
+  announceManualEscalations,
+  escalationExitMessage,
+  escalationMessage,
+} from "./escalations.js";
 import { runIntegrationVerify } from "./integrate.js";
 import type {
   AgentRole,
@@ -172,21 +172,22 @@ export const DEFAULT_LOOP_POLL_MS = 1_000;
 export const DEFAULT_LOOP_MAX_IDLE_MS = 1_800_000;
 /** 同批 in-flight spawn 上限默认值（--max-concurrency；验收文档：默认 3） */
 export const DEFAULT_LOOP_MAX_CONCURRENCY = 3;
-/** 单次 agent spawn 超时（验收文档循环逻辑 3：timeoutMs 固定 30min） */
-const AGENT_SPAWN_TIMEOUT_MS = 1_800_000;
+/** 单次 agent spawn 超时（验收文档循环逻辑 3：timeoutMs 固定 30min）。
+ * fx-6 F1 起 escalations.ts 的转人工指引文案共用本常量（spawn 上限事实单一出处），
+ * 故 export。 */
+export const AGENT_SPAWN_TIMEOUT_MS = 1_800_000;
 /**
  * 同一 unit 连续 spawn TIMEOUT 的转人工阈值（连续 2 次）：期间无任何该 unit 的
  * 账本进展即累计；该 unit 一旦出现新账本事件（agent 被超时 kill 前已有产出）
  * 计数清零。计数是单进程内存态——TIMEOUT 是 spawn 失败不入账本，跨进程累计
  * 物理不可得（Ctrl-C 重跑后从 0 重新计，属可接受损失：封顶防的是单次运行内
  * 的无限重派烧 token）。转人工 = 不再派发（canon：不自动换模型，防静默降级）。
+ * fx-6 F1 起 escalations.ts 的转人工指引文案共用本常量，故 export。
  */
-const AGENT_TIMEOUT_ESCALATION_AFTER = 2;
+export const AGENT_TIMEOUT_ESCALATION_AFTER = 2;
 
 /** 单步 git 操作超时（与 integrate.ts 同口径：本地操作毫秒级，上限防挂死） */
 const GIT_STEP_TIMEOUT_MS = 120_000;
-/** ms → min 换算（转人工指引文案用） */
-const MS_PER_MINUTE = 60_000;
 /**
  * emitExitOutput 的回调等待上限：正常路径回调毫秒级到达；高负载下（集成验证
  * 的连续 spawnSync 阻塞 + 全量并行）libuv 线程池的写队列积压可达数秒。超时后
@@ -259,7 +260,8 @@ function emit(lines: readonly string[]): void {
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
-function emitErr(message: string): void {
+/** fx-6 F1 起 escalations.ts 的转人工出声共用本函数（stderr 单一出口），故 export */
+export function emitErr(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
@@ -816,241 +818,6 @@ interface TimeoutStreak {
   role: AgentRole;
 }
 
-/**
- * 转人工指引（连续 TIMEOUT 封顶时逐 unit 打印；错误指向恢复动作，规则 16）。
- * spawn 超时是 src/runner/loop.ts 的固定常量（30min），cw run 无调大 flag——
- * 如实告知现状而非指向不存在的入口。
- */
-function escalationMessage(rootId: string, unitId: string, role: AgentRole, artifactDir: string): string {
-  // 产物根随 fx-4 迁 run 级 topic 目录（stdout/stderr append 累积本 run 历次输出）
-  const stdoutPath = join(artifactDir, `${unitId}.${role}.stdout`);
-  return (
-    `cw run: unit "${unitId}" 的 ${role} 连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次 spawn TIMEOUT` +
-    "（期间无该 unit 的任何账本进展）——停止自动重派，转人工处理（canon：不自动换模型重试，" +
-    "防静默降级；本循环继续处理其余 unit）。恢复动作（按序）：\n" +
-    `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
-    `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（本次 run 的历次输出；跨 run 历史在 ~/.cw/topic/ 下按 runTs 目录可查）\n` +
-    `  3. 若任务量确超单次 spawn 上限（${AGENT_SPAWN_TIMEOUT_MS / MS_PER_MINUTE}min 固定值，cw run 暂无调大入口）：` +
-    "人工接手完成该 unit，或拆小任务另建 unit"
-  );
-}
-
-/** 转人工收束的退出汇总（无可自动推进的 unit 且存在转人工 unit → exit 1） */
-function escalationExitMessage(rootId: string, escalated: ReadonlyMap<string, AgentRole>): string {
-  return (
-    `cw run: root "${rootId}" 已无可自动推进的 unit（无 in-flight、无待派发），转人工 unit 共 ` +
-    `${escalated.size} 个：\n` +
-    [...escalated]
-      .map(([unitId, role]) => `  - ${unitId}（最后派发 role：${role}）`)
-      .join("\n") +
-    `\n恢复动作：按各 Unit 的转人工指引处理（cw run --root ${rootId} --spawn human 人工接手），` +
-    "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。"
-  );
-}
-
-/**
- * e2e 连挂转人工指引（rv-5，canon §5.2「连挂 2 次的 e2e 用例标 flake 转人工，
- * 不自动豁免，防 Goodhart」）：列出连挂用例 id 与逐次 fail 的 runId，人工判定
- * 动作二选一（判 flake → 修稳定性或声明 nondeterministic 重提 spec；判真 bug →
- * 人工修复）。出口形态复用 fx-2 上限出口的「审计-不喂-idle」模式：停止派发后
- * 不再产生新 VerifyRan 喂活 idle 判定——若树内无其他可推进目标，空转由
- * maxIdleMs 收束退出；人工处置（新 verify pass / 新 spec 过审）写入账本后投影
- * 自然消失，运行中的循环下轮自愈。
- */
-function flakeEscalationMessage(
-  rootId: string,
-  unitId: string,
-  facts: readonly FlakeReviewFact[],
-): string {
-  const factLines = facts.map(
-    (f) =>
-      `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次 fail（runId：${f.runIds.join("、")}）`,
-  );
-  return (
-    `cw run: unit "${unitId}" 的 e2e 验收连挂 2 次以上（flake 疑似）——停止对该 unit 派发 developer（打回循环对随机挂无解），` +
-    "转人工判定（canon §5.2：不自动豁免，防 Goodhart；本循环继续处理其余 unit）：\n" +
-    factLines.join("\n") +
-    "\n人工判定动作（按序）：\n" +
-    `  1. 查看逐次产物：cw report --unit ${unitId}（各 runId 的 report.json 与 stdout/stderr）\n` +
-    "  2. 判定为 flake（测试随机性不稳定）→ 修测试稳定性，或声明 nondeterministic 后重提 spec 并重新过审：\n" +
-    `     cw evidence submit --kind spec --unit ${unitId} --file spec.json（新 spec 提交即清零连挂计数）\n` +
-    "  3. 判定为真 bug → 人工修复实现后重新提交 build 证据并 cw verify\n" +
-    "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
-  );
-}
-
-/**
- * spec-review 打回活锁转人工指引（mx-1 MF2 引入，mx-3 计数改按打回代数，mx-4
- * 预算参数化：阈值经 --max-spec-rejects 注入，默认 10——防 ping-pong：fail →
- * designer 修 → fail → 修 → … 的无限循环对机器无解）。列出各代打回的首条 fail
- * verdict comment 摘要（审计事实，同代试探性提交不重复列出）与人工处置动作；
- * 文案同时含已达代数与预算值（mx-4 §4：人工能看出「已达预算 M 代」）。出口形态
- * 复用 fx-2 上限出口的「审计-不喂-idle」模式：停止派发后不再产生新事件——若树内
- * 无其他可推进目标，空转由 maxIdleMs 收束退出；人工处置（人工以 reviewer 身份
- * 提交 pass verdict，或改写后人工过审）写入账本后 unit 离开 created 态，投影
- * 自然消失，运行中的循环下轮自愈。
- */
-function specDeadlockEscalationMessage(
-  rootId: string,
-  unitId: string,
-  failComments: readonly string[],
-  maxSpecRejects: number,
-): string {
-  const commentLines = failComments.map(
-    (comment, i) => `  - 第 ${i + 1} 代打回的意见：${comment}`,
-  );
-  return (
-    `cw run: unit "${unitId}" 的 spec-review 已打回 ${failComments.length} 代（已达打回代数预算 ${maxSpecRejects} 代，重提 spec 不清零代数累计）` +
-    "——判定 designer-reviewer 打回循环活锁，停止对该 unit 派发（继续循环只会重演），转人工处置" +
-    "（canon：不自动换模型重试，防静默降级；本循环继续处理其余 unit）：\n" +
-    commentLines.join("\n") +
-    "\n人工处置动作（按序）：\n" +
-    `  1. 人工接手该 unit：cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
-    `  2. 人工审查该 spec：cw report --unit ${unitId}（原文副本见 evidence 目录 attachments/）\n` +
-    `  3. 处置三选一：人工修 spec 重提后由你以 reviewer 身份判定（cw evidence submit --kind spec --unit ${unitId} --file spec.json + ` +
-    `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer——mx-3 起 spec-review 必须携带 --role reviewer）；` +
-    "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工提交 pass verdict\n" +
-    "处置完成（unit 离开 created 态）投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
-  );
-}
-
-/**
- * 解析失败回炉活锁转人工指引（mx5-2，设计 mx-5 D2 防活锁独立预算）：两轮完整
- * 回炉（连挂 ≥2 → designer 修 spec → 新 spec 过审 → verify 仍解析失败连挂 ≥2）
- * 走满后判定 spec/brief 层有更深问题——继续派 designer 只会重演（每轮回炉都
- * 清空连挂再重建），停派转人工。列出当前周期的连挂事实（条目 id + 逐次 runId
- * ——原文在 <id>.report.json 顶层 reason，cw report 可查）与人工处置动作；出
- * 口形态复用 fx-2 上限出口的「审计-不喂-idle」模式（停派后无新 VerifyRan 喂活
- * idle 判定，空转由 maxIdleMs 收束）；人工处置（新 spec 过审 / 人工关闭）写入
- * 账本后投影自然消失，运行中的循环下轮自愈。
- */
-function specContractDeadlockEscalationMessage(
-  rootId: string,
-  unitId: string,
-  facts: SpecContractFacts,
-): string {
-  const factLines = facts.streaks.map(
-    (f) =>
-      `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次解析失败（runId：${f.runIds.join("、")}）`,
-  );
-  return (
-    `cw run: unit "${unitId}" 的验收命令解析失败已 2 代回炉仍连挂 ≥2（两轮「连挂 → designer 修 spec → 过审 → verify 检验」完整走完；` +
-    "代数累计不因重提清理）——判定 spec/任务书层有更深问题，停止对该 unit 派发（不再派 designer，防回炉活锁），" +
-    "转人工处置（本循环继续处理其余 unit）：\n" +
-    factLines.join("\n") +
-    "\n人工处置动作（恢复指引，按序）：\n" +
-    `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
-    `  2. 查看逐次解析失败原文：cw report --unit ${unitId}（各 runId 目录的 <验收id>.report.json 顶层 reason）\n` +
-    `  3. 人工修正验收命令契约（e2e 型补标记行产出；vitest 型删冲突 flag——cw 自动追加 --reporter=json）后重提并以 reviewer 身份过审：` +
-    `cw evidence submit --kind spec --unit ${unitId} --file spec.json + cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer；` +
-    "或判定任务书本身不可行，人工关闭/重构该 unit\n" +
-    "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
-  );
-}
-
-/**
- * flake 出声的稳定签名（fx-6 X5）：排序后的连挂 acceptanceId 集合（dedup map 按
- * unitId 键控，签名语义 = unitId + 该集合）。「本质事实变化才重出」——同一组
- * acceptanceId 连挂时 runId 单调追加 / 连挂计数增长只会改消息文本（四跑异常-1：
- * 连挂 runId 增长致 19 条重复出声，纯噪音），不构成重出理由；新增条目进入连挂
- * （本质变化）时集合变化 → 重出一次（消息含新条目）。
- */
-function flakeAnnounceSignature(facts: readonly FlakeReviewFact[]): string {
-  return facts.map((f) => f.acceptanceId).sort().join(",");
-}
-
-/**
- * 回炉活锁出声的稳定签名（fx-6 X5）：flake 同款集合 + 代数档（<上限 / ≥上限
- * 二值档）。本维度只在代数达上限后出声，档位字段保持签名语义完整——上限内的
- * 代数增长与 runId 追加一样不是重出理由，跨越档位才是本质变化。runIds 与恢复
- * 指引仍在消息文本内（信息不降级），签名与消息分离（dedup map 只存签名串）。
- */
-function contractAnnounceSignature(facts: SpecContractFacts): string {
-  const ids = facts.streaks.map((s) => s.acceptanceId).sort().join(",");
-  const band =
-    facts.generations >= SPEC_CONTRACT_MAX_GENERATIONS ? "capped" : "under";
-  return `${ids}|${band}`;
-}
-
-/**
- * 三类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
- * 打回活锁）：事实来自账本重放（flakeReviewFacts / specContractFacts /
- * specReviewFailCounts——全部「重提清连挂、代数类计数不清零」语义），人工处置
- * 写入新事件后投影自然消失。出声去重分两档（fx-6 X5）：flake 与回炉活锁按稳定
- * 签名（unitId + 排序后 acceptanceId 集合，回炉再加代数档）——连挂 runId 单调
- * 追加只改文本不改本质事实，不重出；spec 打回维度维持完整消息文本比较（mx-3
- * 语义）——各代打回意见不同是有意重出（新代意见是新事实）。消息文本本身不变
- * （仍含 runIds 与恢复指引）。返回三类事实映射供 computeDispatchTargets 复用
- * （派发排除与出声同口径同源，不重放两遍）。其他 root 的 unit（同一账本多
- * root）不在本 run 职责内，跳过。
- */
-function announceManualEscalations(
-  rootId: string,
-  events: readonly LedgerEvent[],
-  subtreeIds: ReadonlySet<string>,
-  maxSpecRejects: number,
-  dedup: {
-    flake: Map<string, string>;
-    contract: Map<string, string>;
-    spec: Map<string, string>;
-  },
-): {
-  flakes: ReadonlyMap<string, readonly FlakeReviewFact[]>;
-  contractFacts: ReadonlyMap<string, SpecContractFacts>;
-  specFails: ReadonlyMap<string, number>;
-} {
-  const flakes = flakeReviewFacts(events);
-  for (const [unitId, facts] of flakes) {
-    if (!subtreeIds.has(unitId)) {
-      continue;
-    }
-    const signature = flakeAnnounceSignature(facts);
-    if (dedup.flake.get(unitId) !== signature) {
-      dedup.flake.set(unitId, signature);
-      emitErr(flakeEscalationMessage(rootId, unitId, facts));
-    }
-  }
-  // mx5-2 specContractDeadlock：解析失败连挂 ≥2 且回炉代数达上限（两代完整回炉
-  // 仍失败）→ 停派转人工（computeDispatchTargets 同口径不派）
-  const contractFacts = specContractFacts(events);
-  for (const [unitId, facts] of contractFacts) {
-    if (
-      !subtreeIds.has(unitId) ||
-      facts.streaks.length === 0 ||
-      facts.generations < SPEC_CONTRACT_MAX_GENERATIONS
-    ) {
-      continue;
-    }
-    const signature = contractAnnounceSignature(facts);
-    if (dedup.contract.get(unitId) !== signature) {
-      dedup.contract.set(unitId, signature);
-      emitErr(specContractDeadlockEscalationMessage(rootId, unitId, facts));
-    }
-  }
-  // mx-1 MF2 specReviewDeadlock：spec-review 打回代数 ≥ 预算（mx-4 参数化）。
-  // 去重维持完整消息文本比较（fx-6 X5 不改本维度）：各代打回意见内嵌在消息里，
-  // 代数从 N 到 N+1 意味着新代 fail 意见——是有意重出
-  const specFails = specReviewFailCounts(events);
-  for (const [unitId, failCount] of specFails) {
-    if (!subtreeIds.has(unitId) || failCount < maxSpecRejects) {
-      continue;
-    }
-    const message = specDeadlockEscalationMessage(
-      rootId,
-      unitId,
-      specReviewFailComments(events, unitId),
-      maxSpecRejects,
-    );
-    if (dedup.spec.get(unitId) !== message) {
-      dedup.spec.set(unitId, message);
-      emitErr(message);
-    }
-  }
-  return { flakes, contractFacts, specFails };
-}
 
 /**
  * 抢答警告行（mx-1 S7；mx-3 豁免收紧）：spec-review verdict 入账时刻，该 unit
