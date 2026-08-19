@@ -952,13 +952,40 @@ function specContractDeadlockEscalationMessage(
 }
 
 /**
+ * flake 出声的稳定签名（fx-6 X5）：排序后的连挂 acceptanceId 集合（dedup map 按
+ * unitId 键控，签名语义 = unitId + 该集合）。「本质事实变化才重出」——同一组
+ * acceptanceId 连挂时 runId 单调追加 / 连挂计数增长只会改消息文本（四跑异常-1：
+ * 连挂 runId 增长致 19 条重复出声，纯噪音），不构成重出理由；新增条目进入连挂
+ * （本质变化）时集合变化 → 重出一次（消息含新条目）。
+ */
+function flakeAnnounceSignature(facts: readonly FlakeReviewFact[]): string {
+  return facts.map((f) => f.acceptanceId).sort().join(",");
+}
+
+/**
+ * 回炉活锁出声的稳定签名（fx-6 X5）：flake 同款集合 + 代数档（<上限 / ≥上限
+ * 二值档）。本维度只在代数达上限后出声，档位字段保持签名语义完整——上限内的
+ * 代数增长与 runId 追加一样不是重出理由，跨越档位才是本质变化。runIds 与恢复
+ * 指引仍在消息文本内（信息不降级），签名与消息分离（dedup map 只存签名串）。
+ */
+function contractAnnounceSignature(facts: SpecContractFacts): string {
+  const ids = facts.streaks.map((s) => s.acceptanceId).sort().join(",");
+  const band =
+    facts.generations >= SPEC_CONTRACT_MAX_GENERATIONS ? "capped" : "under";
+  return `${ids}|${band}`;
+}
+
+/**
  * 三类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
  * 打回活锁）：事实来自账本重放（flakeReviewFacts / specContractFacts /
  * specReviewFailCounts——全部「重提清连挂、代数类计数不清零」语义），人工处置
- * 写入新事件后投影自然消失；出声按「消息文本 + unitId」复合签名去重（mx-3 模式
- * ——新事实改变文本时重新出声，修复 M4 gate §5.5 消息重复打印）。返回三类事实
- * 映射供 computeDispatchTargets 复用（派发排除与出声同口径同源，不重放两遍）。
- * 其他 root 的 unit（同一账本多 root）不在本 run 职责内，跳过。
+ * 写入新事件后投影自然消失。出声去重分两档（fx-6 X5）：flake 与回炉活锁按稳定
+ * 签名（unitId + 排序后 acceptanceId 集合，回炉再加代数档）——连挂 runId 单调
+ * 追加只改文本不改本质事实，不重出；spec 打回维度维持完整消息文本比较（mx-3
+ * 语义）——各代打回意见不同是有意重出（新代意见是新事实）。消息文本本身不变
+ * （仍含 runIds 与恢复指引）。返回三类事实映射供 computeDispatchTargets 复用
+ * （派发排除与出声同口径同源，不重放两遍）。其他 root 的 unit（同一账本多
+ * root）不在本 run 职责内，跳过。
  */
 function announceManualEscalations(
   rootId: string,
@@ -980,10 +1007,10 @@ function announceManualEscalations(
     if (!subtreeIds.has(unitId)) {
       continue;
     }
-    const message = flakeEscalationMessage(rootId, unitId, facts);
-    if (dedup.flake.get(unitId) !== message) {
-      dedup.flake.set(unitId, message);
-      emitErr(message);
+    const signature = flakeAnnounceSignature(facts);
+    if (dedup.flake.get(unitId) !== signature) {
+      dedup.flake.set(unitId, signature);
+      emitErr(flakeEscalationMessage(rootId, unitId, facts));
     }
   }
   // mx5-2 specContractDeadlock：解析失败连挂 ≥2 且回炉代数达上限（两代完整回炉
@@ -997,13 +1024,15 @@ function announceManualEscalations(
     ) {
       continue;
     }
-    const message = specContractDeadlockEscalationMessage(rootId, unitId, facts);
-    if (dedup.contract.get(unitId) !== message) {
-      dedup.contract.set(unitId, message);
-      emitErr(message);
+    const signature = contractAnnounceSignature(facts);
+    if (dedup.contract.get(unitId) !== signature) {
+      dedup.contract.set(unitId, signature);
+      emitErr(specContractDeadlockEscalationMessage(rootId, unitId, facts));
     }
   }
-  // mx-1 MF2 specReviewDeadlock：spec-review 打回代数 ≥ 预算（mx-4 参数化）
+  // mx-1 MF2 specReviewDeadlock：spec-review 打回代数 ≥ 预算（mx-4 参数化）。
+  // 去重维持完整消息文本比较（fx-6 X5 不改本维度）：各代打回意见内嵌在消息里，
+  // 代数从 N 到 N+1 意味着新代 fail 意见——是有意重出
   const specFails = specReviewFailCounts(events);
   for (const [unitId, failCount] of specFails) {
     if (!subtreeIds.has(unitId) || failCount < maxSpecRejects) {
@@ -1080,6 +1109,58 @@ function assertPositive(name: string, value: number): void {
     throw new Error(
       `runLoop: 非法参数 ${name}=${value}：须为正数。恢复动作：检查 cw run 的对应 flag（--poll-ms / --max-idle-ms / --max-concurrency / --max-spec-rejects）取值。`,
     );
+  }
+}
+
+/**
+ * spawn 结算的公共出声（fx-6 X3a 从常规结算路径抽出）：移出 inFlight + reviewer
+ * flight 封窗（mx-3 S7）+ 按四态打印结算行（TIMEOUT 的停派态描述 = mx5-2 D6
+ * 诚实化，判定输入 events 由调用方给——常规路径传结算时刻重读的账本，收束路径
+ * 传本轮已读账本）。抽出的动机：末位 spawn（如 root exec-reviewer）退出与 poll
+ * 到点竞争，race 的 sleep 分支先返回时循环顶部先命中 root closed 收束，结算行
+ * 从未打印（M4 gate 四跑异常-2——session/verdict 在场仅缺行）；收束路径复用本
+ * 函数只补打印，收束行为零变更。
+ */
+function settleFlightOutput(
+  inFlight: InFlightSpawn[],
+  flight: InFlightSpawn,
+  result: SpawnResult,
+  events: readonly LedgerEvent[],
+): void {
+  const index = inFlight.indexOf(flight);
+  if (index >= 0) {
+    inFlight.splice(index, 1);
+  }
+  if (flight.reviewerWindow !== undefined) {
+    flight.reviewerWindow.settledAt = Date.now();
+  }
+  const stopState =
+    result.exitCode === "TIMEOUT"
+      ? stoppedDispatchState(events, flight.unitId)
+      : null;
+  emit([
+    `[runner] ${new Date().toISOString()} ${flight.role} unit "${flight.unitId}" 退出 ${describeExit(result.exitCode, stopState)}`,
+  ]);
+}
+
+/**
+ * 收束路径的末位结算行补打印（fx-6 X3a）：对 inFlight 中已自然退出的 spawn 逐个
+ * 打印结算行。非阻塞——sleep(0) 的 macrotask 兜底 vs wait() 的微任务：已 settle
+ * 的 wait()（两适配器均 waitPromise 缓存式，重复调用返回同一 promise）必先到达；
+ * 未退出的 spawn 返回 null 留给 killAll，等待窗口 ≤ 一个空转 tick。
+ */
+async function reportSettledFlights(
+  inFlight: InFlightSpawn[],
+  events: readonly LedgerEvent[],
+): Promise<void> {
+  for (const flight of [...inFlight]) {
+    const settled = await Promise.race<SpawnResult | null>([
+      flight.handle.wait(),
+      sleep(0).then(() => null),
+    ]);
+    if (settled !== null) {
+      settleFlightOutput(inFlight, flight, settled, events);
+    }
   }
 }
 
@@ -1167,14 +1248,16 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // 会与人工操作冲突；进展清零只作用于计数，不撤销转人工）
   const timeoutStreaks = new Map<string, TimeoutStreak>();
   const escalated = new Map<string, AgentRole>();
-  // rv-5 flake 转人工的出声去重（mx-3 改按「消息文本 + unitId」复合签名——文本
-  // 含 unitId 与连挂事实，同签名不重播；人工处置后连挂消失、再连挂（新事实改变
-  // 文本）时重新出声。修复 M4 gate §5.5：in-flight developer 的第三次连挂使旧
-  // runId 签名失效导致整段消息重复打印）
+  // rv-5 flake 转人工的出声去重（fx-6 X5 改稳定签名：map 键 unitId + 值存排序后
+  // acceptanceId 集合串——同一组条目连挂时 runId 单调追加不再重出，新增条目进入
+  // 连挂才重出；修复 M4 gate 四跑异常-1「连挂 runId 增长致消息重复出声 19 条」。
+  // 消息文本不变（含 runIds 与恢复指引），签名与消息分离）
   const announcedFlake = new Map<string, string>();
-  // mx-1 MF2 spec 打回活锁转人工的出声去重（mx-3 同样改消息文本签名，语义同上）
+  // mx-1 MF2 spec 打回活锁转人工的出声去重（维持 mx-3 完整消息文本签名：各代
+  // 打回意见不同是有意重出，fx-6 X5 明确不改本维度）
   const announcedDeadlock = new Map<string, string>();
-  // mx5-2 解析失败回炉活锁转人工的出声去重（消息文本签名，语义同上）
+  // mx5-2 解析失败回炉活锁转人工的出声去重（fx-6 X5 改稳定签名：排序后条目
+  // 集合 + 代数档，runId 追加与上限内代数增长不重出）
   const announcedContractDeadlock = new Map<string, string>();
   // mx-1 S7 抢答警告的去重水位：unitId → 已评估过的最高 spec-review verdict seq。
   // 初始值取本 run 启动时的账本现状（重跑场景下历史 verdict 不追警告，只看本
@@ -1248,7 +1331,11 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       // 「子全 closed」是本循环的补偿逻辑（当时 deriveStatus 够不到子节点），已
       // 归位 fold 层——root 的 exec-review 先于子收尾入账时循环不退，子的
       // reviewer 继续派发，无进展由 maxIdleMs 兜底
-      // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收
+      // 正常路径 in-flight 已空；外部（如人工）直接推 closed 时的兜底回收。
+      // fx-6 X3a：killAll 前先补打印已退出 spawn 的结算行——race 的 sleep 分支
+      // 先到点而 spawn 已退出时，末位（如 root exec-reviewer）的结算行会在此
+      // 收束分支被跳过（四跑异常-2），此处兜底出声
+      await reportSettledFlights(inFlight, events);
       killAll(inFlight);
       // 退出清尾：run 已结束，本轮刚收集的 closed 子现场一并回收（延迟窗口语义
       // 已过点——产出已 merge 进 root 分支且证据链闭合，D5：现场无保留价值；
@@ -1299,8 +1386,6 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
     // fail 打回流转（fail 有 specFixPending 收敛出口）→ stderr 一行警告（不阻断
     // 不入账）。verdict 的入账 ts 取自原始事件流（fold 投影不含 ts），与本进程的
-    // 窗口时刻同机同钟可比
-    // verdict 的入账 ts 取自原始事件流（fold 投影不含 ts），与本进程的
     // 窗口时刻同机同钟可比
     const verdictTsBySeq = specVerdictTsBySeq(events);
     for (const unit of subtreeUnits(projection, opts.rootId)) {
@@ -1465,26 +1550,19 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
     ]);
 
     if (finished !== null) {
-      inFlight.splice(inFlight.indexOf(finished.flight), 1);
-      // mx-3 S7：reviewer flight 结算时刻封窗（此后到达的 verdict 属「晚到提交」，
-      // 抢答检查按窗口判定会告警）
-      if (finished.flight.reviewerWindow !== undefined) {
-        finished.flight.reviewerWindow.settledAt = Date.now();
-      }
       // D6（mx5-2）：TIMEOUT 结算行诚实化——该 unit 此刻若处于停派态（转人工
       // 维度），「可重派」承诺不兑现，改述真实行为。只在 TIMEOUT 时现算（其余
       // 退出码的消费口径不变）；结算时刻重读账本，被 kill 的 agent 死前的处置
-      // 写入已可见（stoppedDispatchState 是 frontier 的只读投影）
-      const stopState =
+      // 写入已可见（stoppedDispatchState 是 frontier 的只读投影）。
+      // fx-6 X3a：出声部分抽出 settleFlightOutput（与收束路径共用）
+      settleFlightOutput(
+        inFlight,
+        finished.flight,
+        finished.result,
         finished.result.exitCode === "TIMEOUT"
-          ? stoppedDispatchState(
-              new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll(),
-              finished.flight.unitId,
-            )
-          : null;
-      emit([
-        `[runner] ${new Date().toISOString()} ${finished.flight.role} unit "${finished.flight.unitId}" 退出 ${describeExit(finished.result.exitCode, stopState)}`,
-      ]);
+          ? new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll()
+          : events,
+      );
       if (finished.result.exitCode === "SPAWN_ERROR") {
         killAll(inFlight);
         await emitExitOutput(

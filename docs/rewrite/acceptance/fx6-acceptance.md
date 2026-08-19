@@ -52,4 +52,4 @@ G1-G6 独立复跑 + 红性抽查（删签名去重改回文本比较 → G1 红
 
 ## 8. status
 
-pending → building（developer 派发时由主 agent 更新）
+pending → building（2026-08-20 developer 交付：4 文件 +123/-44 + 新测试 8 用例，全量 70 文件 551 绿；红性自验 = 改回文本比较 G1 红且「r3 追加重出」精确复现四跑异常-1 形态；rv5 套件零迁移；偏离 3 处备案——X4 措辞因 mx5-3 套件 B2 锁「恰为 json」采用等义精确句、G2 额外验证中间态增强断言、lint 1 warning 为 loop.ts max-lines 存量非本次引入；待 verifier）

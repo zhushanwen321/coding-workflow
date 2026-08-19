@@ -217,9 +217,9 @@ describe("E2E real：human 模式全链（runner 子进程 + 测试进程扮演�
     // 本行 = 本轮 clean 已完成且 developer(impl) 已入 inFlight（下次 reset 要等
     // VerifyRan(impl) 后的 reviewer 派发，那时 app.js 已 commit，tracked 对
     // reset/clean 免疫）
-    const BUILDER_IMPL_DISPATCH_LINE = '派发 developer → unit "impl"';
+    const DEVELOPER_IMPL_DISPATCH_LINE = '派发 developer → unit "impl"';
     const wtDeadline = Date.now() + 10_000;
-    while (!readFileSync(outPath, "utf-8").includes(BUILDER_IMPL_DISPATCH_LINE)) {
+    while (!readFileSync(outPath, "utf-8").includes(DEVELOPER_IMPL_DISPATCH_LINE)) {
       if (Date.now() > wtDeadline) {
         throw new Error(
           `developer(impl) 派发行未在 10s 内出现（runner 未派发？stdout 末尾：${readFileSync(outPath, "utf-8").slice(-400)}`,
