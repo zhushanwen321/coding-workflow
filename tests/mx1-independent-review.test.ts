@@ -12,6 +12,7 @@
  *      同代只计 1 次打回，不再 deadlock（specFixPending 正常派 designer，见
  *      mx3-generation-count G1）；形态②「fail → 重提（改 1 字节）→ fail」= 2 代
  *      打回，保持 specReviewDeadlock + escalation 含各代 comment 摘要 + 停止派发
+ *      （mx4 迁移：默认预算 10，形态② runner 注入 --max-spec-rejects 2 快速构造）
  *   T3 抢答警告：无 in-flight reviewer 时人为提交 spec-review verdict → stderr
  *      警告行（不阻断，循环继续）
  *   T4 派发 gate：designer spawn 存活期间（慢完成信号）frontier 已出现
@@ -373,7 +374,7 @@ describe("mx-1 T1 打回循环全链：reviewer fail → specFixPending 派 desi
 // T2：deadlock（mx3 语义变化：按打回代数计数——同代双 fail 只计 1 代）
 // ================================================================
 
-/** T2 形态②共用断言：escalation 出声（含各代 comment 摘要）+ frontier 可见 + 停止派发 */
+/** T2 形态②共用断言：escalation 出声（含各代 comment 摘要）+ 只读默认视图 + 停止派发 */
 async function assertDeadlock(
   repoDir: string,
   runner: RunnerCapture,
@@ -385,10 +386,13 @@ async function assertDeadlock(
   for (const comment of comments) {
     expect(escalation).toContain(comment);
   }
-  // frontier --json 可见（与派发判定同一出处）
+  // frontier --json 恒用默认 10（mx4 §4：只读命令无 flag 概念，投影展示语义）——
+  // 2 代在默认口径下是 specFixPending；runner 侧转人工由注入的 --max-spec-rejects 2 判定
   const frontier = runCli(repoDir, ["frontier", "--json"]);
   expect(frontier.code).toBe(0);
-  expect((JSON.parse(frontier.stdout) as { specReviewDeadlock: string[] }).specReviewDeadlock).toContain("demo");
+  const groups = JSON.parse(frontier.stdout) as { specReviewDeadlock: string[]; specFixPending: string[] };
+  expect(groups.specReviewDeadlock).not.toContain("demo");
+  expect(groups.specFixPending).toContain("demo");
   // 停止派发：escalation 出声后 loop 继续 poll ≥3 轮（200ms poll × 1.2s ≥ 5 轮）无新派发
   const dispatchNeedles = ['派发 designer → unit "demo"', '派发 reviewer → unit "demo"', '派发 builder → unit "demo"'];
   const countDispatches = () =>
@@ -416,8 +420,9 @@ describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打�
       expect(
         runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态一第2次fail：仍未补A3", "--role", "reviewer"]).code,
       ).toBe(0);
-      // mx3 语义变化（原断言反转）：同一版 spec 的第二条 fail 仍是 1 代打回（<2 阈值）
-      // ——designer 不被试探性提交误杀，specFixPending 出口继续有效
+      // mx3 语义变化（原断言反转）：同一版 spec 的第二条 fail 仍是 1 代打回
+      // （< 阈值——mx4 后默认 10）——designer 不被试探性提交误杀，specFixPending
+      // 出口继续有效
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       expect(runner.stderrText(), "同代双 fail 不触发 deadlock escalation").not.toContain("打回循环活锁");
       const frontier = runCli(repoDir, ["frontier", "--json"]);
@@ -437,8 +442,9 @@ describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打�
 
 describe("mx-1 T2 deadlock 形态②：fail → 重提（改 1 字节）→ fail（代数累计不清零）", () => {
   distIt("fail → designer 重提 1 字节新 spec → 再 fail → specReviewDeadlock（2 代打回，重提不清零）", async () => {
+    // mx4 迁移：默认打回预算 10，注入 --max-spec-rejects 2 快速构造 2 代触顶
     const repoDir = makeScenario("t2-resubmit-fail", "demo");
-    const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
+    const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000", "--max-spec-rejects", "2"]);
     try {
       // 同步点：等首轮 designer 派发再提交（计数断言的锚，见形态①注释）
       await waitText(runner.stdoutText, '派发 designer → unit "demo"', 10_000);

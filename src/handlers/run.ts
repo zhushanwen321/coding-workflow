@@ -1,7 +1,9 @@
 /**
  * `cw run --root <unitId> [--spawn human|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>]
- * [--reviewer-model <m>]`（u7 验收文档锁定：--spawn 路由到后端无关调度循环
- * src/runner/loop.ts + AgentSpawn 适配器；mx-1 增补 --reviewer-model）。
+ * [--reviewer-model <m>] [--max-spec-rejects <n>]`（u7 验收文档锁定：--spawn 路由到后端无关调度循环
+ * src/runner/loop.ts + AgentSpawn 适配器；mx-1 增补 --reviewer-model；mx-4 增补
+ * --max-spec-rejects——runner 侧 spec 打回代数转人工预算，只影响本循环判定，
+ * 只读命令恒用默认值）。
  *
  * M1 起 --spawn 缺省 human 的语义 = 循环 + humanAdapter（u6b）；M0 的 human-loop.ts
  * 直连路径退役（文件与导出保留兼容既有单测，本文件不再调用）。
@@ -12,6 +14,7 @@
  * 自然生效，无需改代码。
  */
 import type { CommandContext } from "../dispatch.js";
+import { SPEC_REVIEW_DEADLOCK_FAILS } from "../readonly/frontier.js";
 import { loadLedger } from "../readonly/load.js";
 import { runLoop } from "../runner/loop.js";
 import type { AgentSpawnAdapter } from "../runner/spawn/types.js";
@@ -106,7 +109,7 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
   if (rootId === undefined) {
     return fail(
       "cw run: 缺少 --root <unitId>。恢复动作：cw run --root <rootUnitId> [--spawn human|pi] " +
-        "[--poll-ms <毫秒>] [--max-idle-ms <毫秒>] [--max-concurrency <n>]。",
+        "[--poll-ms <毫秒>] [--max-idle-ms <毫秒>] [--max-concurrency <n>] [--max-spec-rejects <n>]。",
     );
   }
 
@@ -132,6 +135,17 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
   );
   if (!maxConcurrency.ok) {
     return fail(maxConcurrency.error);
+  }
+  // mx-4：spec 打回代数转人工预算（runner 判定输入；默认值单一事实源 =
+  // frontier.ts 的 SPEC_REVIEW_DEADLOCK_FAILS）。只影响本循环，只读命令恒用默认
+  const maxSpecRejects = parsePositiveIntFlag(
+    ctx.argv["max-spec-rejects"],
+    "--max-spec-rejects",
+    SPEC_REVIEW_DEADLOCK_FAILS,
+    "代",
+  );
+  if (!maxSpecRejects.ok) {
+    return fail(maxSpecRejects.error);
   }
 
   // mx-1：reviewer 异源模型（可选）。flag 优先于进程环境 CW_REVIEWER_MODEL
@@ -166,6 +180,7 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
     pollMs: poll.value,
     maxIdleMs: maxIdle.value,
     maxConcurrency: maxConcurrency.value,
+    maxSpecRejects: maxSpecRejects.value,
     ...(reviewerModel !== undefined ? { reviewerModel } : {}),
   });
 }
@@ -173,8 +188,11 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
 /**
  * 正整数数值 flag 解析（与 verify.ts 的 --timeout-ms 同一套口径，common.ts 属 u2
  * 已验收领地不为 run 扩接口）：number（minimist 数字形态）直接用；纯数字 string 转
- * number；未提供用默认；其余（裸 flag 的 boolean true、非数字、≤0）报错——静默回退
- * 默认值会把显式输入变成 5s/30min 挂死，比报错更糟。
+ * number；未提供用默认；其余（裸 flag 的 boolean true、非数字、≤0、非整数量级——
+ * 0.5/2.5 等 minimist 数值强转形态绕过字符串正则，mx4 打回 F2 收口）报错——静默
+ * 回退默认值会把显式输入变成 5s/30min 挂死，比报错更糟。1e2 类科学计数法强转后
+ * 为整数值（100）保留合法：拒绝的是非整数量级，不是书写形态（--max-idle-ms
+ * 共用本解析器，正小数毫秒同口径拒绝——与「正整数」文案一致，u4a 口径顺带收口）。
  */
 function parsePositiveIntFlag(
   raw: unknown,
@@ -191,7 +209,7 @@ function parsePositiveIntFlag(
       : typeof raw === "string" && /^\d+$/.test(raw)
         ? Number(raw)
         : Number.NaN;
-  if (Number.isFinite(value) && value > 0) {
+  if (Number.isInteger(value) && value > 0) {
     return { ok: true, value };
   }
   return {

@@ -14,7 +14,8 @@
  *     （mx-1 MF1：fail 后的修复出口；fail verdict 的 comment 是任务书的失败事实
  *     来源；同代后续 fail 不改变本谓词——mx-3 按代计数后同代双 fail 仍是
  *     specFixPending 派 designer，不再误判 deadlock）
- *   - specReviewDeadlock：created 且本账本内该 unit 的 spec-review 打回代数 ≥2
+ *   - specReviewDeadlock：created 且本账本内该 unit 的 spec-review 打回代数 ≥ 阈值
+ *     （默认 10；mx-4 起可经 computeFrontier opts.maxSpecRejects 注入运行策略值）
  *     （mx-3 语义迁移：从「fail 总数」改「打回代数」——同条 SpecSubmitted 之后
  *     多条 role=reviewer fail 只计 1 代；MF2 教训由代数累计保持：重提不清零，
  *     fail → 重提 → fail = 2 代 = deadlock）——防 ping-pong 活锁的转人工维度，
@@ -64,7 +65,7 @@ export interface FrontierGroups {
   specReady: string[];
   specReviewPending: string[];
   specFixPending: string[];
-  /** mx-1/mx-3：spec-review 打回代数 ≥2 的 created unit（转人工，机器派发无出口） */
+  /** mx-1/mx-3：spec-review 打回代数 ≥ 阈值（默认 10，mx-4）的 created unit（转人工，机器派发无出口） */
   specReviewDeadlock: string[];
   missingChildren: string[];
   integrationDrift: string[];
@@ -227,12 +228,17 @@ export function consecutiveIntegrationFails(
 // ---- mx-1：spec-review 打回循环的防活锁投影（specReviewDeadlock 维度判定输入） ----
 
 /**
- * spec-review 打回代数的转人工阈值（mx-1 MF2 引入，mx-3 改按代数）：同一 unit
- * 累计 2 个打回代数（designer 修出的第二版 spec 仍被打回）即判 designer-reviewer
- * 打回循环活锁，停止机器派发转人工。取 2 而非 3+：第二代的 fail 已证明「修一轮
- * 仍不过」——继续循环只会烧 token。
+ * spec-review 打回代数的转人工阈值（mx-1 MF2 引入，mx-3 改按代数，mx-4 放宽 2→10）：
+ * 同一 unit 累计 10 个打回代数（designer 修出的第 10 版 spec 仍被打回）即判
+ * designer-reviewer 打回循环活锁，停止机器派发转人工。活锁防护语义保留（mx-1
+ * MF2）：真 ping-pong 活锁烧穿 10 代同样触顶（每轮 ≥2 spawn 成本可控），重提
+ * 不清零代数累计。放宽依据（用户 2026-08-19 裁决，M4 gate 二跑实证）：
+ * leaf-renderer 被 reviewer 两代全新实质意见打回（v1 验收真空 → v2 e2e 脚本
+ * 未定义）即触顶转人工——2 代预算对「reviewer 真意见非活锁」场景过紧，designer
+ * 未获充分自愈空间。runner 侧可经 cw run --max-spec-rejects 注入更紧的运行
+ * 策略值；只读命令（frontier/status）恒用本默认值（投影展示语义）。
  */
-export const SPEC_REVIEW_DEADLOCK_FAILS = 2;
+export const SPEC_REVIEW_DEADLOCK_FAILS = 10;
 
 /**
  * 各 unit 的 spec-review 打回代数（mx-3 语义迁移：从「fail verdict 总数」改为
@@ -365,7 +371,9 @@ export function flakeReviewFacts(
  * 上限判定退化为「无 fail 记录」——仅供无账本上下文的纯函数调用；命令与 loop
  * 消费时必须传入真实计数，否则 integrationDrift / integrationReady 判定分叉。
  * flakeReviewFacts 同理：省略时 flakeReview 维度恒空；specReviewFailCounts 同理：
- * 省略时 specReviewDeadlock 维度恒空（纯函数调用方）。
+ * 省略时 specReviewDeadlock 维度恒空（纯函数调用方）。maxSpecRejects（mx-4）：
+ * specReviewDeadlock 的打回代数阈值——缺省回落常量 SPEC_REVIEW_DEADLOCK_FAILS
+ * （默认 10）；cw run 经 --max-spec-rejects 注入运行策略值，只读命令恒用默认。
  *
  * created 态内 spec 相关维度的互斥推导（mx-1 重排，if/else 序保证单组归属）：
  * specs===0 → specReady；failCount ≥ 阈值 → specReviewDeadlock（优先于审/修，
@@ -380,6 +388,8 @@ export function computeFrontier(
     consecutiveIntegrationFails?: ReadonlyMap<string, number>;
     flakeReviewFacts?: ReadonlyMap<string, readonly FlakeReviewFact[]>;
     specReviewFailCounts?: ReadonlyMap<string, number>;
+    /** specReviewDeadlock 的打回代数阈值（mx-4；缺省回落 SPEC_REVIEW_DEADLOCK_FAILS） */
+    maxSpecRejects?: number;
   },
 ): FrontierGroups {
   const groups: FrontierGroups = {
@@ -397,14 +407,13 @@ export function computeFrontier(
   const fails = opts?.consecutiveIntegrationFails;
   const flakes = opts?.flakeReviewFacts;
   const specFails = opts?.specReviewFailCounts;
+  const maxSpecRejects = opts?.maxSpecRejects ?? SPEC_REVIEW_DEADLOCK_FAILS;
   for (const unit of projection.units.values()) {
     const status = unitStatus(unit);
     if (status === "created") {
       if (unit.specs.length === 0) {
         groups.specReady.push(unit.unitId);
-      } else if (
-        (specFails?.get(unit.unitId) ?? 0) >= SPEC_REVIEW_DEADLOCK_FAILS
-      ) {
+      } else if ((specFails?.get(unit.unitId) ?? 0) >= maxSpecRejects) {
         groups.specReviewDeadlock.push(unit.unitId);
       } else if (latestSpecReviewAfterLastSpec(unit) === null) {
         groups.specReviewPending.push(unit.unitId);

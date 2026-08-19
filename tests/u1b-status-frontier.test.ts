@@ -426,7 +426,7 @@ describe("frontier（验收#2）", () => {
     });
     expect(ready.specReviewPending).toContain("rr");
     expect(ready.specFixPending).toContain("sf");
-    expect(ready.specReviewDeadlock).toEqual([]); // 各 1 次 fail < 阈值 2
+    expect(ready.specReviewDeadlock).toEqual([]); // 各 1 次 fail < 阈值（mx4 后默认 10）
     expect(ready.specReady).not.toContain("rr");
     expect(ready.integrationReady).toContain("ig-root");
     expect(ready.buildReady).not.toContain("ig-root");
@@ -445,10 +445,13 @@ describe("frontier（验收#2）", () => {
 
     // mx-1 MF2：sf 的第二次 fail（重提 1 字节 spec 后再 fail——重提不清零计数）
     // → specReviewDeadlock 出现、specFixPending 消失（转人工维度取代推进维度）
+    // （mx4 迁移：默认预算 10，注入 maxSpecRejects 2 快速构造 2 代触顶——语义
+    // 回归保持「重提不清零、触顶转人工取代修复出口」）
     ledger.append("SpecSubmitted", strongSpec("sf"));
     ledger.append("VerdictSubmitted", { unitId: "sf", verdictKind: "spec-review", verdict: "fail", role: "reviewer", comment: "仍不合格" });
     const deadlocked = computeFrontier(fold(ledger.readAll()), {
       specReviewFailCounts: specReviewFailCounts(ledger.readAll()),
+      maxSpecRejects: 2,
     });
     expect(deadlocked.specReviewDeadlock).toContain("sf");
     expect(deadlocked.specFixPending).not.toContain("sf");

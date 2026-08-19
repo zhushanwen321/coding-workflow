@@ -25,11 +25,13 @@
  *     是 fail → designer（mx-1 specFixPending：修 spec 重提——任务书内嵌 reviewer
  *     fail verdict 的 comment 全文作失败事实；重提后自然回流 specReviewPending
  *     由 reviewer 再审）
- *   - created 且账本内 spec-review 打回代数 ≥2（mx-1 specReviewDeadlock；mx-3 起
- *     按代数计数——同条 SpecSubmitted 后多条 fail 只计 1 代，MF2 教训由代数累计
- *     保持：重提不清零）→ 不派任何 agent（打回循环活锁对机器无解），stderr
- *     转人工 escalation（各代打回意见摘要 + 人工处置动作）；复用 fx-2 上限出口
- *     的审计-不喂-idle 模式，人工 pass verdict 后投影自然消失
+ *   - created 且账本内 spec-review 打回代数 ≥ 阈值（默认 10，mx-4 放宽；cw run
+ *     --max-spec-rejects 可注入更紧运行策略值——只影响本循环，只读命令恒用默认）
+ *     （mx-1 specReviewDeadlock；mx-3 起按代数计数——同条 SpecSubmitted 后多条
+ *     fail 只计 1 代，MF2 教训由代数累计保持：重提不清零）→ 不派任何 agent（打回
+ *     循环活锁对机器无解），stderr 转人工 escalation（各代打回意见摘要 + 人工处置
+ *     动作）；复用 fx-2 上限出口的审计-不喂-idle 模式，人工 pass verdict 后投影
+ *     自然消失
  *   - 派发 gate（mx-1 S1）：同 unit 存在任意 role 的 in-flight spawn 时本轮缓派
  *     该 unit 的全部新派发（reviewer 派发的 worktree reset 会清在飞 designer 的
  *     现场；同时修复既有 designer→builder 转换竞态）。等待窗口 ≤ 一个 poll 周期
@@ -190,6 +192,13 @@ export interface RunLoopOptions {
    * （复用 pi 适配器 resolvePiModel 既有四级链，pi.ts 零改动）。
    */
   reviewerModel?: string;
+  /**
+   * spec 打回代数的转人工预算（mx-4，可选项——缺省回落 frontier.ts 的
+   * SPEC_REVIEW_DEADLOCK_FAILS 默认 10）。只影响本循环的 specReviewDeadlock
+   * 判定与 escalation 出声；只读命令（frontier/status）恒用默认值——转人工预算
+   * 是运行策略，默认值是投影展示语义。CLI 来源 = cw run --max-spec-rejects。
+   */
+  maxSpecRejects?: number;
 }
 
 /** in-flight 派发（mx-1 派发 gate 后同 unit 任意时刻至多一个在飞 spawn） */
@@ -346,12 +355,14 @@ function computeDispatchTargets(
   consecutiveFails: ReadonlyMap<string, number>,
   flakeFacts: ReadonlyMap<string, readonly FlakeReviewFact[]>,
   specFails: ReadonlyMap<string, number>,
+  maxSpecRejects: number,
   excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
   const groups = computeFrontier(projection, {
     consecutiveIntegrationFails: consecutiveFails,
     flakeReviewFacts: flakeFacts,
     specReviewFailCounts: specFails,
+    maxSpecRejects,
   });
   const dimensionOf = new Map<string, keyof FrontierGroups>();
   for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
@@ -877,24 +888,27 @@ function flakeEscalationMessage(
 }
 
 /**
- * spec-review 打回活锁转人工指引（mx-1 MF2 引入，mx-3 计数改按打回代数，防
- * ping-pong：fail → designer 修 → fail → 修 → … 的无限循环对机器无解）。列出
- * 各代打回的首条 fail verdict comment 摘要（审计事实，同代试探性提交不重复
- * 列出）与人工处置动作。出口形态复用 fx-2 上限出口的「审计-不喂-idle」模式：
- * 停止派发后不再产生新事件——若树内无其他可推进目标，空转由 maxIdleMs 收束
- * 退出；人工处置（人工以 reviewer 身份提交 pass verdict，或改写后人工过审）
- * 写入账本后 unit 离开 created 态，投影自然消失，运行中的循环下轮自愈。
+ * spec-review 打回活锁转人工指引（mx-1 MF2 引入，mx-3 计数改按打回代数，mx-4
+ * 预算参数化：阈值经 --max-spec-rejects 注入，默认 10——防 ping-pong：fail →
+ * designer 修 → fail → 修 → … 的无限循环对机器无解）。列出各代打回的首条 fail
+ * verdict comment 摘要（审计事实，同代试探性提交不重复列出）与人工处置动作；
+ * 文案同时含已达代数与预算值（mx-4 §4：人工能看出「已达预算 M 代」）。出口形态
+ * 复用 fx-2 上限出口的「审计-不喂-idle」模式：停止派发后不再产生新事件——若树内
+ * 无其他可推进目标，空转由 maxIdleMs 收束退出；人工处置（人工以 reviewer 身份
+ * 提交 pass verdict，或改写后人工过审）写入账本后 unit 离开 created 态，投影
+ * 自然消失，运行中的循环下轮自愈。
  */
 function specDeadlockEscalationMessage(
   rootId: string,
   unitId: string,
   failComments: readonly string[],
+  maxSpecRejects: number,
 ): string {
   const commentLines = failComments.map(
     (comment, i) => `  - 第 ${i + 1} 代打回的意见：${comment}`,
   );
   return (
-    `cw run: unit "${unitId}" 的 spec-review 已打回 ${failComments.length} 代（≥${SPEC_REVIEW_DEADLOCK_FAILS}，重提 spec 不清零代数累计）` +
+    `cw run: unit "${unitId}" 的 spec-review 已打回 ${failComments.length} 代（已达打回代数预算 ${maxSpecRejects} 代，重提 spec 不清零代数累计）` +
     "——判定 designer-reviewer 打回循环活锁，停止对该 unit 派发（继续循环只会重演），转人工处置" +
     "（canon：不自动换模型重试，防静默降级；本循环继续处理其余 unit）：\n" +
     commentLines.join("\n") +
@@ -1017,7 +1031,7 @@ function snapshotHeadCommit(cwd: string): string {
 function assertPositive(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(
-      `runLoop: 非法参数 ${name}=${value}：须为正数。恢复动作：检查 cw run 的对应 flag（--poll-ms / --max-idle-ms / --max-concurrency）取值。`,
+      `runLoop: 非法参数 ${name}=${value}：须为正数。恢复动作：检查 cw run 的对应 flag（--poll-ms / --max-idle-ms / --max-concurrency / --max-spec-rejects）取值。`,
     );
   }
 }
@@ -1056,9 +1070,13 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   const pollMs = opts.pollMs ?? DEFAULT_LOOP_POLL_MS;
   const maxIdleMs = opts.maxIdleMs ?? DEFAULT_LOOP_MAX_IDLE_MS;
   const maxConcurrency = opts.maxConcurrency ?? DEFAULT_LOOP_MAX_CONCURRENCY;
+  // mx-4：spec 打回代数转人工预算（缺省回落常量默认 10——与只读命令同源，
+  // flag 注入时仅本循环判定变紧/变宽，投影展示语义不变）
+  const maxSpecRejects = opts.maxSpecRejects ?? SPEC_REVIEW_DEADLOCK_FAILS;
   assertPositive("pollMs", pollMs);
   assertPositive("maxIdleMs", maxIdleMs);
   assertPositive("maxConcurrency", maxConcurrency);
+  assertPositive("maxSpecRejects", maxSpecRejects);
 
   const initial = loadLedger(opts.cwd);
   if (!initial.projection.units.has(opts.rootId)) {
@@ -1092,7 +1110,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
 
   emit([
     `[runner] 循环启动：root=${opts.rootId} adapter=${opts.adapter.name} ` +
-      `poll=${pollMs}ms max-idle=${maxIdleMs}ms max-concurrency=${maxConcurrency}`,
+      `poll=${pollMs}ms max-idle=${maxIdleMs}ms max-concurrency=${maxConcurrency} max-spec-rejects=${maxSpecRejects}`,
   ]);
 
   let lastTotalEvents = initial.projection.totalEvents;
@@ -1236,19 +1254,21 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
     }
 
-    // mx-1 MF2 specReviewDeadlock 出口：spec-review 打回代数 ≥ 阈值的 root 子树
-    // unit 转人工（computeDispatchTargets 同口径不派）。事实来自账本重放
+    // mx-1 MF2 specReviewDeadlock 出口：spec-review 打回代数 ≥ 预算（mx-4 参数化：
+    // --max-spec-rejects 注入，默认 10）的 root 子树 unit 转人工
+    // （computeDispatchTargets 同口径不派）。事实来自账本重放
     //（specReviewFailCounts——mx-3 起按打回代数计数，重提不清零），人工 pass
     // verdict 写入后 unit 离开 created 态、投影自然消失；出声按消息文本签名去重
     const specFails = specReviewFailCounts(events);
     for (const [unitId, failCount] of specFails) {
-      if (!subtreeIds.has(unitId) || failCount < SPEC_REVIEW_DEADLOCK_FAILS) {
+      if (!subtreeIds.has(unitId) || failCount < maxSpecRejects) {
         continue;
       }
       const message = specDeadlockEscalationMessage(
         opts.rootId,
         unitId,
         specReviewFailComments(events, unitId),
+        maxSpecRejects,
       );
       if (announcedDeadlock.get(unitId) !== message) {
         announcedDeadlock.set(unitId, message);
@@ -1308,6 +1328,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       consecutiveIntegrationFails(events),
       flakes,
       specFails,
+      maxSpecRejects,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {

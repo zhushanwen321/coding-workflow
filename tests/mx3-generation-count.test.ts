@@ -8,11 +8,14 @@
  *      fail（间隔无新 SpecSubmitted）→ 无 specReviewDeadlock、specFixPending
  *      成立派 designer、无 escalation
  *   G2 跨代双 fail deadlock（ping-pong 保持，MF2 锚：重提不清零）：fail → 新
- *      SpecSubmitted → fail → deadlock 转人工
+ *      SpecSubmitted → fail → deadlock 转人工 + 全程零派发（绝对计数，mx4 打回
+ *      修复 F1）
+ *      （mx4 迁移：默认预算 10，注入 --max-spec-rejects 2 快速构造 2 代触顶）
  *   G3 三代收敛上限：fail → 重提 → fail → 重提 → fail → 第三代计入（已打回
- *      3 代 ≥2）且 deadlock escalation 不重复（去重断言并入）
+ *      3 代 ≥ 注入阈值 2）且 deadlock escalation 不重复（去重断言并入）
+ *      （mx4 迁移：默认预算 10，注入 --max-spec-rejects 2 快速构造）
  *   G4 escalation 去重：deadlock 触发轮 stderr 只出现一次完整文案；跨 unit 的
- *      不同 escalation 各自打印
+ *      不同 escalation 各自打印（mx4 迁移：2 代打回场景，注入阈值 2）
  *   S1 session 落盘：真实 pi spawn（微任务 brief）后 artifactDir 存在 *.jsonl
  *      session 文件，内容含 toolCall 事件与 brief 触发的命令原文
  *   S2 参数与命名：spawn 命令行含 --session-dir <artifactDir> 与
@@ -160,12 +163,16 @@ interface RunnerCapture {
   stderrText(): string;
 }
 
-function startRunner(repoDir: string, rootId: string): RunnerCapture {
+function startRunner(repoDir: string, rootId: string, extraArgs: readonly string[] = []): RunnerCapture {
   const outChunks: string[] = [];
   const errChunks: string[] = [];
   const child = spawn(
     process.execPath,
-    [CLI_PATH, "run", "--root", rootId, "--spawn", "human", "--poll-ms", "200", "--max-idle-ms", "60000"],
+    [
+      CLI_PATH, "run", "--root", rootId, "--spawn", "human",
+      "--poll-ms", "200", "--max-idle-ms", "60000",
+      ...extraArgs,
+    ],
     { cwd: repoDir, env: { ...process.env, CW_HOME: cwHome }, stdio: ["ignore", "pipe", "pipe"] },
   );
   child.stdout?.on("data", (chunk: Buffer) => outChunks.push(chunk.toString("utf-8")));
@@ -259,6 +266,8 @@ describe("mx-3 G1 同代双 fail 不 deadlock：试探 + 正式只计 1 代打�
 
 describe("mx-3 G2 跨代双 fail deadlock：fail → 重提 → fail = 2 代打回", () => {
   it("fail → 新 SpecSubmitted → fail → specReviewDeadlock 转人工（escalation 含两代意见）+ 停止派发", async () => {
+    // mx4 迁移：默认打回预算 10，注入 --max-spec-rejects 2 快速构造 2 代触顶
+    //（语义回归保持：跨代 fail 累计、重提不清零、触顶转人工停派）
     const repoDir = makeScenario("g2-cross-gen", "demo");
     const ledger = ledgerOf(repoDir);
     appendSpec(ledger, "demo", "v1");
@@ -266,10 +275,13 @@ describe("mx-3 G2 跨代双 fail deadlock：fail → 重提 → fail = 2 代打�
     appendSpec(ledger, "demo", "v2"); // designer 修 spec 重提（代数锚点）
     appendReviewerFail(ledger, "demo", "第二代打回：本质问题未解决");
 
+    // 只读命令恒用默认 10（mx4 §4：转人工预算是运行策略，默认值是投影展示语义）
+    //——2 代在 frontier 默认口径下是 specFixPending 而非 deadlock
     const groups = frontierGroups(repoDir);
-    expect(groups.specReviewDeadlock).toContain("demo");
+    expect(groups.specReviewDeadlock).not.toContain("demo");
+    expect(groups.specFixPending).toContain("demo");
 
-    const runner = startRunner(repoDir, "demo");
+    const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
       await waitText(runner.stderrText, "打回循环活锁", 10_000);
       const escalation = runner.stderrText();
@@ -277,10 +289,15 @@ describe("mx-3 G2 跨代双 fail deadlock：fail → 重提 → fail = 2 代打�
       expect(escalation).toContain("已打回 2 代");
       expect(escalation).toContain("第一代打回：A2 标题不达意");
       expect(escalation).toContain("第二代打回：本质问题未解决");
-      // 停止派发：escalation 出声后 ≥5 个 poll 周期无该 unit 的任何新派发
-      const before = countDispatches(runner, "demo");
+      // 停止派发（mx4 打回修复 F1：相对计数 → 绝对计数）：预算触顶的 unit 全程
+      // 零派发。相对形态（escalation 后计数不增长）对「断开 dispatch 侧预算传参
+      // 后首轮误派 designer、随后被派发 gate 冻结」的时序掩盖不敏感（verifier
+      // 红性组二实证 16 用例全绿溜过）；绝对形态下 dispatch 侧任何一次派发即红
       await new Promise((resolve) => setTimeout(resolve, 1_200));
-      expect(countDispatches(runner, "demo"), "deadlock 后应停止该 unit 的一切新派发").toBe(before);
+      expect(
+        countDispatches(runner, "demo"),
+        "deadlock 停派 = 全程零派发（dispatch 侧同样吃注入预算）",
+      ).toBe(0);
       // MF2 教训锚：重提发生过（specs=2）但代数累计不清零
       const specs = ledgerOf(repoDir).readAll().filter((ev) => ev.type === "SpecSubmitted");
       expect(specs.length).toBeGreaterThanOrEqual(2);
@@ -297,6 +314,7 @@ describe("mx-3 G2 跨代双 fail deadlock：fail → 重提 → fail = 2 代打�
 
 describe("mx-3 G3 三代打回：代数=3 ≥2 仍 deadlock 且 escalation 不重复", () => {
   it("fail → 重提 → fail → 重提 → fail → 已打回 3 代；完整文案在 stderr 只出现一次", async () => {
+    // mx4 迁移：默认打回预算 10，注入 --max-spec-rejects 2 快速构造（3 代 ≥ 注入阈值 2）
     const repoDir = makeScenario("g3-three-gen", "demo");
     const ledger = ledgerOf(repoDir);
     appendSpec(ledger, "demo", "v1");
@@ -306,9 +324,12 @@ describe("mx-3 G3 三代打回：代数=3 ≥2 仍 deadlock 且 escalation 不�
     appendSpec(ledger, "demo", "v3");
     appendReviewerFail(ledger, "demo", "第三代打回意见");
 
-    expect(frontierGroups(repoDir).specReviewDeadlock).toContain("demo");
+    // 只读命令恒用默认 10（mx4）：3 代在 frontier 默认口径下仍是 specFixPending
+    const groups = frontierGroups(repoDir);
+    expect(groups.specReviewDeadlock).not.toContain("demo");
+    expect(groups.specFixPending).toContain("demo");
 
-    const runner = startRunner(repoDir, "demo");
+    const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
       await waitText(runner.stderrText, "打回循环活锁", 10_000);
       expect(runner.stderrText()).toContain("已打回 3 代");
@@ -330,6 +351,7 @@ describe("mx-3 G3 三代打回：代数=3 ≥2 仍 deadlock 且 escalation 不�
 
 describe("mx-3 G4 escalation 去重：同 unit 单次、跨 unit 各自打印", () => {
   it("两个 unit 各自 2 代打回 → 各自完整文案恰好一次，互不吞并", async () => {
+    // mx4 迁移：默认打回预算 10，注入 --max-spec-rejects 2 快速构造（2 代触顶）
     const repoDir = makeScenario("g4-two-units", "root");
     const ledger = ledgerOf(repoDir);
     // root：spec-frozen 且 split 两叶（内部节点等待子 verified，自身不产生噪音派发）
@@ -352,7 +374,7 @@ describe("mx-3 G4 escalation 去重：同 unit 单次、跨 unit 各自打印", 
       appendReviewerFail(ledger, leaf, `${mark} 第二代打回意见`);
     }
 
-    const runner = startRunner(repoDir, "root");
+    const runner = startRunner(repoDir, "root", ["--max-spec-rejects", "2"]);
     try {
       await waitText(runner.stderrText, "已打回 2 代", 10_000);
       await waitText(runner.stderrText, '"leaf-dd1"', 10_000);
