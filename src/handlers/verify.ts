@@ -210,13 +210,24 @@ function runRegularVerify(
     );
   }
 
-  // pass/fail 都入账（fail 的 verify 是打回依据）；入账失败 = 审计链断裂，归环境错误
+  // pass/fail 都入账（fail 的 verify 是打回依据）；入账失败 = 审计链断裂，归环境错误。
+  // mx5-1：解析失败信号提取进事件（mx5-2 回炉通道的事件级输入）。提取锚 =
+  // AcceptanceRunResult.parseError === true（适配器 parse 抛错的封闭枚举形态，
+  // 语义见 VerifyRanPayload.parseFailedAcceptanceIds 注释）；exemptNondeterministic
+  // 豁免条目（nameSkipped 标记）不入列——豁免语义是「不计入任何聚合判定」，
+  // 否则 result=pass 的 VerifyRan 携带失败清单污染审计口径。无解析失败不写该键
+  // （旧账本缺字段 = 无解析失败，重放兼容）。判定零变化：该字段只做投影分类，
+  // result 仍由 regularFailed/redFailed 决定
+  const parseFailedIds = outcome.results
+    .filter((r) => r.parseError === true && r.nameSkipped !== "nondeterministic")
+    .map((r) => r.id);
   const payload: VerifyRanPayload = {
     unitId,
     runId,
     reportHash: sha256Hex(reportRawFinal),
     result,
     acceptanceIds,
+    ...(parseFailedIds.length > 0 ? { parseFailedAcceptanceIds: parseFailedIds } : {}),
   };
   const ledger = ledgerForCwd(cwd);
   const appended = tryAppend(ledger, "VerifyRan", payload);

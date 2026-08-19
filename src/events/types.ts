@@ -139,6 +139,17 @@ export interface VerifyRanPayload {
   result: "pass" | "fail";
   /** 本次 verify 覆盖且通过的验收 id 集合（verified 判定输入） */
   acceptanceIds: string[];
+  /**
+   * 本次 verify 中产物解析失败的验收 id（mx5-1；适配器 parse 抛错的封闭枚举
+   * 形态：vitest/playwright stdout 非法 JSON；e2e-sh 无标记行且 exit 0、或标记
+   * id 与验收 id 不符。不含 e2e-sh「无标记行且 exit≠0」——该分支返回
+   * no-markers fail case 不抛错，见投影语义的诚实边界）。result 仍为
+   * "pass"|"fail" 不变，此字段只用于投影分类——解析失败是确定性挂，
+   * 不计入 flake 连挂。exemptNondeterministic 豁免条目不入列（豁免语义 =
+   * 不计入任何聚合判定）。无解析失败不写该键：旧账本缺字段 = 无解析失败，
+   * 重放兼容。
+   */
+  parseFailedAcceptanceIds?: string[];
 }
 
 // ---- 事件信封与账本 ----

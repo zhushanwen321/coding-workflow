@@ -80,4 +80,4 @@ npx eslint src/gates/spec-rules.ts src/events/types.ts src/handlers/verify.ts te
 
 ## 8. status
 
-pending → building（developer 派发时由主 agent 更新）
+pending → building（2026-08-19 developer 交付：3 源文件 +142/-4、2 测试文件 23 用例，全量 66 文件 501 绿；偏离备案——registry.ts 零改动，路由复用 `src/verify/run.ts` 已导出的 `adapterTypeFor`（基线预期的事实位置有误，此复用严格满足「与执行时同一路由」）；待 verifier）

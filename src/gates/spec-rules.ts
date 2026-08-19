@@ -9,7 +9,10 @@
  * 模板未改，split 含自身 → loop 判内部节点 → 等自己 verified → 确定性死锁）；
  * ⑦ 验收 id 字符集（rv-2：与 e2e-sh marker 同源正则，入口拦截非法 id）；
  * ⑧ runner 显式声明时必须在 knownAdapterTypes() 集合内（mx-2：gate 是唯一
- * 入口，verify 侧 adapterTypeFor 不二次校验——非法 runner 靠此处拦截）。
+ * 入口，verify 侧 adapterTypeFor 不二次校验——非法 runner 靠此处拦截）；
+ * ⑨ 验收命令契约（mx5-1，mx-5 设计 D1：按最终适配器路由分派的输出契约
+ * 静态检查——M4 gate 三跑实证 `--reporter=verbose` 与 cw 自动追加的
+ * `--reporter=json` 冲突致 JSON 解析恒挂；禁令清单见 ADAPTER_FLAG_CONTRACTS）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -25,6 +28,7 @@ import type {
 } from "../events/types.js";
 import { ACCEPTANCE_ID_RE } from "../events/types.js";
 import { knownAdapterTypes } from "../testrun/registry.js";
+import { adapterTypeFor } from "../verify/run.js";
 
 /** 规则②③的作用域：e2e 级机器验证（区别于 unit/integration/manual） */
 function isE2eType(type: AcceptanceType): boolean {
@@ -33,8 +37,8 @@ function isE2eType(type: AcceptanceType): boolean {
 
 /**
  * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
- * ⑧ 为 mx-2 追加）。确定性检查（对同一 spec + 同一 PATH 环境结果恒定），不做任何
- * 主观判断——「验收强不强」由独立 reviewer 审，不在本函数职责内。
+ * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加）。确定性检查（对同一 spec + 同一 PATH 环境结果
+ * 恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，不在本函数职责内。
  */
 export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   const failures: string[] = [];
@@ -127,8 +131,140 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
     }
   }
 
+  // ⑨ 验收命令契约（mx5-1）：按最终适配器路由（adapterTypeFor——runner 显式
+  // 声明优先，缺省按 type 推导，与 verify 执行时同一路由）分派 flag 契约检查。
+  // 契约是 cw 自定义协议（适配器输出形态），与规则③（PATH 可解析）同性质、
+  // 同层位——入账前确定性拦截，错误暴露在 designer 写 spec 的工作现场而非
+  // 40 分钟后的 verify 阶段（M4 gate 三跑实证：flag 冲突致解析恒挂被误判
+  // flake）。command 缺失（unit/integration 型合法缺省，走适配器默认命令）
+  // 无 flag 可查，不触发。非法 runner 由规则⑧拦截，路由结果不在
+  // ADAPTER_FLAG_CONTRACTS 表中即跳过（不双重报错）
+  for (const ac of spec.acceptance) {
+    const tokens = (ac.command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+    if (tokens.length === 0) {
+      continue;
+    }
+    const check = ADAPTER_FLAG_CONTRACTS[adapterTypeFor(ac.type, ac.runner)];
+    if (check === undefined) {
+      continue;
+    }
+    for (const gap of check(tokens)) {
+      failures.push(
+        `规则⑨: 验收 ${ac.id} 的 command 含冲突 flag "${gap.flag}"${gap.valueNote}。${gap.fact}恢复动作：${gap.recovery}`,
+      );
+    }
+  }
+
   return { ok: failures.length === 0, failures };
 }
+
+// ── 规则⑨：验收命令契约检查（单一事实源，可扩展枚举） ──────────────
+
+/** 单个 flag 契约缺口：文案要素 = flag 原文 + 取值说明 + 冲突事实 + 恢复动作 */
+interface FlagGap {
+  /** 命令中的 flag 原文 token（如 "--reporter=verbose"、"-qq"） */
+  flag: string;
+  /** 取值说明（如 "（值=verbose）"）；无值形态的缺口说明取值缺失 */
+  valueNote: string;
+  /** 该 flag 与适配器输出契约的冲突事实（为什么必挂） */
+  fact: string;
+  /** 可操作恢复动作 */
+  recovery: string;
+}
+
+/**
+ * vitest / playwright 型共用契约：产物是命令 stdout 上的整体 JSON。
+ *   - `--reporter` 所有取值必须恰为 `json`（cw 自动追加 `--reporter=json`，
+ *     与之并存的其他值让 stdout 变成「人类可读文本 + JSON」混合体，JSON.parse
+ *     恒挂；值恰为 json 是存量夹具锁定的 includes 幂等合法形态——u5b/fx2/
+ *     fx4/fx5/wt5 等 10 文件的 `-- --reporter=json` 靠它零翻红）；
+ *   - 禁 `--outputFile`（任何形式）：把 JSON 重定向到文件、stdout 无 JSON，
+ *     解析必挂（真实 vitest 探针实测形态）。
+ * 值提取兼容 `--reporter=json` 与 `--reporter json` 两种形式。
+ */
+function jsonProductContract(tokens: readonly string[]): FlagGap[] {
+  const gaps: FlagGap[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i] ?? "";
+    if (token === "--reporter") {
+      // 空格形式：值在下一 token；下一 token 缺失或本身是 flag → 取值缺失
+      const value = tokens[i + 1];
+      if (value === undefined || value.startsWith("-")) {
+        gaps.push(reporterGap(token, "（取值缺失）"));
+      } else if (value !== "json") {
+        gaps.push(reporterGap(token, `（值=${value}）`));
+      }
+    } else if (token.startsWith("--reporter=")) {
+      const value = token.slice("--reporter=".length);
+      if (value !== "json") {
+        gaps.push(reporterGap(token, `（值=${value}）`));
+      }
+    }
+    if (token === "--outputFile" || token.startsWith("--outputFile=")) {
+      gaps.push({
+        flag: token,
+        valueNote: "",
+        fact:
+          "--outputFile 会把 JSON 产物重定向到文件、stdout 上无 JSON，vitest/playwright 适配器从 stdout 解析必挂（实测形态）。",
+        recovery: "删除该 flag——cw 从命令 stdout 解析产物，不接受输出重定向。",
+      });
+    }
+  }
+  return gaps;
+}
+
+function reporterGap(flag: string, valueNote: string): FlagGap {
+  return {
+    flag,
+    valueNote,
+    fact:
+      "vitest/playwright 适配器由 cw 自动追加 --reporter=json，命令自带其他 reporter 值会与之并存，stdout 混入人类可读文本，JSON 解析恒挂、验收恒判 fail。",
+    recovery: "删除该 flag——cw 会自动追加正确的 reporter。",
+  };
+}
+
+/** pytest 短选项簇：单 `-` 开头且不含第二个 `-`（如 -q、-v、-qq、-vq、-x） */
+const SHORT_OPTION_CLUSTER_RE = /^-[^-]+$/;
+
+/**
+ * pytest 型契约：禁 `-q` / `--quiet`——与适配器自动追加的 `-v` verbosity 相抵、
+ * 条目行消失，全 pass 且 exit 0 仍解析失败（真实 pytest 探针实测；「同 flag
+ * 幂等」只对同 flag 成立，反义词 flag 是真冲突）。短选项可连写（-qq/-vq/-qqq
+ * 等），token 精确枚举不可行——对簇 token 逐字符展开（includes("q") 即簇中
+ * 含 quiet）。适配器追加的 `--tb=no`、`-p no:cacheprovider` 与命令自带同值
+ * 幂等，不设禁。
+ */
+function noQuietContract(tokens: readonly string[]): FlagGap[] {
+  const gaps: FlagGap[] = [];
+  for (const token of tokens) {
+    if (token === "--quiet" || (SHORT_OPTION_CLUSTER_RE.test(token) && token.includes("q"))) {
+      gaps.push({
+        flag: token,
+        valueNote: "（pytest quiet）",
+        fact:
+          "-q/--quiet 与适配器自动追加的 -v verbosity 相抵、条目行消失，测试全 pass 且 exit 0 仍解析失败（短选项合写簇同样命中）。",
+        recovery: "删除该 flag——cw 会自动追加正确的 verbosity 参数。",
+      });
+    }
+  }
+  return gaps;
+}
+
+/**
+ * 规则⑨禁令清单（单一事实源内的可扩展枚举）：key = adapterTypeFor 路由结果，
+ * value = 该适配器的 flag 契约检查（输入 = command 的空白切分 token）。
+ * e2e-sh / manual 型不在表中 = 不设静态规则（诚实边界：无法静态证明标记行
+ * 产出——标记可能在脚本内、可能条件执行；漏网形态由 mx5-2 verify 阶段回炉
+ * 通道与 mx5-3 reviewer 任务书契约清单兜底）。新冲突形态（适配器扩容 / 新
+ * flag）在此一处追加，禁止散落多个函数。
+ */
+const ADAPTER_FLAG_CONTRACTS: Readonly<
+  Record<string, (tokens: readonly string[]) => FlagGap[]>
+> = {
+  vitest: jsonProductContract,
+  playwright: jsonProductContract,
+  pytest: noQuietContract,
+};
 
 /**
  * `which` 等价检查：含路径分隔符时直接验证该文件可执行，否则遍历 PATH
