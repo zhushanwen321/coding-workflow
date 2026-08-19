@@ -51,4 +51,6 @@ grep -c "八规则" AGENTS.md → 0；六词条 grep 在场
 
 ## 8. status
 
-pending → building（2026-08-20 developer 交付：CONTEXT.md +56/-11、AGENTS.md +3/-2，纯增词条/改计数/补描述；全量 69 文件 534 绿；词条-源码对照表 12 项自验一致。**两点显式说明待 verifier 裁定**：①基线内部冲突——§4 词条 6 要求字面「原 builder」与 mx5-4 N4 测试「CONTEXT.md 全文 builder 零命中」互斥，处置=语义要点全保留、旧值拼写不入词条、锚点指向 types.ts 注释与设计 D4；②授权边缘勘误——frontier 小节 specReviewDeadlock 行「fail 累计 ≥2」为 mx-3/mx-4 遗留过时，实态=打回代数 ≥ 预算 10，因打回代数词条引用该维度不改则自相矛盾已修正。另挂账：AGENTS.md L29 mx-1 段同类过时描述不在授权内未改，记后续 doc 波次）
+pending → building → **verified**（2026-08-20：verifier 独立验收 7/7 PASS，报告 doc-4-report.md——D3 一致性 18 项逐项亲测源码零不符（超 8 项下限）；两点裁定均成立（基线冲突处置为唯一解——N4 硬断言与词条字面互斥、§4 锁的是措辞要点非拼写；边缘勘误实质授权——旧句与代码在阈值与计数口径两层失实，不改即 D3 违例）；可理解性抽检两问仅凭词条可答。findings 1 条挂账：AGENTS.md:29 mx-1 段过时描述跨文件不一致，待后续 doc 波次。**mx-5 波次至此五 unit 全 verified 收口**）
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
