@@ -151,6 +151,9 @@ vite.config.ts.timestamp-*
 # pr-cr-fix skill review 中间产物（多维 review 报告 + aggregated，机器消费不入库）
 .review/
 
+# 开发期 subagent 暂存目录（developer/verifier 中间产物，本地不入库）
+.tmp/
+
 # CW CLI topic artifacts (delivery documents, per-topic working files)
 # 用 .xyz-harness/* 而非 .xyz-harness/ —— 父目录被整体忽略时 git 不进入子目录，
 # 白名单无效。改用内容忽略，才能让特定子目录 re-include。
