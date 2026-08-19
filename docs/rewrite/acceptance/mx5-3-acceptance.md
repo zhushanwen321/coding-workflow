@@ -57,4 +57,6 @@ npx eslint src/runner/brief.ts tests/mx5-3-reviewer-brief.test.ts
 
 ## 8. status
 
-pending → building（2026-08-19 developer 交付：brief.ts +32/-9 仅 reviewer 模板区两 hunk + 9 用例，全量 67 文件 510 绿；B3 以改动前 dist 渲染快照 6/6 逐字节一致佐证其余模板零变更；零偏离；待 verifier）
+pending → building → **verified**（2026-08-19：verifier 独立验收 6/6 PASS，报告 mx5-3-report.md——B3 分段 hash 独立复核、红性 2/2 真红、V3 真实 pi spawn ×3 全部 fail 且 2 次将 A3 列 must-fix（对照三跑 seq19 pass 反例改版有效）；findings 3 条均不阻塞，spawn 产物 /tmp/cw-mx53-v3/ 留档）
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。

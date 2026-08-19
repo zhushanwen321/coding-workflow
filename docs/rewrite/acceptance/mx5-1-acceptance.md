@@ -80,4 +80,6 @@ npx eslint src/gates/spec-rules.ts src/events/types.ts src/handlers/verify.ts te
 
 ## 8. status
 
-pending → building（2026-08-19 developer 交付：3 源文件 +142/-4、2 测试文件 23 用例，全量 66 文件 501 绿；偏离备案——registry.ts 零改动，路由复用 `src/verify/run.ts` 已导出的 `adapterTypeFor`（基线预期的事实位置有误，此复用严格满足「与执行时同一路由」）；待 verifier）
+pending → building → **verified**（2026-08-19：verifier 独立验收 7/7 PASS，报告 mx5-1-report.md——红性抽查 2/3 真红 + V1 真实 CLI 毒 spec 场景过；finding 1「json-verbose 子串用例缺口」移交 mx5-2 顺带补，finding 2「status 行禁改范围」流程改进在后续基线落实）
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
