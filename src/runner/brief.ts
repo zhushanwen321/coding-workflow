@@ -100,6 +100,8 @@ function specReviewReviewerTasks(
     "2. 按五维度对抗式核对清单逐条核对（reviewer 的第一审对象是验收集合，不是文风；",
     "   对 spec 的每条验收逐项过——任何一条不过即 fail，不得以「较弱/可补充」为由放行）：",
     "   ① 验收命令契约逐条核对（cw verify 按适配器解析命令产物——契约错 = 实现再对也恒 fail）：",
+    "      若验收显式声明 runner，按声明适配器核对（与规则⑨同路由——runner 优先于",
+    "      type 推导，如 runner=pytest 的 unit 型条目核 pytest 契约而非 vitest 兼容）：",
     "      - unit / integration 型逐条问：命令是否 vitest 兼容——--reporter 值若出现必须",
     "        恰为 json（与 spec gate 规则⑨同口径：cw 自动追加 --reporter=json，命令里混入",
     "        其他 reporter 值会让 stdout 变成文本+JSON 混合体、解析必挂）；install 步骤带 --silent。",

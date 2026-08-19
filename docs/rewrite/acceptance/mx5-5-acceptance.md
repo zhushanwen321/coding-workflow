@@ -55,4 +55,4 @@ C1-C4 独立复跑 + 红性抽查 2 条（①删 S2 空格拒绝分支 → C1 �
 
 ## 8. status
 
-pending → building（developer 派发时由主 agent 更新）
+pending → building（2026-08-20 developer 交付：7 授权文件 +171/-35，全量 69 文件 543 绿（+9 新用例）；红性自验 S2 2 红 / S3 4 红。**两处一句话级偏离备案待 verifier 裁量**：①CONTEXT.md 规则⑨词条两条 bullet 口径同步（实现收紧后词条原文与实现直接矛盾，最小一致性修正）②brief.ts 既有「恰为 json」句未扩等号口径（空格形态经 S2 进不了 gate，冻结 spec 不可能出现，清单对可达输入成立）；待 verifier）

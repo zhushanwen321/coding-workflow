@@ -16,6 +16,8 @@
  *      兜底分支），渲染输出不含任何环境相关字节，跨机逐字节可复现
  *   B4 e2e 型追问句在场：渲染含 e2e-real 验收的 unit → 输出含「标记行」追问句式
  *      （「stdout 从哪产出」——三跑 A3 裸 build 命令形态的针对性反制）
+ *   mx5-5 C3（S4）runner 显式声明提示句在场：维度①含「若验收显式声明 runner，
+ *      按声明适配器核对（与规则⑨同路由）」——reviewer 清单与机器 gate 同路由口径
  */
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -144,6 +146,18 @@ describe("mx5-3 B4 e2e 型追问句在场", () => {
     expect(content).toContain("stdout 从哪产出");
     expect(content).toContain("标记行");
     expect(content).toContain("`<验收id> PASS`");
+  });
+});
+
+// mx5-5 C3（S4）：reviewer 清单维度①的 runner 路由提示——「按 type 分叉」与
+// 规则⑨「按最终适配器路由」的口径差：runner:"pytest" 显式声明的 unit 型命令
+// 问句须按声明适配器核对（机器层规则⑨已按同路由分派，人审清单同口径）
+describe("mx5-5 C3 runner 显式声明按声明适配器核对", () => {
+  it("渲染输出含「显式声明 runner…按声明适配器核对」提示句（与规则⑨同路由）", () => {
+    const { content } = renderSpecReviewBrief("c3");
+    expect(content).toContain("显式声明 runner");
+    expect(content).toContain("按声明适配器核对");
+    expect(content).toContain("与规则⑨同路由");
   });
 });
 

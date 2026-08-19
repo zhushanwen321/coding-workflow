@@ -8,6 +8,10 @@
  * flag 名 + 恢复动作）+ 不入账；合法对照断言 exit 0 入账。
  * 规则③的 PATH 解析依赖真实环境：正向用 node / echo（PATH 必在），
  * 反向用确定不存在的 no-such-bin-xyz。
+ *
+ * mx5-5 追加 C 系（mx5-5-acceptance §5）：S2 空格形态一律拒绝（R2 第三用例
+ * 按基线 §2 明示授权反转 + C1 补形态）与 S3 --quiet 前缀缩写链（C2，含
+ * --query 防误伤对照）。
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -152,14 +156,23 @@ describe("R2 两种 reporter 形式全覆盖", () => {
     expect(specBooked()).toBe(true);
   });
 
-  it("--reporter json（空格形式，值恰为 json）通过", async () => {
+  // mx5-5 R2 反转（基线 §2 明示授权）：原「空格形式 json 值通过」→ 拒绝——S2
+  // 收紧后空格形态无论值一律拒（translate 幂等检查只认等号子串，空格形态会被
+  // cw 再追加 --reporter=json 形成双 reporter，stdout 混合体解析恒挂）
+  it("--reporter json（空格形式，值恰为 json）→ 拒绝（mx5-5 S2 反转：空格形态无论值一律拒）", async () => {
     const res = await submitSpec("u-1", [
       e2eItem("A1", "node -v"),
       unitItem("A2", "npx vitest run --reporter json tests/close.spec.ts"),
     ]);
 
-    expect(res.code).toBe(0);
-    expect(specBooked()).toBe(true);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑨");
+    expect(res.stderr).toContain("A2");
+    expect(res.stderr).toContain("空格形态");
+    expect(res.stderr).toContain("值=json");
+    expect(res.stderr).toContain("--reporter=json");
+    expect(res.stderr).toContain("恢复动作");
+    expect(specBooked()).toBe(false);
   });
 });
 
@@ -345,5 +358,74 @@ describe("R2b reporter 值子串形态拒收（json-verbose 含 json 子串非�
     expect(res.stderr).toContain("A2");
     expect(res.stderr).toContain("值=json-verbose");
     expect(specBooked()).toBe(false);
+  });
+});
+
+// ================================================================
+// mx5-5 C 系（基线 §5）：S2/S3 完备性收口的增量覆盖——R2 反转已覆盖
+// 「空格形态 json 值拒」，C1 补齐其余条款形态（取值缺失 / playwright 路由 /
+// 等号形态 verbose 与 json 的对照闭环），C2 锁 S3 前缀链与防误伤。
+// ================================================================
+
+describe("C1 空格形态 --reporter 一律拒绝（S2 收紧）", () => {
+  it("尾部裸 --reporter（空格形态取值缺失）→ exit 1 缺口列出", async () => {
+    const res = await submitSpec("u-1", [
+      e2eItem("A1", "node -v"),
+      unitItem("A2", "npx vitest run tests/close.spec.ts --reporter"),
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑨");
+    expect(res.stderr).toContain("A2");
+    expect(res.stderr).toContain("--reporter");
+    expect(res.stderr).toContain("取值缺失");
+    expect(specBooked()).toBe(false);
+  });
+
+  it("runner=playwright 空格形态 --reporter json → 同样拒绝（收紧覆盖 playwright 型）", async () => {
+    const res = await submitSpec("u-1", [
+      e2eItem("A1", "node -v"),
+      unitItem("A2", "npx playwright test --reporter json", { runner: "playwright" }),
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑨");
+    expect(res.stderr).toContain("A2");
+    expect(res.stderr).toContain("空格形态");
+    expect(specBooked()).toBe(false);
+  });
+});
+
+describe("C2 --quiet 前缀缩写链（S3）", () => {
+  // argparse 允许长选项前缀缩写：--q/--qu/--qui/--quie/--quiet 严格逐字符前缀链，
+  // 前缀缩写与全称等价触发 verbosity 相抵（原实现只拦全称 → 缩写形态漏网）
+  const QUIET_PREFIX_CHAIN = ["--q", "--qu", "--qui", "--quie", "--quiet"] as const;
+
+  for (const flag of QUIET_PREFIX_CHAIN) {
+    it(`runner=pytest 型含 "${flag}" → exit 1（前缀缩写同样触发 verbosity 相抵）`, async () => {
+      const res = await submitSpec("u-1", [
+        e2eItem("A1", "node -v"),
+        unitItem("A2", `pytest tests/unit/ ${flag}`, { runner: "pytest" }),
+      ]);
+
+      expect(res.code).toBe(1);
+      expect(res.stderr).toContain("规则⑨");
+      expect(res.stderr).toContain("A2");
+      expect(res.stderr).toContain(flag);
+      expect(specBooked()).toBe(false);
+    });
+  }
+
+  it("--query（非 --quiet 前缀链成员）→ 不因规则⑨拒绝（防前缀链误伤任意 startWith）", async () => {
+    // argparse 可注册独立的 --query 长选项：它不是 --quiet 的逐字符前缀缩写，
+    // 规则⑨只拦 quiet 前缀链——若实现退化为 startWith("--q") 类宽匹配会误拦
+    const res = await submitSpec("u-1", [
+      e2eItem("A1", "node -v"),
+      unitItem("A2", "pytest tests/unit/ --query", { runner: "pytest" }),
+    ]);
+
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stderr).not.toContain("规则⑨");
+    expect(specBooked()).toBe(true);
   });
 });

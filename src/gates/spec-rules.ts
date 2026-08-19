@@ -174,26 +174,31 @@ interface FlagGap {
 
 /**
  * vitest / playwright 型共用契约：产物是命令 stdout 上的整体 JSON。
- *   - `--reporter` 所有取值必须恰为 `json`（cw 自动追加 `--reporter=json`，
- *     与之并存的其他值让 stdout 变成「人类可读文本 + JSON」混合体，JSON.parse
- *     恒挂；值恰为 json 是存量夹具锁定的 includes 幂等合法形态——u5b/fx2/
- *     fx4/fx5/wt5 等 10 文件的 `-- --reporter=json` 靠它零翻红）；
+ *   - `--reporter` 只放行**等号形态且值恰为 `json`**（`--reporter=json`——
+ *     存量夹具锁定的 includes 幂等合法形态，u5b/fx2/fx4/fx5/wt5 等 10 文件的
+ *     `-- --reporter=json` 靠它零翻红）；等号形态其他值与 cw 自动追加的
+ *     `--reporter=json` 并存，stdout 变成「人类可读文本 + JSON」混合体，
+ *     JSON.parse 恒挂；
+ *   - 空格形态 `--reporter <值>` 一律拒绝（无论值，mx5-5 S2 收紧）：translate
+ *     幂等检查只认等号子串（src/testrun/vitest.ts 的 includes），空格形态命令
+ *     不含该子串 → cw 再追加 `--reporter=json` → 双 reporter → 混合体恒挂——
+ *     拦得住的拦死，错误暴露在 designer 工作现场而非 verify 期；
  *   - 禁 `--outputFile`（任何形式）：把 JSON 重定向到文件、stdout 无 JSON，
  *     解析必挂（真实 vitest 探针实测形态）。
- * 值提取兼容 `--reporter=json` 与 `--reporter json` 两种形式。
  */
 function jsonProductContract(tokens: readonly string[]): FlagGap[] {
   const gaps: FlagGap[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i] ?? "";
     if (token === "--reporter") {
-      // 空格形式：值在下一 token；下一 token 缺失或本身是 flag → 取值缺失
-      const value = tokens[i + 1];
-      if (value === undefined || value.startsWith("-")) {
-        gaps.push(reporterGap(token, "（取值缺失）"));
-      } else if (value !== "json") {
-        gaps.push(reporterGap(token, `（值=${value}）`));
-      }
+      // 空格形态一律拒绝（mx5-5 S2）：无论下一 token 取值——命令不含等号子串
+      // --reporter=json，translate 幂等检查不命中，cw 会再追加形成双 reporter
+      const next = tokens[i + 1];
+      const valueNote =
+        next === undefined || next.startsWith("-")
+          ? "（空格形态，取值缺失）"
+          : `（空格形态，值=${next}）`;
+      gaps.push(spaceReporterGap(token, valueNote));
     } else if (token.startsWith("--reporter=")) {
       const value = token.slice("--reporter=".length);
       if (value !== "json") {
@@ -223,26 +228,53 @@ function reporterGap(flag: string, valueNote: string): FlagGap {
   };
 }
 
+/**
+ * 空格形态 `--reporter <值>` 的缺口（mx5-5 S2）：理由链与恢复动作都指向等号
+ * 形态——它不是「值选错」而是「形态选错」，改值救不了（值恰为 json 也恒挂）。
+ */
+function spaceReporterGap(flag: string, valueNote: string): FlagGap {
+  return {
+    flag,
+    valueNote,
+    fact:
+      "空格形态不含 translate 幂等检查认定的等号子串 --reporter=json，cw 会再追加该 flag 形成双 reporter，stdout 混入人类可读文本，JSON 解析恒挂、验收恒判 fail。",
+    recovery:
+      "改用等号形态 --reporter=json（唯一幂等安全形态）或删除该 flag——cw 会自动追加正确的 reporter。",
+  };
+}
+
 /** pytest 短选项簇：单 `-` 开头且不含第二个 `-`（如 -q、-v、-qq、-vq、-x） */
 const SHORT_OPTION_CLUSTER_RE = /^-[^-]+$/;
 
 /**
- * pytest 型契约：禁 `-q` / `--quiet`——与适配器自动追加的 `-v` verbosity 相抵、
- * 条目行消失，全 pass 且 exit 0 仍解析失败（真实 pytest 探针实测；「同 flag
- * 幂等」只对同 flag 成立，反义词 flag 是真冲突）。短选项可连写（-qq/-vq/-qqq
- * 等），token 精确枚举不可行——对簇 token 逐字符展开（includes("q") 即簇中
- * 含 quiet）。适配器追加的 `--tb=no`、`-p no:cacheprovider` 与命令自带同值
+ * `--quiet` 的 argparse 合法前缀缩写链（mx5-5 S3）：--q / --qu / --qui / --quie /
+ * --quiet（严格逐字符前缀，非任意 startWith——`--query`、`--quietly` 等更长选项
+ * 不是链成员，不因本禁令拦截；argparse 对它们按独立选项解析）。前缀缩写与全称
+ * 等价触发 verbosity 相抵，漏拦即确定性解析失败漏网。
+ */
+const QUIET_LONG_PREFIX_RE = /^--q(?:u(?:i(?:e(?:t)?)?)?)?$/;
+
+/**
+ * pytest 型契约：禁 `-q` / `--quiet` 及其长选项前缀缩写——与适配器自动追加的
+ * `-v` verbosity 相抵、条目行消失，全 pass 且 exit 0 仍解析失败（真实 pytest
+ * 探针实测；「同 flag 幂等」只对同 flag 成立，反义词 flag 是真冲突）。短选项
+ * 可连写（-qq/-vq/-qqq 等），token 精确枚举不可行——对簇 token 逐字符展开
+ * （includes("q") 即簇中含 quiet）；长选项前缀缩写走 QUIET_LONG_PREFIX_RE
+ * 严格前缀链。适配器追加的 `--tb=no`、`-p no:cacheprovider` 与命令自带同值
  * 幂等，不设禁。
  */
 function noQuietContract(tokens: readonly string[]): FlagGap[] {
   const gaps: FlagGap[] = [];
   for (const token of tokens) {
-    if (token === "--quiet" || (SHORT_OPTION_CLUSTER_RE.test(token) && token.includes("q"))) {
+    if (
+      QUIET_LONG_PREFIX_RE.test(token) ||
+      (SHORT_OPTION_CLUSTER_RE.test(token) && token.includes("q"))
+    ) {
       gaps.push({
         flag: token,
         valueNote: "（pytest quiet）",
         fact:
-          "-q/--quiet 与适配器自动追加的 -v verbosity 相抵、条目行消失，测试全 pass 且 exit 0 仍解析失败（短选项合写簇同样命中）。",
+          "-q/--quiet（含前缀缩写）与适配器自动追加的 -v verbosity 相抵、条目行消失，测试全 pass 且 exit 0 仍解析失败（短选项合写簇同样命中）。",
         recovery: "删除该 flag——cw 会自动追加正确的 verbosity 参数。",
       });
     }

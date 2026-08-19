@@ -122,7 +122,7 @@ exit 1
 
 推荐 **方案 1**。方案 2 被否的理由独立成条：**cw 不静默改命令**——命令是冻结证据的一部分，改了就与账本 replay 不一致。被否方案反例：若用方案 2，§2.1 现场二的 A2 会被「修好」（verbose 被剥离），但 spec 账本里的命令与实际执行的不一致，红阶段/审计/人对账全部失真。
 
-**规则⑨形状**（按 `AcceptanceItem.runner` 路由，缺省按 type 推导后的最终路由；值提取兼容 `--reporter=json` 与 `--reporter json` 两种形式）：
+**规则⑨形状**（按 `AcceptanceItem.runner` 路由，缺省按 type 推导后的最终路由；`--reporter` 只放行等号形态 `--reporter=json`，空格形态 `--reporter <值>` 一律拒绝——translate 幂等检查只认等号子串，空格形态不含该子串会被 cw 再追加 `--reporter=json` 形成双 reporter 恒挂。mx5-5 S2 勘误：原文「值提取兼容两种形式」是设计缺口，空格形态 json 值曾据此放行并在 verify 期确定性恒挂，靠 D2 回炉兜底违背 G1「拦得住的拦死」）：
 
 - vitest / playwright 型：命令中所有 `--reporter` 取值必须**恰为 `json`**（与 cw 自动追加值一致——存量测试夹具刻意写 `-- --reporter=json` 命中 translate 的 includes 幂等检查，属合法形态，实测 u5b/fx2/fx4/fx5/wt5 等 6+ 文件依赖此语义，禁 `verbose` 等其他值即保全它们）；另禁 `--outputFile`（实测该 flag 把 JSON 重定向到文件、stdout 无 JSON，解析必挂——审查探针实测形态）
 - pytest 型：禁 `-q` / `--quiet`（审查探针实测：`-q` 与适配器追加的 `-v` verbosity 相抵、条目行消失、全 pass exitCode=0 仍解析失败——「同 flag 幂等」只对同 flag 成立，反义词 flag 是真冲突）；**禁令须覆盖短选项合写形态**（`-qq`/`-vq`/`-qqq` 等——pytest 短选项可连写，token 精确枚举抓不到，检查算法须对短选项簇逐字符展开或等价正则）；其余适配器追加 flag（`--tb=no`、`-p no:cacheprovider`）与命令自带同值幂等，不设禁
@@ -174,7 +174,7 @@ export interface VerifyRanPayload {
 
 | 方案 | 长期架构合理性 | 短期成本 | 风险 |
 |------|--------------|---------|------|
-| **1. 单 reviewer + 契约清单 + 反例追问（推荐，本波）** | 清单进机制生成的任务书模板（不再依赖 root designer 转述——三跑现场四的断链根除）；维度可被账本审计（verdict comment 结构化） | 低（brief.ts 模板） | 单 reviewer 严格度方差仍在（role=reviewer 解决身份不解决严格度） |
+| **1. 单 reviewer + 契约清单 + 反例追问（推荐，本波）** | 清单进机制生成的任务书模板（不再依赖 root designer 转述——三跑现场四的断链根除）；维度可被账本审计（verdict comment 纯文本约定——分级词可 grep，无结构化载体；mx5-5 S5 勘误：原「结构化」表述超前） | 低（brief.ts 模板） | 单 reviewer 严格度方差仍在（role=reviewer 解决身份不解决严格度） |
 | 2. 并行多 reviewer 按维度拆分 + 聚合 | 维度隔离、严格度方差被平均掉；用户已明确为未来方向 | 高（spawn 编排、聚合去重、成本×N） | 本波引入过重，且 G2 回炉已兜住漏网 |
 
 推荐**本波方案 1**，方案 2 已记 TODO（用户 2026-08-19 指示）。清单内容（依据 ~/Code 五项目对抗审查 skill 调研共性，契约一致性 4/4 项目共有）：

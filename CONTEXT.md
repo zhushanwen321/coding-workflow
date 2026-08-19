@@ -39,8 +39,8 @@ unit 的定义 = 它的**验收集合 + 契约**（验收是一等工作单元�
 
 spec gate 规则⑨入账前静态检查（`src/gates/spec-rules.ts` 的 `ADAPTER_FLAG_CONTRACTS`，按 `adapterTypeFor` 最终路由——runner 显式声明优先、缺省按 type 推导——分派）：
 
-- vitest / playwright 型：`--reporter` 值若出现必须恰为 `json`（cw 自动追加 `--reporter=json`，其他值让 stdout 混入人类可读文本、JSON 解析恒挂；`--reporter=json` 与 `--reporter json` 两种形式都查），另禁 `--outputFile`（任何形式——把 JSON 重定向到文件、stdout 无 JSON）
-- pytest 型：禁 `-q` / `--quiet`，含短选项合写簇（`-qq` / `-vq` 等，对簇 token 逐字符展开）——与适配器追加的 `-v` verbosity 相抵、条目行消失
+- vitest / playwright 型：`--reporter` 只放行等号形态且值恰为 `json`（`--reporter=json` 是 translate 幂等检查认定的唯一安全形态——cw 自动追加 `--reporter=json`，其他值与之并存让 stdout 混入人类可读文本、JSON 解析恒挂）；空格形态 `--reporter <值>` 一律拒（mx5-5：translate 幂等检查只认等号子串，空格形态会被 cw 再追加 reporter 致双 reporter 恒挂），另禁 `--outputFile`（任何形式——把 JSON 重定向到文件、stdout 无 JSON）
+- pytest 型：禁 `-q` / `--quiet` 及其长选项前缀缩写（`--q` / `--qu` / `--qui` / `--quie`——argparse 允许缩写，严格逐字符前缀链，`--query` 类更长选项不在链内），含短选项合写簇（`-qq` / `-vq` 等，对簇 token 逐字符展开）——与适配器追加的 `-v` verbosity 相抵、条目行消失
 - e2e-sh / manual 型：无静态规则（诚实边界：标记行产出无法静态证明——可能在脚本内、可能条件执行），漏网形态由 reviewer 任务书契约清单 + 回炉通道兜底
 
 例：`npx vitest run --reporter=verbose tests/x.spec.ts` 被⑨当场拒（reporter 值非 json）；裸 `pnpm build` 过得了⑨（e2e 型无静态规则）但 verify 时永不产出 `A3 PASS` 标记行 → 解析失败 → 回炉。
@@ -102,7 +102,7 @@ verify（干净重跑）的判定链，共同原则是**伪造成本 ≥ 干活�
 
 verify 重跑产物的失败二分类（mx5-1/mx5-2）：
 
-- **解析失败** = 适配器 parse 抛错、无法从产物读出判定的封闭枚举形态：vitest / playwright stdout 非法 JSON；e2e-sh 无标记行且 exit 0、或标记 id 与验收 id 不符（信号源 = `src/verify/run.ts` 的 `AcceptanceRunResult.parseError`，入账字段 = VerifyRan 的 `parseFailedAcceptanceIds`）。不含 e2e-sh「无标记行且 exit≠0」——该形态无法确定性归因 spec（命令挂可能是实现缺陷），照旧断言失败路径
+- **解析失败** = `AcceptanceRunResult.parseError === true`（无法产出可判定产物）。来源**非穷举**——完整集合以四适配器 parse/translate 实现（`src/testrun/`）与 `src/verify/run.ts` 的路由为准，代表形态：适配器 parse 抛错（vitest / playwright stdout 非法 JSON 或 JSON 合法但形状不符；e2e-sh 无标记行且 exit 0、或标记 id 与验收 id 不符）、零条目且 exit 0 防线（playwright / pytest 判无区分力抛错）、translate 抛错（如 runner 显式声明 e2e-sh 的条目 command 缺省）、路由不到适配器的旁路（非法 runner 绕过 gate）。入账字段 = VerifyRan 的 `parseFailedAcceptanceIds`。不含 e2e-sh「无标记行且 exit≠0」——该形态无法确定性归因 spec（命令挂可能是实现缺陷），照旧断言失败路径
 - **断言失败** = 产物合法可解析但 case 判 fail
 
 解析失败是确定性 spec 缺陷（错的不是语义而是命令契约）：不计入 flake 连挂（拆「确定性挂被误判随机挂」死局），连挂 ≥2 走回炉通道；豁免条目（`nondeterministic`）不入解析失败清单（豁免 = 不计入任何聚合）。pass/fail 判定本身不变——解析失败的 case 照旧判 fail（伪造成本 ≥ 干活成本）。
