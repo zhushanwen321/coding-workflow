@@ -59,4 +59,6 @@ grep -rn "builder" src/ tests/ AGENTS.md CONTEXT.md → 零输出
 
 ## 8. status
 
-pending → building（2026-08-19 developer 交付：37 文件 +335/-271 + 新测试 5 用例 + R1/R2 断言 2 用例，全量 69 文件 534 绿，grep 零残留含大写变体，267 处逐文件归因无出入（纯角色词 196 + camelCase 派生命名 26 + 大写变体 3 + src 特殊形态），pi.ts session 命名随 AgentRole 动态零改动，35 文件 diff 经归一化还原逐行比对。R1/R2 红性自验双红。偏离 3 项备案：D4 授权记 6 行注释块（自包含且避开旧值字面量——字面量会击穿 N4 零残留口径）、N2 文案通用迁移指引同因、.tmp 未触碰；待 verifier）
+pending → building → **verified**（2026-08-20：verifier 独立验收 8/8 PASS，报告 mx5-4-report.md——37 可比文件全量双重归一化比对（双向归一化 + 还原法，超抽样要求），不可还原差异 3 文件 70 行全部授权（role 枚举/D4 记档/VERDICT_ROLES/迁移指引/R1-R2 断言），**未授权差异 = 0**；N1/V4 真实 human spawn 链全过、R1/R2 红性双红、pi.ts 动态拼接零改动核实。findings：F1 minor 挂账——`tests/u5b-e2e.test.ts` 常量 `BUILDER_IMPL_DISPATCH_LINE` 全大写形态在 N4 口径盲点外（查 builder/Builder 不查 BUILDER），无语义影响，记下一波次顺带改名；F2 幅度已备案；F3 计数口径按行注记）
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
