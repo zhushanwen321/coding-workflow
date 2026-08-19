@@ -55,4 +55,6 @@ C1-C4 独立复跑 + 红性抽查 2 条（①删 S2 空格拒绝分支 → C1 �
 
 ## 8. status
 
-pending → building（2026-08-20 developer 交付：7 授权文件 +171/-35，全量 69 文件 543 绿（+9 新用例）；红性自验 S2 2 红 / S3 4 红。**两处一句话级偏离备案待 verifier 裁量**：①CONTEXT.md 规则⑨词条两条 bullet 口径同步（实现收紧后词条原文与实现直接矛盾，最小一致性修正）②brief.ts 既有「恰为 json」句未扩等号口径（空格形态经 S2 进不了 gate，冻结 spec 不可能出现，清单对可达输入成立）；待 verifier）
+pending → building → **verified**（2026-08-20：verifier 6/6 PASS，报告 mx5-5-report.md——红性 2/2（S2 还原恰 2 红、S3 前缀链还原恰 4 红）、两处偏离均裁定成立（CONTEXT 词条旧文与新实现直接矛盾最小修正；brief 保留句经代码实证双路径封死——新提交入账前 gate、旧冻结 spec 投影重算跌出 spec-frozen 不渲染 brief）、types.ts 逐行确认仅注释。F1 minor 记档：brief「同口径」括注 S2 后不字面精确，下次触碰顺手同步。**S1-S5 全闭环，mx-5 终验遗留清零，gate 四跑前置就绪**）
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
