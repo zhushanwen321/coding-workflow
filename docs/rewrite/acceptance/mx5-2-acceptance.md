@@ -68,4 +68,6 @@ npx eslint src/readonly/frontier.ts src/runner/loop.ts src/runner/brief.ts tests
 
 ## 8. status
 
-pending → building（2026-08-19 developer 交付：src 3 文件 +721/-182 + 新测试 15 用例 + R2b×2，全量 68 文件 527 绿。**越界备案 4 项（测试侧最小调整，先例依据 rv-5 `ef4ee67` / mx5-3 基线 §3 明文，待 verifier 深查）**：①mx5-3 测试 B3 快照同步 brief 文案修复 ②u1b-e2e toEqual 补空键 ③rv5 fixture 改恒可解析 JSON（解析失败归回炉后 flake 场景被抢的语义必然；T5 断言 buildReady→specContractBroken）④D6 停派态范围——TIMEOUT 封顶转人工为单进程内存态不进 describeExit（代码注释记档）。另：loop.ts 四个纯投影函数逐字节搬移 frontier.ts（eslint max-lines 触顶 977/1000，frontier 本是派发判定单一出处）。取数路径选定 verify 产物 report.json 的 parseError/reason，降级路径有测试；待 verifier）
+pending → building → **verified**（2026-08-19：verifier 独立验收 PASS，报告 mx5-2-report.md——4 项越界全部判定「最小必要无掩盖回归」（rv5 fixture 意图等价性、D6 停派口径事实成立均经代码核实）、四函数搬移逐字节等价、V2/V2b human spawn 真实 dispatch 全链全过（回炉任务书含两轮机器错误原文、连挂清零代数+1、deadlock 出口 broken 恰 2 次后出声零派发）、红性抽查「代数清零→F5 红」实证。findings 4 条：R1/R2 测试覆盖缺口（flake 输入排除与中间解析成功清零删掉后全量仍绿——断言被单组归属优先级/verified 粘性态掩盖）移交 mx5-4 顺带补反向断言；R3 JSDoc 空白字符 trivial；R4 loop.ts 注释重复为 3b3ec42 前存量。证据 /tmp/cw-mx52-v2/ 11 文件）
+
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
