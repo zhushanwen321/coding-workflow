@@ -10,7 +10,7 @@
  *   B2 契约口径与规则⑨一致：清单文本含「恰为 json」，且不含「无 --reporter」
  *      漂移口径（规则⑨允许 --reporter=json，禁的是其他 reporter 值）
  *   B3 其余模板零变更：designer（specReady / specFixPending / missingChildren /
- *      integrationDrift 四形态）+ build（builder）+ exec-review（reviewer）渲染
+ *      integrationDrift 四形态）+ build（developer）+ exec-review（reviewer）渲染
  *      输出与改动前逐字节一致——嵌入式渲染快照生成自 mx5-3 改动前源码；
  *      B3 fixture 输入全为常量合成路径（briefRef 刻意不存在，走「不可读」
  *      兜底分支），渲染输出不含任何环境相关字节，跨机逐字节可复现
@@ -156,7 +156,7 @@ type B3CaseName =
   | "designer-spec-fix"
   | "designer-missing-children"
   | "designer-integration-drift"
-  | "builder-build-ready"
+  | "developer-build-ready"
   | "reviewer-exec-review";
 
 // ---- B3 fixture 常量：全合成路径（与真实 tmp 无关）——渲染输出不含环境字节 ----
@@ -275,8 +275,8 @@ const B3_CASES: readonly B3Case[] = [
     },
   },
   {
-    name: "builder-build-ready",
-    target: { role: "builder", unitId: "mx53-leaf", dimension: "buildReady" },
+    name: "developer-build-ready",
+    target: { role: "developer", unitId: "mx53-leaf", dimension: "buildReady" },
     build(ledger) {
       ledger.append("UnitCreated", { unitId: "mx53-root", parentId: null, briefRef: B3_BRIEF_REF });
       ledger.append("UnitCreated", {
@@ -463,7 +463,7 @@ runner 已停止自动重派集成——契约漂移/merge 冲突的处置需要
 - workdir: /cw-mx53-b3/worktrees/mx53-root（unit 专属 git worktree，分支 cw-root/mx53-root）
 - 账本命令：直接在 workdir 下执行 cw …（CW_PROJECT_DIR 已注入 env，自动锚定项目账本 /cw-mx53-b3/project）
 `,
-  "builder-build-ready": `# builder 任务书：unit "mx53-leaf"
+  "developer-build-ready": `# developer 任务书：unit "mx53-leaf"
 
 ## Unit 上下文
 - unitId: mx53-leaf
@@ -474,7 +474,7 @@ runner 已停止自动重派集成——契约漂移/merge 冲突的处置需要
 ### 原始任务书内容
 (原始任务书文件不可读：/cw-mx53-b3/project/brief.md)
 
-## 你的任务（builder）
+## 你的任务（developer）
 1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。
 2. 提交 build 证据：cw evidence submit --kind build --unit mx53-leaf --commit <hash> --run-id <自拟唯一 runId> [--file <产物路径>...]
 3. 触发干净重跑验证：cw verify --unit mx53-leaf（默认含红阶段检查——新测试在旧代码树必须 fail，恒真测试会被拒）。

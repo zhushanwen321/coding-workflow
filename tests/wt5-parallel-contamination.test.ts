@@ -4,8 +4,8 @@
  *
  *   C1 并发污染对抗（场景 1，G1）：tmp git 项目，root spec 声明 unit-a/unit-b
  *      两子（验收 command 全部真实可执行轻量命令），账本预置三 unit 全部
- *      spec-frozen → 首轮 frontier 即两 builder。fake adapter（u7-e2e/fx3 模式）
- *      以 maxConcurrency=2 驱动：两 builder worker（真实 node 子进程）经
+ *      spec-frozen → 首轮 frontier 即两 developer。fake adapter（u7-e2e/fx3 模式）
+ *      以 maxConcurrency=2 驱动：两 developer worker（真实 node 子进程）经
  *      ready-rendezvous 同步屏障后并行——各自在自己 worktree 改 src/app.ts 的
  *      不同区域（写入各自标记行）、git add+commit、以 bash 内联
  *      CW_PROJECT_DIR 前缀真实跑 dist/cli.js evidence submit + verify。断言：
@@ -205,7 +205,7 @@ function makeContamRepo(name: string): string {
   return repoDir;
 }
 
-/** 账本预置一个 spec-frozen unit（u7-e2e 直写模式：绕过 designer，首轮 frontier 即 builder） */
+/** 账本预置一个 spec-frozen unit（u7-e2e 直写模式：绕过 designer，首轮 frontier 即 developer） */
 function appendSpecFrozen(
   repoDir: string,
   unitId: string,
@@ -230,7 +230,7 @@ function appendSpecFrozen(
 
 /**
  * argv: <role> <unitId> <projectCwd> <barrierDir> <peerUnitId> <markerLine>
- * builder：ready-rendezvous 屏障 → 改 src/app.ts（插入标记行）→ git add+commit
+ * developer：ready-rendezvous 屏障 → 改 src/app.ts（插入标记行）→ git add+commit
  *   → 内联 CW_PROJECT_DIR 前缀真实跑 cw evidence submit + cw verify。
  * reviewer：内联前缀真实跑 cw review submit（exec-review pass）。
  */
@@ -267,8 +267,8 @@ const git = (args) => {
   return (res.stdout ?? "").trim();
 };
 
-if (role === "builder") {
-  // 同步屏障（ready-rendezvous）：两 builder 都落 ready 文件后才放行——保证后续
+if (role === "developer") {
+  // 同步屏障（ready-rendezvous）：两 developer 都落 ready 文件后才放行——保证后续
   // 文件操作时间窗必然重叠（C1 并行对抗的前提）
   mkdirSync(barrierDir, { recursive: true });
   writeFileSync(join(barrierDir, "ready-" + unitId), String(process.pid) + "\\n");
@@ -276,7 +276,7 @@ if (role === "builder") {
   const deadline = Date.now() + 30_000;
   while (!existsSync(peerReady)) {
     if (Date.now() > deadline) {
-      throw new Error("wt5-worker: builder " + unitId + " 屏障超时（peer " + peerUnitId + " 未就位）");
+      throw new Error("wt5-worker: developer " + unitId + " 屏障超时（peer " + peerUnitId + " 未就位）");
     }
     await sleep(20);
   }
@@ -287,7 +287,7 @@ if (role === "builder") {
   const content = readFileSync(appPath, "utf-8");
   const patched = content.replace(anchor, anchor + "\\n" + markerLine);
   if (patched === content) {
-    throw new Error("wt5-worker: builder " + unitId + " 未命中 anchor: " + anchor);
+    throw new Error("wt5-worker: developer " + unitId + " 未命中 anchor: " + anchor);
   }
   writeFileSync(appPath, patched);
   await sleep(400); // 真实工作时长：拉宽窗口，让重叠断言对调度抖动稳健
@@ -306,7 +306,7 @@ if (role === "builder") {
     "--commit", commit, "--run-id", "run-" + unitId + "-1", "--file", "src/app.ts",
   ]);
   runCw(["verify", "--unit", unitId, "--no-red-phase"]);
-  console.log("wt5-worker-done builder " + unitId + " commit " + commit);
+  console.log("wt5-worker-done developer " + unitId + " commit " + commit);
 } else if (role === "reviewer") {
   // rv-2 exec-review refs 必填适配（方案 C）：从账本读该 unit 真实入账的 runId 后
   // 引用——内部节点（root）无 EvidenceSubmitted，执行证据 = 集成 VerifyRan
@@ -340,26 +340,26 @@ const WORKER_PATH = writeWorkerScript();
 
 // ---- C1 测试专用适配器（spawnProcess 包装 + 派发时点现场快照供断言） ----
 
-interface BuilderDispatchRecord {
+interface DeveloperDispatchRecord {
   unitId: string;
   at: number;
 }
 
 function makeContamAdapter(barrierDir: string): {
   adapter: AgentSpawnAdapter;
-  builderDispatches(): readonly BuilderDispatchRecord[];
+  developerDispatches(): readonly DeveloperDispatchRecord[];
   /** 每次派发时点的 git worktree list --porcelain 快照（两 worktree 并存的证据） */
   worktreeListSnapshots(): readonly string[];
 } {
-  const builderDispatches: BuilderDispatchRecord[] = [];
+  const developerDispatches: DeveloperDispatchRecord[] = [];
   const worktreeLists: string[] = [];
   return {
     adapter: {
       name: "wt5-contamination-script",
       spawn: (req: AgentSpawnRequest): Promise<SpawnHandle> => {
         worktreeLists.push(gitRun(req.projectCwd, ["worktree", "list", "--porcelain"]));
-        if (req.role === "builder") {
-          builderDispatches.push({ unitId: req.unitId, at: Date.now() });
+        if (req.role === "developer") {
+          developerDispatches.push({ unitId: req.unitId, at: Date.now() });
         }
         const markerLine =
           req.unitId === "unit-a" ? MARKER_LINE_A : req.unitId === "unit-b" ? MARKER_LINE_B : "";
@@ -377,7 +377,7 @@ function makeContamAdapter(barrierDir: string): {
         );
       },
     },
-    builderDispatches: () => builderDispatches,
+    developerDispatches: () => developerDispatches,
     worktreeListSnapshots: () => worktreeLists,
   };
 }
@@ -425,7 +425,7 @@ function readWindow(path: string): MutationWindow {
 // ================================================================
 
 describe("wt5 C1 并发污染对抗（场景 1，G1）", () => {
-  it("两 builder 经同步屏障并行改 src/app.ts 不同区域：commit 互不混卷、worktree 并存、项目 cwd 零污染、全链 closed + root 集成 pass", async () => {
+  it("两 developer 经同步屏障并行改 src/app.ts 不同区域：commit 互不混卷、worktree 并存、项目 cwd 零污染、全链 closed + root 集成 pass", async () => {
     const repoDir = makeContamRepo("contam");
     appendSpecFrozen(repoDir, ROOT_ID, null, ROOT_ACCEPTANCE, [
       { unitId: "unit-a", dependsOn: [] },
@@ -433,10 +433,10 @@ describe("wt5 C1 并发污染对抗（场景 1，G1）", () => {
     ]);
     appendSpecFrozen(repoDir, "unit-a", ROOT_ID, acceptanceOf("unit-a"), []);
     appendSpecFrozen(repoDir, "unit-b", ROOT_ID, acceptanceOf("unit-b"), []);
-    expect(statusOf(repoDir, ROOT_ID)).toBe("spec-frozen"); // 前提：首轮 frontier 即两 builder
+    expect(statusOf(repoDir, ROOT_ID)).toBe("spec-frozen"); // 前提：首轮 frontier 即两 developer
 
     const barrierDir = join(tmpRoot, "contam-barrier");
-    const { adapter, builderDispatches, worktreeListSnapshots } = makeContamAdapter(barrierDir);
+    const { adapter, developerDispatches, worktreeListSnapshots } = makeContamAdapter(barrierDir);
     const watch = startCwdPollutionWatch(repoDir);
 
     let captured: { code: number; out: string; err: string };
@@ -498,18 +498,18 @@ describe("wt5 C1 并发污染对抗（场景 1，G1）", () => {
       "git worktree list 快照中未出现两 unit worktree 并存",
     ).toBe(true);
 
-    // 并行前提复核：两 builder 同轮派发（间隔毫秒级）+ 文件操作窗口重叠 > 0
-    const dispatches = builderDispatches();
+    // 并行前提复核：两 developer 同轮派发（间隔毫秒级）+ 文件操作窗口重叠 > 0
+    const dispatches = developerDispatches();
     expect(dispatches.map((d) => d.unitId).sort()).toEqual(["unit-a", "unit-b"]);
     const dispatchGap = Math.abs(dispatches[0].at - dispatches[1].at);
     const winA = readWindow(join(barrierDir, "window-unit-a.json"));
     const winB = readWindow(join(barrierDir, "window-unit-b.json"));
     const overlapMs = Math.min(winA.end, winB.end) - Math.max(winA.start, winB.start);
     console.log(
-      `[wt5] builder 文件操作窗口重叠 ${overlapMs}ms（a:[${winA.start},${winA.end}] b:[${winB.start},${winB.end}]，派发间隔 ${dispatchGap}ms）`,
+      `[wt5] developer 文件操作窗口重叠 ${overlapMs}ms（a:[${winA.start},${winA.end}] b:[${winB.start},${winB.end}]，派发间隔 ${dispatchGap}ms）`,
     );
     expect(dispatchGap).toBeLessThan(5_000);
-    expect(overlapMs, `两 builder 文件操作窗口应重叠（a:[${winA.start},${winA.end}] b:[${winB.start},${winB.end}]）`).toBeGreaterThan(0);
+    expect(overlapMs, `两 developer 文件操作窗口应重叠（a:[${winA.start},${winA.end}] b:[${winB.start},${winB.end}]）`).toBeGreaterThan(0);
 
     // root 分支汇聚两标记行（merge 后的集成树 = G5 回流载体）
     const rootBranchApp = gitRun(repoDir, ["show", `${unitBranchName(ROOT_ID, ROOT_ID)}:src/app.ts`]);

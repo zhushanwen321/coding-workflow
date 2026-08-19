@@ -150,7 +150,7 @@ describe("u6b human 适配器", () => {
     const scenario = makeScenario("instruction", "instr");
     const briefPath = join(scenario.workdir, "brief.md");
 
-    for (const role of ["designer", "builder", "reviewer"] as const) {
+    for (const role of ["designer", "developer", "reviewer"] as const) {
       // spawn 立即返回即产物就绪（human 无子进程，文件写入先于 handle 返回）
       await humanAdapter.spawn(spawnRequest(scenario, "instr", role, 60_000));
       const out = readFileSync(artifactPath(scenario, "instr", role, "stdout"), "utf8");
@@ -166,10 +166,10 @@ describe("u6b human 适配器", () => {
     expect(designerOut).toContain("cw evidence submit --kind spec");
     // mx-1：designer 指令不再含任何 review submit 步骤（spec-review 归独立 reviewer）
     expect(designerOut).not.toContain("review submit");
-    const builderOut = readFileSync(artifactPath(scenario, "instr", "builder", "stdout"), "utf8");
-    expect(builderOut).toContain("git commit");
-    expect(builderOut).toContain("cw evidence submit --kind build");
-    expect(builderOut).toContain("cw verify");
+    const developerOut = readFileSync(artifactPath(scenario, "instr", "developer", "stdout"), "utf8");
+    expect(developerOut).toContain("git commit");
+    expect(developerOut).toContain("cw evidence submit --kind build");
+    expect(developerOut).toContain("cw verify");
     const reviewerOut = readFileSync(artifactPath(scenario, "instr", "reviewer", "stdout"), "utf8");
     expect(reviewerOut).toContain("cw review submit");
     expect(reviewerOut).toContain("--verdict-kind spec-review");
@@ -177,7 +177,7 @@ describe("u6b human 适配器", () => {
     // mx-1：reviewer 指令内嵌 --role reviewer 自报（任务书模板与 CLI flag 对齐）
     expect(reviewerOut).toContain("--role reviewer");
     // 信任边界提示（human 无自动 reviewer，人自任）三 role 共有
-    for (const role of ["designer", "builder", "reviewer"] as const) {
+    for (const role of ["designer", "developer", "reviewer"] as const) {
       expect(readFileSync(artifactPath(scenario, "instr", role, "stdout"), "utf8")).toContain(
         "无自动 reviewer",
       );
@@ -197,15 +197,15 @@ describe("u6b human 适配器", () => {
     expect(result.pid).toBe(-1); // human 无子进程，-1 = 不适用（与 lifecycle/pi 一致）
   });
 
-  it("验收#3 builder wait() 事件按 role 过滤：SpecSubmitted / EvidenceSubmitted 均不触发（完成信号对齐任务书第 3 步 cw verify），VerifyRan 才触发", async () => {
-    const scenario = makeScenario("builder-filter", "bf");
+  it("验收#3 developer wait() 事件按 role 过滤：SpecSubmitted / EvidenceSubmitted 均不触发（完成信号对齐任务书第 3 步 cw verify），VerifyRan 才触发", async () => {
+    const scenario = makeScenario("developer-filter", "bf");
     // spawn 前账本已有 SpecSubmitted（ts 早于 spawn 起始——旧事件 + 类型不符双重不触发）
     new EventLedger(scenario.ledgerFile).append("SpecSubmitted", specPayload("bf"));
-    const handle = await humanAdapter.spawn(spawnRequest(scenario, "bf", "builder", 15_000));
+    const handle = await humanAdapter.spawn(spawnRequest(scenario, "bf", "developer", 15_000));
     const waitPromise = handle.wait();
 
     // spawn 之后写入的新 SpecSubmitted / EvidenceSubmitted（晚于起始、同 unit）：
-    // builder 任务书第 3 步（cw verify）才是最后一步——前两步的产物若提前
+    // developer 任务书第 3 步（cw verify）才是最后一步——前两步的产物若提前
     // resolve，verify 永远无人执行，loop 重算时 unit 仍 spec-frozen 只能重派
     appendEventFromRealChild(scenario.ledgerFile, "SpecSubmitted", specPayload("bf"));
     appendEventFromRealChild(scenario.ledgerFile, "EvidenceSubmitted", evidencePayload("bf", "run-bf-1"));
@@ -215,7 +215,7 @@ describe("u6b human 适配器", () => {
     ]);
     expect(
       state,
-      "builder wait() 对 SpecSubmitted / EvidenceSubmitted 不应误判（轮询 1s，观察窗 1.5s）",
+      "developer wait() 对 SpecSubmitted / EvidenceSubmitted 不应误判（轮询 1s，观察窗 1.5s）",
     ).toBe("pending");
 
     appendEventFromRealChild(scenario.ledgerFile, "VerifyRan", verifyRanPayload("bf", "run-bf-1"));
@@ -226,7 +226,7 @@ describe("u6b human 适配器", () => {
   it("验收#4 超时：timeoutMs=800 无进展事件 → TIMEOUT", async () => {
     const scenario = makeScenario("timeout", "to");
     const startedAt = Date.now();
-    const handle = await humanAdapter.spawn(spawnRequest(scenario, "to", "builder", 800));
+    const handle = await humanAdapter.spawn(spawnRequest(scenario, "to", "developer", 800));
     const result = await handle.wait();
     expect(result.exitCode).toBe("TIMEOUT");
     expect(result.pid).toBe(-1); // human 无子进程，-1 = 不适用

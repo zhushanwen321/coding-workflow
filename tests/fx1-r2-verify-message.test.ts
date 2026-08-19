@@ -3,7 +3,7 @@
  * `cw verify` 失败时的恢复动作文案。
  *
  * 根因（final-gate-report.md §5 R2）：旧文案「修复后重新提交 spec + build 证据并
- * 重审，再 cw verify」诱导 builder 重提 spec → deriveStatus 判回 created（重提 =
+ * 重审，再 cw verify」诱导 developer 重提 spec → deriveStatus 判回 created（重提 =
  * 打回重审）→ 派发真空死区。新文案必须指向「仅重提 build 证据，spec 冻结不动」。
  *
  * 真实环境零 mock：真实 git 仓库 + 干净 checkout 重跑（dispatch 层完整路径）。
@@ -99,7 +99,7 @@ describe("fx-1 R2.1 verify 失败恢复文案：spec 冻结不动，仅重提 bu
       "仅重新 cw evidence submit --kind build --unit u-1 --commit <hash> --run-id <新id> 再 cw verify",
     );
     expect(res.stderr).toContain("spec 冻结不动（改验收走重新 spec 是另一路径，需重新过审）");
-    // 旧误导语必须清除：它正是终验中 builder 落入派发真空死区的指令来源
+    // 旧误导语必须清除：它正是终验中 developer 落入派发真空死区的指令来源
     expect(res.stderr).not.toContain("重新提交 spec + build 证据");
   });
 });

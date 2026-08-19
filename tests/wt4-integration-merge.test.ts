@@ -519,8 +519,8 @@ describe("wt4 M5 启动孤儿清扫（J3 跨 run 兜底）", () => {
 
 /** M6/M7 的进度适配器观测（closed 当轮 / 下轮回收 / root worktree 全程在） */
 interface ProgressObs {
-  /** builder(root) spawn 时（unit-a closed 已入账的下一轮）unit-a worktree 是否仍在 */
-  builderSawUnitA: boolean | null;
+  /** developer(root) spawn 时（unit-a closed 已入账的下一轮）unit-a worktree 是否仍在 */
+  developerSawUnitA: boolean | null;
   /** reviewer(root) spawn 时（再下一轮，J4 已执行回收）unit-a worktree 是否已回收 */
   reviewerSawUnitA: boolean | null;
   /** 任意 spawn 时点 root worktree 是否曾缺位（期望 false：全程保留） */
@@ -529,7 +529,7 @@ interface ProgressObs {
 
 /**
  * 脚本化推进适配器：按 role 对真实账本写入（designer 写 root spec + 过审、
- * reviewer 写 exec-review、builder 写 evidence + VerifyRan——u7 worker 的职责边界
+ * reviewer 写 exec-review、developer 写 evidence + VerifyRan——u7 worker 的职责边界
  * 同款：本文件测调度与回收时序，verify 真实性属 u4/u5 已验收领地）。
  * spawn 时点捕获 unit-a / root worktree 存在性供 M6 断言。
  */
@@ -538,7 +538,7 @@ function makeProgressAdapter(unitAId: string, rootCommit: string): {
   obs: ProgressObs;
 } {
   const obs: ProgressObs = {
-    builderSawUnitA: null,
+    developerSawUnitA: null,
     reviewerSawUnitA: null,
     rootWorktreeEverMissing: false,
   };
@@ -571,7 +571,7 @@ function makeProgressAdapter(unitAId: string, rootCommit: string): {
           });
         } else {
           if (req.unitId === ROOT_ID) {
-            obs.builderSawUnitA = existsSync(worktreePath(WT_HOME, req.projectCwd, unitAId));
+            obs.developerSawUnitA = existsSync(worktreePath(WT_HOME, req.projectCwd, unitAId));
           }
           const runId = `run-${req.unitId}-1`;
           ledger.append("EvidenceSubmitted", {
@@ -658,7 +658,7 @@ function seedLoopFixture(name: string): { repoDir: string; head: string } {
 }
 
 describe("wt4 M6 延迟回收（J4：closed 当轮仍在、下轮开头回收；root 全程保留）", () => {
-  it("unit-a closed 后当轮派发的 builder(root) 仍见其 worktree；下一轮回收后 reviewer(root) 不再见到；root worktree 全程保留", async () => {
+  it("unit-a closed 后当轮派发的 developer(root) 仍见其 worktree；下一轮回收后 reviewer(root) 不再见到；root worktree 全程保留", async () => {
     const { repoDir, head } = seedLoopFixture("m6");
     const { adapter, obs } = makeProgressAdapter("unit-a", head);
 
@@ -668,8 +668,8 @@ describe("wt4 M6 延迟回收（J4：closed 当轮仍在、下轮开头回收；
 
     expect(captured.code).toBe(0); // root closed 全链收束
     // unit-a closed（轮 1 末 reviewer 写 exec-review）→ 轮 2 收集不回收 →
-    // builder(root)（轮 2 派发）spawn 时仍在（debug 留一轮窗口）
-    expect(obs.builderSawUnitA).toBe(true);
+    // developer(root)（轮 2 派发）spawn 时仍在（debug 留一轮窗口）
+    expect(obs.developerSawUnitA).toBe(true);
     // 轮 3 开头 J4 执行回收 → reviewer(root)（轮 3+ 派发）spawn 时已回收
     expect(obs.reviewerSawUnitA).toBe(false);
     // root worktree 全程保留（回流载体），run 结束后仍在

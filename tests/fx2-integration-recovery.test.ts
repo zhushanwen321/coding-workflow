@@ -469,11 +469,11 @@ describe("fx-2 R4a 回归3（rv-4 语义迁移：处置链路不变）：designe
     expect(feat?.specs.length).toBeGreaterThanOrEqual(2);
     expect(feat?.specs[feat.specs.length - 1]?.contracts[0]?.signature).toBe(CONTRACT_SIGNATURE_FIXED);
 
-    // 派发形态：designer 处置 + root 的 exec-review reviewer；全程无 builder
+    // 派发形态：designer 处置 + root 的 exec-review reviewer；全程无 developer
     const roles = script.spawned().map((r) => r.role);
     expect(roles[0]).toBe("designer");
     expect(roles).toContain("reviewer");
-    expect(roles).not.toContain("builder");
+    expect(roles).not.toContain("developer");
   }, 60_000);
 });
 

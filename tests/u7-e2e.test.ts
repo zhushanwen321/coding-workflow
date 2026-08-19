@@ -8,8 +8,8 @@
  *      human.ts）合入前 dist 模块缺席，本条以 it.todo 挂起（验收文档许可的
  *      推迟项），合入并 build 后自动激活；同条件的 M0 回归见 tests/u5b-e2e.test.ts。
  *   2. A2 最小版（双叶子并行）：测试专用适配器直调 runLoop（import dist），fixture
- *      预置 root + 两叶全部 spec-frozen → 两 builder 并行，用账本事件信封 ts 断言
- *      两 builder 的工作区间重叠 ≥ 1 对（[EvidenceSubmitted.ts, VerifyRan.ts] 区间）。
+ *      预置 root + 两叶全部 spec-frozen → 两 developer 并行，用账本事件信封 ts 断言
+ *      两 developer 的工作区间重叠 ≥ 1 对（[EvidenceSubmitted.ts, VerifyRan.ts] 区间）。
  *
  * 全部真实子进程 + tmp git 仓库 + 隔离 CW_HOME，零 mock。注意：直接
  * `npx vitest run tests/u7-e2e.test.ts` 不触发 pretest，需先 `npm run build`。
@@ -443,34 +443,34 @@ describe("E2E real：human 后端走新 loop + humanAdapter（u6b 合入后自�
 });
 
 // ================================================================
-// E2E 条件 2：A2 最小版——双叶子 builder 并行重叠（直调 runLoop）
+// E2E 条件 2：A2 最小版——双叶子 developer 并行重叠（直调 runLoop）
 // ================================================================
 
-/** 双叶子场景的测试专用 worker：builder 两段 sleep（各 builderWorkMs）制造可观察区间 */
+/** 双叶子场景的测试专用 worker：developer 两段 sleep（各 developerWorkMs）制造可观察区间 */
 function writeParallelWorker(): string {
   const script = `// tests/u7-e2e.test.ts 生成的测试专用 agent worker（真实进程，非 mock）
-// argv: <role> <unitId> <cwd> <builderWorkMs> <commit> <briefPath>
+// argv: <role> <unitId> <cwd> <developerWorkMs> <commit> <briefPath>
 import { createHash } from "node:crypto";
 const DIST = ${JSON.stringify(DIST_ROOT)};
 const [role, unitId, cwd, workMsRaw, commit] = process.argv.slice(2);
-const builderWorkMs = Number(workMsRaw);
+const developerWorkMs = Number(workMsRaw);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 const { ledgerForCwd } = await import(DIST + "/handlers/common.js");
 const { loadLedger } = await import(DIST + "/readonly/load.js");
 console.log("worker " + role + " " + unitId + " pid=" + process.pid);
 
-if (role === "builder") {
-  await sleep(builderWorkMs);
+if (role === "developer") {
+  await sleep(developerWorkMs);
   const unit = loadLedger(cwd).projection.units.get(unitId);
-  if (unit === undefined || unit.specs.length === 0) throw new Error("builder: unit " + unitId + " 无 spec");
+  if (unit === undefined || unit.specs.length === 0) throw new Error("developer: unit " + unitId + " 无 spec");
   const acceptanceIds = unit.specs[unit.specs.length - 1].acceptance.map((a) => a.id);
   const runId = "run-" + unitId + "-" + Date.now();
   const ledger = ledgerForCwd(cwd);
   ledger.append("EvidenceSubmitted", { unitId, runId, commit, paths: ["app.js"], sha256: [sha("app.js")], exitCode: 0 });
-  await sleep(builderWorkMs);
+  await sleep(developerWorkMs);
   ledger.append("VerifyRan", { unitId, runId, reportHash: sha("evidence-report:" + runId), result: "pass", acceptanceIds });
-  console.log("worker-done builder " + unitId);
+  console.log("worker-done developer " + unitId);
 } else if (role === "reviewer") {
   await sleep(50);
   ledgerForCwd(cwd).append("VerdictSubmitted", { unitId, verdictKind: "exec-review", verdict: "pass" });
@@ -492,7 +492,7 @@ interface ParallelSpawnRecord {
   at: number;
 }
 
-function makeParallelAdapter(commit: string, builderWorkMs: number): {
+function makeParallelAdapter(commit: string, developerWorkMs: number): {
   adapter: AgentSpawnAdapter;
   spawned(): readonly ParallelSpawnRecord[];
 } {
@@ -510,7 +510,7 @@ function makeParallelAdapter(commit: string, builderWorkMs: number): {
             req.unitId,
             // wt-2 迁移：worker 写账本锚定 projectCwd（等价 agent 的 CW_PROJECT_DIR 锚定）
             req.projectCwd,
-            String(builderWorkMs),
+            String(developerWorkMs),
             commit,
             req.briefPath,
           ],
@@ -536,8 +536,8 @@ function eventTs(events: readonly LedgerEvent[], unitId: string, type: string): 
   return Date.parse(hit.ts);
 }
 
-describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调 + 账本 ts 重叠断言）", () => {
-  it("两 builder 工作区间重叠 ≥1 对（[EvidenceSubmitted, VerifyRan] 事件 ts），全链 root closed", async () => {
+describe("E2E real：A2 最小版——双叶子 developer 并行（runLoop 直调 + 账本 ts 重叠断言）", () => {
+  it("两 developer 工作区间重叠 ≥1 对（[EvidenceSubmitted, VerifyRan] 事件 ts），全链 root closed", async () => {
     const repoDir = makeScenario("parallel-leaves");
     writeFileSync(join(repoDir, "brief.md"), "# feat 任务书\n");
     // u8 适配：root（split 非空）在两叶 verified 后由循环直跑子树集成——集成会在
@@ -547,7 +547,7 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
     gitRun(repoDir, ["commit", "-m", "fixture: brief"]);
     const head = gitRun(repoDir, ["rev-parse", "HEAD"]);
 
-    // fixture 预置：root feat + 两叶全部 spec-frozen（runLoop 首轮 frontier 即两个 builder）
+    // fixture 预置：root feat + 两叶全部 spec-frozen（runLoop 首轮 frontier 即两个 developer）
     const ledger = ledgerForCwd(repoDir);
     ledger.append("UnitCreated", {
       unitId: "feat",
@@ -607,33 +607,33 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
     }
 
     // 重叠断言（账本事件信封 ts 为权威时间线）：
-    // 区间 [EvidenceSubmitted.ts, VerifyRan.ts] 即 builder 两次真实写账本之间的工作窗口
+    // 区间 [EvidenceSubmitted.ts, VerifyRan.ts] 即 developer 两次真实写账本之间的工作窗口
     const events = ledgerForCwd(repoDir).readAll();
     const leaf1Start = eventTs(events, "leaf1", "EvidenceSubmitted");
     const leaf1End = eventTs(events, "leaf1", "VerifyRan");
     const leaf2Start = eventTs(events, "leaf2", "EvidenceSubmitted");
     const leaf2End = eventTs(events, "leaf2", "VerifyRan");
-    // 辅助证据：两 builder 的派发时刻来自同一轮批次（间隔远小于单个 builder 的窗口）
-    const builderDispatches = spawned().filter((r) => r.role === "builder" && r.unitId !== "feat");
-    expect(builderDispatches.length).toBe(2);
-    const dispatchGap = Math.abs(builderDispatches[0].at - builderDispatches[1].at);
+    // 辅助证据：两 developer 的派发时刻来自同一轮批次（间隔远小于单个 developer 的窗口）
+    const developerDispatches = spawned().filter((r) => r.role === "developer" && r.unitId !== "feat");
+    expect(developerDispatches.length).toBe(2);
+    const dispatchGap = Math.abs(developerDispatches[0].at - developerDispatches[1].at);
     expect(dispatchGap).toBeLessThan(1_000);
 
     const overlapMs = Math.min(leaf1End, leaf2End) - Math.max(leaf1Start, leaf2Start);
     // 证据行（验收汇报的时间戳来源）：两区间在账本事件 ts 轴上的重叠毫秒数
     console.log(
-      `[u7-e2e] 双叶 builder 区间重叠 ${overlapMs}ms（leaf1:[${leaf1Start},${leaf1End}] leaf2:[${leaf2Start},${leaf2End}]，派发间隔 ${dispatchGap}ms）`,
+      `[u7-e2e] 双叶 developer 区间重叠 ${overlapMs}ms（leaf1:[${leaf1Start},${leaf1End}] leaf2:[${leaf2Start},${leaf2End}]，派发间隔 ${dispatchGap}ms）`,
     );
-    expect(overlapMs, `两 builder 区间应重叠（leaf1:[${leaf1Start},${leaf1End}] leaf2:[${leaf2Start},${leaf2End}]）`).toBeGreaterThan(0);
+    expect(overlapMs, `两 developer 区间应重叠（leaf1:[${leaf1Start},${leaf1End}] leaf2:[${leaf2Start},${leaf2End}]）`).toBeGreaterThan(0);
 
     // 顺序证据（u8 派发时机升级适配：rootLast 从「子全 closed」升级为「子全
     // verified」——root 的 build 不再派 agent worker，改由循环直跑子树集成并写
     // VerifyRan，故改用账本 seq 断言时序）：
     // a) root 的集成 VerifyRan 晚于两叶 VerifyRan（子证据齐是集成的物理前提——
-    //    本 fixture 两 builder 完成时刻有先后，这是唯一确定的顺序不变量；
+    //    本 fixture 两 developer 完成时刻有先后，这是唯一确定的顺序不变量；
     //    「集成早于子 exec-review（不等 closed）」的确定性断言在 u8-e2e 的
     //    预置 verified fixture 中覆盖）；
-    // b) root 无 builder spawn（内部节点不派 agent），其 VerifyRan 为集成产物。
+    // b) root 无 developer spawn（内部节点不派 agent），其 VerifyRan 为集成产物。
     const allEvents = ledgerForCwd(repoDir).readAll();
     const seqOf = (unitId: string, type: string): number => {
       const hit = allEvents.find((ev) => ev.type === type && ev.payload.unitId === unitId);
@@ -648,6 +648,6 @@ describe("E2E real：A2 最小版——双叶子 builder 并行（runLoop 直调
     const rootVerify = featUnit?.verifyRuns.at(-1);
     expect(rootVerify?.runId).toMatch(/^integrate-/);
     expect(rootVerify?.result).toBe("pass");
-    expect(spawned().some((r) => r.unitId === "feat" && r.role === "builder")).toBe(false);
+    expect(spawned().some((r) => r.unitId === "feat" && r.role === "developer")).toBe(false);
   }, 60_000);
 });

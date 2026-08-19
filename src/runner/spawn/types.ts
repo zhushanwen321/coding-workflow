@@ -6,7 +6,7 @@
  * u6a（lifecycle 进程管理原语）与 u6b/u6c（human/pi 适配器）并行开发，双方只 import。
  */
 
-export type AgentRole = "designer" | "builder" | "reviewer";
+export type AgentRole = "designer" | "developer" | "reviewer";
 
 export interface AgentSpawnRequest {
   role: AgentRole;

@@ -33,7 +33,7 @@
  *     可执行集成（u8：不派 agent，loop 直接跑 runIntegrationVerify）
  *   - flakeReview：spec-frozen 且当前 spec 周期内某 e2e 级验收连挂 ≥2 次——
  *     待人工判定（rv-5，canon §5.2：不自动豁免防 Goodhart；机器派发无出口，
- *     loop 停派该 unit 的 builder，其余 unit 照常）。连挂输入排除解析失败条目
+ *     loop 停派该 unit 的 developer，其余 unit 照常）。连挂输入排除解析失败条目
  *     （mx5-2：解析失败是确定性 spec 缺陷走 specContractBroken 回炉，不再误判
  *     为随机挂——M4 gate 三跑现场五的根因拆除）
  *   - specContractBroken：spec-frozen 且当前 spec 周期内某验收解析失败
@@ -48,7 +48,7 @@
  *     新 SpecSubmitted 整体重置该 unit 全部连挂状态——断言失败条目的 flake
  *     连挂同样被清，每 unit 至多被清 2 次（代数上界）且计数可重建
  *   - buildReady：spec-frozen 叶子（split 空 ∨ 自引用按叶子语义）且子全部
- *     closed（rootLast）——待 builder
+ *     closed（rootLast）——待 developer
  *   - execReviewReady：verified 且未 closed——待 reviewer（exec-review）
  * closed 的 unit 与「等待子树推进」的 unit 不在任何组（已越过 / 尚未到达本
  * frontier 推进点）。弱 spec（gate 红）停在 created 且已有过审记录的 unit 亦无组：
@@ -256,7 +256,7 @@ export function latestSpecReviewAfterLastSpec(
 }
 
 /**
- * builder 的 rootLast 等待条件（叶子路径）：该 unit 的全部子 unit（按账本
+ * developer 的 rootLast 等待条件（叶子路径）：该 unit 的全部子 unit（按账本
  * parentId）已 closed。全投影口径与 loop 时代的「root 子树内遍历」等价——
  * 子树内 unit 的子（parentId 边）必然仍在子树内（BFS 收集性质）。
  */
@@ -426,7 +426,7 @@ export interface FlakeReviewFact {
  * （聚合 pass 集）：当前 spec 的 e2e 条目在某次 unit 级 verify 中不在 pass 集
  * 即该次 fail。口径锁定（rv5-acceptance §4）：
  *   - 只认 e2e 级（e2e-real / e2e-mock）：unit/integration 连挂是稳定 bug，
- *     走正常 fail 打回（builder 修），不转人工；
+ *     走正常 fail 打回（developer 修），不转人工；
  *   - 连续 = 当前 spec 周期内该条目在每次 unit 级 VerifyRan 中都 fail 且次数
  *     ≥2；中间任何一次 pass 即清零（投影天然重算，无内存态）；
  *   - 集成 verify（integrate- 前缀 runId）不参与计数也不清零（集成是全量重跑
@@ -696,7 +696,7 @@ export function computeFrontier(
         groups.specContractBroken.push(unit.unitId);
       } else if ((flakes?.get(unit.unitId)?.length ?? 0) > 0) {
         // rv-5 flakeReview 优先于推进组：e2e 连挂的判定权在人，机器继续派发
-        // （builder 打回 / 集成重跑）对随机挂无解——转人工期间该 unit 停止
+        // （developer 打回 / 集成重跑）对随机挂无解——转人工期间该 unit 停止
         // 自动推进，其余 unit 照常；人工处置后投影自然消失，自愈
         groups.flakeReview.push(unit.unitId);
       } else if (!selfReferencing && splitOf(unit).length > 0) {
@@ -733,7 +733,7 @@ export function renderFrontier(groups: FrontierGroups): string {
  * 该 unit 当前的停派态描述（mx5-2 D6：TIMEOUT 结算行诚实化的输入）。停派态 =
  * 三个转人工维度之一（specContractDeadlock / flakeReview / specReviewDeadlock
  * ——TIMEOUT 封顶的转人工是单进程内存态且封顶后不再有新 spawn，无需投影判定）。
- * 停派态下的「可重派」承诺不兑现（三跑现场五：flake 停派中的 builder TIMEOUT
+ * 停派态下的「可重派」承诺不兑现（三跑现场五：flake 停派中的 developer TIMEOUT
  * 结算行写可重派，死局），文案须改述真实行为。纯投影：调用方传入结算时刻的
  * 最新事件流（被 kill 的 agent 死前可能已写入处置事件）。
  */

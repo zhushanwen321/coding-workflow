@@ -215,7 +215,7 @@ function countDispatches(runner: RunnerCapture, unitId: string): number {
   const needles = [
     `派发 designer → unit "${unitId}"`,
     `派发 reviewer → unit "${unitId}"`,
-    `派发 builder → unit "${unitId}"`,
+    `派发 developer → unit "${unitId}"`,
   ];
   return needles.reduce((sum, needle) => sum + occurrences(runner.stdoutText(), needle), 0);
 }

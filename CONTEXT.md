@@ -86,7 +86,7 @@ verify（干净重跑）的判定链，共同原则是**伪造成本 ≥ 干活�
 2. **名字级比对**：验收逐条按名字在重跑产物里 PASS，不是「N passed ≥ 用例数」的计数启发式（`nondeterministic` 声明条目跳过，结果标注 nameSkipped）
 3. **干净重跑**：干净 checkout 到隔离临时工作区（commit hash 取自账本）+ 独立 CW_HOME，系统自己 spawnSync 复跑
 
-**flake 转人工**：e2e 级验收在当前 spec 周期内连挂 ≥2 次 → frontier 的 `flakeReview` 维度转人工判定（停派 builder、stderr 列连挂 runId），不自动豁免；处置 = 修稳定性 / 声明 nondeterministic 重提 spec / 修真 bug。中间任何一次 pass 或新 spec 提交即清零。
+**flake 转人工**：e2e 级验收在当前 spec 周期内连挂 ≥2 次 → frontier 的 `flakeReview` 维度转人工判定（停派 developer、stderr 列连挂 runId），不自动豁免；处置 = 修稳定性 / 声明 nondeterministic 重提 spec / 修真 bug。中间任何一次 pass 或新 spec 提交即清零。
 
 ### 集成 verify（内部节点的 verify）
 
@@ -103,8 +103,8 @@ verify（干净重跑）的判定链，共同原则是**伪造成本 ≥ 干活�
 - `missingChildren`：spec-frozen 内部节点且 split 声明的子有未创建——待 designer 补建子
 - `integrationDrift`：子全 verified 但集成连续 fail 达上限——待 designer 处置契约漂移
 - `integrationReady`：子全 verified、未达 fail 上限——可执行集成（不派 agent，loop 直跑）
-- `flakeReview`：当前 spec 周期内某 e2e 级验收连挂 ≥2——转人工判定（停派 builder）
-- `buildReady`：spec-frozen 叶子且子全部 closed（rootLast）——待 builder
+- `flakeReview`：当前 spec 周期内某 e2e 级验收连挂 ≥2——转人工判定（停派 developer）
+- `buildReady`：spec-frozen 叶子且子全部 closed（rootLast）——待 developer
 - `execReviewReady`：verified 且未 closed——待 reviewer（exec-review）
 
 ### 四态 spawn 退出
@@ -122,7 +122,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit（深度上限 2） |
 | `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过八规则 + children-first 后入账冻结） |
 | `cw evidence submit --unit <id> --kind build --commit <hash> --run-id <id> --file <产物>...` | 写 | 提交构建证据（commit 经 git cat-file 实存校验，产物 sha256 入账） |
-| `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|builder\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；`--role` 为可选自报字段——审计载体非信任边界） |
+| `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；`--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
 | `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |
@@ -130,7 +130,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw tree` | 只读 | 分解树 |
 | `cw report [--unit <id>]` | 只读 | 证据链汇总（逐验收覆盖标记 ✓/✗ + hash 前 12 位） |
 
-runner 的角色派发规则（对投影每轮重算，维度 → 派发形态单一映射）：created 且无 spec → designer（首派，任务书第 0 步建 split 子 unit）；created 且有 spec 待审 → 独立 reviewer（specReviewPending，designer 不自审）；spec-review fail 后 → designer 修 spec 重提（specFixPending，任务书内嵌 fail comment 全文）；spec-frozen 叶子 → builder（verified 未 closed → reviewer exec-review）；子全 verified 的根 → 不派 agent，直接集成；集成连续 fail 达上限 → designer 处置契约漂移。同 unit 存在任意 role 的 in-flight spawn 时本轮缓派（防 worktree reset 清在飞现场）。等待 spawn 期间零锁（否则子进程的 evidence submit 饿死）。中断（Ctrl-C）后重跑 `cw run` 从事件投影续接，已 closed 的单元不重做。可见性防线：无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告（不阻断——role 自报可伪造，仅审计信号）。
+runner 的角色派发规则（对投影每轮重算，维度 → 派发形态单一映射）：created 且无 spec → designer（首派，任务书第 0 步建 split 子 unit）；created 且有 spec 待审 → 独立 reviewer（specReviewPending，designer 不自审）；spec-review fail 后 → designer 修 spec 重提（specFixPending，任务书内嵌 fail comment 全文）；spec-frozen 叶子 → developer（verified 未 closed → reviewer exec-review）；子全 verified 的根 → 不派 agent，直接集成；集成连续 fail 达上限 → designer 处置契约漂移。同 unit 存在任意 role 的 in-flight spawn 时本轮缓派（防 worktree reset 清在飞现场）。等待 spawn 期间零锁（否则子进程的 evidence submit 饿死）。中断（Ctrl-C）后重跑 `cw run` 从事件投影续接，已 closed 的单元不重做。可见性防线：无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告（不阻断——role 自报可伪造，仅审计信号）。
 
 ## 环境变量
 
@@ -138,7 +138,7 @@ runner 的角色派发规则（对投影每轮重算，维度 → 派发形态�
 |------|------|------|
 | `CW_HOME` | 存储根目录（per-cwd 隔离的父目录） | `~/.cw`（须绝对路径，相对值报错） |
 | `CW_AGENT_MODEL` | pi 后端派发 agent 用的模型（`--model` 参数） | `xiaomi-token-plan-cn/mimo-v2.5-pro` |
-| `CW_REVIEWER_MODEL` | reviewer spawn 的异源模型（优先级：`--reviewer-model` flag > 本变量 > 回落 builder 同款模型链；注入点 = reviewer spawn 的 `CW_AGENT_MODEL`） | 未设置（回落 builder 同款） |
+| `CW_REVIEWER_MODEL` | reviewer spawn 的异源模型（优先级：`--reviewer-model` flag > 本变量 > 回落 developer 同款模型链；注入点 = reviewer spawn 的 `CW_AGENT_MODEL`） | 未设置（回落 developer 同款） |
 | `CW_WORKTREE_HOME` | unit worktree 根目录（须绝对路径） | `~/.cw-worktrees` |
 | `CW_PROJECT_DIR` | 项目目录锚点：agent 在 worktree 内执行 cw 命令时经它锚定项目账本与 git 操作（须绝对路径） | 进程 cwd |
 

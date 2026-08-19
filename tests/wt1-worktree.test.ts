@@ -197,8 +197,8 @@ describe("B 组：worktree 生命周期", () => {
     // worktree 内的它是普通 untracked——裸 clean -fd 清掉是正确语义（原 `-e .cw-spawn`
     // 保留断言随 fx-4 纯化整体反转：worktree 内不存在 cw 想保护的东西）
     mkdirSync(join(wt, ".cw-spawn"), { recursive: true });
-    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.stdout"), "forged prev role stdout\n");
-    writeFileSync(join(wt, ".cw-spawn", "u-b5.builder.brief.md"), "forged prev role brief\n");
+    writeFileSync(join(wt, ".cw-spawn", "u-b5.developer.stdout"), "forged prev role stdout\n");
+    writeFileSync(join(wt, ".cw-spawn", "u-b5.developer.brief.md"), "forged prev role brief\n");
     expect(gitRun(wt, ["status", "--porcelain"])).not.toBe("");
     expect(resetWorktree(wt)).toEqual({ ok: true });
     // porcelain 全空：无 -e 例外条款，伪造目录一并被清

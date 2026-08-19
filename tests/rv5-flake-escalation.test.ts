@@ -9,7 +9,7 @@
  *   T2 声明不逃逸执行：声明条目真跑真产物（stdout/stderr/exitCode，非 skip 执行）
  *   T3 e2e 连挂转人工（核心）：固定 fail 的 e2e 验收两次 verify fail → frontier
  *      --json 出现 flakeReview；human 模式 runner stderr 出现人工判定指引（含
- *      用例 id 与两次 runId）且不再派该 unit 的 builder
+ *      用例 id 与两次 runId）且不再派该 unit 的 developer
  *   T4 中间 pass 清零：fail → pass → fail（同 spec 周期）→ 不出 flakeReview
  *   T5 unit 级不转人工：unit 型验收连挂 2 次 → 无 flakeReview（正常打回继续）
  *   T6 集成 fail 不计数：integrate- 前缀 runId 的 VerifyRan fail ×2 → 不出 flakeReview
@@ -407,9 +407,9 @@ async function driveToFlake(
   repoDir: string,
   runner: RunnerCapture,
 ): Promise<{ runIds: string[] }> {
-  const dispatchLine = '派发 builder → unit "fdemo"';
+  const dispatchLine = '派发 developer → unit "fdemo"';
   submitScenarioSpec(repoDir, "node e1.js");
-  // builder 第 1 次派发后人进场：worktree 提交坏实现 + build 证据 + 第一次 verify
+  // developer 第 1 次派发后人进场：worktree 提交坏实现 + build 证据 + 第一次 verify
   await waitText(runner.stdoutText, dispatchLine, 10_000);
   const badCommit = humanCommit(repoDir, "fdemo", {
     "impl.js": implBad("E1"),
@@ -421,12 +421,12 @@ async function driveToFlake(
   ).toBe(0);
   const verify1 = runCli(repoDir, ["verify", "--unit", "fdemo"]);
   expect(verify1.code, `第一次 verify 应 fail（E1 FAIL）：${verify1.stderr}`).toBe(1);
-  // builder 第 2 次派发（正常打回路径）后再挂一次——同条目连续第 2 次 fail
+  // developer 第 2 次派发（正常打回路径）后再挂一次——同条目连续第 2 次 fail
   await waitTextCount(runner.stdoutText, dispatchLine, 2, 10_000);
   const verify2 = runCli(repoDir, ["verify", "--unit", "fdemo"]);
   expect(verify2.code, `第二次 verify 应 fail（E1 FAIL）：${verify2.stderr}`).toBe(1);
-  // 转人工指引出声（stderr）且不再派 builder——由调用方各自断言
-  await waitText(runner.stderrText, "停止对该 unit 派发 builder", 10_000);
+  // 转人工指引出声（stderr）且不再派 developer——由调用方各自断言
+  await waitText(runner.stderrText, "停止对该 unit 派发 developer", 10_000);
   const runs = scenarioVerifyRans(repoDir);
   expect(runs).toHaveLength(2);
   return { runIds: runs.map((r) => r.runId) };
@@ -621,7 +621,7 @@ describe("T5 unit 级不转人工", () => {
     // unit 级连挂不进 flake 投影（canon §5.2 只认 e2e 级）。mx5-2 起：U5 的形态
     // 是 vitest 产物解析失败（非断言失败）——连挂 2 次走 spec 契约回炉通道
     //（specContractBroken 派 designer 修 spec 命令契约；M4 gate 现场二同类
-    // 形态），不再停留在 buildReady 等 builder 重派
+    // 形态），不再停留在 buildReady 等 developer 重派
     const groups = await frontierGroups();
     expect(groups.flakeReview).toEqual([]);
     expect(groups.specContractBroken).toContain("u-1");
@@ -700,7 +700,7 @@ describe("T7 spec 变更清零", () => {
 // ================================================================
 
 describe("T3 e2e 连挂转人工（human 模式 E2E）", () => {
-  runnerIt("两次 verify fail 后：flakeReview 维度出现、stderr 转人工指引、不再派 builder", async () => {
+  runnerIt("两次 verify fail 后：flakeReview 维度出现、stderr 转人工指引、不再派 developer", async () => {
     const repoDir = makeRunnerScenario("t3-flake");
     // 空转上限收紧：转人工后无新事件，循环按「审计-不喂-idle」模式收束退出
     const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "4000"]);
@@ -717,8 +717,8 @@ describe("T3 e2e 连挂转人工（human 模式 E2E）", () => {
     expect(stderr).toContain(runIds[1] ?? "");
     expect(stderr).toContain("cw report --unit fdemo");
     expect(stderr).toContain("nondeterministic");
-    // 不再派 builder：第 2 次 fail 后无第 3 次派发（循环空转到 idle 退出）
-    const dispatchCount = runner.stdoutText().split('派发 builder → unit "fdemo"').length - 1;
+    // 不再派 developer：第 2 次 fail 后无第 3 次派发（循环空转到 idle 退出）
+    const dispatchCount = runner.stdoutText().split('派发 developer → unit "fdemo"').length - 1;
     expect(dispatchCount).toBe(2);
     // frontier --json 出现 flakeReview 维度（与派发判定同一出处）
     expect(scenarioFrontier(repoDir).flakeReview).toContain("fdemo");

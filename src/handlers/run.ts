@@ -149,13 +149,13 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
   }
 
   // mx-1：reviewer 异源模型（可选）。flag 优先于进程环境 CW_REVIEWER_MODEL
-  //（runLoop 启动时按同一优先级读取）；未配置时 reviewer spawn 回落 builder
+  //（runLoop 启动时按同一优先级读取）；未配置时 reviewer spawn 回落 developer
   // 同款模型链——结构隔离不依赖模型异源，异源是配置项（设计 D1/D2）
   const reviewerModel = stringArg(ctx.argv, "reviewer-model");
   if (reviewerModel === "") {
     return fail(
       "cw run: --reviewer-model 需要一个模型名参数（如 --reviewer-model provider/model）。" +
-        "恢复动作：补上模型名，或去掉该 flag（回退 CW_REVIEWER_MODEL 环境变量 / builder 同款模型）。",
+        "恢复动作：补上模型名，或去掉该 flag（回退 CW_REVIEWER_MODEL 环境变量 / developer 同款模型）。",
     );
   }
 

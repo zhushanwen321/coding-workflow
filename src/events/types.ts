@@ -114,8 +114,14 @@ export interface VerdictSubmittedPayload {
    * 弱声明）：可选、自报、可伪造——是审计载体不是信任边界（cw review submit 的
    * --role flag 枚举校验只拦手滑不拦伪造）。信任增强来自结构隔离：spec-review
    * 由独立 reviewer spawn 提交（mx-1），role 字段是其旁证之一。
+   *
+   * mx5-4 改名记档：本枚举的实现角色旧值已改为 developer——触发本文件头部
+   * 「已有定义不得改名改义」纪律，属设计 mx-5 D4 用户拍板的例外授权（直接改，
+   * 不做兼容别名）。历史账本兼容已核实：fold 对 exec-review verdict 不比对
+   * role（携带改名前旧角色值的 exec-review pass 照常驱动 closed）、对
+   * spec-review 只认 reviewer（旧角色值本就不算数），重放语义改名前后一致。
    */
-  role?: "reviewer" | "designer" | "builder" | "human";
+  role?: "reviewer" | "designer" | "developer" | "human";
 }
 
 export interface EvidenceSubmittedPayload {

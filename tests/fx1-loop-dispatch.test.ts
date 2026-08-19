@@ -8,7 +8,7 @@
  *   mx-1 起派独立 reviewer（specReviewPending），reviewer 判 fail（gate 规则⑥）
  *   → specFixPending 派 designer 修正 spec 重提 → reviewer 再审 pass → 全链
  *   收敛 closed（修复前：无任何派发目标，maxIdleMs 兜底 exit 1）。
- * - R2.2：builder 重提 spec（spec×2）后无过审 → 派独立 reviewer 审 spec（brief
+ * - R2.2：developer 重提 spec（spec×2）后无过审 → 派独立 reviewer 审 spec（brief
  *   为 spec-review 任务书，不含「撰写 spec」指令），过审后全链收敛 closed
  *   （修复前：created + specs>0 是派发真空，同样 idle exit 1）。
  *
@@ -108,15 +108,15 @@ if (role === "designer" && mode === "fix") {
   const specHash = sha(JSON.stringify({ acceptance: ACCEPTANCE, contracts: [], split: [] }));
   ledger.append("SpecSubmitted", { unitId, specHash, acceptance: ACCEPTANCE, contracts: [], split: [] });
   console.log("fx1-worker-done designer-fix " + unitId);
-} else if (role === "builder") {
+} else if (role === "developer") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
-  if (unit === undefined || unit.specs.length === 0) throw new Error("builder: unit " + unitId + " 无 spec");
+  if (unit === undefined || unit.specs.length === 0) throw new Error("developer: unit " + unitId + " 无 spec");
   const acceptanceIds = unit.specs[unit.specs.length - 1].acceptance.map((a) => a.id);
   const runId = "run-" + unitId + "-" + Date.now();
   const ledger = ledgerForCwd(cwd);
   ledger.append("EvidenceSubmitted", { unitId, runId, commit, paths: ["app.js"], sha256: [sha("app.js")], exitCode: 0 });
   ledger.append("VerifyRan", { unitId, runId, reportHash: sha("evidence-report:" + runId), result: "pass", acceptanceIds });
-  console.log("fx1-worker-done builder " + unitId);
+  console.log("fx1-worker-done developer " + unitId);
 } else if (role === "reviewer") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   if (unit === undefined) throw new Error("reviewer: unit " + unitId + " 不在账本");
@@ -278,12 +278,12 @@ describe("fx-1 R1.3 loop 级（mx-1 形态）：账本已有自引用 spec → �
     expect(captured.code).toBe(0);
     expect(statusOf(repoDir, "selfref")).toBe("closed");
     // mx-1 派发形态：reviewer 首审（fail）→ designer 修 spec → reviewer 再审
-    //（pass）→ builder → reviewer（exec-review）
+    //（pass）→ developer → reviewer（exec-review）
     expect(script.spawned().map((r) => r.role)).toEqual([
       "reviewer",
       "designer",
       "reviewer",
-      "builder",
+      "developer",
       "reviewer",
     ]);
     // spec-review reviewer 任务书（而非「撰写 spec」任务书）落到 reviewer 手里
@@ -309,12 +309,12 @@ describe("fx-1 R1.3 loop 级（mx-1 形态）：账本已有自引用 spec → �
 // ---- R2.2：重提 spec 后派独立 reviewer 审 spec（specReviewPending 形态） ----
 
 describe("fx-1 R2.2 loop 级（mx-1 形态）：重提 spec 后无过审 → 派独立 reviewer 审 spec", () => {
-  it("spec×2（builder 重提）且最后一条 spec 后无 verdict → 首个派发即 reviewer，过审后全链 closed", async () => {
+  it("spec×2（developer 重提）且最后一条 spec 后无 verdict → 首个派发即 reviewer，过审后全链 closed", async () => {
     const { repoDir, head } = makeRepo("r2-resubmit");
     appendUnitCreated(repoDir, "u");
     appendSpec(repoDir, "u", []); // spec1（初版）
     ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "u", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
-    appendSpec(repoDir, "u", []); // spec2（builder 重提——终验 seq13 同款状态）
+    appendSpec(repoDir, "u", []); // spec2（developer 重提——终验 seq13 同款状态）
     expect(statusOf(repoDir, "u")).toBe("created"); // 重提 = 打回重审，旧 pass 不计数
 
     const script = makeScriptAdapter({ mode: "fix", commit: head });
@@ -326,7 +326,7 @@ describe("fx-1 R2.2 loop 级（mx-1 形态）：重提 spec 后无过审 → 派
     expect(captured.code).toBe(0);
     expect(statusOf(repoDir, "u")).toBe("closed");
     // mx-1：spec-review 由独立 reviewer spawn 提交（designer 不再补审自审）
-    expect(script.spawned().map((r) => r.role)).toEqual(["reviewer", "builder", "reviewer"]);
+    expect(script.spawned().map((r) => r.role)).toEqual(["reviewer", "developer", "reviewer"]);
     // spec-review 任务书（而非「撰写 spec」任务书）落到 reviewer 手里
     const brief =
       script

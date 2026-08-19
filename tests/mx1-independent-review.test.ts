@@ -394,7 +394,7 @@ async function assertDeadlock(
   expect(groups.specReviewDeadlock).not.toContain("demo");
   expect(groups.specFixPending).toContain("demo");
   // 停止派发：escalation 出声后 loop 继续 poll ≥3 轮（200ms poll × 1.2s ≥ 5 轮）无新派发
-  const dispatchNeedles = ['派发 designer → unit "demo"', '派发 reviewer → unit "demo"', '派发 builder → unit "demo"'];
+  const dispatchNeedles = ['派发 designer → unit "demo"', '派发 reviewer → unit "demo"', '派发 developer → unit "demo"'];
   const countDispatches = () =>
     dispatchNeedles.reduce((sum, needle) => sum + occurrences(runner.stdoutText(), needle), 0);
   const before = countDispatches();
@@ -430,9 +430,9 @@ describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打�
       expect(groups.specReviewDeadlock).not.toContain("demo");
       expect(groups.specFixPending).toContain("demo");
       // designer 未被停派：第二条 fail 后 designer 仍是该 unit 的推进出口（此处
-      // designer#2 尚在飞等待重提，无新派发是 gate 语义——断言 reviewer/builder
+      // designer#2 尚在飞等待重提，无新派发是 gate 语义——断言 reviewer/developer
       // 均未被派发即可证停派未发生之外的通道未打开）
-      expect(runner.stdoutText()).not.toContain('派发 builder → unit "demo"');
+      expect(runner.stdoutText()).not.toContain('派发 developer → unit "demo"');
     } finally {
       runner.child.kill("SIGTERM");
       await waitExit(runner, 10_000);
@@ -484,7 +484,7 @@ describe("mx-1 T2 deadlock 形态②：fail → 重提（改 1 字节）→ fail
 // ================================================================
 
 describe("mx-1 T3 抢答警告：无在场 reviewer 时提交 spec-review verdict（mx3 迁移：designer 自审不驱动冻结）", () => {
-  distIt("designer 形态的自审 pass（spec+verdict 单写者一次入账）→ stderr 警告行；fold 不消费 → 派独立 reviewer 而非 builder", async () => {
+  distIt("designer 形态的自审 pass（spec+verdict 单写者一次入账）→ stderr 警告行；fold 不消费 → 派独立 reviewer 而非 developer", async () => {
     const repoDir = makeScenario("t3-premature", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
@@ -523,9 +523,9 @@ describe("mx-1 T3 抢答警告：无在场 reviewer 时提交 spec-review verdic
 
       await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 10_000);
       // mx3 语义变化：fold 只认 role=reviewer——designer 的自审 pass 不驱动冻结，
-      // unit 回 specReviewPending，循环改派独立 reviewer（不再派 builder）
+      // unit 回 specReviewPending，循环改派独立 reviewer（不再派 developer）
       await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 10_000);
-      expect(runner.stdoutText()).not.toContain('派发 builder → unit "demo"');
+      expect(runner.stdoutText()).not.toContain('派发 developer → unit "demo"');
       // 状态锚：designer 自审后 unit 仍是 created（待独立审查）
       expect(runCli(repoDir, ["status"]).stdout).toMatch(/demo\s+created/);
     } finally {
@@ -624,7 +624,7 @@ describe("mx-1 T6 role 字段", () => {
     ]);
     expect(res.code).toBe(1);
     expect(res.stderr).toContain('--role "boss"');
-    expect(res.stderr).toContain("reviewer | designer | builder | human");
+    expect(res.stderr).toContain("reviewer | designer | developer | human");
     expect(res.stderr).toContain("恢复动作");
     // 拒绝的提交不入账
     expect(ledgerOf(repoDir).readAll().some((ev) => ev.type === "VerdictSubmitted")).toBe(false);
@@ -705,7 +705,7 @@ if (role === "designer") {
     ledgerForCwd(cwd).append("SpecSubmitted", { unitId, specHash: sha("mx1-fast"), acceptance: ACCEPTANCE, contracts: [], split: [] });
   }
   console.log("mx1-worker-done designer " + unitId);
-} else if (role === "builder") {
+} else if (role === "developer") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   if (unit === undefined || unit.specs.length === 0) throw new Error("mx1-worker: unit " + unitId + " 无 spec");
   const acceptanceIds = unit.specs[unit.specs.length - 1].acceptance.map((a) => a.id);
@@ -713,7 +713,7 @@ if (role === "designer") {
   const ledger = ledgerForCwd(cwd);
   ledger.append("EvidenceSubmitted", { unitId, runId, commit, paths: ["app.js"], sha256: [sha("app.js")], exitCode: 0 });
   ledger.append("VerifyRan", { unitId, runId, reportHash: sha("evidence-report:" + runId), result: "pass", acceptanceIds });
-  console.log("mx1-worker-done builder " + unitId);
+  console.log("mx1-worker-done developer " + unitId);
 } else if (role === "reviewer") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   if (unit === undefined) throw new Error("mx1-worker: unit " + unitId + " 不在账本");
@@ -794,7 +794,7 @@ describe("mx-1 T4 派发 gate：同 unit 在飞期间缓派（S1）", () => {
 
     expect(code).toBe(0);
     const roles = records.map((r) => r.role);
-    expect(roles).toEqual(["designer", "reviewer", "builder", "reviewer"]);
+    expect(roles).toEqual(["designer", "reviewer", "developer", "reviewer"]);
     const designer = records[0]!;
     const specReviewer = records[1]!;
     // 慢 designer：200ms 写 spec（此后每轮 frontier 都是 specReviewPending）、

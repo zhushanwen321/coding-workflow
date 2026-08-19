@@ -106,7 +106,7 @@ function makeRepo(name: string): string {
 
 /**
  * stepped 记录适配器：spawn 时同步按 role 推进账本（designer → 仅 spec（mx-1
- * 不自审）；reviewer → 按 unit 现状出 spec-review / exec-review；builder →
+ * 不自审）；reviewer → 按 unit 现状出 spec-review / exec-review；developer →
  * evidence + VerifyRan），记录全部 req——重点断言 reviewer role 的 req.env
  * （loop 的 CW_AGENT_MODEL 注入点）。
  */
@@ -125,7 +125,7 @@ function makeSteppedAdapter(): { adapter: AgentSpawnAdapter; calls(): readonly A
       });
       return;
     }
-    if (req.role === "builder") {
+    if (req.role === "developer") {
       const runId = `run-${req.unitId}-${Date.now()}`;
       ledger.append("EvidenceSubmitted", {
         unitId: req.unitId,
@@ -178,7 +178,7 @@ function makeSteppedAdapter(): { adapter: AgentSpawnAdapter; calls(): readonly A
   };
 }
 
-/** 跑一遍单 unit 全链（designer → reviewer(spec) → builder → reviewer(exec)），返回全部 spawn req */
+/** 跑一遍单 unit 全链（designer → reviewer(spec) → developer → reviewer(exec)），返回全部 spawn req */
 async function runFullChain(repoDir: string, reviewerModel?: string): Promise<readonly AgentSpawnRequest[]> {
   const script = makeSteppedAdapter();
   const code = await runLoop({
@@ -191,7 +191,7 @@ async function runFullChain(repoDir: string, reviewerModel?: string): Promise<re
   });
   expect(code).toBe(0);
   const roles = script.calls().map((r) => r.role);
-  expect(roles).toEqual(["designer", "reviewer", "builder", "reviewer"]);
+  expect(roles).toEqual(["designer", "reviewer", "developer", "reviewer"]);
   return script.calls();
 }
 
@@ -207,7 +207,7 @@ function piModelOf(req: AgentSpawnRequest): string {
   return model;
 }
 
-describe("mx-1 T7 reviewer 异源模型三级链（flag > CW_REVIEWER_MODEL > 回落 builder 同款）", () => {
+describe("mx-1 T7 reviewer 异源模型三级链（flag > CW_REVIEWER_MODEL > 回落 developer 同款）", () => {
   it("CW_REVIEWER_MODEL 进程环境 → reviewer spawn 的 req.env 注入对应模型，pi 命令行含 --model；designer 不受影响", async () => {
     const envModel = "deepseek/reviewer-env-model";
     process.env.CW_REVIEWER_MODEL = envModel;
@@ -249,13 +249,13 @@ describe("mx-1 T7 reviewer 异源模型三级链（flag > CW_REVIEWER_MODEL > �
     delete process.env.CW_AGENT_MODEL;
     const repoDir = makeRepo("t7-default-same");
     const calls = await runFullChain(repoDir);
-    const [designer, specReviewer, builder, execReviewer] = calls;
-    for (const req of [designer, specReviewer, builder, execReviewer]) {
-      expect(req?.env?.CW_AGENT_MODEL, "未配置时不得注入（reviewer 回落 builder 同款链）").toBeUndefined();
+    const [designer, specReviewer, developer, execReviewer] = calls;
+    for (const req of [designer, specReviewer, developer, execReviewer]) {
+      expect(req?.env?.CW_AGENT_MODEL, "未配置时不得注入（reviewer 回落 developer 同款链）").toBeUndefined();
     }
     const designerModel = piModelOf(designer!);
     expect(piModelOf(specReviewer!)).toBe(designerModel);
-    expect(piModelOf(builder!)).toBe(designerModel);
+    expect(piModelOf(developer!)).toBe(designerModel);
     expect(piModelOf(execReviewer!)).toBe(designerModel);
   }, 30_000);
 });

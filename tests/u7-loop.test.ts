@@ -3,7 +3,7 @@
  *
  * 全部真实环境零 mock：直调 dist 的 runLoop + 测试专用适配器（文件内定义）spawn
  * 真实 node 子进程（worker 脚本由本文件生成），worker 经 dist 的 EventLedger API
- * 对真实账本执行真实写入（designer 写 SpecSubmitted + spec-review、builder 写
+ * 对真实账本执行真实写入（designer 写 SpecSubmitted + spec-review、developer 写
  * EvidenceSubmitted + VerifyRan、reviewer 写 exec-review）；并发计数在适配器内
  * （in-flight 计数器，断言峰值 ≤ maxConcurrency）。
  *
@@ -122,17 +122,17 @@ if (mode === "idle") {
   const specHash = sha(JSON.stringify({ acceptance: ACCEPTANCE, contracts: [], split: [] }));
   ledgerForCwd(cwd).append("SpecSubmitted", { unitId, specHash, acceptance: ACCEPTANCE, contracts: [], split: [] });
   console.log("worker-done designer " + unitId);
-} else if (role === "builder") {
+} else if (role === "developer") {
   await sleep(workMs);
   const unit = loadLedger(cwd).projection.units.get(unitId);
-  if (unit === undefined || unit.specs.length === 0) throw new Error("builder: unit " + unitId + " 无 spec");
+  if (unit === undefined || unit.specs.length === 0) throw new Error("developer: unit " + unitId + " 无 spec");
   const acceptanceIds = unit.specs[unit.specs.length - 1].acceptance.map((a) => a.id);
   const runId = "run-" + unitId + "-" + Date.now();
   const ledger = ledgerForCwd(cwd);
   ledger.append("EvidenceSubmitted", { unitId, runId, commit, paths: ["app.js"], sha256: [sha("app.js")], exitCode: 0 });
   await sleep(workMs);
   ledger.append("VerifyRan", { unitId, runId, reportHash: sha("evidence-report:" + runId), result: "pass", acceptanceIds });
-  console.log("worker-done builder " + unitId);
+  console.log("worker-done developer " + unitId);
 } else if (role === "reviewer") {
   await sleep(workMs);
   // mx-1：reviewer 按 unit 现状二选一——spec 待审（created）→ spec-review；
@@ -243,7 +243,7 @@ function gitRun(repoDir: string, args: readonly string[]): string {
   return (res.stdout ?? "").trim();
 }
 
-/** 独立 repo：init + 一个真实 commit（builder 证据的 commit hash 来源） */
+/** 独立 repo：init + 一个真实 commit（developer 证据的 commit hash 来源） */
 function makeRepo(name: string): { repoDir: string; head: string } {
   const base = join(tmpRoot, name);
   mkdirSync(base, { recursive: true });
@@ -380,7 +380,7 @@ describe("u7 验收#1 测试专用适配器：真实 node 进程 + dist EventLed
   }, 30_000);
 });
 
-// ---- 验收#2：单 unit 全链（created → designer → builder → reviewer → closed → 0） ----
+// ---- 验收#2：单 unit 全链（created → designer → developer → reviewer → closed → 0） ----
 
 describe("u7 验收#2 单 unit 全链", () => {
   it("runLoop 逐 role 推进至 root closed，返回 0，brief 落盘三份", async () => {
@@ -394,9 +394,9 @@ describe("u7 验收#2 单 unit 全链", () => {
 
     expect(captured.code).toBe(0);
     expect(statusOf(repoDir, "root")).toBe("closed");
-    // 派发顺序（mx-1）：designer（提 spec）→ reviewer（spec-review）→ builder →
+    // 派发顺序（mx-1）：designer（提 spec）→ reviewer（spec-review）→ developer →
     // reviewer（exec-review）——spec-review 是独立 reviewer spawn，不再由 designer 自审
-    expect(script.spawned().map((r) => r.role)).toEqual(["designer", "reviewer", "builder", "reviewer"]);
+    expect(script.spawned().map((r) => r.role)).toEqual(["designer", "reviewer", "developer", "reviewer"]);
     // reviewer 的 spec-review verdict 带自报 role=reviewer（弱声明审计载体）
     const verdict = loadLedger(repoDir)
       .projection.units.get("root")
@@ -441,7 +441,7 @@ describe("u7 验收#3 并发上限", () => {
     const script = makeScriptAdapter({ mode: "work", workMs: 200, commit: head });
 
     // work 模式下 worker 按 role 全程推进（mx-1：spec-review 由独立 reviewer
-    // spawn 提交）：5 designer（并发受限）→ 5 reviewer（spec-review）→ 5 builder
+    // spawn 提交）：5 designer（并发受限）→ 5 reviewer（spec-review）→ 5 developer
     // → 5 reviewer（exec-review）→ root 集成（直跑）→ root reviewer → closed
     // 返回 0。并发上限的主断言是适配器内 in-flight 峰值（验收文档锁定方式）。
     const captured = await captureStd(() =>
@@ -554,7 +554,7 @@ describe("修复回归：killAll 兜底清理是 best-effort（kill 异常不炸
     //
     // 竞态消除（存量 flaky 修复）：先 await 真实 handle.wait()（worker 死透、
     // 账本写入完整）再返回外层 handle。原实现直接返回，loop 的 50ms 轮询可能
-    // 捕获「spec 已写、evidence 未写」的中间态（瞬时 spec-frozen → 派 builder，
+    // 捕获「spec 已写、evidence 未写」的中间态（瞬时 spec-frozen → 派 developer，
     // canon 允许同 unit 不同 role 并存），第二个 worker 的新 spec 使 lastSpecSeq
     // 后移、旧 exec-review 失效，root 永远回不到 closed → 偶发 maxIdle exit 1。
     let killCalled = false;

@@ -14,7 +14,7 @@
  *                                specFixPending 骨架）
  *   - missingChildren          → designer 补建 split 子（fx-3 R5.3）
  *   - integrationDrift         → designer 处置集成契约漂移（fx-2 R4a / rv-4）
- *   - buildReady / execReviewReady → builder / reviewer（exec-review 含 rv-2 必填
+ *   - buildReady / execReviewReady → developer / reviewer（exec-review 含 rv-2 必填
  *                                --evidence-refs 与 mx-1 --role reviewer）
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -56,8 +56,8 @@ export interface BriefTarget {
 }
 
 const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => string> = {
-  builder: (unitId) => [
-    "## 你的任务（builder）",
+  developer: (unitId) => [
+    "## 你的任务（developer）",
     "1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。",
     `2. 提交 build 证据：cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <自拟唯一 runId> [--file <产物路径>...]`,
     `3. 触发干净重跑验证：cw verify --unit ${unitId}（默认含红阶段检查——新测试在旧代码树必须 fail，恒真测试会被拒）。`,
@@ -460,7 +460,7 @@ function renderBrief(
               : target.dimension === "specReady"
                 ? designerFirstTasks(unit, projection)
                 : target.dimension === "buildReady"
-                  ? ROLE_TASKS.builder(unit.unitId)
+                  ? ROLE_TASKS.developer(unit.unitId)
                   : ROLE_TASKS.reviewer(unit.unitId);
   return [
     `# ${target.role} 任务书：unit "${unit.unitId}"`,

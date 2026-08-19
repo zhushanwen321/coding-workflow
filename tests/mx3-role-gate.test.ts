@@ -8,7 +8,7 @@
  *      入账成功 payload.role=reviewer；exec-review 无 role → 仍入账（范围外不收紧）
  *   R2 fold 只认 reviewer（纵深第二层）：role=designer 的 spec-review pass 直写
  *      账本（绕过入账层）→ 不进 spec-frozen；同账本补 role=reviewer pass → 冻结
- *   R3 全链防绕过复现（§5.1 场景重演，human E2E）：builder in-flight 期间带 build
+ *   R3 全链防绕过复现（§5.1 场景重演，human E2E）：developer in-flight 期间带 build
  *      证据后自审 spec-review——无 role 被拒 exit 1；--role reviewer 谎报入账但
  *      stderr 出现抢答警告（mx-3 豁免收紧：无在场 reviewer 即告警），循环继续
  *   R4 历史兼容锚：role=reviewer 的既有事件序列行为与 mx-1 基线一致（三态推进）
@@ -124,7 +124,7 @@ function appendSpec(ledger: EventLedger, unitId: string, salt: string): void {
 }
 
 /** VerdictSubmittedPayload.role 的字面量联合（自报身份枚举域，对齐 src） */
-type VerdictRole = "reviewer" | "designer" | "builder" | "human";
+type VerdictRole = "reviewer" | "designer" | "developer" | "human";
 
 function appendSpecReview(
   ledger: EventLedger,
@@ -346,7 +346,7 @@ describe("mx-3 R2 fold 消费校验：role≠reviewer 的 spec-review verdict �
 // R3：全链防绕过复现（§5.1 场景重演，human E2E）
 // ================================================================
 
-describe("mx-3 R3 全链防绕过：builder in-flight 期间自审（§5.1 场景重演）", () => {
+describe("mx-3 R3 全链防绕过：developer in-flight 期间自审（§5.1 场景重演）", () => {
   it("带 build 证据后自审无 role → 被拒 exit 1；--role reviewer 谎报 → 入账 + 抢答警告 + 循环继续", async () => {
     const repoDir = makeScenario("r3-bypass", "demo");
     // 前置直写：spec 已过独立审查（role=reviewer pass）→ unit spec-frozen
@@ -356,9 +356,9 @@ describe("mx-3 R3 全链防绕过：builder in-flight 期间自审（§5.1 场�
 
     const runner = startRunner(repoDir, "demo");
     try {
-      // builder 派发（buildReady）——human adapter 无 VerifyRan 前保持 in-flight
-      await waitText(runner.stdoutText, '派发 builder → unit "demo"', 10_000);
-      // builder 形态提交者先入账 build 证据（EvidenceSubmitted 不结算 human builder）
+      // developer 派发（buildReady）——human adapter 无 VerifyRan 前保持 in-flight
+      await waitText(runner.stdoutText, '派发 developer → unit "demo"', 10_000);
+      // developer 形态提交者先入账 build 证据（EvidenceSubmitted 不结算 human developer）
       ledger.append("EvidenceSubmitted", {
         unitId: "demo",
         runId: "run-r3-build",
@@ -382,12 +382,12 @@ describe("mx-3 R3 全链防绕过：builder in-flight 期间自审（§5.1 场�
         "review", "submit", "--unit", "demo",
         "--verdict-kind", "spec-review", "--verdict", "pass",
         "--role", "reviewer",
-        "--comment", "builder 自审（R3 谎报现场）",
+        "--comment", "developer 自审（R3 谎报现场）",
       ]);
       expect(spoofed.code, `谎报 role 应入账（stderr: ${spoofed.stderr}）`).toBe(0);
 
       await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 10_000);
-      // 不阻断：警告后循环继续轮询（builder 仍 in-flight、runner 存活 ≥5 个 poll 周期）
+      // 不阻断：警告后循环继续轮询（developer 仍 in-flight、runner 存活 ≥5 个 poll 周期）
       await new Promise((resolve) => setTimeout(resolve, 1_200));
       expect(runner.child.exitCode, "警告只是审计可见性，不得阻断或杀死循环").toBeNull();
     } finally {

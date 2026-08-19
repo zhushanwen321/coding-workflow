@@ -38,7 +38,7 @@ const DEFAULT_MODEL = "xiaomi-token-plan-cn/mimo-v2.5-pro";
 function baseReq(overrides?: Partial<AgentSpawnRequest>): AgentSpawnRequest {
   const workdir = join(tmpRoot, "base-work");
   return {
-    role: "builder",
+    role: "developer",
     unitId: "u6c-unit",
     workdir,
     // wt-2 迁移：适配器直调场景的账本锚定（值 = 测试的项目 tmp 目录）
@@ -74,7 +74,7 @@ describe("u6c pi 适配器：buildPiCommand 命令拼装与模型三级优先级
         "--model", DEFAULT_MODEL,
         "-p",
         "--session-dir", req.artifactDir,
-        "--name", "u6c-unit-builder",
+        "--name", "u6c-unit-developer",
         `@${req.briefPath}`,
       ],
     });
@@ -168,7 +168,7 @@ describe("u6c pi 适配器：真实 pi 微调用 E2E", () => {
       mkdirSync(workdir, { recursive: true });
       writeFileSync(briefPath, "请只输出两个字：可用");
       const req = baseReq({
-        role: "builder",
+        role: "developer",
         unitId: "u6c-real",
         workdir,
         briefPath,
@@ -207,7 +207,7 @@ describe("u6c pi 适配器：SPAWN_ERROR 转译", () => {
     expect(result.pid).toBe(-1);
     // fx-4：产物路径从 req.artifactDir 拼装（此处未建目录——SPAWN_ERROR 前置失败，
     // 路径语义仍是契约的一部分）
-    expect(result.stdoutPath).toBe(join(tmpRoot, "base-topic", "u6c-unit.builder.stdout"));
-    expect(result.stderrPath).toBe(join(tmpRoot, "base-topic", "u6c-unit.builder.stderr"));
+    expect(result.stdoutPath).toBe(join(tmpRoot, "base-topic", "u6c-unit.developer.stdout"));
+    expect(result.stderrPath).toBe(join(tmpRoot, "base-topic", "u6c-unit.developer.stderr"));
   });
 });

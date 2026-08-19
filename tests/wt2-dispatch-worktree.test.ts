@@ -474,7 +474,7 @@ describe("wt2 T7 pi env 注入", () => {
     process.env.CW_PROJECT_DIR = "/should/be/overridden";
     try {
       const handle = await createPiAdapter().spawn({
-        role: "builder",
+        role: "developer",
         unitId: "t7",
         workdir,
         projectCwd,
@@ -535,26 +535,26 @@ describe("wt2 T8 human 指令与账本锚定（场景 4 前半）", () => {
     });
 
     const handle = await humanAdapter.spawn({
-      role: "builder",
+      role: "developer",
       unitId: "t8",
       workdir,
       projectCwd: projectDir,
       artifactDir,
-      briefPath: join(artifactDir, "t8.builder.brief.md"),
+      briefPath: join(artifactDir, "t8.developer.brief.md"),
       env: { CW_HOME: cwHome },
       timeoutMs: 15_000,
     });
 
     // 指令清单（R-4）：cd 含双引号；每条 cw 命令内联前缀；不再有 export 行
-    const instruction = readFileSync(join(artifactDir, "t8.builder.stdout"), "utf-8");
+    const instruction = readFileSync(join(artifactDir, "t8.developer.stdout"), "utf-8");
     expect(instruction).toContain(`cd "${workdir}"`);
-    expect(instruction).toContain(`cat "${join(artifactDir, "t8.builder.brief.md")}"`);
+    expect(instruction).toContain(`cat "${join(artifactDir, "t8.developer.brief.md")}"`);
     expect(instruction).toContain(`CW_PROJECT_DIR="${projectDir}" cw evidence submit --kind build --unit t8`);
     expect(instruction).toContain(`CW_PROJECT_DIR="${projectDir}" cw verify --unit t8`);
     expect(instruction).not.toContain("export CW_PROJECT_DIR");
 
     const waitPromise = handle.wait();
-    // 模拟人按指引在 worktree 里跑 cw：完成信号（builder = VerifyRan）写进项目账本
+    // 模拟人按指引在 worktree 里跑 cw：完成信号（developer = VerifyRan）写进项目账本
     appendEventFromRealChild(ledgerFile, "VerifyRan", {
       unitId: "t8",
       runId: "run-t8-1",
@@ -570,7 +570,7 @@ describe("wt2 T8 human 指令与账本锚定（场景 4 前半）", () => {
 });
 
 describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
-  it("人按指引在 worktree 里（CW_PROJECT_DIR 锚定）真实执行 cw evidence/review submit → 事件写项目账本而非 worktree 编码账本；循环推进到下一状态（builder 派发）", async () => {
+  it("人按指引在 worktree 里（CW_PROJECT_DIR 锚定）真实执行 cw evidence/review submit → 事件写项目账本而非 worktree 编码账本；循环推进到下一状态（developer 派发）", async () => {
     const { repoDir } = initRepo("t9");
     appendUnitCreated(repoDir, "t9", null);
     const wtDir = worktreePath(WT_HOME, repoDir, "t9");
@@ -622,7 +622,7 @@ describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
     ]);
     expect(submit.code, `evidence submit 应成功（stderr: ${submit.stderr}）`).toBe(0);
 
-    // 3. 补 spec-review（推到 spec-frozen，循环即可派 builder——「推进到下一状态」）
+    // 3. 补 spec-review（推到 spec-frozen，循环即可派 developer——「推进到下一状态」）
     // （mx3 迁移：spec-review 必须携带 --role reviewer）
     const review = runCliInWorktree([
       "review",
@@ -638,8 +638,8 @@ describe("wt2 T9 e2e human 全链路（场景 4 完整）", () => {
     ]);
     expect(review.code, `review submit 应成功（stderr: ${review.stderr}）`).toBe(0);
 
-    // 4. 循环消费项目账本事件 → unit spec-frozen → 派发 builder（下一状态；brief 落 topic）
-    await waitUntil(() => existsSync(join(t9Topic, "t9.builder.brief.md")), 10_000, "builder 派发");
+    // 4. 循环消费项目账本事件 → unit spec-frozen → 派发 developer（下一状态；brief 落 topic）
+    await waitUntil(() => existsSync(join(t9Topic, "t9.developer.brief.md")), 10_000, "developer 派发");
     const captured = await runPromise;
     expect(captured.code).toBe(1); // 之后无人推进 → maxIdle 有界退出（非崩溃）
     expect(captured.err).toContain("无账本进展");

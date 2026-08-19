@@ -56,7 +56,7 @@ type ProgressMatcher = (event: DiscriminatedEvent, req: AgentSpawnRequest) => bo
  *     子、parentId 才指向本 unit——按 parent 维度匹配）。spec-review verdict
  *     一律归 reviewer spawn——designer 遇 VerdictSubmitted 不结算（mx-1：designer
  *     不自审，verdict 不是 designer 任务书的完成信号）。
- *   - builder：任务书共 3 步，最后一步 cw verify 产出 VerifyRan——若按第 2 步
+ *   - developer：任务书共 3 步，最后一步 cw verify 产出 VerifyRan——若按第 2 步
  *     的 EvidenceSubmitted 判完成，第 3 步 verify 无人执行。
  *   - reviewer：任务书唯一产出 = VerdictSubmitted（spec-review 与 exec-review
  *     两形态共用——loop 按 frontier 维度选择任务书，完成信号同类）。
@@ -66,7 +66,7 @@ const PROGRESS_MATCHERS: Record<AgentRole, readonly ProgressMatcher[]> = {
     (event, req) => event.type === "SpecSubmitted" && event.payload.unitId === req.unitId,
     (event, req) => event.type === "UnitCreated" && event.payload.parentId === req.unitId,
   ],
-  builder: [
+  developer: [
     (event, req) => event.type === "VerifyRan" && event.payload.unitId === req.unitId,
   ],
   reviewer: [
@@ -77,11 +77,11 @@ const PROGRESS_MATCHERS: Record<AgentRole, readonly ProgressMatcher[]> = {
 /**
  * 信任边界提示（三 role 共用）：mx-1 起 spec-review / exec-review 由独立的
  * reviewer 派发承载（本指令之外会单独打印 reviewer 指令）——你作为 designer /
- * builder 不自审；reviewer 指令的执行者仍是你时，审查责任在人（human 无自动
+ * developer 不自审；reviewer 指令的执行者仍是你时，审查责任在人（human 无自动
  * agent，这是 human 模式的固有边界）
  */
 function trustBoundaryLine(): string {
-  return "[human] 信任边界：review 结论由独立的 reviewer 派发指令提交（mx-1：designer/builder 不自审）——human 无自动 reviewer，执行 reviewer 指令的人自任审查者";
+  return "[human] 信任边界：review 结论由独立的 reviewer 派发指令提交（mx-1：designer/developer 不自审）——human 无自动 reviewer，执行 reviewer 指令的人自任审查者";
 }
 
 /**
@@ -103,7 +103,7 @@ function roleStepLines(req: AgentSpawnRequest): string[] {
         `[human]   2. ${cwCommand(req, `evidence submit --kind spec --unit ${req.unitId} --file spec.json`)}`,
         "[human]   （spec 入账即完成——spec-review 由独立 reviewer 在下轮接手，无需自审）",
       ];
-    case "builder":
+    case "developer":
       return [
         "[human]   1. 按 brief 完成实现并 git commit（取 hash：git rev-parse HEAD）",
         `[human]   2. ${cwCommand(req, `evidence submit --kind build --unit ${req.unitId} --commit <hash> --run-id <自拟唯一 runId> --file <产物路径>`)}`,

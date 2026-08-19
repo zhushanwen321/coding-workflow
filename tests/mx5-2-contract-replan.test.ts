@@ -43,7 +43,7 @@ import type {
 import { fold } from "../src/core/fold.js";
 import { dispatch } from "../src/dispatch.js";
 import type { AcceptanceItem } from "../src/events/types.js";
-import { specContractFacts } from "../src/readonly/frontier.js";
+import { flakeReviewFacts, specContractFacts } from "../src/readonly/frontier.js";
 import { writeBriefFile } from "../src/runner/brief.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { evidenceDir, ledgerPath } from "../src/store/project.js";
@@ -366,6 +366,63 @@ describe("F7 flake 排除与并存", () => {
     const groups = await frontierGroups();
     expect(groups.flakeReview).toEqual([]); // 三跑现场五的误判形态拆除
     expect(groups.specContractBroken).toContain("u-1");
+  });
+});
+
+// ================================================================
+// R1-facts / R2-facts：facts 级直断言（mx5-2 verifier 移交的覆盖缺口，mx5-4 顺带
+// 补强——区别于 F2/F7 的组级断言：直接断投影函数输出，不被组归属优先级与
+// verified 粘性态掩盖；对应排除/清零逻辑被删后此处必红）
+// ================================================================
+
+describe("R1-facts 输入排除双向直断言", () => {
+  it("混合 unit：flakeReviewFacts 不含解析失败条目 ∧ specContractFacts 不含断言失败条目（删 flake 输入排除逻辑后必红）", () => {
+    // 与 F7 同款混合 unit：E1 解析失败连挂 ×2（回炉通道输入）、E2 断言失败连挂 ×2
+    //（e2e 不在 pass 集——flake 通道输入）
+    appendFrozenSpec("u-mix", [
+      { id: "E1", core: true, title: "解析失败条目", type: "e2e-real", command: "node e1.js" },
+      { id: "E2", core: true, title: "断言失败条目", type: "e2e-real", command: "node e2.js" },
+      { id: "U1", core: false, title: "单元冒烟", type: "unit", command: "node u1check.js" },
+    ]);
+    appendVerifyRan("u-mix", { runId: "m1", result: "fail", acceptanceIds: ["U1"], parseFailed: ["E1"] });
+    appendVerifyRan("u-mix", { runId: "m2", result: "fail", acceptanceIds: ["U1"], parseFailed: ["E1"] });
+
+    const events = ledger.readAll();
+    // 方向一：flake 输出不含解析失败条目（E1）。E2 在场证明输出非空——空集不能
+    // 证明排除逻辑存在；删 flakeReviewFacts 的 parseFailed 排除分支后 E1 计入 → 红
+    const flake = flakeReviewFacts(events).get("u-mix");
+    expect(flake?.map((f) => f.acceptanceId)).toContain("E2");
+    expect(flake?.map((f) => f.acceptanceId)).not.toContain("E1");
+    // 方向二：contract 输出不含断言失败条目（E2）。E1 在场同上
+    const contract = specContractFacts(events).get("u-mix");
+    expect(contract?.streaks.map((s) => s.acceptanceId)).toContain("E1");
+    expect(contract?.streaks.map((s) => s.acceptanceId)).not.toContain("E2");
+  });
+});
+
+describe("R2-facts 中间解析成功清零直断言", () => {
+  it("fail(parse) → pass → fail(parse) 同 id：清零后计数 1（<2 不外露）；再 fail 后计数恰 2 且 runIds 不含被清零轮（删清零逻辑后必红）", () => {
+    appendFrozenSpec("u-1", contractAcceptance());
+    appendVerifyRan("u-1", parseFailRun("v1", ["E1"]));
+    // 中间一次解析成功（v2 无解析失败键、E1 在 pass 集——unit 同时转 verified）→
+    // E1 连挂清零。verified 是粘性态：组级断言（execReviewReady）无论清零与否都
+    // 成立，只有 facts 级计数能直断清零发生
+    appendVerifyRan("u-1", { runId: "v2", result: "pass", acceptanceIds: ["E1", "U1"] });
+    appendVerifyRan("u-1", parseFailRun("v3", ["E1"]));
+
+    // v1 已被清零 → 当前计数 1，低于外露阈值 2（streaks 空 / 无条目）
+    const mid = specContractFacts(ledger.readAll()).get("u-1");
+    expect(mid === undefined || mid.streaks.length === 0).toBe(true);
+
+    // 数值直断：再挂一次后计数恰为 2（v3 起重计），runIds 不含 v1——
+    // 删 specContractFacts 的清零分支 → 计数 3、runIds 含 v1，两断言必红
+    appendVerifyRan("u-1", parseFailRun("v4", ["E1"]));
+    const streak = specContractFacts(ledger.readAll()).get("u-1")?.streaks.find(
+      (s) => s.acceptanceId === "E1",
+    );
+    expect(streak).toBeDefined();
+    expect(streak?.consecutiveFails).toBe(2);
+    expect(streak?.runIds).toEqual(["v3", "v4"]);
   });
 });
 
@@ -718,7 +775,7 @@ describe("F10 D6 文案", () => {
     expect(plainRun.out).toContain("TIMEOUT，可重派（连续 2 次后转人工）"); // 现状文案不变
     expect(plainRun.out).not.toContain("停派态");
 
-    // --- 停派态：builder spawn 在飞期间该 unit 因 e2e 连挂进入 flakeReview，
+    // --- 停派态：developer spawn 在飞期间该 unit 因 e2e 连挂进入 flakeReview，
     //     其 TIMEOUT 结算行诚实化（不承诺不兑现的重派） ---
     const repoHalt = makeRepo("f10-halt");
     const ledgerHalt = new EventLedger(ledgerPath(cwHome, repoHalt));
@@ -731,7 +788,7 @@ describe("F10 D6 文案", () => {
       split: [],
     });
     ledgerHalt.append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
-    // 第 1 次 builder spawn 派发（buildReady）后，spawn 内写入两轮 e2e 断言失败
+    // 第 1 次 developer spawn 派发（buildReady）后，spawn 内写入两轮 e2e 断言失败
     //（E1 不在 pass 集、无解析失败）→ 该 unit 转入 flakeReview 停派态；随后该
     // spawn 结算 TIMEOUT → 结算行须改述真实行为
     const haltAdapter = makeSteppedAdapter([
@@ -766,7 +823,7 @@ describe("F10 D6 文案", () => {
     expect(haltRun.out).toContain("恢复动作");
     expect(haltRun.out).not.toContain("可重派");
     // flake 转人工指引照常出声（既有出口不回归）
-    expect(haltRun.err).toContain("停止对该 unit 派发 builder");
+    expect(haltRun.err).toContain("停止对该 unit 派发 developer");
   }, 30_000);
 
   it("brief.ts 过时文案消失：specFixPending 与回炉模板渲染产物均不含「连续 2 次」/「累计 2 次」（对齐 mx-3 代数 / mx-4 预算语义）", () => {

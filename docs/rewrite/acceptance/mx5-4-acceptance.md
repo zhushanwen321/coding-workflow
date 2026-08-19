@@ -59,4 +59,4 @@ grep -rn "builder" src/ tests/ AGENTS.md CONTEXT.md → 零输出
 
 ## 8. status
 
-pending → building（developer 派发时由主 agent 更新）
+pending → building（2026-08-19 developer 交付：37 文件 +335/-271 + 新测试 5 用例 + R1/R2 断言 2 用例，全量 69 文件 534 绿，grep 零残留含大写变体，267 处逐文件归因无出入（纯角色词 196 + camelCase 派生命名 26 + 大写变体 3 + src 特殊形态），pi.ts session 命名随 AgentRole 动态零改动，35 文件 diff 经归一化还原逐行比对。R1/R2 红性自验双红。偏离 3 项备案：D4 授权记 6 行注释块（自包含且避开旧值字面量——字面量会击穿 N4 零残留口径）、N2 文案通用迁移指引同因、.tmp 未触碰；待 verifier）

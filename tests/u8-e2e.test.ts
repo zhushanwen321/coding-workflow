@@ -7,7 +7,7 @@
  *      verified）、契约命中、产物目录存在、root exec-review 后 closed。
  *      同时覆盖单测验收#3 前半：子全 verified（未全 closed）→ 集成已触发（不等子
  *      closed）——以账本 seq 断言「root 集成事件晚于两叶 VerifyRan、早于两叶
- *      exec-review」，且 root 的 builder 全程无 agent spawn（内部节点不派 agent）。
+ *      exec-review」，且 root 的 developer 全程无 agent spawn（内部节点不派 agent）。
  *   2. 契约违背路径：同 fixture 但 leaf-a 实现改名（capitalize → capitalise）→
  *      集成 fail、VerifyRan(result=fail) 留痕、stderr 指明 C1 与期望文件；随后
  *      fixture 受控修复（验收脚本把正确实现补进 root 分支并提交——发生在首轮
@@ -525,10 +525,10 @@ describe("E2E real：契约违背路径（capitalize → capitalise → 集成 f
     }
 
     // 派发形态：drift 处置的 designer(root) + 两叶与 root 的 exec-review reviewer，
-    // 全程无 builder（内部节点的 build = 集成，不派 agent）
+    // 全程无 developer（内部节点的 build = 集成，不派 agent）
     const spawnedRoles = spawned();
     expect(spawnedRoles.some((r) => r.role === "designer" && r.unitId === "feat")).toBe(true);
     expect(spawnedRoles.every((r) => r.role === "reviewer" || r.role === "designer")).toBe(true);
-    expect(spawnedRoles.some((r) => r.role === "builder")).toBe(false);
+    expect(spawnedRoles.some((r) => r.role === "developer")).toBe(false);
   }, 120_000);
 });

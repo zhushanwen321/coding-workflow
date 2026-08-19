@@ -157,14 +157,14 @@ function statusOf(repoDir: string, unitId: string): string {
   return unitStatus(unit);
 }
 
-/** 按推进一步（designer → spec+过审；builder → evidence+verify；reviewer → exec-review） */
+/** 按推进一步（designer → spec+过审；developer → evidence+verify；reviewer → exec-review） */
 function advanceStep(repoDir: string, unitId: string, role: AgentSpawnRequest["role"], commit: string): void {
   const ledger = ledgerForCwd(repoDir);
   if (role === "designer") {
     appendSpecFrozen(repoDir, unitId);
     return;
   }
-  if (role === "builder") {
+  if (role === "developer") {
     const unit = loadLedger(repoDir).projection.units.get(unitId);
     const acceptanceIds =
       unit?.specs[unit.specs.length - 1]?.acceptance.map((a) => a.id) ?? FIXTURE_ACCEPTANCE.map((a) => a.id);
@@ -302,11 +302,11 @@ describe("fx4 T1 产出纯净（场景 1）", () => {
       spawn: async (req): Promise<SpawnHandle> => {
         calls.push(req);
         appendArtifacts(calls.length, req);
-        if (req.role === "builder") {
+        if (req.role === "developer") {
           // 真实 agent 行为（最坏形态）：worktree 写业务产出后 git add -A + commit——
           // fx-4 前 .cw-spawn 产物会被卷进 evidence commit；fx-4 后 worktree 内
           // 物理上没有 cw 自身文件，by construction 不可能卷入
-          writeFileSync(join(req.workdir, "app-t1.txt"), "t1 builder output\n");
+          writeFileSync(join(req.workdir, "app-t1.txt"), "t1 developer output\n");
           gitRun(req.workdir, ["add", "-A"]);
           gitRun(req.workdir, ["commit", "-m", "t1: app-t1.txt"]);
           advanceStep(repoDir, req.unitId, req.role, gitRun(req.workdir, ["rev-parse", "HEAD"]));
@@ -326,7 +326,7 @@ describe("fx4 T1 产出纯净（场景 1）", () => {
 
     expect(captured.code).toBe(0); // 正常收敛 root closed
     expect(statusOf(repoDir, "t1")).toBe("closed");
-    expect(calls.map((c) => c.role)).toEqual(["designer", "builder", "reviewer"]);
+    expect(calls.map((c) => c.role)).toEqual(["designer", "developer", "reviewer"]);
     // worktree 内不存在 .cw-spawn（fx-4 纯化；root worktree 永不回收，run 后仍在）
     expect(existsSync(join(wtDir, ".cw-spawn"))).toBe(false);
     // root 分支聚合 commit 树零 .cw-spawn 路径（agent 的 evidence commit 用了 add -A）
@@ -335,7 +335,7 @@ describe("fx4 T1 产出纯净（场景 1）", () => {
     expect(treeFiles).toContain("app-t1.txt"); // 前提：树上确有 agent 业务产出
     // 三类产物全在 run 级 topic 目录，文件名形态 <unitId>.<role>.*
     const topic = findTopicDir(cwHome, repoDir, "t1");
-    for (const role of ["designer", "builder", "reviewer"] as const) {
+    for (const role of ["designer", "developer", "reviewer"] as const) {
       expect(existsSync(join(topic, `t1.${role}.brief.md`)), `${role} brief 应在 topic`).toBe(true);
       expect(existsSync(join(topic, `t1.${role}.stdout`)), `${role} stdout 应在 topic`).toBe(true);
       expect(existsSync(join(topic, `t1.${role}.stderr`)), `${role} stderr 应在 topic`).toBe(true);
@@ -353,13 +353,13 @@ describe("fx4 T2 清理极简（场景 2）", () => {
   it("worktree 预置 tracked 脏 + untracked + 手工伪造 .cw-spawn/x → 重派 porcelain 全空（无任何例外条款，伪造目录一并被清）；已 commit 产出保留", async () => {
     const { repoDir } = initRepo("t2");
     appendUnitCreated(repoDir, "t2");
-    appendSpecFrozen(repoDir, "t2"); // 直接 spec-frozen → 首派 builder
+    appendSpecFrozen(repoDir, "t2"); // 直接 spec-frozen → 首派 developer
     const wtDir = worktreePath(WT_HOME, repoDir, "t2");
 
     let porcelainAtSecondSpawn = "(not captured)";
     const script = makeSteppedAdapter([
       {
-        // 失败 builder：留 tracked 脏改（brief.md）+ untracked 垃圾 + 手工伪造
+        // 失败 developer：留 tracked 脏改（brief.md）+ untracked 垃圾 + 手工伪造
         // .cw-spawn/x + 一个已 commit 的产出文件（reset/clean 的保留面）
         exitCode: 1,
         onSpawn: (req) => {
@@ -567,7 +567,7 @@ describe("fx4 T5 human 接管 + 反向断言（场景 4）", () => {
   it("正向：人按指引 cat topic 内 brief、cd worktree 改码 commit、内联前缀 cw 提交 → 事件写项目账本、循环推进至 root closed", async () => {
     const { repoDir } = initRepo("t5");
     appendUnitCreated(repoDir, "t5");
-    appendSpecFrozen(repoDir, "t5"); // 直接 spec-frozen → 首派 builder（human）
+    appendSpecFrozen(repoDir, "t5"); // 直接 spec-frozen → 首派 developer（human）
     const wtDir = worktreePath(WT_HOME, repoDir, "t5");
     const runCliInWorktree = (args: readonly string[]): { code: number; stdout: string; stderr: string } => {
       const res = spawnSync(process.execPath, [CLI_PATH, ...args], {
@@ -582,7 +582,7 @@ describe("fx4 T5 human 接管 + 反向断言（场景 4）", () => {
       runLoop({ rootId: "t5", adapter: humanAdapter, cwd: repoDir, pollMs: 50, maxIdleMs: 60_000 }),
     );
 
-    // 1. 等 builder 指令落盘（human spawn 即写 run 级 topic 目录下的产物）
+    // 1. 等 developer 指令落盘（human spawn 即写 run 级 topic 目录下的产物）
     let topic = "";
     await waitUntil(() => {
       try {
@@ -592,10 +592,10 @@ describe("fx4 T5 human 接管 + 反向断言（场景 4）", () => {
         return false; // runLoop 尚未建 topic 目录（异步启动窗口）
       }
     }, 10_000, "topic 目录");
-    await waitUntil(() => existsSync(join(topic, "t5.builder.stdout")), 10_000, "builder 指令");
-    const instruction = readFileSync(join(topic, "t5.builder.stdout"), "utf-8");
+    await waitUntil(() => existsSync(join(topic, "t5.developer.stdout")), 10_000, "developer 指令");
+    const instruction = readFileSync(join(topic, "t5.developer.stdout"), "utf-8");
     // 指引双路径：cat 的 brief 在 topic 内（fx-4：worktree 内无 cw 文件）；cd 到 worktree
-    expect(instruction).toContain(`cat "${join(topic, "t5.builder.brief.md")}"`);
+    expect(instruction).toContain(`cat "${join(topic, "t5.developer.brief.md")}"`);
     expect(instruction).toContain(`cd "${wtDir}"`);
     expect(existsSync(join(wtDir, ".cw-spawn"))).toBe(false);
 

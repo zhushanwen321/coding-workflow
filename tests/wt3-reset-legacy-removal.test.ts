@@ -4,7 +4,7 @@
  * 用例对应 docs/rewrite/acceptance/wt3-acceptance.md §4：
  *   - A1 项目 cwd 不再被 reset：预置 tracked 脏改动跨重派轮次原样保留
  *     （锁死 W3 行为变化，防共享 cwd 近似 reset 复活）
- *   - A2 worktree 半成品清理仍生效（防删过头）：失败 builder 留在 worktree 的
+ *   - A2 worktree 半成品清理仍生效（防删过头）：失败 developer 留在 worktree 的
  *     tracked 脏 + untracked（含手工伪造的 .cw-spawn）重派前被派发点
  *     ensureUnitWorktree 清净（fx-4 起裸 clean -fd、porcelain 全空，与 wt2 T3 同语义）
  *   - A3 派发流程零回归：fake adapter 收敛 root closed（exit 0），输出无
@@ -128,14 +128,14 @@ function statusOf(repoDir: string, unitId: string): string {
   return unitStatus(unit);
 }
 
-/** 按推进一步（designer → spec+过审；builder → evidence+verify；reviewer → exec-review） */
+/** 按推进一步（designer → spec+过审；developer → evidence+verify；reviewer → exec-review） */
 function advanceStep(repoDir: string, unitId: string, role: AgentSpawnRequest["role"], commit: string): void {
   const ledger = ledgerForCwd(repoDir);
   if (role === "designer") {
     appendSpecFrozen(repoDir, unitId);
     return;
   }
-  if (role === "builder") {
+  if (role === "developer") {
     const unit = loadLedger(repoDir).projection.units.get(unitId);
     const acceptanceIds =
       unit?.specs[unit.specs.length - 1]?.acceptance.map((a) => a.id) ?? FIXTURE_ACCEPTANCE.map((a) => a.id);
@@ -234,7 +234,7 @@ describe("wt3 A1 项目 cwd 不再被 reset", () => {
   it("项目 cwd 预置 tracked 脏改动（改 a.txt 不 commit）→ runLoop 失败重派多轮 → 脏改动原样保留（内容与 porcelain 双断言；旧近似会 git reset --hard 掉它）", async () => {
     const { repoDir } = initRepo("a1");
     appendUnitCreated(repoDir, "a1");
-    appendSpecFrozen(repoDir, "a1"); // 直接 spec-frozen → 首派 builder
+    appendSpecFrozen(repoDir, "a1"); // 直接 spec-frozen → 首派 developer
     // 项目 cwd 预置 tracked 脏改动（用户的进行中工作，不属于任何 agent）
     const dirtyContent = "a\n<!-- user's dirty change -->\n";
     writeFileSync(join(repoDir, "a.txt"), dirtyContent);
@@ -242,7 +242,7 @@ describe("wt3 A1 项目 cwd 不再被 reset", () => {
     let porcelainAtRedispatch = "(not captured)";
     let contentAtRedispatch = "(not captured)";
     const script = makeSteppedAdapter([
-      { exitCode: 1 }, // 失败 builder：制造重派轮次
+      { exitCode: 1 }, // 失败 developer：制造重派轮次
       {
         // 重派轮次（越界沿用，仅首次捕获现场）：此刻旧近似已对项目 cwd
         // reset --hard——若脏改动消失即近似复活
@@ -277,7 +277,7 @@ describe("wt3 A1 项目 cwd 不再被 reset", () => {
 // ---- A2：worktree 半成品清理仍生效（防删过头；fx-4 语义反转：无 -e 例外条款） ----
 
 describe("wt3 A2 worktree 半成品清理仍生效", () => {
-  it("失败 builder 在 unit worktree 留 tracked 脏改 + untracked 产物 + 伪造 .cw-spawn → 重派 spawn 时 worktree porcelain 全空（裸 clean -fd 无例外条款；伪造目录一并被清、topic 产物不在 worktree 所以无东西可保护）", async () => {
+  it("失败 developer 在 unit worktree 留 tracked 脏改 + untracked 产物 + 伪造 .cw-spawn → 重派 spawn 时 worktree porcelain 全空（裸 clean -fd 无例外条款；伪造目录一并被清、topic 产物不在 worktree 所以无东西可保护）", async () => {
     const { repoDir } = initRepo("a2");
     appendUnitCreated(repoDir, "a2");
     appendSpecFrozen(repoDir, "a2");
@@ -286,7 +286,7 @@ describe("wt3 A2 worktree 半成品清理仍生效", () => {
     let porcelainAtRedispatch = "(not captured)";
     const script = makeSteppedAdapter([
       {
-        // 失败 builder：在自己的 worktree 留 tracked 脏改（brief.md）+ untracked 产物 +
+        // 失败 developer：在自己的 worktree 留 tracked 脏改（brief.md）+ untracked 产物 +
         // 手工伪造 .cw-spawn/x（旧习惯 agent 自建——普通 untracked，被清是正确语义）
         exitCode: 1,
         onSpawn: (req) => {
@@ -323,7 +323,7 @@ describe("wt3 A2 worktree 半成品清理仍生效", () => {
     expect(existsSync(join(wtDir, ".cw-spawn"))).toBe(false);
     expect(readFileSync(join(wtDir, "brief.md"), "utf-8")).toBe(BRIEF_CONTENT);
     // cw 产物（历次派发的 brief）不在 worktree——在 run 级 topic 目录（fx-4 迁移）
-    expect(existsSync(join(wtDir, ".cw-spawn", "a2.builder.brief.md"))).toBe(false);
+    expect(existsSync(join(wtDir, ".cw-spawn", "a2.developer.brief.md"))).toBe(false);
   }, 15_000);
 });
 
@@ -332,7 +332,7 @@ describe("wt3 A2 worktree 半成品清理仍生效", () => {
 describe("wt3 A3 派发流程零回归", () => {
   it("fake adapter 按角色推账本 → runLoop 完整收敛 root closed（exit 0），输出无「派发前清理」字样（旧文案已随近似实现删除）", async () => {
     const { repoDir, head } = initRepo("a3");
-    appendUnitCreated(repoDir, "a3"); // created 起：designer → builder → reviewer 全链
+    appendUnitCreated(repoDir, "a3"); // created 起：designer → developer → reviewer 全链
 
     const calls: AgentSpawnRequest[] = [];
     const adapter: AgentSpawnAdapter = {
@@ -355,6 +355,6 @@ describe("wt3 A3 派发流程零回归", () => {
     expect(captured.out).not.toContain("派发前清理");
     expect(captured.err).not.toContain("派发前清理");
     // 全链真实走过三角色
-    expect(calls.map((c) => c.role)).toEqual(["designer", "builder", "reviewer"]);
+    expect(calls.map((c) => c.role)).toEqual(["designer", "developer", "reviewer"]);
   }, 30_000);
 });

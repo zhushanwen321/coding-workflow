@@ -427,7 +427,7 @@ describe("rv-1 T5：runLoop 信号 handler 注册与清理", () => {
     await waitFileExists(join(topic, "root.reviewer.stdout"), 10_000);
     ledgerForCwd(repoDir).append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
 
-    await waitFileExists(join(topic, "root.builder.stdout"), 10_000);
+    await waitFileExists(join(topic, "root.developer.stdout"), 10_000);
     const runId = "run-t5-root";
     ledgerForCwd(repoDir).append("EvidenceSubmitted", {
       unitId: "root",

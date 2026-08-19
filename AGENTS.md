@@ -26,7 +26,7 @@ npm run build       # tsc 编译到 dist/
 - **verify 三道 gate**（`src/handlers/verify.ts` + `src/verify/`）：红阶段（测试区分力检查，新测试打到实现前基线树必须挂；默认执行，`--no-red-phase` 逃生口——rv-4 已交付）→ 名字级比对（验收 id 词边界匹配重跑产物用例名，非计数启发式，`src/verify/name-match.ts`）→ 干净 checkout 重跑（账本 commit 检出到一次性工作区 + 独立 CW_HOME，系统自己复跑，`src/verify/checkout.ts` / `src/verify/run.ts`）。exit 语义：`0` 全过；`1` 有 fail（fail 也入账留审计）；`2` 环境错误（不入账）。
 - **testrun 四适配器**（`src/testrun/registry.ts`）：`vitest` / `e2e-sh` / `pytest` / `playwright`，统一折叠为 EvidenceReport；`AcceptanceItem.runner` 显式声明优先，缺省按 type 推导（unit/integration→vitest、e2e 级→e2e-sh）。合法值单一事实源 = `knownAdapterTypes()`。
 - **runner 循环**（`src/runner/loop.ts`）：每轮对投影重算 frontier 就绪维度并派发（维度见 `src/readonly/frontier.ts`：specReady / specReviewPending / specFixPending / specReviewDeadlock / missingChildren / integrationDrift / integrationReady / flakeReview / buildReady / execReviewReady）；等待 spawn 期间零锁；Ctrl-C 后重跑 `cw run` 从投影续接。每 unit 独立 git worktree + 独立分支（双空间命名 `cw-root/<rootId>` 与 `cw/<rootId>/<unitId>`，`src/runner/worktree.ts`）；spawn 过程产物（brief/stdout/stderr）落 run 级 topic 目录 `~/.cw/topic/<encoded-cwd>/<runTs>-<rootId>/`。内部节点集成 = 确定性代码不派 agent（`src/runner/integrate.ts`：merge 子树 → 干净重跑受影响验收 → 契约两道比对），连续 fail 达上限停止自动重派、转派 designer 处置契约漂移（上限 MAX=1 首败即转——rv-4 已交付，mergeFailures 结构化入报告与处置任务书）。exec-review 必须携带 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId（`src/handlers/review-submit.ts`）。
-- **异源 reviewer 派发**（mx-1 已交付，commit 59cca38）：spec-review verdict 一律由独立 reviewer spawn 提交（designer 任务书不含任何 review submit 步骤）——frontier 维度 `specReviewPending`（待审，派 reviewer）/ `specFixPending`（fail 后修 spec，派 designer）/ `specReviewDeadlock`（fail 累计 ≥2 转人工，账本重放计数不因重提 spec 清零）；reviewer 模型链 `--reviewer-model` / `CW_REVIEWER_MODEL` > 回落 builder 同款；`cw review submit --role` 可选自报字段（审计载体非信任边界）；无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告。设计 v1.1 见 `docs/rewrite/design-independent-review.md`。
+- **异源 reviewer 派发**（mx-1 已交付，commit 59cca38）：spec-review verdict 一律由独立 reviewer spawn 提交（designer 任务书不含任何 review submit 步骤）——frontier 维度 `specReviewPending`（待审，派 reviewer）/ `specFixPending`（fail 后修 spec，派 designer）/ `specReviewDeadlock`（fail 累计 ≥2 转人工，账本重放计数不因重提 spec 清零）；reviewer 模型链 `--reviewer-model` / `CW_REVIEWER_MODEL` > 回落 developer 同款；`cw review submit --role` 可选自报字段（审计载体非信任边界）；无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告。设计 v1.1 见 `docs/rewrite/design-independent-review.md`。
 
 ## TypeScript 规范
 
@@ -39,7 +39,7 @@ npm run build       # tsc 编译到 dist/
 - 零 mock：真实事件账本 + tmp 目录 + 真实 git 子进程（`tests/fixtures/` 提供共享夹具）
 - 测试文件按 unit / 波次命名（`tests/u1-*.test.ts`、`tests/wt-*.test.ts`、`tests/rv*.test.ts`、`tests/mx2-*.test.ts` 等），与 `docs/rewrite/acceptance/` 的验收基线一一对应
 - e2e 测试用子进程跑真实 `cw` CLI 命令，走完整 dispatch 路径（不直接调 handler）
-- 开发期每波次走「验收基线先行入 git → builder 实现 → verifier 独立验收」流程，见 [docs/rewrite/orchestration.md](./docs/rewrite/orchestration.md)
+- 开发期每波次走「验收基线先行入 git → developer 实现 → verifier 独立验收」流程，见 [docs/rewrite/orchestration.md](./docs/rewrite/orchestration.md)
 
 ## CI 约定
 
@@ -52,7 +52,7 @@ npm run build       # tsc 编译到 dist/
 |------|------|
 | [CONTEXT.md](./CONTEXT.md) | 2.0 统一语言（核心概念 / 9 命令面 / 环境变量 / 数据布局）——权威术语源 |
 | [docs/rewrite/ledger.md](./docs/rewrite/ledger.md) | 重写状态账本（M0-M4 各 unit 状态 / 里程碑 gate / 事件流水）——进行中波次的唯一权威 |
-| [docs/rewrite/orchestration.md](./docs/rewrite/orchestration.md) | 重写期协调机制（验收基线防篡改 + builder/verifier 分工） |
+| [docs/rewrite/orchestration.md](./docs/rewrite/orchestration.md) | 重写期协调机制（验收基线防篡改 + developer/verifier 分工） |
 | [docs/rewrite/acceptance/](./docs/rewrite/acceptance/) | 各 unit 验收基线（`<unit>-acceptance.md`）与 verifier 报告 / 里程碑 gate 报告 |
 | [docs/rewrite/design-worktree-isolation.md](./docs/rewrite/design-worktree-isolation.md) | M3 每 unit 独立 worktree 设计（D1-D6） |
 | [docs/rewrite/design-topic-artifacts.md](./docs/rewrite/design-topic-artifacts.md) | fx-4 spawn 产物 topic 目录收口设计（P1-P4） |

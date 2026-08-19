@@ -163,7 +163,7 @@ if (mode === "idle") {
   }
   // mx-1：designer 不自审——spec-review 由独立 reviewer spawn 提交
   console.log("fx3-worker-done designer " + unitId);
-} else if (role === "builder") {
+} else if (role === "developer") {
   const unit = loadLedger(cwd).projection.units.get(unitId);
   if (unit === undefined || unit.specs.length === 0) throw new Error("fx3-worker: unit " + unitId + " 无 spec");
   const acceptanceIds = unit.specs[unit.specs.length - 1].acceptance.map((a) => a.id);
@@ -171,7 +171,7 @@ if (mode === "idle") {
   const ledger = ledgerForCwd(cwd);
   ledger.append("EvidenceSubmitted", { unitId, runId, commit, paths: ["app.js"], sha256: [sha("app.js")], exitCode: 0 });
   ledger.append("VerifyRan", { unitId, runId, reportHash: sha("evidence-report:" + runId), result: "pass", acceptanceIds });
-  console.log("fx3-worker-done builder " + unitId);
+  console.log("fx3-worker-done developer " + unitId);
 } else if (role === "reviewer") {
   // mx-1：reviewer 按 unit 现状二选一（created 待审 → spec-review；verified →
   // exec-review），verdict 带自报 role=reviewer
@@ -257,7 +257,7 @@ function gitRun(repoDir: string, args: readonly string[]): string {
 
 /**
  * 独立 repo：init + app.js（A1 验收命令的真实产物）+ brief + 一个真实 commit
- * （builder 证据的 commit hash 与集成干净重跑的基线）
+ * （developer 证据的 commit hash 与集成干净重跑的基线）
  */
 function makeRepo(name: string): { repoDir: string; head: string } {
   const base = join(tmpRoot, name);
@@ -508,14 +508,14 @@ describe("fx-3 全链回归5：root 首派 → 建子 → R5.1 过审 → 子链
     expect(rootVerify?.result).toBe("pass");
 
     // 派发形态（mx-1）：root designer 一次完成建子 + spec 提交（不自审）；
-    // root 的 spec-review 与两叶的全部推进各由独立 spawn 承担；root 无 builder
+    // root 的 spec-review 与两叶的全部推进各由独立 spawn 承担；root 无 developer
     // spawn（内部节点不派 agent）
     const spawned = script.spawned();
     expect(spawned.filter((r) => r.unitId === ROOT_ID && r.role === "designer").length).toBe(1);
     expect(spawned.some((r) => r.unitId === ROOT_ID && r.role === "reviewer")).toBe(true);
-    expect(spawned.some((r) => r.unitId === ROOT_ID && r.role === "builder")).toBe(false);
+    expect(spawned.some((r) => r.unitId === ROOT_ID && r.role === "developer")).toBe(false);
     for (const leaf of LEAF_IDS) {
-      for (const role of ["designer", "builder", "reviewer"] as const) {
+      for (const role of ["designer", "developer", "reviewer"] as const) {
         expect(spawned).toContainEqual({ role, unitId: leaf });
       }
     }

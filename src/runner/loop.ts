@@ -11,7 +11,7 @@
  * u8 的内部节点集成（canon §3.3 D6「内部节点 build = runner merge 子树」）：集成
  * 是确定性代码无智能，不派 agent，由本循环直接执行 runIntegrationVerify 并以其
  * 结果写 root 的 VerifyRan（pass/fail 都入账；fail 留审计，下轮重派重试，与
- * builder 重派同待遇）。
+ * developer 重派同待遇）。
  *
  * 派发对象规则（每轮对投影重算，子树 BFS 序；就绪判定输入 = readonly/frontier.ts
  * 的 computeFrontier——与 `cw frontier` 命令同一出处，维度 → 派发形态的映射见
@@ -34,12 +34,12 @@
  *     自然消失
  *   - 派发 gate（mx-1 S1）：同 unit 存在任意 role 的 in-flight spawn 时本轮缓派
  *     该 unit 的全部新派发（reviewer 派发的 worktree reset 会清在飞 designer 的
- *     现场；同时修复既有 designer→builder 转换竞态）。等待窗口 ≤ 一个 poll 周期
+ *     现场；同时修复既有 designer→developer 转换竞态）。等待窗口 ≤ 一个 poll 周期
  *     （in-flight spawn 必然 wait() 结算或 TIMEOUT，无死等路径）
  *   - spec-frozen 内部节点（split 非空且不含自身）且 split 声明的子有未 created
  *     者 → designer（fx-3 R5.3 派发兜底：补建子任务书——处理 R5.1 gate 生效前
  *     的历史账本/旁路数据；先于集成等待分支拦截，子不齐不集成）
- *   - spec-frozen 叶子（split 空）且（无子 ∨ 子全部 closed）→ builder agent
+ *   - spec-frozen 叶子（split 空）且（无子 ∨ 子全部 closed）→ developer agent
  *     （rootLast：子的产出是 root 验收的输入，root 的 build 等子树收尾）
  *   - spec-frozen 内部节点（split 非空且不含自身）且子全部 verified → 不派 agent，
  *     直接 runIntegrationVerify（u8 rootLast 升级：集成的物理前提是子证据齐——
@@ -51,7 +51,7 @@
  *     unitId = 自引用（gate 规则⑥ fx-1 已拒新账本）→ 记 stderr 警告并按叶子语义
  *     参与派发，绝不作为内部节点等待子树（fx-1 R1 loop 级防御）
  *   - spec-frozen 且当前 spec 周期内某 e2e 级验收连挂 ≥2 次（flakeReview，rv-5）
- *     → 不派任何 agent（builder 打回循环对随机挂无解），stderr 转人工判定指引
+ *     → 不派任何 agent（developer 打回循环对随机挂无解），stderr 转人工判定指引
  *     （列出连挂用例 id 与逐次 fail 的 runId；处置 = 修稳定性 / 声明
  *     nondeterministic 重提 spec / 修真 bug）。复用 fx-2 上限出口的审计-不喂
  *     -idle 模式：停派后无新 VerifyRan，若树内无其他目标由 maxIdleMs 收束；
@@ -74,12 +74,12 @@
  * （spawn→结算）内、且非 specFixPending 流转 → stderr 一行警告（不阻断不入账
  * ——role 自报可伪造，结构隔离之外的唯一可见性增强）。原「本 run 派发过该
  * unit 的 reviewer 即永久豁免」已废除（M4 gate §5.1 的绕过正是被它吞掉警告）；
- * 正常 reviewer spawn 内的提交豁免不误报，晚到提交 / builder in-flight 期间的
+ * 正常 reviewer spawn 内的提交豁免不误报，晚到提交 / developer in-flight 期间的
  * 自审提交告警。
  *
  * 异源模型链（mx-1 S3，pi.ts 零改动）：RunLoopOptions.reviewerModel（cw run
  * --reviewer-model）> 进程环境 CW_REVIEWER_MODEL > 不注入（reviewer spawn 回落
- * builder 同款模型链）。注入点 = reviewer role 的 spawn req.env.CW_AGENT_MODEL，
+ * developer 同款模型链）。注入点 = reviewer role 的 spawn req.env.CW_AGENT_MODEL，
  * 复用 resolvePiModel 既有四级链的 req.env 级。
  *
  * 等待期间零锁（canon D4：等待 spawn 期间持锁会饿死子进程的账本写入）。
@@ -203,7 +203,7 @@ export interface RunLoopOptions {
   maxIdleMs?: number;
   maxConcurrency?: number;
   /**
-   * reviewer spawn 的异源模型（mx-1 S3，可选项——未配置时回落 builder 同款模型链，
+   * reviewer spawn 的异源模型（mx-1 S3，可选项——未配置时回落 developer 同款模型链，
    * 结构隔离不依赖模型异源）。CLI 来源 = --reviewer-model flag（优先）或进程环境
    * CW_REVIEWER_MODEL；注入点 = reviewer role 的 spawn req.env.CW_AGENT_MODEL
    * （复用 pi 适配器 resolvePiModel 既有四级链，pi.ts 零改动）。
@@ -237,7 +237,7 @@ interface DispatchTarget {
   /** 派发依据的 frontier 维度（任务书模板按维度选择，mx-1 起 reviewer 有两种形态） */
   dimension: DispatchDimension;
   /**
-   * u8（canon D6）：内部节点（spec.split 非空）的 builder 不派 agent，由循环直接
+   * u8（canon D6）：内部节点（spec.split 非空）的 developer 不派 agent，由循环直接
    * 执行 runIntegrationVerify（确定性代码）。不占 in-flight 并发额度（不是 spawn）。
    */
   integration: boolean;
@@ -323,8 +323,8 @@ const DISPATCH_SHAPE: Record<
   specContractBroken: { role: "designer", integration: false },
   missingChildren: { role: "designer", integration: false },
   integrationDrift: { role: "designer", integration: false },
-  integrationReady: { role: "builder", integration: true },
-  buildReady: { role: "builder", integration: false },
+  integrationReady: { role: "developer", integration: true },
+  buildReady: { role: "developer", integration: false },
   execReviewReady: { role: "reviewer", integration: false },
 };
 
@@ -334,7 +334,7 @@ const DISPATCH_SHAPE: Record<
  * 子树、按 BFS 序展开为 (role, unitId, dimension, integration)。派发 gate
  * （mx-1 S1）：同 unit 存在任意 role 的 in-flight spawn 时本轮缓派该 unit 的
  * 全部新角色——reviewer 派发前的 worktree reset 会清在飞 designer 的现场，
- * 同理修复既有 designer→builder 转换竞态；等待窗口 ≤ 一个 poll 周期。
+ * 同理修复既有 designer→developer 转换竞态；等待窗口 ≤ 一个 poll 周期。
  * excluded = 转人工 unit（连续 TIMEOUT 封顶后不再派发）。specReviewDeadlock /
  * flakeReview / specContractDeadlock 维度同样不派发——转人工指引由 runLoopMain
  * 出声，此处只负责不进 targets。spec-frozen 自引用的 stderr 警告保持每轮可见
@@ -436,7 +436,7 @@ function collectIntegrationContracts(
 /**
  * 执行一次内部节点集成并写 root 的 VerifyRan（pass/fail 都入账——与 u4a verify
  * 「fail 也是打回依据，审计必需」同语义）。失败不抛错：fail VerifyRan 留审计，
- * unit 停在 spec-frozen，下轮重算自然重派集成（与 builder 重派同待遇）。
+ * unit 停在 spec-frozen，下轮重算自然重派集成（与 developer 重派同待遇）。
  * 入账失败（锁竞争等）也只出声不炸循环——产物已落盘，下轮重试自愈。
  */
 async function runIntegrationDispatch(
@@ -784,7 +784,7 @@ function spawnErrorMessage(rootId: string, unitId: string, role: AgentRole): str
 /**
  * spawn 退出的结算描述（D6 文案诚实化，mx5-2）：TIMEOUT 且该 unit 处于停派态
  * （frontier.stoppedDispatchState 的投影判定）时改述真实行为——停派态下「可
- * 重派」承诺不兑现（三跑现场五：flake 停派中的 builder TIMEOUT 结算行写可重派
+ * 重派」承诺不兑现（三跑现场五：flake 停派中的 developer TIMEOUT 结算行写可重派
  * ，死局）。只改文案，超时计数与转人工判定的优先级行为零变更（行为重估列观察
  * 项，见设计 mx-5 D6）。非停派态输出与历史逐字节一致（u7b 锁定）。
  */
@@ -867,7 +867,7 @@ function flakeEscalationMessage(
       `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次 fail（runId：${f.runIds.join("、")}）`,
   );
   return (
-    `cw run: unit "${unitId}" 的 e2e 验收连挂 2 次以上（flake 疑似）——停止对该 unit 派发 builder（打回循环对随机挂无解），` +
+    `cw run: unit "${unitId}" 的 e2e 验收连挂 2 次以上（flake 疑似）——停止对该 unit 派发 developer（打回循环对随机挂无解），` +
     "转人工判定（canon §5.2：不自动豁免，防 Goodhart；本循环继续处理其余 unit）：\n" +
     factLines.join("\n") +
     "\n人工判定动作（按序）：\n" +
@@ -1028,7 +1028,7 @@ function announceManualEscalations(
  * 无在场的 reviewer spawn（in-flight 或其 spawn 窗口内）且非 specFixPending 流转
  * （fail 的打回修复有 loop 的收敛出口）——唯一可见性增强，不阻断不入账。
  * mx-3 收紧点：原「本 run 派发过该 unit 的 reviewer 即永久豁免」废除（M4 gate
- * §5.1 三因之一——builder 重提 spec 后的自审被该豁免吞掉警告）；正常 reviewer
+ * §5.1 三因之一——developer 重提 spec 后的自审被该豁免吞掉警告）；正常 reviewer
  * spawn 内的提交（verdict ts 落在该 reviewer flight 的 spawn→结算窗口内）豁免
  * 不误报。
  */
@@ -1036,7 +1036,7 @@ function prematureVerdictWarningLine(unitId: string): string {
   return (
     `[runner] 警告：unit "${unitId}" 出现新的 spec-review verdict，但该 verdict 入账时该 unit 无在场的 ` +
     "reviewer spawn（不在任何 reviewer flight 的存活窗口内）且非 fail 打回流转——疑似非独立 reviewer 提交（designer 自审 / " +
-    "builder 越权 / 人工抢答）。role 字段是自报弱声明可伪造；本警告仅审计可见性，不阻断。\n"
+    "developer 越权 / 人工抢答）。role 字段是自报弱声明可伪造；本警告仅审计可见性，不阻断。\n"
   );
 }
 
@@ -1045,7 +1045,7 @@ function prematureVerdictWarningLine(unitId: string): string {
  * 时刻，settledAt = wait() 结算时刻（null = 仍在飞）。verdict 的入账 ts 落在
  * [spawnedAt, settledAt] 内即视为「reviewer 在场期间提交」——正常 reviewer 流
  * （worker 在 spawn 内写完 verdict 再退出）不误报；reviewer 已结算后的晚到提交、
- * builder in-flight 期间的自审提交（无匹配窗口）都会告警。
+ * developer in-flight 期间的自审提交（无匹配窗口）都会告警。
  */
 interface ReviewerFlightWindow {
   spawnedAt: number;
@@ -1134,7 +1134,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   }
 
   // mx-1 S3：reviewer 异源模型链——flag（--reviewer-model）优先于进程环境
-  // CW_REVIEWER_MODEL，都未设则不注入（reviewer 回落 builder 同款模型链）。
+  // CW_REVIEWER_MODEL，都未设则不注入（reviewer 回落 developer 同款模型链）。
   // 读取点在启动时一次性定格（与 CW_HOME 等环境语义一致，运行中改 env 不生效）
   const envReviewerModel = process.env.CW_REVIEWER_MODEL;
   const reviewerModel =
@@ -1169,7 +1169,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   const escalated = new Map<string, AgentRole>();
   // rv-5 flake 转人工的出声去重（mx-3 改按「消息文本 + unitId」复合签名——文本
   // 含 unitId 与连挂事实，同签名不重播；人工处置后连挂消失、再连挂（新事实改变
-  // 文本）时重新出声。修复 M4 gate §5.5：in-flight builder 的第三次连挂使旧
+  // 文本）时重新出声。修复 M4 gate §5.5：in-flight developer 的第三次连挂使旧
   // runId 签名失效导致整段消息重复打印）
   const announcedFlake = new Map<string, string>();
   // mx-1 MF2 spec 打回活锁转人工的出声去重（mx-3 同样改消息文本签名，语义同上）
@@ -1191,7 +1191,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   }
   // mx-3 S7 豁免收紧：reviewer flight 存活窗口登记表（unitId → 本 run 全部
   // reviewer flight 的窗口）。取代原「本 run 派发过即永久豁免」的 Set——豁免
-  // 只认「verdict 入账时刻 reviewer 在场」，builder in-flight 期间的自审提交、
+  // 只认「verdict 入账时刻 reviewer 在场」，developer in-flight 期间的自审提交、
   // reviewer 结算后的晚到提交都会告警（可见性增强，不阻断）
   const reviewerFlightWindows = new Map<string, ReviewerFlightWindow[]>();
   let lastUnitSeqs = new Map<string, number>();
@@ -1430,7 +1430,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
       const briefPath = writeBriefFile(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir);
       // mx-1 S3：reviewer role 注入异源模型（复用 pi 的 CW_AGENT_MODEL → --model
-      // 翻译链，req.env 级；未配置时不注入——reviewer 与 builder 同模型链）。
+      // 翻译链，req.env 级；未配置时不注入——reviewer 与 developer 同模型链）。
       // mx-3 S7：reviewer flight 的存活窗口登记（抢答豁免收紧后，豁免只认
       // 「verdict 入账时刻 reviewer 在场」——本窗口是唯一豁免依据）
       let reviewerWindow: ReviewerFlightWindow | undefined;

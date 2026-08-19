@@ -9,7 +9,7 @@
  *      （含恢复动作与产物路径）、无可推进后 exit 1 汇总
  *   2. TIMEOUT 间穿插账本进展 → 计数清零（「连续」语义）
  *   3. 多 unit：一个转人工后其余 unit 继续推进（循环不因单 unit 卡死）
- *   4. 失败 builder 的半成品 → 重派前由派发点 ensureUnitWorktree 清理
+ *   4. 失败 developer 的半成品 → 重派前由派发点 ensureUnitWorktree 清理
  *      （reset --hard + clean -fd 裸形态，wt-2 起清 unit worktree；fx-4 起无 -e 例外）；
  *      项目 cwd 属于用户，runner 不触碰（W3 已删共享 cwd 近似 reset）
  *
@@ -92,7 +92,7 @@ function gitRun(repoDir: string, args: readonly string[]): string {
   return (res.stdout ?? "").trim();
 }
 
-/** 独立 repo：init + 一个真实 commit（builder 证据的 commit hash 来源） */
+/** 独立 repo：init + 一个真实 commit（developer 证据的 commit hash 来源） */
 function makeRepo(name: string): { repoDir: string; head: string } {
   const base = join(tmpRoot, name);
   mkdirSync(base, { recursive: true });
@@ -141,14 +141,14 @@ function statusOf(repoDir: string, unitId: string): string {
   return unitStatus(unit);
 }
 
-/** 按推进一步（designer → spec+过审；builder → evidence+verify；reviewer → exec-review） */
+/** 按推进一步（designer → spec+过审；developer → evidence+verify；reviewer → exec-review） */
 function advanceStep(repoDir: string, unitId: string, role: AgentSpawnRequest["role"], commit: string): void {
   const ledger = ledgerForCwd(repoDir);
   if (role === "designer") {
     appendSpecFrozen(repoDir, unitId);
     return;
   }
-  if (role === "builder") {
+  if (role === "developer") {
     const unit = loadLedger(repoDir).projection.units.get(unitId);
     const acceptanceIds =
       unit?.specs[unit.specs.length - 1]?.acceptance.map((a) => a.id) ?? FIXTURE_ACCEPTANCE.map((a) => a.id);
@@ -281,8 +281,8 @@ describe("连续 TIMEOUT 转人工", () => {
         exitCode: "TIMEOUT",
         onSpawn: (req) => advanceStep(req.projectCwd, req.unitId, "designer", ""),
       },
-      { exitCode: "TIMEOUT" }, // 清零后第 1 次（builder）
-      { exitCode: "TIMEOUT" }, // 清零后第 2 次（builder）→ 转人工
+      { exitCode: "TIMEOUT" }, // 清零后第 1 次（developer）
+      { exitCode: "TIMEOUT" }, // 清零后第 2 次（developer）→ 转人工
     ]);
 
     const captured = await captureStd(() =>
@@ -291,10 +291,10 @@ describe("连续 TIMEOUT 转人工", () => {
 
     expect(captured.code).toBe(1);
     expect(script.calls.length).toBe(4);
-    // 前 2 次派 designer（created），有进展清零后 unit 已 spec-frozen → 后 2 次派 builder
-    expect(script.calls.map((c) => c.role)).toEqual(["designer", "designer", "builder", "builder"]);
+    // 前 2 次派 designer（created），有进展清零后 unit 已 spec-frozen → 后 2 次派 developer
+    expect(script.calls.map((c) => c.role)).toEqual(["designer", "designer", "developer", "developer"]);
     // 转人工指引只在封顶后出现一次（第 2 次 TIMEOUT 有进展，不触发）
-    expect(captured.err).toContain('unit "root" 的 builder 连续 2 次 spawn TIMEOUT');
+    expect(captured.err).toContain('unit "root" 的 developer 连续 2 次 spawn TIMEOUT');
     expect(statusOf(repoDir, "root")).toBe("spec-frozen");
   }, 30_000);
 
@@ -341,35 +341,35 @@ describe("连续 TIMEOUT 转人工", () => {
 // ---- 2. 重派前 worktree 清理（wt-2 迁移：清理对象随派发 workdir 迁 unit worktree） ----
 
 describe("重派前 tracked 半成品清理", () => {
-  it("失败 builder 在 unit worktree 留下 tracked 脏改 + untracked 产物 → 重派前被 ensure reset 清净（porcelain 为空）；项目 cwd 的用户 untracked 文件不受影响", async () => {
+  it("失败 developer 在 unit worktree 留下 tracked 脏改 + untracked 产物 → 重派前被 ensure reset 清净（porcelain 为空）；项目 cwd 的用户 untracked 文件不受影响", async () => {
     const { repoDir, head } = makeRepo("reset-dirty");
     // 项目 cwd 预置 untracked 文件（用户/认知外文件——任何清理都不得动它）
     writeFileSync(join(repoDir, "user-notes.txt"), "user's own file");
     appendUnitCreated(repoDir, "root", null);
-    appendSpecFrozen(repoDir, "root"); // 直接 spec-frozen → 派 builder
+    appendSpecFrozen(repoDir, "root"); // 直接 spec-frozen → 派 developer
 
     const wtDir = worktreePath(WT_HOME, repoDir, "root");
     let porcelainAtSecondSpawn = "(not captured)";
     const script = makeSteppedAdapter([
       {
-        // 失败 builder：在 unit worktree 改 tracked 文件（brief.md）不提交 + 留
+        // 失败 developer：在 unit worktree 改 tracked 文件（brief.md）不提交 + 留
         // untracked 构建产物，exit 1（wt-2 起 agent 的半成品只落在自己的 worktree）
         exitCode: 1,
         onSpawn: (req) => {
           const brief = join(req.workdir, "brief.md");
-          writeFileSync(brief, `${readFileSync(brief, "utf-8")}\n<!-- half-done builder output -->`);
+          writeFileSync(brief, `${readFileSync(brief, "utf-8")}\n<!-- half-done developer output -->`);
           writeFileSync(join(req.workdir, "build-artifact.tmp"), "half-done");
         },
       },
       {
-        // 重派 builder：此刻 worktree 应已被派发点 ensure 的 reset --hard + clean -fd
+        // 重派 developer：此刻 worktree 应已被派发点 ensure 的 reset --hard + clean -fd
         // 清净（wt-2 精确语义：tracked 脏改与 untracked 一并清，D4）——捕获证据
         exitCode: 0,
         onSpawn: (req) => {
           porcelainAtSecondSpawn = spawnSync("git", ["-C", req.workdir, "status", "--porcelain"], {
             encoding: "utf-8",
           }).stdout ?? "";
-          advanceStep(req.projectCwd, req.unitId, "builder", head);
+          advanceStep(req.projectCwd, req.unitId, "developer", head);
         },
       },
       {
@@ -390,10 +390,10 @@ describe("重派前 tracked 半成品清理", () => {
     // 半成品确实被清掉（文件本体消失，不是 porcelain 误报）
     expect(existsSync(join(wtDir, "build-artifact.tmp"))).toBe(false);
     // 项目 cwd 的用户 untracked 文件不受任何清理影响（安全断言：worktree 隔离后
-    // builder 半成品不再污染项目 cwd，用户文件更不会被 clean 波及）
+    // developer 半成品不再污染项目 cwd，用户文件更不会被 clean 波及）
     expect(existsSync(join(repoDir, "user-notes.txt"))).toBe(true);
     expect(readFileSync(join(repoDir, "user-notes.txt"), "utf-8")).toBe("user's own file");
     // 重派真实发生（worktree 路径出现在派发日志行）
-    expect(captured.out).toContain(`派发 builder → unit "root"（worktree: ${wtDir}`);
+    expect(captured.out).toContain(`派发 developer → unit "root"（worktree: ${wtDir}`);
   }, 30_000);
 });

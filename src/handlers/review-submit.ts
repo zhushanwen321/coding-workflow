@@ -1,6 +1,6 @@
 /**
  * `cw review submit --unit <id> --verdict-kind <spec-review|exec-review> --verdict <pass|fail>
- * [--comment <text>] [--evidence-refs <runId,...>] [--role <reviewer|designer|builder|human>]`
+ * [--comment <text>] [--evidence-refs <runId,...>] [--role <reviewer|designer|developer|human>]`
  * （u2 验收文档锁定的 M0 规格；mx-1 增补可选 --role 自报字段）。
  *
  * mx-3 起 spec-review 的 --role 收紧为必填且必须 reviewer（缺/错 → exit 1 纯拒绝，
@@ -42,8 +42,8 @@ function verifyRunIds(ledger: EventLedger, unitId: string): Set<string> {
   return runIds;
 }
 
-/** --role 的合法值集（mx-1：提交者自报身份的枚举域，对齐 VerdictSubmittedPayload.role） */
-const VERDICT_ROLES = ["reviewer", "designer", "builder", "human"] as const;
+/** --role 的合法值集（mx-1：提交者自报身份的枚举域，对齐 VerdictSubmittedPayload.role；mx5-4 起实现角色只收 developer，改名前旧值拒收） */
+const VERDICT_ROLES = ["reviewer", "designer", "developer", "human"] as const;
 
 /** 自报 role 的枚举判定（类型守卫：payload 的 role 字段收窄到字面量联合） */
 function isVerdictRole(
@@ -139,14 +139,15 @@ export async function handleReviewSubmit(ctx: CommandContext): Promise<number> {
   if (role !== undefined && !isVerdictRole(role)) {
     return fail(
       `cw review submit: 非法 --role "${role}"：合法值 ${VERDICT_ROLES.join(" | ")}。` +
-        "恢复动作：按你的实际身份选（reviewer=独立审查者 / designer / builder / human=人工），" +
-        "或去掉 --role（自报字段可选，缺省不入账）。",
+        "恢复动作：按你的实际身份选（reviewer=独立审查者 / designer / developer / human=人工），" +
+        "或去掉 --role（自报字段可选，缺省不入账）。若你用的是改名前的实现角色旧值（mx5-4 起" +
+        "已拒收），迁移指引：改用 --role developer。",
     );
   }
   // mx-3：spec-review 结论的身份强校验（入账层，双层防线第一层——M4 gate §5.1
-  // builder 自审 pass 绕过独立审查的现场）。缺/错 role 一律纯拒绝（不产生任何
+  // developer 自审 pass 绕过独立审查的现场）。缺/错 role 一律纯拒绝（不产生任何
   // 事件），提交者按文案补 role 重试；reviewer brief 与 human 指令模板均已含
-  // --role reviewer，正常链路零影响。防的是无意识自审（builder/designer 按自己
+  // --role reviewer，正常链路零影响。防的是无意识自审（developer/designer 按自己
   // 知道的命令形态提交，不带 role）；不防有意谎报——role 是自报字段可伪造，但
   // 谎报者必须在账本留下显式 role=reviewer 声明（事后审计可对照 spawn 记录）。
   // exec-review 不收紧：其前置 verified 由机器验证把关，M4 gate 发现的绕过路径
@@ -156,7 +157,7 @@ export async function handleReviewSubmit(ctx: CommandContext): Promise<number> {
       role === undefined ? "未携带 --role" : `携带的是 --role "${role}"`;
     return fail(
       `cw review submit: spec-review 结论必须由 reviewer 身份提交（当前${roleDesc}）——` +
-        "spec-review 是 spec 冻结的唯一闸门，非 reviewer 身份（designer 自审 / builder 越权）的结论不可入账。" +
+        "spec-review 是 spec 冻结的唯一闸门，非 reviewer 身份（designer 自审 / developer 越权）的结论不可入账。" +
         `恢复动作：补 --role reviewer 重试——cw review submit --unit ${unitId} --verdict-kind spec-review --verdict ${verdict} --role reviewer` +
         "（若你确非该 unit 的独立 reviewer，请勿提交，交由 runner 派发的 reviewer spawn 处理）。",
     );
