@@ -194,7 +194,8 @@ describe("E2E real：flag 端到端（--unit / --json）", () => {
     expect(f.code).toBe(0);
     // 全维度（与 runner 派发同口径）：本账本 root 待 spec、leaf 待 build，其余组空
     // （rv-5 起含 flakeReview 维度；mx-1 起 created+spec 维度重排为
-    // specReviewPending / specFixPending / specReviewDeadlock 三组）
+    // specReviewPending / specFixPending / specReviewDeadlock 三组；mx5-2 起含
+    // specContractBroken / specContractDeadlock 契约回炉两组）
     expect(JSON.parse(f.stdout)).toEqual({
       specReady: ["root"],
       specReviewPending: [],
@@ -203,6 +204,8 @@ describe("E2E real：flag 端到端（--unit / --json）", () => {
       missingChildren: [],
       integrationDrift: [],
       integrationReady: [],
+      specContractBroken: [],
+      specContractDeadlock: [],
       flakeReview: [],
       buildReady: ["leaf"],
       execReviewReady: [],
@@ -251,6 +254,8 @@ describe("E2E real：空账本目录", () => {
       missingChildren: [],
       integrationDrift: [],
       integrationReady: [],
+      specContractBroken: [],
+      specContractDeadlock: [],
       flakeReview: [],
       buildReady: [],
       execReviewReady: [],

@@ -55,7 +55,17 @@
  *     （列出连挂用例 id 与逐次 fail 的 runId；处置 = 修稳定性 / 声明
  *     nondeterministic 重提 spec / 修真 bug）。复用 fx-2 上限出口的审计-不喂
  *     -idle 模式：停派后无新 VerifyRan，若树内无其他目标由 maxIdleMs 收束；
- *     人工处置写入账本后投影自然消失，运行中的循环下轮自愈
+ *     人工处置写入账本后投影自然消失，运行中的循环下轮自愈。连挂输入排除
+ *     解析失败条目（mx5-2：解析失败走 specContractBroken 回炉，不再误判 flake）
+ *   - spec-frozen 且当前 spec 周期内某验收解析失败连挂 ≥2 ∧ 回炉代数 <2
+ *     （specContractBroken，mx5-2）→ designer 回炉修 spec 的验收命令契约
+ *     （任务书内嵌当前周期逐轮解析失败原文 + 规则⑨式恢复指引；新 spec 照旧
+ *     过独立 reviewer 再审——回炉不建新信任机制）。回炉代数 =「连挂 ≥2 → 新
+ *     SpecSubmitted」累计次数，新 spec 只清连挂计数不清代数
+ *   - spec-frozen 且解析失败连挂 ≥2 ∧ 回炉代数 ≥2（specContractDeadlock，
+ *     mx5-2）→ 不派任何 agent（两轮修复均经 verify 检验仍失败，判 spec/brief
+ *     层更深问题），stderr 转人工（含 2 代回炉事实与恢复指引）；复用审计-不喂
+ *     -idle 模式，人工处置（新 spec 过审 / 人工关闭）写入账本后投影自然消失
  *   - verified 且未 closed   → reviewer（exec-review；任务书含 rv-2 必填的
  *     --evidence-refs 与 mx-1 的 --role reviewer 自报）
  *
@@ -102,7 +112,6 @@ import { join } from "node:path";
 
 import { fold } from "../core/fold.js";
 import type {
-  DiscriminatedEvent,
   LedgerEvent,
   SequencedProjection,
   SequencedUnitProjection,
@@ -116,11 +125,19 @@ import {
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
   latestSpecReviewAfterLastSpec,
+  SPEC_CONTRACT_MAX_GENERATIONS,
   SPEC_REVIEW_DEADLOCK_FAILS,
+  type SpecContractFacts,
+  specContractFacts,
+  specReviewFailComments,
   specReviewFailCounts,
+  specVerdictTsBySeq,
   splitChildrenNotCreated,
   splitOf,
   splitSelfReferences,
+  stoppedDispatchState,
+  subtreeUnits,
+  unitEventHighWaterSeqs,
 } from "../readonly/frontier.js";
 import { loadLedger, treeStatuses, unitStatus } from "../readonly/load.js";
 import { EventLedger } from "../store/events-log.js";
@@ -287,41 +304,15 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
   });
 }
 
-/**
- * root 子树的 unit 列表（BFS 序 = root 先、子按账本创建序）。实现与 human-loop
- * 的同名私有函数一致（泛化期两处并存，human-loop 退役后单一化）。
- */
-function subtreeUnits(
-  projection: SequencedProjection,
-  rootId: string,
-): SequencedUnitProjection[] {
-  const childrenOf = new Map<string, string[]>();
-  for (const unit of projection.units.values()) {
-    if (unit.parentId !== null) {
-      const siblings = childrenOf.get(unit.parentId) ?? [];
-      siblings.push(unit.unitId);
-      childrenOf.set(unit.parentId, siblings);
-    }
-  }
-  const units: SequencedUnitProjection[] = [];
-  const queue = [rootId];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === undefined) break;
-    const unit = projection.units.get(current);
-    if (unit === undefined) break; // 不可达：BFS 只入账内 id
-    units.push(unit);
-    queue.push(...(childrenOf.get(current) ?? []));
-  }
-  return units;
-}
-
 /** frontier 维度 → 派发形态（role 与集成直跑标记）。维度语义单一出处 = readonly/frontier.ts。
- * specReviewDeadlock / flakeReview 无条目（mx-1 / rv-5）：两者都是转人工维度——
- * 不派任何 agent（打回循环对活锁/随机挂无解），转人工指引由 runLoopMain 的
- * specDeadlockEscalationMessage / flakeEscalationMessage 出声。
+ * specReviewDeadlock / flakeReview / specContractDeadlock 无条目（mx-1 / rv-5 /
+ * mx5-2）：三者都是转人工维度——不派任何 agent（打回活锁 / 随机挂 / 回炉活锁
+ * 对机器无解），转人工指引由 runLoopMain 的 specDeadlockEscalationMessage /
+ * flakeEscalationMessage / specContractDeadlockEscalationMessage 出声。
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
- * 但任务书形态不同（renderBrief 按 dimension 区分）。 */
+ * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
+ * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
+ * 模板（内嵌解析失败原文，非 reviewer comment）。 */
 const DISPATCH_SHAPE: Record<
   DispatchDimension,
   { role: AgentRole; integration: boolean }
@@ -329,6 +320,7 @@ const DISPATCH_SHAPE: Record<
   specReady: { role: "designer", integration: false },
   specReviewPending: { role: "reviewer", integration: false },
   specFixPending: { role: "designer", integration: false },
+  specContractBroken: { role: "designer", integration: false },
   missingChildren: { role: "designer", integration: false },
   integrationDrift: { role: "designer", integration: false },
   integrationReady: { role: "builder", integration: true },
@@ -344,9 +336,10 @@ const DISPATCH_SHAPE: Record<
  * 全部新角色——reviewer 派发前的 worktree reset 会清在飞 designer 的现场，
  * 同理修复既有 designer→builder 转换竞态；等待窗口 ≤ 一个 poll 周期。
  * excluded = 转人工 unit（连续 TIMEOUT 封顶后不再派发）。specReviewDeadlock /
- * flakeReview 维度同样不派发——转人工指引由 runLoopMain 出声，此处只负责不进
- * targets。spec-frozen 自引用的 stderr 警告保持每轮可见——判定半边在共享函数
- * （按叶子语义入组），此处只保留可观测性半边（fx-1 R1 loop 级防御）。
+ * flakeReview / specContractDeadlock 维度同样不派发——转人工指引由 runLoopMain
+ * 出声，此处只负责不进 targets。spec-frozen 自引用的 stderr 警告保持每轮可见
+ * ——判定半边在共享函数（按叶子语义入组），此处只保留可观测性半边（fx-1 R1
+ * loop 级防御）。
  */
 function computeDispatchTargets(
   projection: SequencedProjection,
@@ -354,6 +347,7 @@ function computeDispatchTargets(
   inFlight: readonly InFlightSpawn[],
   consecutiveFails: ReadonlyMap<string, number>,
   flakeFacts: ReadonlyMap<string, readonly FlakeReviewFact[]>,
+  contractFacts: ReadonlyMap<string, SpecContractFacts>,
   specFails: ReadonlyMap<string, number>,
   maxSpecRejects: number,
   excluded: ReadonlySet<string>,
@@ -361,6 +355,7 @@ function computeDispatchTargets(
   const groups = computeFrontier(projection, {
     consecutiveIntegrationFails: consecutiveFails,
     flakeReviewFacts: flakeFacts,
+    specContractFacts: contractFacts,
     specReviewFailCounts: specFails,
     maxSpecRejects,
   });
@@ -386,10 +381,11 @@ function computeDispatchTargets(
     if (
       dimension === undefined ||
       dimension === "flakeReview" ||
-      dimension === "specReviewDeadlock"
+      dimension === "specReviewDeadlock" ||
+      dimension === "specContractDeadlock"
     ) {
-      // 转人工维度（rv-5 flake / mx-1 spec 打回复审活锁）——不派任何 agent，
-      // 打回循环停摆等人工处置后投影自然消失
+      // 转人工维度（rv-5 flake / mx-1 spec 打回活锁 / mx5-2 回炉活锁）——不派
+      // 任何 agent，停摆等人工处置后投影自然消失
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
@@ -785,12 +781,25 @@ function spawnErrorMessage(rootId: string, unitId: string, role: AgentRole): str
   );
 }
 
-function describeExit(exitCode: SpawnResult["exitCode"]): string {
+/**
+ * spawn 退出的结算描述（D6 文案诚实化，mx5-2）：TIMEOUT 且该 unit 处于停派态
+ * （frontier.stoppedDispatchState 的投影判定）时改述真实行为——停派态下「可
+ * 重派」承诺不兑现（三跑现场五：flake 停派中的 builder TIMEOUT 结算行写可重派
+ * ，死局）。只改文案，超时计数与转人工判定的优先级行为零变更（行为重估列观察
+ * 项，见设计 mx-5 D6）。非停派态输出与历史逐字节一致（u7b 锁定）。
+ */
+function describeExit(exitCode: SpawnResult["exitCode"], stopState: string | null): string {
   if (exitCode === 0) {
     return "exit 0";
   }
   if (exitCode === "SPAWN_ERROR") {
     return "SPAWN_ERROR";
+  }
+  if (exitCode === "TIMEOUT" && stopState !== null) {
+    return (
+      `TIMEOUT——该 unit 当前处于 ${stopState} 停派态，本次超时不触发重派；` +
+      "恢复动作：按该停派态的转人工指引处理（cw frontier 查看分组），处置写入账本后重跑 cw run 即续"
+    );
   }
   const capped =
     exitCode === "TIMEOUT"
@@ -799,22 +808,6 @@ function describeExit(exitCode: SpawnResult["exitCode"]): string {
         ? "，可重派"
         : "";
   return `${String(exitCode)}${capped}`;
-}
-
-/**
- * 各 unit 的最新事件 seq 高水位（连续 TIMEOUT 计数的进展清零输入）：五类事件
- * payload 均含 unitId，任何类型的新事件（SpecSubmitted / EvidenceSubmitted /
- * VerdictSubmitted / VerifyRan / UnitCreated）都视为该 unit 有进展。
- */
-function unitEventHighWaterSeqs(events: readonly LedgerEvent[]): Map<string, number> {
-  const seqs = new Map<string, number>();
-  for (const record of events) {
-    const event = record as DiscriminatedEvent;
-    if (event.seq > (seqs.get(event.payload.unitId) ?? 0)) {
-      seqs.set(event.payload.unitId, event.seq);
-    }
-  }
-  return seqs;
 }
 
 /** 同一 unit 连续 TIMEOUT 的计数条目（role = 最近一次 TIMEOUT 的派发 role） */
@@ -924,38 +917,110 @@ function specDeadlockEscalationMessage(
 }
 
 /**
- * 该 unit 各打回代数的首条 fail comment（mx-3：只认 role=reviewer 的 fail、按
- * SpecSubmitted 代数取每代首条——与 specReviewFailCounts 的计数口径完全同构，
- * 转人工指引列出的意见数 = 打回代数；缺 comment 时给可定位占位）。需原始事件
- * 流（fold 投影的平行数组丢失跨类型顺序）。
+ * 解析失败回炉活锁转人工指引（mx5-2，设计 mx-5 D2 防活锁独立预算）：两轮完整
+ * 回炉（连挂 ≥2 → designer 修 spec → 新 spec 过审 → verify 仍解析失败连挂 ≥2）
+ * 走满后判定 spec/brief 层有更深问题——继续派 designer 只会重演（每轮回炉都
+ * 清空连挂再重建），停派转人工。列出当前周期的连挂事实（条目 id + 逐次 runId
+ * ——原文在 <id>.report.json 顶层 reason，cw report 可查）与人工处置动作；出
+ * 口形态复用 fx-2 上限出口的「审计-不喂-idle」模式（停派后无新 VerifyRan 喂活
+ * idle 判定，空转由 maxIdleMs 收束）；人工处置（新 spec 过审 / 人工关闭）写入
+ * 账本后投影自然消失，运行中的循环下轮自愈。
  */
-function specReviewFailComments(
-  events: readonly LedgerEvent[],
+function specContractDeadlockEscalationMessage(
+  rootId: string,
   unitId: string,
-): string[] {
-  const comments: string[] = [];
-  let countedInGeneration = false;
-  for (const record of events) {
-    const event = record as DiscriminatedEvent;
-    if (event.type === "SpecSubmitted" && event.payload.unitId === unitId) {
-      countedInGeneration = false;
-    } else if (
-      event.type === "VerdictSubmitted" &&
-      event.payload.unitId === unitId &&
-      event.payload.verdictKind === "spec-review" &&
-      event.payload.verdict === "fail" &&
-      event.payload.role === "reviewer"
-    ) {
-      if (!countedInGeneration) {
-        comments.push(
-          event.payload.comment ??
-            "（该次 fail 未附 comment——按 cw report --unit 的 verdict 时间线核对）",
-        );
-        countedInGeneration = true;
-      }
+  facts: SpecContractFacts,
+): string {
+  const factLines = facts.streaks.map(
+    (f) =>
+      `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次解析失败（runId：${f.runIds.join("、")}）`,
+  );
+  return (
+    `cw run: unit "${unitId}" 的验收命令解析失败已 2 代回炉仍连挂 ≥2（两轮「连挂 → designer 修 spec → 过审 → verify 检验」完整走完；` +
+    "代数累计不因重提清理）——判定 spec/任务书层有更深问题，停止对该 unit 派发（不再派 designer，防回炉活锁），" +
+    "转人工处置（本循环继续处理其余 unit）：\n" +
+    factLines.join("\n") +
+    "\n人工处置动作（恢复指引，按序）：\n" +
+    `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
+    `  2. 查看逐次解析失败原文：cw report --unit ${unitId}（各 runId 目录的 <验收id>.report.json 顶层 reason）\n` +
+    `  3. 人工修正验收命令契约（e2e 型补标记行产出；vitest 型删冲突 flag——cw 自动追加 --reporter=json）后重提并以 reviewer 身份过审：` +
+    `cw evidence submit --kind spec --unit ${unitId} --file spec.json + cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer；` +
+    "或判定任务书本身不可行，人工关闭/重构该 unit\n" +
+    "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
+    `cw run --root ${rootId} 即续。`
+  );
+}
+
+/**
+ * 三类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
+ * 打回活锁）：事实来自账本重放（flakeReviewFacts / specContractFacts /
+ * specReviewFailCounts——全部「重提清连挂、代数类计数不清零」语义），人工处置
+ * 写入新事件后投影自然消失；出声按「消息文本 + unitId」复合签名去重（mx-3 模式
+ * ——新事实改变文本时重新出声，修复 M4 gate §5.5 消息重复打印）。返回三类事实
+ * 映射供 computeDispatchTargets 复用（派发排除与出声同口径同源，不重放两遍）。
+ * 其他 root 的 unit（同一账本多 root）不在本 run 职责内，跳过。
+ */
+function announceManualEscalations(
+  rootId: string,
+  events: readonly LedgerEvent[],
+  subtreeIds: ReadonlySet<string>,
+  maxSpecRejects: number,
+  dedup: {
+    flake: Map<string, string>;
+    contract: Map<string, string>;
+    spec: Map<string, string>;
+  },
+): {
+  flakes: ReadonlyMap<string, readonly FlakeReviewFact[]>;
+  contractFacts: ReadonlyMap<string, SpecContractFacts>;
+  specFails: ReadonlyMap<string, number>;
+} {
+  const flakes = flakeReviewFacts(events);
+  for (const [unitId, facts] of flakes) {
+    if (!subtreeIds.has(unitId)) {
+      continue;
+    }
+    const message = flakeEscalationMessage(rootId, unitId, facts);
+    if (dedup.flake.get(unitId) !== message) {
+      dedup.flake.set(unitId, message);
+      emitErr(message);
     }
   }
-  return comments;
+  // mx5-2 specContractDeadlock：解析失败连挂 ≥2 且回炉代数达上限（两代完整回炉
+  // 仍失败）→ 停派转人工（computeDispatchTargets 同口径不派）
+  const contractFacts = specContractFacts(events);
+  for (const [unitId, facts] of contractFacts) {
+    if (
+      !subtreeIds.has(unitId) ||
+      facts.streaks.length === 0 ||
+      facts.generations < SPEC_CONTRACT_MAX_GENERATIONS
+    ) {
+      continue;
+    }
+    const message = specContractDeadlockEscalationMessage(rootId, unitId, facts);
+    if (dedup.contract.get(unitId) !== message) {
+      dedup.contract.set(unitId, message);
+      emitErr(message);
+    }
+  }
+  // mx-1 MF2 specReviewDeadlock：spec-review 打回代数 ≥ 预算（mx-4 参数化）
+  const specFails = specReviewFailCounts(events);
+  for (const [unitId, failCount] of specFails) {
+    if (!subtreeIds.has(unitId) || failCount < maxSpecRejects) {
+      continue;
+    }
+    const message = specDeadlockEscalationMessage(
+      rootId,
+      unitId,
+      specReviewFailComments(events, unitId),
+      maxSpecRejects,
+    );
+    if (dedup.spec.get(unitId) !== message) {
+      dedup.spec.set(unitId, message);
+      emitErr(message);
+    }
+  }
+  return { flakes, contractFacts, specFails };
 }
 
 /**
@@ -985,24 +1050,6 @@ function prematureVerdictWarningLine(unitId: string): string {
 interface ReviewerFlightWindow {
   spawnedAt: number;
   settledAt: number | null;
-}
-
-/**
- * VerdictSubmitted 的 seq → 入账时刻映射（mx-3 S7 抢答检查的输入）：fold 投影
- * 不含 ts，从原始事件流提取；ts 不可解析的条目不入表（消费侧保守告警）。
- */
-function specVerdictTsBySeq(events: readonly LedgerEvent[]): Map<number, number> {
-  const tsBySeq = new Map<number, number>();
-  for (const record of events) {
-    const event = record as DiscriminatedEvent;
-    if (event.type === "VerdictSubmitted") {
-      const ts = Date.parse(event.ts);
-      if (Number.isFinite(ts)) {
-        tsBySeq.set(event.seq, ts);
-      }
-    }
-  }
-  return tsBySeq;
 }
 
 /**
@@ -1127,6 +1174,8 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   const announcedFlake = new Map<string, string>();
   // mx-1 MF2 spec 打回活锁转人工的出声去重（mx-3 同样改消息文本签名，语义同上）
   const announcedDeadlock = new Map<string, string>();
+  // mx5-2 解析失败回炉活锁转人工的出声去重（消息文本签名，语义同上）
+  const announcedContractDeadlock = new Map<string, string>();
   // mx-1 S7 抢答警告的去重水位：unitId → 已评估过的最高 spec-review verdict seq。
   // 初始值取本 run 启动时的账本现状（重跑场景下历史 verdict 不追警告，只看本
   // run 期间新入账的）
@@ -1236,45 +1285,15 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
     }
 
-    // rv-5 flakeReview 出口：e2e 验收连挂 ≥2 的 root 子树 unit 转人工（不派
-    // builder）。事实来自账本重放（flakeReviewFacts），人工处置写入新事件
-    //（pass / 新 spec）后投影自然消失、循环自愈；出声按「消息文本 + unitId」
-    // 复合签名去重（mx-3：修复 M4 gate §5.5 消息重复打印——in-flight builder
-    // 追加的连挂事实不改变已出声消息时不再重播）
-    const flakes = flakeReviewFacts(events);
+    // 三类转人工出口的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
+    // 打回活锁——语义与去重见 announceManualEscalations 注释）。事实映射回传给
+    // 派发计算（同口径同源）；人工处置写入新事件后投影自然消失、循环自愈
     const subtreeIds = new Set(subtreeUnits(projection, opts.rootId).map((u) => u.unitId));
-    for (const [unitId, facts] of flakes) {
-      if (!subtreeIds.has(unitId)) {
-        continue; // 其他 root 的 unit（同一账本多 root）：不在本 run 职责内
-      }
-      const message = flakeEscalationMessage(opts.rootId, unitId, facts);
-      if (announcedFlake.get(unitId) !== message) {
-        announcedFlake.set(unitId, message);
-        emitErr(message);
-      }
-    }
-
-    // mx-1 MF2 specReviewDeadlock 出口：spec-review 打回代数 ≥ 预算（mx-4 参数化：
-    // --max-spec-rejects 注入，默认 10）的 root 子树 unit 转人工
-    // （computeDispatchTargets 同口径不派）。事实来自账本重放
-    //（specReviewFailCounts——mx-3 起按打回代数计数，重提不清零），人工 pass
-    // verdict 写入后 unit 离开 created 态、投影自然消失；出声按消息文本签名去重
-    const specFails = specReviewFailCounts(events);
-    for (const [unitId, failCount] of specFails) {
-      if (!subtreeIds.has(unitId) || failCount < maxSpecRejects) {
-        continue;
-      }
-      const message = specDeadlockEscalationMessage(
-        opts.rootId,
-        unitId,
-        specReviewFailComments(events, unitId),
-        maxSpecRejects,
-      );
-      if (announcedDeadlock.get(unitId) !== message) {
-        announcedDeadlock.set(unitId, message);
-        emitErr(message);
-      }
-    }
+    const escalatedFacts = announceManualEscalations(opts.rootId, events, subtreeIds, maxSpecRejects, {
+      flake: announcedFlake,
+      contract: announcedContractDeadlock,
+      spec: announcedDeadlock,
+    });
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
@@ -1326,8 +1345,9 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       opts.rootId,
       inFlight,
       consecutiveIntegrationFails(events),
-      flakes,
-      specFails,
+      escalatedFacts.flakes,
+      escalatedFacts.contractFacts,
+      escalatedFacts.specFails,
       maxSpecRejects,
       new Set(escalated.keys()),
     );
@@ -1355,19 +1375,30 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         continue; // 不可达（target 来自同一投影）
       }
       if (target.role === "designer" && unitStatus(unit) === "spec-frozen") {
-        // designer × spec-frozen 两个出口的可观测性（终验日志里明确「为何派 designer」）：
-        // fx-3 R5.3 兜底（split 子未建）优先于 fx-2 R4a 上限（集成连续 fail）判定
-        const missingChildren = splitChildrenNotCreated(projection, unit);
-        if (missingChildren.length > 0) {
+        // designer × spec-frozen 出口的可观测性（终验日志里明确「为何派 designer」）。
+        // 判定序与 computeFrontier 单组归属同步：mx5-2 契约回炉 → fx-3 R5.3 兜底
+        //（split 子未建）→ fx-2 R4a 上限（集成连续 fail）
+        if (target.dimension === "specContractBroken") {
+          const fact = escalatedFacts.contractFacts.get(target.unitId);
           emit([
-            `[runner] unit "${target.unitId}" 的 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missingChildren.length} 个未创建` +
-              `（${missingChildren.join("、")}）——派 designer 补建子（子不齐不集成）`,
+            `[runner] unit "${target.unitId}" 的验收命令解析失败连挂 ≥2（条目 ` +
+              `${fact?.streaks.map((s) => s.acceptanceId).join("、") ?? "（未知）"}；spec 契约回炉，` +
+              `代数 ${fact?.generations ?? 0}/${SPEC_CONTRACT_MAX_GENERATIONS}）` +
+              "——转派 designer 修 spec 的验收命令契约（逐轮解析失败原文见 brief）",
           ]);
         } else {
-          emit([
-            `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
-              "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
-          ]);
+          const missingChildren = splitChildrenNotCreated(projection, unit);
+          if (missingChildren.length > 0) {
+            emit([
+              `[runner] unit "${target.unitId}" 的 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missingChildren.length} 个未创建` +
+                `（${missingChildren.join("、")}）——派 designer 补建子（子不齐不集成）`,
+            ]);
+          } else {
+            emit([
+              `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
+                "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
+            ]);
+          }
         }
       } else if (target.dimension === "specReviewPending") {
         // mx-1：spec-review 独立 reviewer 派发的可观测性（信任链关键跳变）
@@ -1440,8 +1471,19 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       if (finished.flight.reviewerWindow !== undefined) {
         finished.flight.reviewerWindow.settledAt = Date.now();
       }
+      // D6（mx5-2）：TIMEOUT 结算行诚实化——该 unit 此刻若处于停派态（转人工
+      // 维度），「可重派」承诺不兑现，改述真实行为。只在 TIMEOUT 时现算（其余
+      // 退出码的消费口径不变）；结算时刻重读账本，被 kill 的 agent 死前的处置
+      // 写入已可见（stoppedDispatchState 是 frontier 的只读投影）
+      const stopState =
+        finished.result.exitCode === "TIMEOUT"
+          ? stoppedDispatchState(
+              new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll(),
+              finished.flight.unitId,
+            )
+          : null;
       emit([
-        `[runner] ${new Date().toISOString()} ${finished.flight.role} unit "${finished.flight.unitId}" 退出 ${describeExit(finished.result.exitCode)}`,
+        `[runner] ${new Date().toISOString()} ${finished.flight.role} unit "${finished.flight.unitId}" 退出 ${describeExit(finished.result.exitCode, stopState)}`,
       ]);
       if (finished.result.exitCode === "SPAWN_ERROR") {
         killAll(inFlight);

@@ -68,4 +68,4 @@ npx eslint src/readonly/frontier.ts src/runner/loop.ts src/runner/brief.ts tests
 
 ## 8. status
 
-pending → building（developer 派发时由主 agent 更新）
+pending → building（2026-08-19 developer 交付：src 3 文件 +721/-182 + 新测试 15 用例 + R2b×2，全量 68 文件 527 绿。**越界备案 4 项（测试侧最小调整，先例依据 rv-5 `ef4ee67` / mx5-3 基线 §3 明文，待 verifier 深查）**：①mx5-3 测试 B3 快照同步 brief 文案修复 ②u1b-e2e toEqual 补空键 ③rv5 fixture 改恒可解析 JSON（解析失败归回炉后 flake 场景被抢的语义必然；T5 断言 buildReady→specContractBroken）④D6 停派态范围——TIMEOUT 封顶转人工为单进程内存态不进 describeExit（代码注释记档）。另：loop.ts 四个纯投影函数逐字节搬移 frontier.ts（eslint max-lines 触顶 977/1000，frontier 本是派发判定单一出处）。取数路径选定 verify 产物 report.json 的 parseError/reason，降级路径有测试；待 verifier）

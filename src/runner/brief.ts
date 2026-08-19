@@ -9,6 +9,9 @@
  *   - specReviewPending        → reviewer 独立审 spec（mx-1：内嵌 attachments 绝对路径
  *                                + canon D3 审查语义 + --role reviewer 提交命令）
  *   - specFixPending           → designer 按 fail comment 全文修 spec 重提（mx-1 MF1）
+ *   - specContractBroken       → designer 回炉修 spec 的验收命令契约（mx5-2：内嵌
+ *                                当前周期逐轮解析失败原文 + 规则⑨式恢复指引；复用
+ *                                specFixPending 骨架）
  *   - missingChildren          → designer 补建 split 子（fx-3 R5.3）
  *   - integrationDrift         → designer 处置集成契约漂移（fx-2 R4a / rv-4）
  *   - buildReady / execReviewReady → builder / reviewer（exec-review 含 rv-2 必填
@@ -17,9 +20,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { VerifySequencedUnitProjection } from "../core/fold.js";
 import type {
   SequencedProjection,
   SequencedUnitProjection,
+  VerifyRanPayload,
 } from "../events/types.js";
 import {
   type FrontierGroups,
@@ -28,15 +33,19 @@ import {
   splitOf,
 } from "../readonly/frontier.js";
 import { unitStatus } from "../readonly/load.js";
-import { attachmentsDir, getCwHome } from "../store/project.js";
+import { attachmentsDir, evidenceDir, getCwHome } from "../store/project.js";
 import { integrationRecoveryGuidance, readIntegrateReport } from "./integrate.js";
 import type { AgentRole } from "./spawn/types.js";
 import { unitBranchName } from "./worktree.js";
 
-/** 会派发 spawn 的 frontier 维度（specReviewDeadlock / flakeReview 是转人工维度，无任务书） */
+/**
+ * 会派发 spawn 的 frontier 维度（specReviewDeadlock / flakeReview /
+ * specContractDeadlock 是转人工维度，无任务书——loop 的派发排除清单与本 Exclude
+ * 三处联动，设计 mx-5 D2「specReviewDeadlock 同款」）
+ */
 export type DispatchDimension = Exclude<
   keyof FrontierGroups,
-  "specReviewDeadlock" | "flakeReview"
+  "specReviewDeadlock" | "flakeReview" | "specContractDeadlock"
 >;
 
 /** brief 渲染的派发目标（loop 的 DispatchTarget 结构子集——渲染只需这三元组） */
@@ -154,16 +163,148 @@ function specFixPendingTasks(unit: SequencedUnitProjection): string {
     `1. 按上述意见修正 spec.json（验收五规则见 src/gates/spec-rules.ts）。`,
     `2. 重提：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "3. 重提后 unit 自动回流 spec-review 待审队列——由独立 reviewer 再审，你无需（也不得）",
-    "   自行提交 review 结论；reviewer 再 fail 将累计打回计数（同一 unit 累计 2 次 fail 转人工）。",
+    "   自行提交 review 结论；reviewer 再 fail 将累计打回代数（重提不清零，达预算——默认",
+    "   10 代——转人工）。",
     "完成标志：修正后的 spec 已提交入账（审查结论由 reviewer 给出）。",
   ].join("\n");
 }
 
 /**
+ * 解析失败条目的产物文件名 stem（与 src/verify/run.ts 的 fileStem 同源口径：
+ * 白名单外字符替换为 `_`——id 是 spec 作者输入，产物文件名按该规则落盘）。
+ * verify/run.ts 属 mx5-2 禁改领地且 fileStem 未导出，此处按同一字符集镜像实现；
+ * 两处字符集由 ACCEPTANCE_ID_RE 派生的 id 生态约束（gate 规则⑦拦新账本非法
+ * id），漂移面收敛在白名单字符集本身。
+ */
+function reportStemOf(id: string): string {
+  return id.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+/** 回炉任务书的单条解析失败事实（取数路径见 specContractBrokenTasks 注释） */
+interface ParseFailFact {
+  acceptanceId: string;
+  runId: string;
+  /** <id>.report.json 顶层 reason；产物不可读 / 无 reason 时为 null（降级备案） */
+  reason: string | null;
+  /** 产物文件绝对路径（降级与审计的兜底锚点） */
+  reportPath: string;
+}
+
+/**
+ * <id>.report.json 解析失败形态的形状守卫（顶层 {parseError: true, reason}——
+ * src/verify/run.ts 的 parse 抛错分支落盘结构；readIntegrateReport 同款守卫式）
+ */
+function isParseErrorReport(value: unknown): value is { parseError: true; reason: string } {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return v.parseError === true && typeof v.reason === "string";
+}
+
+/**
+ * 当前 spec 周期内逐条解析失败事实的取数（mx5-2 基线 §4 取数检查点——developer
+ * 已核实：解析失败原文不在 VerdictSubmitted（那是 reviewer 的语义结论），机器
+ * 原文的落盘载体 = verify 产物 <id>.report.json 顶层 {parseError, reason}
+ * （src/verify/run.ts parse 抛错分支落盘；VerifyRan payload 只带 id 清表不带
+ * 原文）。选取路径 = 周期内每条携带 parseFailedAcceptanceIds 的 VerifyRan，
+ * 按其 runId 定位 evidence/<unitId>/<runId>/<stem>.report.json 读 reason——
+ * 与 verify 落盘结构一一对应、可审计可降级。周期边界锚 lastSpecSeq（run 的
+ * 账本 seq 需晚于最后一条 SpecSubmitted），seq 锚点取 fold 输出的结构超集
+ * （deriveStatus 同款访问方式，手写投影缺锚点时保守视为不在周期内）。
+ */
+function parseFailFactsOf(
+  unit: SequencedUnitProjection,
+  projectCwd: string,
+): ParseFailFact[] {
+  const lastSpecSeq = unit.lastSpecSeq;
+  const runSeqs: readonly number[] =
+    (unit as VerifySequencedUnitProjection).verifyRunSeqs ?? [];
+  const facts: ParseFailFact[] = [];
+  unit.verifyRuns.forEach((run: VerifyRanPayload, i: number) => {
+    const seq = runSeqs[i] ?? 0;
+    if (lastSpecSeq === null || seq <= lastSpecSeq) {
+      return;
+    }
+    for (const id of run.parseFailedAcceptanceIds ?? []) {
+      const reportPath = join(
+        evidenceDir(getCwHome(), projectCwd, unit.unitId, run.runId),
+        `${reportStemOf(id)}.report.json`,
+      );
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
+      } catch {
+        parsed = null; // 产物不可读 / 非法 JSON → 降级为 id + 产物路径（事实行兜底）
+      }
+      const reason = isParseErrorReport(parsed) ? parsed.reason : null;
+      facts.push({ acceptanceId: id, runId: run.runId, reason, reportPath });
+    }
+  });
+  return facts;
+}
+
+/**
+ * mx5-2：specContractBroken 的 designer 回炉任务书（解析失败连挂 ≥2 触发，复用
+ * specFixPending 模板骨架——失败事实全文内嵌 + 修 spec 指令 + 重提回流独立
+ * reviewer）。与 specFixPending 的差异仅在失败事实来源：那里是 reviewer fail
+ * verdict 的 comment（语义结论），这里必须内嵌机器错误原文（<id>.report.json
+ * 的 reason——designer 修的是命令契约，错的不是语义而是产物形态）；逐轮列出
+ * （连挂 2 轮 = 2 份原文，审计可对账）。附规则⑨式恢复指引（按验收 type 对照
+ * 适配器输出契约——回炉任务书的「怎么修」不依赖 designer 记得规则⑨）。
+ */
+function specContractBrokenTasks(
+  unit: SequencedUnitProjection,
+  projectCwd: string,
+): string {
+  const facts = parseFailFactsOf(unit, projectCwd);
+  const spec = unit.specs[unit.specs.length - 1];
+  const factLines =
+    facts.length === 0
+      ? [
+          "  （账本内未见携带解析失败字段的 VerifyRan——不可达：本任务书仅在解析失败连挂 ≥2 后派发；",
+          "    可 cw report --unit " + unit.unitId + " 核对逐轮产物）",
+        ]
+      : facts.map(
+          (f) =>
+            `  - 验收 ${f.acceptanceId}（runId=${f.runId}）：${f.reason ?? `（原文不可读——产物：${f.reportPath}）`}`,
+        );
+  return [
+    "## 你的任务（designer：验收命令契约回炉——修 spec 的解析失败形态）",
+    "",
+    `unit "${unit.unitId}" 的验收在 verify 阶段解析失败连挂 ≥2 次——冻结 spec 的验收命令`,
+    "与 cw 适配器的输出契约不符（实现写得再对也恒判 fail），不是实现问题，是 spec 的命令契约",
+    "问题。请按以下机器错误原文修正 spec 后重提：",
+    "",
+    "### 解析失败事实（当前 spec 周期内逐轮原文，<id>.report.json 顶层 reason）",
+    ...factLines,
+    "",
+    "### 命令契约恢复指引（按验收 type 对照，与 spec gate 规则⑨同口径）",
+    "  - unit / integration 型（vitest 适配器从 stdout 解析 JSON）：删除冲突 flag——cw 会自动",
+    "    追加 --reporter=json，命令自带的其他 --reporter 值或 --outputFile 会让 stdout 混入",
+    "    文本 / 重定向走 JSON，解析必挂；命令须为 vitest 兼容形态。",
+    "  - e2e 型（e2e-sh 适配器靠标记行判定）：stdout 必须产出独立标记行 `<验收id> PASS|FAIL`",
+    "    ——命令里指得出来吗？裸 build/test 命令 exit 0 也永不产出标记行；可改走脚本或追加",
+    '    `&& echo "<验收id> PASS"` 形态（确属实现职责的输出也行，但命令要保证它产出）。',
+    "  - manual 型免机器验证，不会出现在上述事实里。",
+    "",
+    "### 修 spec 指令（回炉）",
+    `1. 按上述失败事实与恢复指引修正 spec.json 中对应验收的 command（当前 spec 共 ${spec?.acceptance.length ?? 0} 条验收；`,
+    "   验收规则见 src/gates/spec-rules.ts——规则⑨对 flag 契约在入账前拒绝，改后重提会重新过全部 gate）。",
+    "2. spec diff 只改验收命令契约相关字段，其余验收与 contracts 不动（契约 hash 变更会牵动",
+    "   集成期跨 unit 比对，无谓变更制造漂移）。",
+    `3. 重提：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
+    "4. 新 spec 照旧过独立 reviewer 再审（spec-review 一律由独立 reviewer 提交，你无需也不得",
+    "   自审）；过审后 verify 若仍解析失败连挂 ≥2，将累计回炉代数（已 2 代回炉转人工——每次",
+    "   修复都经完整 verify 检验后才计满）。",
+    "完成标志：修正后的 spec 已提交入账（审查结论由 reviewer 给出）。",
+  ].join("\n");
+}
+/**
  * designer 首派任务书（created 且 specs===0）。fx-3 R5.2：root 无子时追加第 0 步
  * 建子指令——建子职责从 brief 实施建议的「建议」措辞（print 模式 agent 会停下
  * 询问，终验第 3 次现场）升级为系统任务书的指令化步骤，与 fx-3 R5.1 gate
- * （先建子后提 spec）口径对齐。条件收窄到 root 无子：已有子的 root 重派 /
+ *（先建子后提 spec）口径对齐。条件收窄到 root 无子：已有子的 root 重派 /
  * 叶子首派不重复教建子。mx-1：不再含 spec-review 自审步骤——审查由独立
  * reviewer spawn 接手，完成标志 = spec 已提交入账。
  */
@@ -302,7 +443,8 @@ function renderBrief(
   // 任务书按派发依据的 frontier 维度选择（口径与 loop 的 computeDispatchTargets
   // 同一投影）：spec-frozen + split 子未建 = fx-3 R5.3 兜底出口（补建子）；其余
   // spec-frozen designer = fx-2 R4a 集成上限出口（契约漂移处置）；specFixPending
-  // = mx-1 fail 打回修 spec；specReviewPending = mx-1 独立 reviewer 审 spec；
+  // = mx-1 fail 打回修 spec；specContractBroken = mx5-2 解析失败回炉（命令契约
+  // 修复，内嵌机器错误原文）；specReviewPending = mx-1 独立 reviewer 审 spec；
   // specReady = 首派（撰写 spec，root 无子时含 fx-3 R5.2 第 0 步建子指令）
   const roleTasks =
     target.dimension === "missingChildren"
@@ -311,13 +453,15 @@ function renderBrief(
         ? integrationDriftTasks(unit, projectCwd)
         : target.dimension === "specFixPending"
           ? specFixPendingTasks(unit)
-          : target.dimension === "specReviewPending"
-            ? specReviewReviewerTasks(unit, projectCwd)
-            : target.dimension === "specReady"
-              ? designerFirstTasks(unit, projection)
-              : target.dimension === "buildReady"
-                ? ROLE_TASKS.builder(unit.unitId)
-                : ROLE_TASKS.reviewer(unit.unitId);
+          : target.dimension === "specContractBroken"
+            ? specContractBrokenTasks(unit, projectCwd)
+            : target.dimension === "specReviewPending"
+              ? specReviewReviewerTasks(unit, projectCwd)
+              : target.dimension === "specReady"
+                ? designerFirstTasks(unit, projection)
+                : target.dimension === "buildReady"
+                  ? ROLE_TASKS.builder(unit.unitId)
+                  : ROLE_TASKS.reviewer(unit.unitId);
   return [
     `# ${target.role} 任务书：unit "${unit.unitId}"`,
     "",

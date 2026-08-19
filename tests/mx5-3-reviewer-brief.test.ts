@@ -345,6 +345,9 @@ const B3_CASES: readonly B3Case[] = [
  * 改动前（mx5-3 之前）源码的渲染快照——生成方式：对 pre-change dist 以与
  * B3_CASES 逐字节同源的 fixture 真实渲染 writeBriefFile 后捕获。任何 designer
  * / build / exec-review 模板或共享 scaffold 的字节级改动都会在此翻红。
+ * mx5-2 备案（基线 §2③ 授权的 D6 过时文案修复）：designer-spec-fix 快照第 3
+ * 条的「累计 2 次 fail 转人工」句与 mx-3 代数计数 / mx-4 预算 10 语义不符，
+ * 已随 brief.ts 同步为代数口径（mx5-3 §3 允许的最小断言调整）。
  */
 const B3_SNAPSHOTS: Record<B3CaseName, string> = {
   "designer-spec-ready": `# designer 任务书：unit "mx53-root"
@@ -394,7 +397,8 @@ unit "mx53-root" 的 spec 被独立 reviewer 判 fail——请按以下失败事
 1. 按上述意见修正 spec.json（验收五规则见 src/gates/spec-rules.ts）。
 2. 重提：cw evidence submit --kind spec --unit mx53-root --file spec.json
 3. 重提后 unit 自动回流 spec-review 待审队列——由独立 reviewer 再审，你无需（也不得）
-   自行提交 review 结论；reviewer 再 fail 将累计打回计数（同一 unit 累计 2 次 fail 转人工）。
+   自行提交 review 结论；reviewer 再 fail 将累计打回代数（重提不清零，达预算——默认
+   10 代——转人工）。
 完成标志：修正后的 spec 已提交入账（审查结论由 reviewer 给出）。
 
 ## 环境约定

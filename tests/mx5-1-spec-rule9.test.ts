@@ -314,3 +314,36 @@ describe("R8 对照组合法入账", () => {
     expect(specBooked()).toBe(true);
   });
 });
+
+// mx5-2 顺带补（基线 §5 R2b）：堵 mx5-1 verifier 红性抽查③暴露的用例缺口——
+// 值含 json 子串但非恰 json 的形态必须拒绝（恰 json 白名单是严格相等，非前缀/
+// 子串匹配）。只增不改：R2 既有用例零变更。
+describe("R2b reporter 值子串形态拒收（json-verbose 含 json 子串非恰 json）", () => {
+  it("--reporter=json-verbose（= 形式，值含 json 子串）→ exit 1 列缺口", async () => {
+    const res = await submitSpec("u-1", [
+      e2eItem("A1", "node -v"),
+      unitItem("A2", "npx vitest run --reporter=json-verbose tests/close.spec.ts"),
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑨");
+    expect(res.stderr).toContain("A2");
+    expect(res.stderr).toContain("--reporter=json-verbose");
+    expect(res.stderr).toContain("值=json-verbose");
+    expect(res.stderr).toContain("恢复动作");
+    expect(specBooked()).toBe(false);
+  });
+
+  it("--reporter json-verbose（空格形式，值含 json 子串）→ 同样拒绝", async () => {
+    const res = await submitSpec("u-1", [
+      e2eItem("A1", "node -v"),
+      unitItem("A2", "npx vitest run --reporter json-verbose tests/close.spec.ts"),
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑨");
+    expect(res.stderr).toContain("A2");
+    expect(res.stderr).toContain("值=json-verbose");
+    expect(specBooked()).toBe(false);
+  });
+});

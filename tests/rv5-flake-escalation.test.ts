@@ -121,16 +121,19 @@ function e1File(): string {
 /**
  * u1check.js：unit 级验收 command 的入口。产出 vitest JSON reporter 形状产物
  *（u5b/u7-e2e 同款——tmp repo 无 node_modules，真 vitest 环境不可得）；红阶段
- * 语义：impl 缺失或不含期望标记 → 非零退出且无 JSON → vitest parse 抛错 →
- * 旧树 fail（有区分力），防止自包含恒真命令把红阶段判无区分力。
+ * 语义：impl 缺失或不含期望标记 → 用例级 failed + exit 1 → 旧树 fail（有区分
+ * 力），防止自包含恒真命令把红阶段判无区分力。mx5-2 起产物契约恒为可解析
+ * JSON（impl 坏时也不产出裸文本）——unit 型「解析失败连挂」会进 spec 契约回炉
+ * 通道（specContractBroken），与本套件的 flake 焦点正交：fixture 保持 U1 恒
+ * 断言失败（parse 恒成功），两通道不抢同一形态。
  */
 function u1CheckFile(markerId: string): string {
   return [
     "const fs = require('fs');",
     "let ok = false;",
     `try { ok = fs.readFileSync(__dirname + '/impl.js', 'utf8').includes('${markerId} PASS'); } catch {}`,
+    "console.log(JSON.stringify({testResults:[{assertionResults:[{fullName:'U1 smoke',status: ok ? 'passed' : 'failed'}]}]}));",
     "if (!ok) { console.error('impl not good'); process.exit(1); }",
-    "console.log(JSON.stringify({testResults:[{assertionResults:[{fullName:'U1 smoke',status:'passed'}]}]}));",
     "",
   ].join("\n");
 }
@@ -196,6 +199,8 @@ interface FrontierJson {
   missingChildren: string[];
   integrationDrift: string[];
   integrationReady: string[];
+  specContractBroken: string[];
+  specContractDeadlock: string[];
   flakeReview: string[];
   buildReady: string[];
   execReviewReady: string[];
@@ -613,10 +618,13 @@ describe("T5 unit 级不转人工", () => {
     const v2 = await run(["verify", "--unit", "u-1"]);
     expect(v2.code).toBe(1); // U5 连续第 2 次 fail
 
-    // unit 级连挂不进 flake 投影（canon §5.2 只认 e2e 级）；正常打回继续
+    // unit 级连挂不进 flake 投影（canon §5.2 只认 e2e 级）。mx5-2 起：U5 的形态
+    // 是 vitest 产物解析失败（非断言失败）——连挂 2 次走 spec 契约回炉通道
+    //（specContractBroken 派 designer 修 spec 命令契约；M4 gate 现场二同类
+    // 形态），不再停留在 buildReady 等 builder 重派
     const groups = await frontierGroups();
     expect(groups.flakeReview).toEqual([]);
-    expect(groups.buildReady).toContain("u-1");
+    expect(groups.specContractBroken).toContain("u-1");
     const runs = verifyRanFacts();
     expect(runs).toHaveLength(2);
     expect(runs.every((r) => !r.acceptanceIds.includes("U5"))).toBe(true);
