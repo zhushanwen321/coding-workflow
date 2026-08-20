@@ -30,6 +30,15 @@ jobs:
 
       - run: npm ci
 
+      # mx-2 适配器测试零 mock，需要真实运行环境：pytest（python3 -m pytest）
+      # 与 playwright（测试解析器首选仓库 node_modules；--ignore-scripts 跳过
+      # 根包 postinstall 重跑，浏览器由下一步显式装）。@playwright/test 钉 1.58.2
+      # = 本机 npx 缓存中全套测试实证通过的版本，升级须重跑 mx2 适配器验收。
+      - run: python3 -m pip install pytest
+
+      - run: npm install --no-save --ignore-scripts @playwright/test@1.58.2
+      - run: npx playwright install --with-deps chromium
+
       - run: npm run build
 
       - run: npm test
