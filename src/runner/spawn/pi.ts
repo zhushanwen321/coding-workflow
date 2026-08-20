@@ -22,6 +22,7 @@
  * 解除），模型注入链（req.env CW_AGENT_MODEL → --model）零变更；session 文件
  * 是纯审计载体，不参与任何 gate 判定（fx-4 P2 永久保留策略的延续）。
  */
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { spawnProcess } from "./lifecycle.js";
@@ -131,10 +132,23 @@ export function createPiAdapter(opts?: PiAdapterOptions): AgentSpawnAdapter {
           stdoutPath,
           stderrPath,
         });
-      } catch {
+      } catch (e) {
         // lifecycle 同步抛（可执行解析预检 ENOENT 等）= 起不来 → 转译 SPAWN_ERROR
         // 语义：配置错误不重试。异步 error 兜底（PATH 缺失等预检未覆盖形态）已由
         // lifecycle 归因为 SPAWN_ERROR，两条路径在此对齐为同一四态出口。
+        // fx-7：原始错误原文 append 进 stderrPath（SPAWN_ERROR 时 stderr 的天然
+        // 归宿）——预检 Error 自带恢复动作文案，吞掉即归零排障线索
+        const detail = e instanceof Error ? e.message : String(e);
+        try {
+          appendFileSync(stderrPath, `[pi-adapter] spawn 同步失败：${detail}\n`, "utf-8");
+        } catch (writeErr) {
+          // 连产物文件都写不进（同步抛早于产物目录建立等）——降级 stderr 裸写
+          // 一次（尽力而为，此刻产物路径已不可信），SPAWN_ERROR 出口本身仍成立，
+          // loop 的 SPAWN_ERROR 结算指引覆盖恢复动作
+          process.stderr.write(
+            `[pi-adapter] spawn 同步失败的原始错误落盘失败（${writeErr instanceof Error ? writeErr.message : String(writeErr)}），原文：${detail}\n`,
+          );
+        }
         const spawnError: SpawnResult = {
           exitCode: "SPAWN_ERROR",
           stdoutPath,

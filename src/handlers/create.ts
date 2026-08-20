@@ -1,10 +1,13 @@
 /**
  * `cw create --id <slug> --brief <path> [--parent <unitId>]`（u2 验收文档锁定的 M0 规格）。
  *
- * 校验序（便宜的先做）：slug 规则 → brief 可读 → 重复 unitId → parent 存在 + 深度上限。
+ * 校验序（便宜的先做）：slug 规则 → brief 可读 → 重复 unitId → parent 存在 +
+ * 深度上限 + parent 非 closed（fx-7 S-3：closed 父拒绝建子）。
  * 深度限制：M0 上限 2 层（根 + 叶）——--parent 的目标 unit 自身不得再有 parent。
  */
+import { deriveStatuses, fold } from "../core/fold.js";
 import type { CommandContext } from "../dispatch.js";
+import { checkSpecRules } from "../gates/spec-rules.js";
 import {
   copyAttachmentToEvidence,
   fail,
@@ -72,6 +75,18 @@ export async function handleCreate(ctx: CommandContext): Promise<number> {
       return fail(
         `cw create: 分解深度超限：--parent "${parent}" 自身已是子 unit（其 parent 为 "${parentFact.parentId}"），` +
           "M0 上限 2 层（根 + 叶），不允许三层嵌套。恢复动作：把子 unit 挂到根 unit 下（--parent 指向根）。",
+      );
+    }
+    // closed 不可逆（canon L0）的 create 路径半边（fx-7 S-3）：--parent 指向树感知
+    // closed 的 unit 时拒绝——若放行，新子的 UnitCreated 会让 deriveStatusInTree
+    // 把根从 closed 拉回 verified（「全部直接子节点 closed」不再成立），历史结论
+    // 被一条新事件篡改；与 evidence-submit spec 重提路径的 closed 拒绝同族防线。
+    // 其余状态不拦：verified 根补建子 unit 是合法演进（根回到 verified 等新链路）
+    const parentStatus = deriveStatuses(fold(ledger.readAll()).units, checkSpecRules).get(parent);
+    if (parentStatus === "closed") {
+      return fail(
+        `cw create: --parent "${parent}" 已 closed（树感知状态，含全部子节点 closed），不可逆——closed 是账本上的最终结论，在其下新建子 unit 会把投影拉回 verified（篡改历史结论）。` +
+          `恢复动作：closed 不可逆；如需承接新工作，去掉 --parent 新建根 unit（cw create --id <slug> --brief <brief文件>），或以未 closed 的 unit 为父。`,
       );
     }
     parentId = parent;

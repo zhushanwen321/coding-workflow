@@ -9,6 +9,9 @@ import { resolveProjectDir } from "./store/project.js";
 /** node 进程 argv 偏移：argv[0]=node argv[1]=脚本路径，其后才是 CLI 参数 */
 const CLI_ARGS_OFFSET = 2;
 
+/** 环境错误 exit code（与 verify.ts 的 ENV_ERROR_EXIT 同语义：未发生可入账的验证） */
+const ENV_ERROR_EXIT = 2;
+
 const HELP = `cw — agent 工作的 CI（重写版）
 
 Usage: cw <command> [options]
@@ -72,7 +75,16 @@ if (isDirectRun()) {
     .then((code) => process.exit(code))
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`${message}\n`);
-      process.exit(1);
+      // fx-7 S-2：预期错误（用法/校验/判定 fail）一律经 handler 返回值出口
+      // （exit 0/1/2，见各 handler），穿透到本 catch 的都是未预期异常——命令
+      // 未完成且未入账任何事件，按项目 exit 契约属环境错误：exit 2（区别于
+      // exit 1「有 fail 且已入账」），防 agent 按退出码误信存在打回依据。
+      process.stderr.write(
+        `${message}\n` +
+          "cw: 未预期异常，命令中止且未入账任何事件（exit 2 = 环境错误，非 exit 1 的" +
+          "「有 fail 已入账」）。恢复动作：按上方错误信息处理——账本损坏类错误自带行号与" +
+          "截断指引；处理后重试，仍失败则携带完整 stderr 反馈维护者。\n",
+      );
+      process.exit(ENV_ERROR_EXIT);
     });
 }

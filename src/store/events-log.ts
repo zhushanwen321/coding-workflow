@@ -3,7 +3,9 @@
  *
  * 职责：
  *   - append：文件锁短事务内「读末 seq → seq+1 → 追加 JSONL 行 + fsync」
- *   - readAll / readUnit：全量 / 单 unit 读取（逐行解析，损坏行抛带恢复动作的错误）
+ *   - readAll / readUnit：全量 / 单 unit 读取（逐行解析，JSON 语法 + 信封形状
+ *     校验，损坏行抛带行号与恢复动作的错误——fx-7 S-1 收口读层，fold/handler
+ *     的裸读崩溃面即闭合）
  *   - 跨进程文件锁：lockfile + O_EXCL 原子创建 + stale 检测（30s 阈值 + pid 指纹
  *     二次比对防 TOCTOU 误删）+ 有界重试（总上限 10s，超时抛错；可注入缩短，
  *     测试专用）。空窗口语义（u1 备案承诺）：openSync(wx) 成功到 writeSync 指纹
@@ -52,6 +54,60 @@ const MS_PER_SECOND = 1_000;
 const INT32_BYTES = 4;
 /** 首条事件 seq（账本内单调递增起点） */
 const FIRST_SEQ = 1;
+
+/** 五类事件 type 的运行时枚举集（types.ts EventType 的投影，信封校验单一出处） */
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set<string>([
+  "UnitCreated",
+  "SpecSubmitted",
+  "VerdictSubmitted",
+  "EvidenceSubmitted",
+  "VerifyRan",
+]);
+
+/** 报错里的字段值预览上限（防损坏行携带巨型值撑爆错误信息） */
+const PREVIEW_MAX_CHARS = 100;
+
+/** 错误信息里的值预览：JSON 形态，超长截断 */
+function preview(value: unknown): string {
+  const s = JSON.stringify(value) ?? String(value);
+  return s.length > PREVIEW_MAX_CHARS ? `${s.slice(0, PREVIEW_MAX_CHARS)}…` : s;
+}
+
+/**
+ * 信封形状最小校验（fx-7 S-1）：JSON 语法合法 ≠ 形状合法——events.log 是外部
+ * 可编辑输入，「JSON 合法而形状损坏」此前以裸 TypeError 崩在消费方（fold 的
+ * e.payload.unitId / append 的末行 seq+1 / frontier 的 Date.parse(event.ts)），
+ * 违背本模块「损坏行抛带恢复动作错误」的承诺。
+ *
+ * 边界（对齐 types.ts，刻意最小）：信封层 type ∈ 五类枚举 / seq 正整数 / ts
+ * 字符串 + 五类 payload 共有的 unitId 字符串。分事件类型的字段级 schema 属
+ * 过重校验，语义层继续由既有防线（孤儿 / 重复 UnitCreated / 幂等键）覆盖。
+ * 返回 undefined = 通过；否则返回缺口描述（调用方拼进行号报错）。
+ */
+function envelopeShapeError(parsed: unknown): string | undefined {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return `行是 ${preview(parsed)}（应为事件对象）`;
+  }
+  const env = parsed as Record<string, unknown>;
+  if (typeof env.type !== "string" || !KNOWN_EVENT_TYPES.has(env.type)) {
+    return `type=${preview(env.type)} 不在五类事件枚举（UnitCreated/SpecSubmitted/VerdictSubmitted/EvidenceSubmitted/VerifyRan）内`;
+  }
+  if (typeof env.seq !== "number" || !Number.isInteger(env.seq) || env.seq < 1) {
+    return `seq=${preview(env.seq)} 非正整数（信封承诺：账本内从 1 起单调递增）`;
+  }
+  if (typeof env.ts !== "string") {
+    return `ts=${preview(env.ts)} 非字符串（ISO 8601 时间戳）`;
+  }
+  const payload = env.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return `payload=${preview(payload)} 非对象`;
+  }
+  const unitId = (payload as Record<string, unknown>).unitId;
+  if (typeof unitId !== "string") {
+    return `payload.unitId=${preview(unitId)} 非字符串（五类事件 payload 的共有锚字段）`;
+  }
+  return undefined;
+}
 
 /**
  * EvidenceSubmitted 幂等命中（同 unitId+runId 已入账）的可区分拒绝。
@@ -189,7 +245,8 @@ export class EventLedger {
 
   /**
    * 读取全部事件（按账本顺序）。
-   * 账本文件不存在 → 空数组（全新项目，正常）；存在损坏行 → 抛带行号与恢复动作的错误。
+   * 账本文件不存在 → 空数组（全新项目，正常）；存在损坏行（JSON 语法非法或
+   * 信封形状损坏，见 envelopeShapeError）→ 抛带行号与恢复动作的错误。
    */
   readAll(): LedgerEvent[] {
     let raw: string;
@@ -206,13 +263,21 @@ export class EventLedger {
     }
     const events: LedgerEvent[] = [];
     for (let i = 0; i < lines.length; i++) {
+      let parsed: unknown;
       try {
-        events.push(JSON.parse(lines[i] as string) as LedgerEvent);
+        parsed = JSON.parse(lines[i] as string);
       } catch (err) {
         throw new Error(
           `EventLedger: 账本第 ${i + 1} 行不是合法 JSON（${this.ledgerPath}）：${(err as Error).message}。恢复动作：并发写已被文件锁串行化，损坏通常来自外部编辑；备份后检查该行，从损坏行起截断恢复（截断前确认无并发写入者）。`,
         );
       }
+      const shapeError = envelopeShapeError(parsed);
+      if (shapeError !== undefined) {
+        throw new Error(
+          `EventLedger: 账本第 ${i + 1} 行不是合法事件信封（${this.ledgerPath}）：${shapeError}。恢复动作：并发写已被文件锁串行化，损坏通常来自外部编辑；备份后检查该行，从损坏行起截断恢复（截断前确认无并发写入者）。`,
+        );
+      }
+      events.push(parsed as LedgerEvent);
     }
     return events;
   }

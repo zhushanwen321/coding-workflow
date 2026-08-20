@@ -61,7 +61,7 @@ spec gate 规则⑨入账前静态检查（`src/gates/spec-rules.ts` 的 `ADAPTE
 |---|---|
 | `UnitCreated` | unitId、parentId（null = 根）、briefRef |
 | `SpecSubmitted` | specHash（冻结锚点）、acceptance[]（含可选 runner / nondeterministic）、contracts[]、split[] |
-| `VerdictSubmitted` | verdictKind（spec-review / exec-review）、verdict（pass / fail）、evidenceRefs、role（可选自报：审计载体非信任边界） |
+| `VerdictSubmitted` | verdictKind（spec-review / exec-review）、verdict（pass / fail）、evidenceRefs、role（自报：审计载体非信任边界；spec-review verdict 经命令面必填且必须 reviewer——mx-3，exec-review 可选缺省不入账） |
 | `EvidenceSubmitted` | runId（幂等键）、commit、paths[]、sha256[]、exitCode |
 | `VerifyRan` | runId、reportHash、result（pass / fail）、acceptanceIds[]、parseFailedAcceptanceIds[]（可选，mx5-1：本次 verify 产物解析失败的验收 id；旧账本缺字段 = 无解析失败，重放兼容） |
 
@@ -165,7 +165,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit（深度上限 2） |
 | `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过九规则 + children-first 后入账冻结） |
 | `cw evidence submit --unit <id> --kind build --commit <hash> --run-id <id> --file <产物>...` | 写 | 提交构建证据（commit 经 git cat-file 实存校验，产物 sha256 入账） |
-| `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；`--role` 为可选自报字段——审计载体非信任边界） |
+| `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；spec-review verdict 必填 `--role reviewer`——缺/错 exit 1 拒收，mx-3 入账层强校验；exec-review 的 `--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
 | `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |

@@ -275,10 +275,12 @@ describe("mx-1 T8 pi.ts 模型注入链零改动（mx3 迁移：session 参数�
     expect(res.status, `git diff 应成功（stderr: ${res.stderr}）`).toBe(0);
     const diff = res.stdout ?? "";
     // 交付时点（工作区含 mx3 改动）：diff 应体现 session 参数迁移；提交后时点：
-    // diff 为空——两种时点都是合法形态（锚的是「模型链不动」，不是「文件不动」）
+    // diff 为空——两种时点都是合法形态（锚的是「模型链不动」，不是「文件不动」）。
+    // fx-7 解锁面（pr-cr-fix S-6）：catch 块保留 SPAWN_ERROR 原始错误消息（append
+    // 进 stderrPath）——不触及模型注入链
     expect(
-      diff === "" || diff.includes("--session-dir"),
-      "pi.ts 的改动只允许 session 参数行（mx3 解锁面）；出现其他改动须核对 mx3-acceptance §3",
+      diff === "" || diff.includes("--session-dir") || diff.includes("[pi-adapter] spawn 同步失败"),
+      "pi.ts 的改动只允许 session 参数行（mx3 解锁面）或 fx-7 SPAWN_ERROR 错误保留行；出现其他改动须核对 mx3-acceptance §3",
     ).toBe(true);
     // 模型注入链四级链（resolvePiModel 及其缺省模型）零变更——mx-1 锁定的存续部分
     expect(diff).not.toMatch(/^[-+].*(resolvePiModel|DEFAULT_PI_MODEL)/m);

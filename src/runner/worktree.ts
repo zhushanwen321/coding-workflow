@@ -246,7 +246,8 @@ export interface UnitBranchRef {
  * "/"，合法 ref 恒两段；解析失败（旁路创建的多段 / 大写 ref）跳过不报错——扫描
  * 是回收的输入而非 ref 完整性检查。root 成果分支（cw-root/ 前缀）不在本命名空间，
  * 天然不会被扫出（成果分支永不自动回收）。排序保证确定性（与
- * listUnitWorktreeIds 同口径，回收日志可复现）。
+ * listUnitWorktreeIds 同口径，回收日志可复现）。fx-7：命令级失败（非零 exit /
+ * 超时）throw——返回的空数组只表达「无分支」，不与「扫描失败」混淆。
  */
 export function listUnitBranchRefs(repoDir: string): UnitBranchRef[] {
   const res = spawnSync(
@@ -255,7 +256,14 @@ export function listUnitBranchRefs(repoDir: string): UnitBranchRef[] {
     { encoding: "utf-8", timeout: GIT_STEP_TIMEOUT_MS },
   );
   if (res.error !== undefined || res.status !== 0) {
-    return [];
+    // fx-7：命令级失败显式 throw——此前与「无分支」同归空数组，启动清扫会把
+    // 「扫描失败」当「无孤儿分支」静默跳过分支侧（孤儿分支发现源失效且不可
+    // 感知）。调用方（loop 清扫）catch 后出声并保守降级，不阻塞主流程
+    throw new Error(
+      `git for-each-ref 扫描子 unit 分支失败（命名空间 refs/heads/${UNIT_BRANCH_PREFIX}，仓库 "${repoDir}"）：` +
+        `${describeFailure(res.error, res.status, res.stderr)}。` +
+        "恢复动作：排查 git 可用性（仓库完整 / 磁盘 / 权限）后重跑 cw run——扫描恢复即自动回收孤儿分支。",
+    );
   }
   const refs: UnitBranchRef[] = [];
   for (const line of (res.stdout ?? "").split("\n")) {

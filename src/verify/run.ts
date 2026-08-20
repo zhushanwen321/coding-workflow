@@ -482,7 +482,12 @@ type BashExecOutcome =
   | { kind: "done"; exitCode: number }
   | { kind: "spawn-error"; message: string };
 
-function execBashTree(
+/**
+ * 导出仅为 fx-7 测试锚点（tests/fx7-verify-run-error.test.ts 直测引擎分支：
+ * spawn 异步失败结算 / 正常退出码回归——runAcceptances 黑盒无法隔离触发
+ * cwd 级 spawn 失败）。调用方仍是本文件 runOne。
+ */
+export function execBashTree(
   command: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
@@ -525,6 +530,16 @@ function execBashTree(
     } catch (e) {
       return { kind: "spawn-error", message: e instanceof Error ? e.message : String(e) };
     }
+    // fx-7 MF-1：异步 spawn 失败（EMFILE/ENOMEM/cwd 缺失等）不经同步 throw 而
+    // 经 'error' 事件投递（上面的 try/catch 只覆盖参数级错误；pid 缺失分支也
+    // 只是提前返回，排队中的 error 事件无人接 = 进程级 uncaughtException，
+    // verify exit 0/1/2 语义失效——node v24 探针实证）。同模式正确写法参照
+    // src/runner/spawn/lifecycle.ts 的 child.on("error")。同步等待模型下事件
+    // 循环被阻塞，监听器触发时本函数多半已返回——失败结算已由 pid 缺失 /
+    // 超时路径完成，监听器补的是把失败事实追加进 stderr 产物留审计。
+    child.on("error", (err) => {
+      appendFile(stderrPath, `bash spawn 异步失败：${err instanceof Error ? err.message : String(err)}\n`);
+    });
     const pgid = child.pid;
     if (pgid === undefined) {
       return { kind: "spawn-error", message: "子进程未启动（pid 缺失）" };
@@ -537,7 +552,15 @@ function execBashTree(
     // 哨兵优先于 ETIMEDOUT 判定：与 deadline 撞车时命令可能已完成，退出码是事实
     if (existsSync(sentinelPath)) {
       reclaimGroup(pgid);
-      return { kind: "done", exitCode: readSentinel(sentinelPath) };
+      const exitCode = readSentinel(sentinelPath);
+      // fx-7 S-8：重读后仍不可解析 = 真损坏（非「创建-写入」窗口），与旧 NaN→-1
+      // 静默兜底区分开——审计行落 stderr 后按 -1 结算该条 fail
+      if (exitCode === undefined) {
+        const note = "哨兵文件内容不可解析（期望命令退出码数字），按损坏哨兵记 exit -1；可重跑 cw verify 复核";
+        appendFile(stderrPath, `${note}\n`);
+        return { kind: "done", exitCode: -1 };
+      }
+      return { kind: "done", exitCode };
     }
     const timedOut = wait.error !== undefined && (wait.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
     if (timedOut) {
@@ -579,10 +602,28 @@ function reclaimGroup(pgid: number): void {
   }
 }
 
-/** 哨兵内容（命令退出码）→ 数值；损坏内容按 -1（与旧 res.status ?? -1 同兜底） */
-function readSentinel(path: string): number {
-  const code = Number.parseInt(readFileSync(path, "utf-8").trim(), 10);
-  return Number.isFinite(code) ? code : -1;
+/**
+ * 哨兵内容（命令退出码）→ 数值。fx-7 S-8：bash 的 `>` 重定向先创建空文件后
+ * 落笔，「创建-写入」空窗口内读到空内容 parseInt 得 NaN——超时判定恰撞上窗口
+ * 时已成功命令会被误记 -1。解析失败先短重读一次（printf 微秒级完成，50ms
+ * 充裕，sleep 手法与 reclaimGroup 同款）；仍不可解析才是真损坏，返回
+ * undefined 由调用方（execBashTree done 分支）记审计行后按 -1 结算。
+ *
+ * 导出仅为 fx-7 测试锚点（tests/fx7-verify-run-error.test.ts 用真实子进程
+ * 时序验证重读行为——「空窗口撞车」无法从 runAcceptances 黑盒稳定构造）。
+ */
+export function readSentinel(path: string): number | undefined {
+  const first = parseSentinel(readFileSync(path, "utf-8"));
+  if (first !== undefined) {
+    return first;
+  }
+  spawnSync("bash", ["-c", "sleep 0.05"], { timeout: 2_000 });
+  return parseSentinel(readFileSync(path, "utf-8"));
+}
+
+function parseSentinel(content: string): number | undefined {
+  const code = Number.parseInt(content.trim(), 10);
+  return Number.isFinite(code) ? code : undefined;
 }
 
 /** 路径嵌入 bash 命令串的单引号包裹（内含单引号时以 '\'' 转义） */

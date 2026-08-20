@@ -164,6 +164,7 @@ import {
   reclaimUnit,
   removeWorktree,
   unitBranchName,
+  type UnitBranchRef,
 } from "./worktree.js";
 
 /** 账本轮询间隔默认值（--poll-ms；验收文档：默认 1000） */
@@ -567,6 +568,42 @@ const LOOP_SIGNAL_EXIT_CODES: Record<"SIGINT" | "SIGTERM", number> = {
 };
 
 /**
+ * designer × spec-frozen 派发出口的可观测性出声（fx-7 从 runLoopMain 抽出，行为
+ * 零变更——判定序与 computeFrontier 单组归属同步：mx5-2 契约回炉 → fx-3 R5.3
+ * 兜底（split 子未建）→ fx-2 R4a 上限（集成连续 fail），终验日志里明确「为何派
+ * designer」）。
+ */
+function emitSpecFrozenDesignerRationale(
+  target: DispatchTarget,
+  unit: SequencedUnitProjection,
+  projection: SequencedProjection,
+  contractFacts: ReadonlyMap<string, SpecContractFacts>,
+): void {
+  if (target.dimension === "specContractBroken") {
+    const fact = contractFacts.get(target.unitId);
+    emit([
+      `[runner] unit "${target.unitId}" 的验收命令解析失败连挂 ≥2（条目 ` +
+        `${fact?.streaks.map((s) => s.acceptanceId).join("、") ?? "（未知）"}；spec 契约回炉，` +
+        `代数 ${fact?.generations ?? 0}/${SPEC_CONTRACT_MAX_GENERATIONS}）` +
+        "——转派 designer 修 spec 的验收命令契约（逐轮解析失败原文见 brief）",
+    ]);
+    return;
+  }
+  const missingChildren = splitChildrenNotCreated(projection, unit);
+  if (missingChildren.length > 0) {
+    emit([
+      `[runner] unit "${target.unitId}" 的 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missingChildren.length} 个未创建` +
+        `（${missingChildren.join("、")}）——派 designer 补建子（子不齐不集成）`,
+    ]);
+    return;
+  }
+  emit([
+    `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
+      "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
+  ]);
+}
+
+/**
  * runLoop 的信号 handler（SIGINT/SIGTERM 共用，rv-1）：Ctrl-C/SIGTERM 后 agent
  * 子进程会成孤儿继续写账本，用户重跑 `cw run` 对同一 worktree reset + 二次 spawn
  * 就是双 agent 混卷——所以 runner 必须主动回收全部在飞 spawn 再退出，「重跑即续」
@@ -718,7 +755,18 @@ function reclaimPendingUnits(
 function sweepOrphanWorktrees(cwd: string, rootId: string): string[] {
   const home = getCwWorktreeHome();
   const dirIds = listUnitWorktreeIds(home, cwd);
-  const branchRefs = listUnitBranchRefs(cwd);
+  let branchRefs: UnitBranchRef[];
+  try {
+    branchRefs = listUnitBranchRefs(cwd);
+  } catch (err) {
+    // fx-7：ref 扫描命令级失败 ≠ 无分支——出声后按「跳过分支侧、目录侧继续」保守
+    // 降级（不误删、不阻塞 run 启动），孤儿分支由扫描恢复后的下次 run 再扫再收
+    emitErr(
+      "[runner] 启动清扫的分支扫描失败，本次跳过分支侧（目录侧继续）：" +
+        `${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    branchRefs = [];
+  }
   if (dirIds.length === 0 && branchRefs.length === 0) {
     return [];
   }
@@ -1216,7 +1264,18 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       if (target.integration) {
         // 集成在本轮同步完成（含 VerifyRan 入账）；后续 target 仍按本轮开头投影
         // 派发，集成引起的状态跃迁由下一轮重算接手
-        await runIntegrationDispatch(opts.cwd, projection, target.unitId);
+        try {
+          await runIntegrationDispatch(opts.cwd, projection, target.unitId);
+        } catch (err) {
+          // fx-7：集成路径 env 级 throw（evidence 目录建失败 / 报告写入失败等）
+          // 不炸循环——降级为该 unit 本轮集成失败，与下方 worktree 就绪失败同款
+          // 「出声 + 跳过本轮」；下轮重算 frontier 自然重试。账本入账失败已在
+          // runIntegrationDispatch 内部出声处理，此处只兜其未覆盖的 env 级异常
+          emitErr(
+            `[runner] unit "${target.unitId}" 的集成派发异常（本轮跳过，下轮重算自动重试）：` +
+              `${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
         continue;
       }
       if (inFlight.length >= maxConcurrency) {
@@ -1230,28 +1289,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         // designer × spec-frozen 出口的可观测性（终验日志里明确「为何派 designer」）。
         // 判定序与 computeFrontier 单组归属同步：mx5-2 契约回炉 → fx-3 R5.3 兜底
         //（split 子未建）→ fx-2 R4a 上限（集成连续 fail）
-        if (target.dimension === "specContractBroken") {
-          const fact = escalatedFacts.contractFacts.get(target.unitId);
-          emit([
-            `[runner] unit "${target.unitId}" 的验收命令解析失败连挂 ≥2（条目 ` +
-              `${fact?.streaks.map((s) => s.acceptanceId).join("、") ?? "（未知）"}；spec 契约回炉，` +
-              `代数 ${fact?.generations ?? 0}/${SPEC_CONTRACT_MAX_GENERATIONS}）` +
-              "——转派 designer 修 spec 的验收命令契约（逐轮解析失败原文见 brief）",
-          ]);
-        } else {
-          const missingChildren = splitChildrenNotCreated(projection, unit);
-          if (missingChildren.length > 0) {
-            emit([
-              `[runner] unit "${target.unitId}" 的 spec 声明了 ${splitOf(unit).length} 个子 unit 但 ${missingChildren.length} 个未创建` +
-                `（${missingChildren.join("、")}）——派 designer 补建子（子不齐不集成）`,
-            ]);
-          } else {
-            emit([
-              `[runner] unit "${target.unitId}" 集成连续 fail 达上限（${INTEGRATION_MAX_CONSECUTIVE_FAILS} 次）` +
-                "——停止自动重派集成，转派 designer 处置契约漂移（处置路径见 brief）",
-            ]);
-          }
-        }
+        emitSpecFrozenDesignerRationale(target, unit, projection, escalatedFacts.contractFacts);
       } else if (target.dimension === "specReviewPending") {
         // mx-1：spec-review 独立 reviewer 派发的可观测性（信任链关键跳变）
         emit([
@@ -1292,18 +1330,36 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         windows.push(reviewerWindow);
         reviewerFlightWindows.set(target.unitId, windows);
       }
-      const handle = await opts.adapter.spawn({
-        role: target.role,
-        unitId: target.unitId,
-        workdir: wtDir,
-        projectCwd: opts.cwd,
-        artifactDir: artifactsDir,
-        briefPath,
-        ...(target.role === "reviewer" && reviewerModel !== undefined
-          ? { env: { CW_AGENT_MODEL: reviewerModel } }
-          : {}),
-        timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
-      });
+      let handle: SpawnHandle;
+      try {
+        handle = await opts.adapter.spawn({
+          role: target.role,
+          unitId: target.unitId,
+          workdir: wtDir,
+          projectCwd: opts.cwd,
+          artifactDir: artifactsDir,
+          briefPath,
+          ...(target.role === "reviewer" && reviewerModel !== undefined
+            ? { env: { CW_AGENT_MODEL: reviewerModel } }
+            : {}),
+          timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
+        });
+      } catch (err) {
+        // fx-7：适配器同步 throw（human 适配器 brief 落盘 IO 失败等 env 级异常）
+        // 不炸循环——与上方 worktree 就绪失败同款「出声 + 跳过本轮」，下轮重算
+        // 重试。throw 时该 unit 未入 in-flight（结算 / killAll 不受牵连，其余
+        // unit 的等待与结算照常）；reviewer 窗口立即封窗——spawn 未成立，不能让
+        // 永久 open 的窗口吞掉后续抢答告警（mx-3 豁免只认「verdict 时 reviewer
+        // 在场」）
+        if (reviewerWindow !== undefined) {
+          reviewerWindow.settledAt = Date.now();
+        }
+        emitErr(
+          `[runner] unit "${target.unitId}" 的 ${target.role} 派发 spawn 异常（本轮跳过，下轮重算自动重试）：` +
+            `${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        continue;
+      }
       inFlight.push({ role: target.role, unitId: target.unitId, handle, reviewerWindow });
       emit([
         `[runner] ${new Date().toISOString()} 派发 ${target.role} → unit "${target.unitId}"（worktree: ${wtDir}，brief: ${briefPath}）`,

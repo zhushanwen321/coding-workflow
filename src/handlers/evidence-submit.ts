@@ -43,6 +43,9 @@ import { type SpecFile, validateSpecFile } from "./spec-schema.js";
 /** git commit hash 白名单：进命令行前先过此校验（注入安全，spawnSync 本身无 shell） */
 const COMMIT_HASH_RE = /^[0-9a-f]{6,40}$/;
 
+/** git 步进超时（fx-7 S-7：与 worktree.ts / checkout.ts / integrate.ts / red-phase.ts 全库 git 调用同口径；超时经下方 probe.error 分支出声，不悬挂） */
+const GIT_STEP_TIMEOUT_MS = 120_000;
+
 export async function handleEvidenceSubmit(ctx: CommandContext): Promise<number> {
   const kind = stringArg(ctx.argv, "kind");
   if (kind === undefined) {
@@ -224,8 +227,12 @@ function submitBuild(ctx: CommandContext, ledger: ReturnType<typeof ledgerForCwd
     );
   }
 
-  // 注入安全：commit 已过十六进制白名单才进 argv；spawnSync 不经 shell，无拼接注入面
-  const probe = spawnSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: ctx.cwd });
+  // 注入安全：commit 已过十六进制白名单才进 argv；spawnSync 不经 shell，无拼接注入面；
+  // timeout 全库同口径——异常文件系统挂起时 120s 出口，超时由 probe.error 分支承接
+  const probe = spawnSync("git", ["cat-file", "-e", `${commit}^{commit}`], {
+    cwd: ctx.cwd,
+    timeout: GIT_STEP_TIMEOUT_MS,
+  });
   if (probe.error !== undefined) {
     return fail(
       `cw evidence submit --kind build: 无法执行 git（${probe.error.message}）。恢复动作：确认环境安装 git，且 cwd "${ctx.cwd}" 可访问。`,
