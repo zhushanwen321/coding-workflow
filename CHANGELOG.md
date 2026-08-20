@@ -1,5 +1,66 @@
 # Changelog
 
+## [v2.0.0] - 2026-08-20
+
+Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold projection state machine + runner dispatch loop + acceptance-grade machine verification. The 1.x codebase is archived under `archive/`. Wave-level development history lives in `docs/rewrite/ledger.md`.
+
+### Features
+- feat(gates): mx5-5 rule-9 completeness closure — audit S1-S5 fixed (6aeb255)
+- feat(frontier): mx5-2 contract-replan projection, dispatch chain, and D6 timeout honesty (9703d9f)
+- feat(runner): mx5-3 adversarial reviewer brief — five-dimension checklist + graded output format (9fd2c87)
+- feat(gates): mx5-1 rule 9 acceptance-command contract gate + parseFailedAcceptanceIds extraction (e29238e)
+- feat(engine,runner): mx-4 — widen spec-review rejection budget to 10, configurable via --max-spec-rejects (e62d426)
+- feat(engine,runner): mx-3 — spec-review role enforcement, generation-based deadlock count, spawn session retention (31ffa49)
+- feat(runner): mx-1 independent spec-review dispatch — reviewer spawn, role field, model chain (59cca38)
+- feat(verify,runner): rv-5 — flake escalation + nondeterministic exemption (ef4ee67)
+- feat(verify,runner): rv-4 — red-phase default wiring, first-fail integration disposal, contract pairing (145ee96)
+- feat(testrun): mx-2 pytest + playwright adapters with explicit runner routing (edae57f)
+- feat(engine): rv-2 engine fixpack — id charset gate, marker unification, exec-review evidence enforcement (1af974a)
+- feat(runner): rv-1 spawn/loop robustness — EPERM exemption + signal-driven child reclaim (3256bcf)
+- feat(verify): rv-3 contract-match hardening — doc-host exclusion + whitespace-normalized matching (1bbbf4d)
+- feat(runner): fx-4 spawn artifacts relocate to ~/.cw/topic — worktree purification (66fc7e0)
+- feat(runner): wt-4 integration merge into root branch + worktree reclaim (23780f1)
+- feat(runner): wt-2 spawn chain worktree split — behavior switch point (c3b4fc5)
+- feat(runner): wt-1 worktree infra — lifecycle wrapper + path layout + CW_PROJECT_DIR (ac30e67)
+- feat(m2): u8 integration verify - commits reachability + subtree acceptance rerun + contract matching (verified) - M2 complete (4e3c84c)
+- feat(m2): contract.file field + u8 integration-verify acceptance baseline (21da1e1)
+- feat(m1): u7 backend-agnostic run loop (verified after rework) - M1 complete (469310c)
+- feat(m1): u6b human adapter on the spawn seam (verified) (3ed963b)
+- feat(m1): u6c pi adapter - first real harness on the spawn seam (verified) (34ce8dc)
+- feat(m1): u6a agent-spawn lifecycle primitive (verified, two-builder relay) (0d34bbb)
+- feat(m1): agent-spawn contract layer + u6a acceptance baseline (78fa351)
+- feat(m0): u4b name-level matching + red-phase gate (verified) - M0 complete (0061b26)
+- feat(m0): u5b human-mode loop - cw run --spawn human (verified) (4c481ce)
+- feat(m0): u4a cw verify clean-checkout rerun framework (verified after rework) (df432b0)
+- feat(m0): u5 testrun adapters - vitest/e2e-sh pure functions (verified) (22e0ffe)
+- feat(m0): testrun contract layer + acceptance baselines for u4a/u5 (115e52c)
+- feat(m0): u1b read-only commands - status/frontier/tree/report (verified) (efa7f04)
+- feat(m0): u2 write commands - create/evidence submit/review submit (verified) (cb7d344)
+- feat(m0): dispatch contract layer + acceptance baselines for u2/u1b (552ae90)
+- feat(m0): u1 event ledger + fold projection (verified) (a47e46c)
+- feat(m0): u3 spec gate five rules (verified) (71f60a9)
+- feat(rewrite): acceptance baselines for u1/u3 + shared domain type contract (01fd577)
+
+### Bug Fixes
+- fix: fx-7 pr-cr-fix review wave — spawn error guard, ledger envelope validation, exit-2 contract (881880a)
+- fix(runner): fx-6 minor cleanup — stable-signature escalation dedup + final settlement line + static debts (ee1bbcb)
+- fix(runner): fx-5 paired unit-resource reclaim, merge point free of side effects (187f7df)
+- fix: repair design-consistency findings wave 3 (runner loop semantics) (8a1f846)
+- fix: repair design-consistency findings wave 2 (ledger/projection semantics) (f24782d)
+- fix: repair design-consistency findings wave 1 (CLI/gate/verify-exec domains) (1fc5e8c)
+- fix(final): fx-3 decomposition-establishment gap R5 (verified, 22/22 adversarial) (8e0bf13)
+- fix(final): fx-2 integration-layer deadlock R4a/R4b (verified, shadow-repo red-green) (4a3c7fd)
+- fix(final): fx-1 deadlock root causes R1/R2/R3 (verified, shadow-repo red-green) (c699786)
+- docs(rewrite): tighten orchestration role boundary - main agent dispatches only (431ced7)
+- fix(dispatch): token-prefix command matching so flags resolve correctly (fe514f4)
+
+### Refactoring
+- refactor(runner): fx-6 F1 escalation family moved to escalations.ts — loop.ts back under max-lines, byte-identical migration (bb44207)
+- refactor(role): mx5-4 builder->developer rename across 267 occurrences / 37 files + mx5-2 R1/R2 coverage assertions (e1aa49b)
+- refactor(runner): wt-3 remove legacy shared-cwd reset approximation (dc5326b)
+- refactor(fold): single-source the tree-aware closed predicate (0da5aa0)
+
+
 ## [v1.6.4] - 2026-08-14
 
 ### Features
