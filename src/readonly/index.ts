@@ -1,13 +1,16 @@
 /**
- * readonly 查询渲染层 barrel export。
- *
- * cli.ts 的 V1_READONLY_QUERIES 分支（tree/status/list）从此处导入渲染函数。
- * 渲染函数都是纯函数（不读文件系统），仅接收 CwStore / WorkUnitRecord 数据 + 参数。
+ * 只读命令域注册表（u1b 交付）：status / frontier / tree / report。
+ * 全部只读：不 append 任何事件（装载层见 load.ts）。
  */
-export type { FrontierNode, FrontierResult } from "../core/frontier.js";
-export type { LoadedCwd } from "./cross-cwd.js";
-export { loadAllCwdsFromHome } from "./cross-cwd.js";
-export type { AnnotatedUnit,ListOptions } from "./render.js";
-export { renderFrontier, renderHandoff, renderList,renderStatus, renderTree } from "./render.js";
-export type { ReportOptions,ReportStore } from "./report.js";
-export { collectDescendants,renderReport } from "./report.js";
+import type { CommandEntry } from "../dispatch.js";
+import { frontierHandler } from "./frontier.js";
+import { reportHandler } from "./report.js";
+import { statusHandler } from "./status.js";
+import { treeHandler } from "./tree.js";
+
+export const commands: CommandEntry[] = [
+  { name: "status", handler: statusHandler, summary: "查看单元状态（只读）" },
+  { name: "frontier", handler: frontierHandler, summary: "查看就绪集合（只读）" },
+  { name: "tree", handler: treeHandler, summary: "查看分解树（只读）" },
+  { name: "report", handler: reportHandler, summary: "汇总报告（只读）" },
+];

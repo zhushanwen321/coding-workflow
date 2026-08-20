@@ -1,55 +1,36 @@
-/**
- * v1 handlers 编排层统一导出（wave 层 10 个 action handler + CwDeps + ActionResult + 各 Input）。
- *
- * 来源：v5 wave 附录 A §10（handler 编排骨架）、各阶段产物归宿。
- *
- * 层职责：handlers 是编排层——每个 action 一个 handler，串 rules（纯函数）+ store（IO）。
- *      handler 自身不含业务逻辑：调 rules 做 gate/freeze/状态机校验，调 store 做持久化。
- *      所有 IO（git 校验 / 跑测试 / 文件存在 / 时钟）通过 CwDeps 注入。
- *
- * 模块索引（10 个 handler）：
- * - create：入口，createWave 工厂初始化空态
- * - design：写 WavePlan 4 类条目 + append clarifications
- * - design-review：7 个 gate + 写 designReviewJudgment
- * - execute：记录 commitHash + 填 evidence 客观部分
- * - test：跑测试 + 3 个 gate + 填 testRunResult/testJudgment
- * - exec-review：4 个 gate + 写 execReviewJudgment
- * - retrospect：2 个 gate + 写 retrospectData
- * - closeout：补 evidence 主观部分 + drift 检查 + 冻结
- * - replan：checkFreeze + computeImpact + 旁路 statusHistory
- * - abort：级联 abort 子孙 + append abandonedRefs + 流转 aborted
- *
- * 注：internal.ts 是 handler 层内部编排辅助，不对外导出。
- */
-// 共享类型
-export type {
-  AbortInput,
-  ActionResult,
-  CloseoutInput,
-  CreateInput,
-  CwDeps,
-  DesignInput,
-  DesignReviewInput,
-  DesignSliceInput,
-  ExecReviewInput,
-  ExecuteInput,
-  ReplanInput,
-  RetrospectInput,
-  RetrospectSliceInput,
-  TestInput,
-} from "./types.js";
+import type { CommandEntry } from "../dispatch.js";
+import { handleCreate } from "./create.js";
+import { handleEvidenceSubmit } from "./evidence-submit.js";
+import { handleReviewSubmit } from "./review-submit.js";
+import { handleRun } from "./run.js";
+import { handleVerify } from "./verify.js";
 
-// 10 个 handler
-export { handleAbort } from "./abort.js";
-export { handleCloseout } from "./closeout.js";
-export { handleCreate } from "./create.js";
-export { handleDesign } from "./design.js";
-export { handleDesignReview } from "./design-review.js";
-export { handleExecReview } from "./exec-review.js";
-export { handleExecute } from "./execute.js";
-export { handleReplan } from "./replan.js";
-export { handleRetrospect } from "./retrospect.js";
-export { handleTest } from "./test.js";
-
-// rollup 辅助（child wave 状态变更回写 parent PlanningUnit 的 childDelivery）
-export { rollupChildDelivery } from "./rollup.js";
+/** 写命令域注册表（u2 交付：create / evidence submit / review submit；verify 属 u4a；run 属 u5b） */
+export const commands: CommandEntry[] = [
+  {
+    name: "create",
+    handler: handleCreate,
+    summary: "创建 unit（--id slug + --brief 任务书路径，可选 --parent 挂到已有根 unit）",
+  },
+  {
+    name: "evidence submit",
+    handler: handleEvidenceSubmit,
+    summary: "提交证据（--kind spec 附 spec.json；--kind build 附 commit/runId/产物路径）",
+  },
+  {
+    name: "review submit",
+    handler: handleReviewSubmit,
+    summary: "提交审查结论（--verdict-kind spec-review|exec-review × --verdict pass|fail）",
+  },
+  {
+    name: "run",
+    handler: handleRun,
+    summary:
+      "runner 调度循环（--root <id>，M0 仅 human 后端：打印每步人该执行的指令，轮询账本推进至 root closed）",
+  },
+  {
+    name: "verify",
+    handler: handleVerify,
+    summary: "干净重跑验证（--unit <id> [--timeout-ms <n>]，checkout 冻结 commit 重跑验收）",
+  },
+];

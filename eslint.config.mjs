@@ -17,6 +17,7 @@ export default [
       'node_modules/**',
       '.xyz-harness/**',
       'skill/**',
+      'archive/**',
     ],
   },
 ];

@@ -1,0 +1,214 @@
+<mxfile host="Electron">
+  <diagram name="wave-endstate-flow-v2" id="diag2">
+    <mxGraphModel dx="1488" dy="960" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2240" pageHeight="1330" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;fontSize=16;fontStyle=1;align=left;" value="一个 wave 的终态执行流程：design / design-review / execute / exec-review，每步谁执行、有无智能" vertex="1">
+          <mxGeometry height="36" width="1100" x="40" y="8" as="geometry" />
+        </mxCell>
+        <mxCell id="laneH" parent="1" style="swimlane;startSize=26;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=12;" value="人（触发者）" vertex="1">
+          <mxGeometry height="110" width="2120" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="h1" parent="laneH" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;" value="① 触发一次：&#xa;cw run --root slice:X" vertex="1">
+          <mxGeometry height="50" width="240" x="40" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h18" parent="laneH" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;" value="⑱ 收到汇总：&#xa;全树状态 + 证据一览" vertex="1">
+          <mxGeometry height="50" width="240" x="1840" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="laneR" parent="1" style="swimlane;startSize=26;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=12;" value="runner（cw run —— 确定性代码，无智能）" vertex="1">
+          <mxGeometry height="170" width="2120" x="40" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" parent="laneR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" value="② 读就绪集合&#xa;cw frontier --json" vertex="1">
+          <mxGeometry height="50" width="240" x="340" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="r4" parent="laneR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" value="④ 并行 spawn designer ×N&#xa;（spawn=起进程，无智能；&#xa;被起的进程才是 LLM）" vertex="1">
+          <mxGeometry height="60" width="240" x="640" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="r7" parent="laneR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" value="⑦ 派独立 reviewer&#xa;（design-review）" vertex="1">
+          <mxGeometry height="50" width="240" x="940" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="r10" parent="laneR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" value="⑩ 重算 frontier → spawn builder&#xa;（dependsOn 满足才派）" vertex="1">
+          <mxGeometry height="50" width="240" x="940" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="r14" parent="laneR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" value="⑭ 派独立 reviewer&#xa;（exec-review）" vertex="1">
+          <mxGeometry height="50" width="240" x="1540" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="r17" parent="laneR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" value="⑰ 全部 closed →&#xa;汇总退出" vertex="1">
+          <mxGeometry height="50" width="240" x="1840" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="laneC" parent="1" style="swimlane;startSize=26;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;" value="cw engine（CLI —— 确定性代码，无智能。校验与记账）" vertex="1">
+          <mxGeometry height="110" width="2120" x="40" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" parent="laneC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="③ 确定性算 ready&#xa;（dependsOn / phase）" vertex="1">
+          <mxGeometry height="60" width="240" x="340" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" parent="laneC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="⑥ design gate：结构校验 + 落账&#xa;（草稿态，可 replan；&#xa;五条确定性规则见底部）" vertex="1">
+          <mxGeometry height="70" width="240" x="640" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c9" parent="laneC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="⑨ verdict 一致性校验 → 验收冻结&#xa;（hash 入账，可派发）" vertex="1">
+          <mxGeometry height="60" width="240" x="940" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c13" parent="laneC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="⑬ 验收级 gate（非单测级）→ verified&#xa;干净重跑执行全部验收 A1-A5&#xa;（单测 + e2e-real 在此执行；&#xa;红阶段 / 名字级比对）" vertex="1">
+          <mxGeometry height="80" width="240" x="1540" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c16" parent="laneC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="⑯ verdict 一致性 gate → closed&#xa;（append-only；之后进集成队列，见底部）" vertex="1">
+          <mxGeometry height="60" width="240" x="1840" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="laneD" parent="1" style="swimlane;startSize=26;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=12;" value="designer agent（LLM —— 写验收与 plan；clarify 也在此）" vertex="1">
+          <mxGeometry height="110" width="2120" x="40" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" parent="laneD" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" value="⑤ 写验收 A1-A5（含 e2e 脚本）&#xa;+ plan + test 设计（clarify 在此）&#xa;→ cw design submit（验收在此写入 cw）" vertex="1">
+          <mxGeometry height="70" width="240" x="640" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="laneB" parent="1" style="swimlane;startSize=26;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;" value="builder agent（LLM —— 唯一写代码）" vertex="1">
+          <mxGeometry height="170" width="2120" x="40" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="b11" parent="laneB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="⑪ 读 brief → 写代码 + 单测（TDD）&#xa;（brief = 冻结的验收 + contracts）" vertex="1">
+          <mxGeometry height="50" width="240" x="1240" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b12" parent="laneB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="⑫ cw evidence submit&#xa;（commit hash + 产物路径）" vertex="1">
+          <mxGeometry height="50" width="240" x="1240" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="laneV" parent="1" style="swimlane;startSize=26;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=12;" value="reviewer agent（LLM —— 独立 context，两次审查，与执行者永不合并）" vertex="1">
+          <mxGeometry height="110" width="2120" x="40" y="780" as="geometry" />
+        </mxCell>
+        <mxCell id="v8" parent="laneV" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="⑧ 审验收强度：核心 case 有 e2e-real？&#xa;mock 没 mock 掉被测行为？断言够强？&#xa;→ cw review submit（不可改）" vertex="1">
+          <mxGeometry height="70" width="240" x="940" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="v15" parent="laneV" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="⑮ 审证据包（产物 vs 验收）&#xa;→ cw review submit" vertex="1">
+          <mxGeometry height="60" width="240" x="1650" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="h1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="r2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="340" y="125" />
+              <mxPoint x="340" y="245" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="r2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.25;exitY=1;entryX=0.25;entryY=0;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="c3" value="请求">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.75;exitY=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;exitDx=0;exitDy=0;" target="r2" value="返回 ready">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="r4" value="ready 集合">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="650" y="430" />
+              <mxPoint x="650" y="245" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="r4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" target="d5" value="spawn ×N">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="940" y="245" />
+              <mxPoint x="940" y="550" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="d5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="c6" value="design submit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="c6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.3;entryX=0;entryY=0.5;" target="r7" value="验收过">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="950" y="418" />
+              <mxPoint x="950" y="245" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="r7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" target="v8" value="派 reviewer">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1250" y="245" />
+              <mxPoint x="1250" y="850" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="v8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="c9" value="verdict（append-only）">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="c9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="r10" value="验收冻结 → 可派发">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="r10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="b11" value="spawn builder">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1230" y="315" />
+              <mxPoint x="1230" y="665" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="b11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="b12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="b12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="c13" value="证据（commit + 产物）">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1525" y="735" />
+              <mxPoint x="1525" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e15" edge="1" parent="1" source="c13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="r14" value="verified → 派 exec-review">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="r14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" target="v15" value="派 reviewer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" edge="1" parent="1" source="v15" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.75;exitY=0;entryX=0;entryY=0.5;exitDx=0;exitDy=0;" target="c16" value="verdict">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" edge="1" parent="1" source="c16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="r17" value="closed">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" edge="1" parent="1" source="r17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="h18" value="汇总报告">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL1" edge="1" parent="1" source="c6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#b85450;strokeColor=#b85450;dashed=1;exitX=0;exitY=0.25;entryX=0;entryY=0.3;" target="d5" value="design gate 不过 → 回 ⑤">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="415" />
+              <mxPoint x="660" y="536" />
+              <mxPoint x="680" y="536" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eL2" edge="1" parent="1" source="c9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#b85450;strokeColor=#b85450;dashed=1;exitX=0;exitY=0.75;entryX=0;entryY=0.7;" target="d5" value="review 不过 → replan 回 ⑤">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="960" y="445" />
+              <mxPoint x="960" y="640" />
+              <mxPoint x="660" y="640" />
+              <mxPoint x="660" y="562" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eL3" edge="1" parent="1" source="c13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=10;fontColor=#b85450;strokeColor=#b85450;dashed=1;exitX=0;exitY=0.25;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="b11" value="verify gate 不过 → 回 ⑪ 继续修">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;align=left;spacing=8;" value="泳道颜色：&#xa;灰 = 人（触发）　橙 = runner（确定性代码，无智能）&#xa;绿 = cw engine（确定性代码，无智能）　黄 = designer agent（LLM）&#xa;蓝 = builder agent（LLM）　紫 = reviewer agent（LLM，独立 context）" vertex="1">
+          <mxGeometry height="100" width="620" x="40" y="910" as="geometry" />
+        </mxCell>
+        <mxCell id="note" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacing=8;" value="design（clarify / plan / 验收 A1-A5）在 ⑤ 由 designer agent 写，cw design submit 落地为「草稿账」；design-review 在 ⑦⑧：runner 派独立 reviewer 审验收强度，verdict 由 cw 在 ⑨ 校验后才冻结（hash 入账）。&#xa;冻结后的验收 + contracts 就是 builder 的不可改 brief。红虚线 = 仅有的三条回退：⑥ design gate 不过、⑨ review 不过（replan 改验收）、⑬ verify gate 不过。其余全部只向右走。" vertex="1">
+          <mxGeometry height="100" width="1460" x="700" y="910" as="geometry" />
+        </mxCell>
+        <mxCell id="boxA" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;align=left;spacing=8;verticalAlign=top;" value="【维度一】gate 校验代码（红阶段/名字比对/重跑/一致性）谁写、谁审、何时写：&#xa;· 写入时机：cw 版本开发时（一次性，任何 wave 之前）&#xa;· 谁写：cw 开发者（人 / agent 走 cw 自己的流程）&#xa;· 谁审：人 PR review + cw 自己的 801 个测试（真实 CwStore + git 子进程 + 真实 cw e2e）&#xa;· 发布为固定版本；wave 里的 ⑥⑨⑬⑯ 只是【执行】冻结代码——不在 wave 里编写、不逐 wave 重新审查&#xa;· 信任根闭合：wave 内作弊防不住 cw 重跑；重跑代码本身由版本化 + 人审 + 801 测试兜底（信任链递归到人终止）" vertex="1">
+          <mxGeometry height="220" width="500" x="40" y="1040" as="geometry" />
+        </mxCell>
+        <mxCell id="boxB" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;spacing=8;verticalAlign=top;" value="【⑥ 五条确定性规则】（机器强制，保证「声明层面一定有」）&#xa;1. testCases 非空&#xa;2. 每个核心 case 至少一条 type=e2e 且 verification≠manual&#xa;3. 每条 e2e 有可执行 command（路径存在性可查）&#xa;4. 含 mock 的 e2e → mockFidelityNote 必填（Optional → 条件必填）&#xa;5. 至少一条 unit 用例（红阶段 gate 的前提）&#xa;「声明强不强」= ⑧ reviewer（概率）；「reviewer 没放水」= 人类 slice 抽验" vertex="1">
+          <mxGeometry height="220" width="500" x="560" y="1040" as="geometry" />
+        </mxCell>
+        <mxCell id="boxC" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacing=8;verticalAlign=top;" value="【验收类型全景：谁写 / 在哪执行】&#xa;· unit 单测：⑪ builder 写（TDD）→ ⑬ 红阶段 + 干净重跑&#xa;· integration（进程内多模块）：⑪ builder 写 → ⑬ 重跑（vitest）&#xa;· e2e-real（真实二进制，自包含）：⑤ designer 写脚本 → ⑬ 干净重跑执行&#xa;· e2e-mock（外部环境被 mock，如 fake open）：⑤ 写 → ⑬ 重跑；规则：单测 mock 内部依赖 / e2e 只 mock 外部环境 / e2e-real 不 mock 被测路径&#xa;· 环境级 e2e-real（真实 pi 长驻 / 真实浏览器）：⑤ 声明环境要求 → 集成队列（merge 前跑，跑不过不 closed）&#xa;· 跨 wave 集成：slice contracts（C1/C2）生成 → 集成队列" vertex="1">
+          <mxGeometry height="220" width="560" x="1080" y="1040" as="geometry" />
+        </mxCell>
+        <mxCell id="boxD" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=left;spacing=8;verticalAlign=top;" value="【谁写什么 / 谁审什么】&#xa;· 验收 + e2e 脚本：⑤ designer 写 → ⑧ reviewer + ⑥⑨ cw&#xa;· 单测：⑪ builder 写 → ⑬ 红阶段 + ⑮ reviewer&#xa;· 产品代码：⑪ builder 写 → ⑬ 重跑 + ⑮ reviewer&#xa;· gate 代码：cw 版本开发时写 → 人 PR + 801 测试（见维度一）&#xa;【runner vs engine】&#xa;· runner = 调度循环（无状态、无智能）：spawn 谁 / 几个 / 哪个 worktree&#xa;· engine = 账本 + 裁判（有状态、无智能）：frontier / gate / 状态迁移 / append-only 记账&#xa;· engine 保持 agent-agnostic（bash + JSON）；runner 是唯一依赖 harness spawn 能力的层" vertex="1">
+          <mxGeometry height="220" width="500" x="1660" y="1040" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

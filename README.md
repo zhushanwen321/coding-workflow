@@ -1,70 +1,114 @@
-# coding-workflow
+# coding-workflow (cw)
 
-Agent-agnostic CLI that keeps AI coding agents on track through a state-machine pipeline: `create → design → design-review → execute → test → exec-review → retrospect → closeout`.
+**agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务，分解为可验证单元，用机器证据判定「完成」——系统说 done，就是真的 done，可复算、可重放。
 
-CW 不假设调用方有任何特定 agent harness 的能力（无 skill 加载、无 workflow 引擎）。agent 只需通过 bash 调用 `cw`，按返回的 `nextAction.guidance` 推进。guidance 内嵌完整阶段提示词（design / design-review / execute / test / exec-review / retrospect 方法论），agent 不需要记忆命令列表。
+cw 2.0 是对 1.x 的完全重写。旧版（四层 WorkUnit + 状态机 + 声明推进）的实证问题——串行排队占全链近半、验证可伪造（sed 伪装测试输出）、验收强度无人兜底、先干活后补录——在新结构下被消灭而非收窄。
 
-## Quick Start
+## 它怎么工作
+
+四个机制，各管一段：
+
+1. **事件账本 + 投影**：状态不存储，只计算（`status = fold(events)`）。append-only 的 `events.log` 是唯一真相源；没有「声明状态」的命令，只有「交证据」的命令——补录结构性不可能。
+2. **证据 gate**：spec 提交过五+二确定性规则（验收非空、核心 case 强制 e2e 级、命令可解析……）；完成判定走三道 gate——红阶段（测试必须有区分力）、名字级比对（逐条验收按名字 PASS，不数数）、干净重跑（checkout 账本记录的 commit，隔离环境，系统自己复跑）。伪造成本 ≥ 干活成本。
+3. **runner 调度**：确定性循环（frontier → 批次派发 → 等退出 → 证据回收 → 重算），协调权在代码不在 prompt。并行是默认——wall-clock 只受真实依赖与集成验证限制。
+4. **两个能力缝 + 集成 verify**：AgentSpawn 缝（起无头 agent 进程：human / pi 后端）与 TestRun 缝（vitest / e2e-sh 适配器，统一 EvidenceReport）可插拔；流程语义焊死。子树全 verified 后，根节点走确定性集成：merge 子树 → 重跑受影响验收 → 跨节点契约机器比对。
+
+概念词典（unit / 验收 / 证据 / 契约 / frontier / 四态退出 / children-first……）见 [CONTEXT.md](./CONTEXT.md)。
+
+## 快速上手
 
 ```bash
 npm install -g @zhushanwen/coding-workflow
 ```
 
-安装后两样东西自动就绪：
+要求 Node ≥ 20。安装后 `cw` 命令全局可用。
 
-1. **`cw` 命令**——全局可用
-2. **`cw-cli` skill**——自动安装到 `~/.agents/skills/` 和 `~/.claude/skills/`（通过 postinstall 钩子）
+最小流程——人给意图（唯一一次人工输入），之后全自动：
 
-然后让 agent 直接用 `cw-cli` skill 开发即可。agent 会自动调 `cw create` 开始流程，之后按返回的 `nextAction.guidance` 一步步推进到 `closeout`，用户无需干预。
-
-> 要求 Node ≥ 20。
-
-## 它怎么工作
-
-```
-created → designing → design-reviewed → executing → tested → exec-reviewed → retrospected → closed
-                      ↑       |
-                      └── replan ──┘
+```bash
+cd your-project
+cw create --id my-feature --brief brief.md   # 创建根 unit，任务书 = 你的意图
+cw run --root my-feature --spawn pi          # 触发 runner，派 agent 推进至根 closed
 ```
 
-agent 调 `cw create` 建一个 WorkUnit（4 层：epic/feature/slice/wave），之后每次 `cw` 调用返回 `nextAction`——包含下一步该调什么 action（`action` 字段）和怎么做（`guidance` 字段，含完整方法论）。agent 只需按 `nextAction.action` 调下一次 `cw`，直到 `action` 为空（流程结束）。
+runner 会派 designer（建子 + 提 spec + spec-review）→ 并行派 builder 写各叶子 → 机器 verify → 集成 → exec-review，全部证据入账。无头 agent 不可用或想人肉走一遍时用 `--spawn human`：打印每步人该执行的指令，轮询账本推进，验证价值 100% 保留。
 
-gate 机制在每个阶段做机器检查（plan 结构、commit 真实性、testCases 覆盖校验、测试结果重算）。gate fail 时 `nextAction.action` 指回当前阶段 retry，并附 `mustFix` 说明原因。
+### 命令一览（9 个）
 
-## Skill
+| 命令 | 类别 | 用途 |
+|---|---|---|
+| `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit |
+| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（入账冻结） |
+| `cw evidence submit --unit <id> --kind build --commit <hash> --run-id <id> --file <产物>...` | 写 | 提交构建证据 |
+| `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail` | 写 | 提交审查结论 |
+| `cw verify --unit <id> [--timeout-ms <n>]` | 写 | 干净重跑验证 |
+| `cw run --root <id> [--spawn human\|pi] [--poll-ms] [--max-idle-ms] [--max-concurrency]` | 跑 | runner 调度循环 |
+| `cw status [--unit <id>] [--json]` | 只读 | 状态视图 |
+| `cw frontier [--json]` | 只读 | 就绪集合 |
+| `cw tree` | 只读 | 分解树 |
+| `cw report [--unit <id>]` | 只读 | 证据链汇总 |
 
-agent 的完整操作手册在 [skills/cw-cli/SKILL.md](./skills/cw-cli/SKILL.md)——含入口判断、命令语法、gate fail 恢复、cwd 隔离、失败模式诊断等。
+人与 agent 同权：都只能交证据，状态推进的唯一出口是机器验证。
+
+### 环境变量
+
+| 变量 | 作用 | 缺省 |
+|---|---|---|
+| `CW_HOME` | 存储根目录（每个 cwd 一个独立账本） | `~/.cw` |
+| `CW_AGENT_MODEL` | pi 后端派发 agent 用的模型 | `xiaomi-token-plan-cn/mimo-v2.5-pro` |
+
+数据布局：`$CW_HOME/<cwd 编码>/events.log`（账本）+ `evidence/<unitId>/<runId>/`（verify 产物）。详见 [CONTEXT.md](./CONTEXT.md)。
+
+### 后端
+
+`cw run --spawn` 路由到 AgentSpawn 适配器：
+
+- **human**（缺省）：无头环境或人肉模式。打印指令清单，人执行后交证据，runner 轮询账本推进。
+- **pi**：起无头 pi 进程（`pi --model <model> -p --no-session @<brief>`），brief 文件传递防注入；超时整树 kill，四态退出归因（exit≠0 / TIMEOUT / CRASH / SPAWN_ERROR），前三种自动重派。
+
+## 架构
+
+engine（无智能、无 spawn）与 runner（同包、确定性调度）两层，依赖单向：
+
+```
+cw engine（账本 + 投影 + gate，纯 bash + JSON）
+  ├─ 事件账本（append-only 日志 + fold 投影）          src/events/ src/core/ src/store/
+  ├─ spec gate（五+二确定性规则）                      src/gates/
+  ├─ verify（红阶段 / 名字比对 / 干净重跑 / 契约比对）  src/verify/
+  └─ 命令（5 写 4 只读）                               src/handlers/ src/readonly/
+
+cw runner（确定性循环，无智能）
+  ├─ 调度循环（frontier → 批次 spawn → 回收 → 重算）   src/runner/loop.ts
+  ├─ AgentSpawn 缝（human / pi 适配器）                src/runner/spawn/
+  ├─ TestRun 缝（vitest / e2e-sh → EvidenceReport）    src/testrun/
+  └─ 集成（merge 子树 → 触发根 verify）                src/runner/integrate.ts
+
+engine 禁止 import runner（依赖单向）
+```
+
+设计决策的完整论证（为什么一种 unit、为什么事件投影、为什么验收一等公民、Goodhart 防线、能力缝可插而流程语义焊死）见 canon：[`.xyz-harness/cw-endstate-architecture/design-rewrite-architecture.md`](./.xyz-harness/cw-endstate-architecture/design-rewrite-architecture.md)。重写过程的全 unit 台账见 [docs/rewrite/ledger.md](./docs/rewrite/ledger.md)。
+
+## 测试
+
+零 mock 哲学：真实账本 + tmp 目录 + 真实 git 子进程；CLI 命令走子进程跑真实二进制（dispatch 层测试不直接调 handler）。当前 230 个测试（以实跑为准），含真实并发 e2e 与真实 pi 后端 E2E。
+
+```bash
+npm run check:all    # tsc 类型检查（src + tests）
+npm test             # vitest run（真实子进程 e2e）
+npm run lint         # eslint src/ tests/
+```
 
 ## 本地开发
 
 ```bash
 git clone https://github.com/zhushanwen321/coding-workflow.git
 cd coding-workflow
-npm install          # 安装依赖 + 自动 link skill
+npm install          # 安装依赖（postinstall 同时安装 skills/）
 npm run build
 npm link             # 全局 link cw 命令到本地 dist
 ```
 
-```bash
-npm run check:all    # tsc 类型检查（src + tests）
-npm test             # vitest run（801 个测试，含真实子进程 e2e；会随开发增长，以实跑为准）
-npm run lint         # eslint src/ tests/
-npm run build        # tsc 编译到 dist/
-```
-
-测试是真实环境的：零 mock 框架，真实 CwStore + tmp 目录 + git 子进程。
-
-## 文档
-
-| 文档 | 内容 |
-|------|------|
-| [SKILL.md](./skills/cw-cli/SKILL.md) | agent 操作手册（入口、命令、gate fail、失败模式） |
-| [CONTEXT.md](./CONTEXT.md) | 统一语言（15 action / 两层 status / 核心架构概念） |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构（分层 / 模块划分 / 状态机 / gate 机制） |
-| [PRODUCT.md](./PRODUCT.md) | 产品文档（愿景 / 核心用户 / 功能边界 / 非目标 / 路线图） |
-| [NFR.md](./NFR.md) | 工程约束（安全 / 数据 / 性能 / 并发 / 稳定性 / 兼容性 / 可观测性） |
-| [TEST-STRATEGY.md](./TEST-STRATEGY.md) | 测试策略（金字塔边界 / mock 约定 / 不可回退基线） |
-| [DESIGN-LOG.md](./DESIGN-LOG.md) | 设计历史索引（主题台账 / ADR 索引） |
+统一语言与命令语义以 [CONTEXT.md](./CONTEXT.md) 为准。
 
 ## License
 

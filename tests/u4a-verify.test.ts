@@ -1,0 +1,468 @@
+/**
+ * u4a 单测：cleanCheckout / runAcceptances / cw verify exit 语义
+ * （dispatch 层完整路径，真实 git 子进程 + tmp 目录 + 隔离 CW_HOME，零 mock）。
+ *
+ * 用例编号「验收N」逐条对应 docs/rewrite/acceptance/u4a-acceptance.md「单测验收」：
+ *   验收1/2 → cleanCheckout；验收3/4 → runAcceptances；验收5 → verify handler。
+ */
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+
+import { dispatch } from "../src/dispatch.js";
+import type { AcceptanceItem } from "../src/events/types.js";
+import { EventLedger } from "../src/store/events-log.js";
+import { evidenceDir, ledgerPath } from "../src/store/project.js";
+import { cleanCheckout, cleanupCheckout } from "../src/verify/checkout.js";
+import { runAcceptances, timeoutForAcceptance } from "../src/verify/run.js";
+
+const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u4a-"));
+const cwHome = join(tmpRoot, "home");
+const originalCwHome = process.env.CW_HOME;
+
+afterAll(() => {
+  if (originalCwHome === undefined) {
+    delete process.env.CW_HOME;
+  } else {
+    process.env.CW_HOME = originalCwHome;
+  }
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+function git(dir: string, args: readonly string[]): void {
+  const res = spawnSync("git", ["-C", dir, ...args], { encoding: "utf-8" });
+  if (res.status !== 0) {
+    throw new Error(`git ${args.join(" ")} 失败: ${res.stderr}`);
+  }
+}
+
+/** 真实 tmp git 仓库：init + 每次提交写入一批根目录文件；返回各 commit hash（按提交序） */
+function makeGitRepo(dir: string, commitsFiles: ReadonlyArray<Record<string, string>>): string[] {
+  mkdirSync(dir, { recursive: true });
+  git(dir, ["init"]);
+  git(dir, ["config", "user.email", "cw-test@example.com"]);
+  git(dir, ["config", "user.name", "cw-test"]);
+  const hashes: string[] = [];
+  commitsFiles.forEach((files, i) => {
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(dir, name), content);
+    }
+    git(dir, ["add", "-A"]);
+    git(dir, ["commit", "-m", `commit-${i + 1}`]);
+    hashes.push(
+      (spawnSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf-8" }).stdout ?? "").trim(),
+    );
+  });
+  return hashes;
+}
+
+function ac(id: string, command: string | undefined, type: AcceptanceItem["type"] = "unit"): AcceptanceItem {
+  return { id, core: false, title: `标题-${id}`, type, ...(command === undefined ? {} : { command }) };
+}
+
+// ── 验收1/2：cleanCheckout ───────────────────────────────────
+
+describe("验收1：cleanCheckout 检出指定 commit", () => {
+  it("检出第 1 个 commit → 目录内容与该 commit 一致（第 2 个 commit 的文件不存在）；porcelain 为空", () => {
+    const repo = join(tmpRoot, "co-repo-1");
+    const [c1] = makeGitRepo(repo, [{ "a.txt": "v1" }, { "b.txt": "v2" }]);
+    expect(c1).toMatch(/^[0-9a-f]{40}$/);
+
+    const out = cleanCheckout(repo, c1);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    try {
+      expect(existsSync(join(out.dir, "a.txt"))).toBe(true);
+      expect(readFileSync(join(out.dir, "a.txt"), "utf-8")).toBe("v1");
+      expect(existsSync(join(out.dir, "b.txt"))).toBe(false);
+      const porcelain = spawnSync("git", ["-C", out.dir, "status", "--porcelain"], {
+        encoding: "utf-8",
+      });
+      expect(porcelain.status).toBe(0);
+      expect(porcelain.stdout.trim()).toBe("");
+    } finally {
+      cleanupCheckout(out.dir);
+    }
+  });
+});
+
+describe("验收2：cleanCheckout 对不存在 commit 返回 error", () => {
+  it("不存在的 commit → { ok:false, error }（不抛裸异常）", () => {
+    const repo = join(tmpRoot, "co-repo-2");
+    makeGitRepo(repo, [{ "a.txt": "v1" }]);
+    const out = cleanCheckout(repo, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toContain("deadbeef");
+  });
+});
+
+// ── 验收3/4：runAcceptances ──────────────────────────────────
+
+describe("验收3：runAcceptances 三态判定与产物落盘", () => {
+  it("真过 / 真挂 / sleep 超时（500ms 上限）→ pass/fail/timeout 判定正确、产物存在且非空", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-3"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-3"));
+    // u4b 判定升级适配：exit code 不再是判定输入，改用 e2e-sh 标记行语义构造三态
+    // （A3 用 e2e-real 使 translate 原样返回 sleep 2——unit 型会被追加
+    // --reporter=json 参数导致 sleep 立即 usage error 而非超时）
+    const outcome = runAcceptances(
+      checkoutDir,
+      [
+        ac("A1", 'echo "A1 PASS"', "e2e-real"),
+        ac("A2", 'echo "A2 FAIL"; echo boom >&2; exit 3', "e2e-real"),
+        ac("A3", "sleep 2", "e2e-real"),
+      ],
+      evidenceBase,
+      500,
+    );
+
+    // 判定：pass / fail(标记 FAIL=执行失败) / fail(timeout)
+    const [r1, r2, r3] = outcome.results;
+    expect(r1?.status).toBe("pass");
+    expect(r1?.timeout).toBe(false);
+    expect(r2?.status).toBe("fail");
+    expect(r2?.reason).toContain("执行失败");
+    expect(r3?.status).toBe("fail");
+    expect(r3?.timeout).toBe(true);
+    expect(r3?.reason).toContain("超时");
+
+    // 产物：stdout 非空 / 挂的 stderr 有内容 / 超时有 .timeout 标记
+    expect(readFileSync(r1?.stdoutPath ?? "", "utf-8")).toContain("A1 PASS");
+    expect(readFileSync(r2?.stderrPath ?? "", "utf-8")).toContain("boom");
+    const timeoutMarker = join(evidenceBase, "A3.timeout");
+    expect(existsSync(timeoutMarker)).toBe(true);
+    expect(readFileSync(timeoutMarker, "utf-8")).toContain("timed out");
+    expect(readFileSync(r3?.stderrPath ?? "", "utf-8")).toContain("timed out");
+
+    // 总报告：cases 三条 + exitCode 1，manual 不在此例（由 handler 并入 acceptanceIds）
+    expect(outcome.report.exitCode).toBe(1);
+    expect(outcome.report.cases.map((c) => [c.id, c.status])).toEqual([
+      ["A1", "pass"],
+      ["A2", "fail"],
+      ["A3", "fail"],
+    ]);
+    const onDisk = JSON.parse(readFileSync(join(evidenceBase, "report.json"), "utf-8")) as {
+      cases: Array<{ id: string; status: string }>;
+    };
+    expect(onDisk.cases).toHaveLength(3);
+  });
+});
+
+describe("验收4：e2e 用例缺 command → 该条 fail（u4b 适配：unit 缺 command 走 vitest 默认全量命令）", () => {
+  it("e2e-real 用例缺 command → fail + 错误信息含「command 缺失」（e2e-sh translate 拒绝代拟）", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-4"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-4"));
+    const outcome = runAcceptances(checkoutDir, [ac("X9", undefined, "e2e-real")], evidenceBase, 1000);
+
+    expect(outcome.results).toHaveLength(1);
+    expect(outcome.results[0]?.status).toBe("fail");
+    expect(outcome.results[0]?.reason).toContain("X9");
+    expect(outcome.results[0]?.reason).toContain("command 缺失");
+    expect(readFileSync(outcome.results[0]?.stderrPath ?? "", "utf-8")).toContain("command 缺失");
+  });
+});
+
+// ── 超时分档 / 进程树回收 / 逐产物 hash（对抗审查修复回归） ──────
+
+describe("超时分档：timeoutForAcceptance 与 runAcceptances 默认/覆盖", () => {
+  it("timeoutForAcceptance：e2e 双型 30min，unit/integration/manual 10min", () => {
+    expect(timeoutForAcceptance("e2e-real")).toBe(1_800_000);
+    expect(timeoutForAcceptance("e2e-mock")).toBe(1_800_000);
+    expect(timeoutForAcceptance("unit")).toBe(600_000);
+    expect(timeoutForAcceptance("integration")).toBe(600_000);
+    // manual 不经机器执行，取单测口径仅保持穷尽（值无意义但锁定不漂移）
+    expect(timeoutForAcceptance("manual")).toBe(600_000);
+  });
+
+  it("runAcceptances 省略 timeoutMs → 分档默认路径可用（e2e-real 快命令正常 pass）", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-d1"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-d1"));
+    const outcome = runAcceptances(checkoutDir, [ac("D1", 'echo "D1 PASS"', "e2e-real")], evidenceBase);
+
+    expect(outcome.results[0]?.status).toBe("pass");
+  });
+
+  // 显式 timeoutMs 覆盖分档默认的传参路径由「验收3」的 A3 锁定（e2e-real 分档
+  // 默认 30min，显式 500ms 仍超时 fail = 覆盖优先于分档），不另设重复用例
+});
+
+describe("进程树回收：超时与正常完成都不留孙进程", () => {
+  it("超时路径：前台 wait + 后台孙进程 → 1s 整树 SIGKILL，TIMEOUT fail 且 pgrep 无残留", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-k1"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-k1"));
+    // 307 为独特参数便于 pgrep 精确定位；前台 wait 让直接子进程（bash）活到超时点
+    const outcome = runAcceptances(
+      checkoutDir,
+      [ac("K1", "sleep 307 & echo started; wait", "e2e-real")],
+      evidenceBase,
+      1_000,
+    );
+
+    const r = outcome.results[0];
+    expect(r?.status).toBe("fail");
+    expect(r?.timeout).toBe(true);
+    expect(r?.reason).toContain("超时");
+    // 子进程死前的部分输出仍落盘（整树 kill 不吞产物）
+    expect(readFileSync(r?.stdoutPath ?? "", "utf-8")).toContain("started");
+    expect(existsSync(join(evidenceBase, "K1.timeout"))).toBe(true);
+    // 安全性核心断言：孙进程（sleep）随进程组同灭，进程表无残留
+    expect(noResidualProcess("sleep 307")).toBe(true);
+  });
+
+  it("正常完成路径：命令退出但后台孙进程存活 → 完成后整组回收，pgrep 无残留", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-k2"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-k2"));
+    // 无前台 wait：直接子进程立即退出（commandExit 0），后台 sleep 307 成同组
+    // 余党——「残留 dev server 让后续 e2e 验收假绿」的正是此形态
+    const outcome = runAcceptances(
+      checkoutDir,
+      [ac("K2", "sleep 307 & echo started", "e2e-real")],
+      evidenceBase,
+      60_000,
+    );
+
+    const r = outcome.results[0];
+    expect(r?.timeout).toBe(false);
+    expect(r?.commandExit).toBe(0);
+    // stdout 无 ^A 标记行 → e2e-sh parse 抛错 → fail（判定结果与回收语义无关）
+    expect(r?.status).toBe("fail");
+    expect(noResidualProcess("sleep 307")).toBe(true);
+  });
+});
+
+describe("report.json 逐产物 sha256（重跑产物可比较性）", () => {
+  it("artifacts 逐条记录 stdout/stderr 的 sha256，与独立重算一致", () => {
+    const checkoutDir = mkdtempSync(join(tmpRoot, "co-h1"));
+    const evidenceBase = mkdtempSync(join(tmpRoot, "ev-h1"));
+    const outcome = runAcceptances(
+      checkoutDir,
+      [ac("H1", 'echo "H1 PASS"', "e2e-real"), ac("H2", 'echo "H2 FAIL"; exit 1', "e2e-real")],
+      evidenceBase,
+      5_000,
+    );
+    expect(outcome.report.cases.map((c) => c.id)).toEqual(["H1", "H2"]);
+
+    const onDisk = JSON.parse(readFileSync(join(evidenceBase, "report.json"), "utf-8")) as {
+      artifacts: Array<{ id: string; stdoutSha256: string; stderrSha256: string }>;
+    };
+    // reportHash 的计算输入是整个 report.json → artifacts 入 report 即随 reportHash 入账
+    expect(onDisk.artifacts.map((a) => a.id)).toEqual(["H1", "H2"]);
+    for (const a of onDisk.artifacts) {
+      expect(a.stdoutSha256).toBe(
+        createHash("sha256").update(readFileSync(join(evidenceBase, `${a.id}.stdout`))).digest("hex"),
+      );
+      expect(a.stderrSha256).toBe(
+        createHash("sha256").update(readFileSync(join(evidenceBase, `${a.id}.stderr`))).digest("hex"),
+      );
+    }
+  });
+});
+
+/** pgrep -f：exit 1 = 无匹配进程（无残留）。零 mock，真实进程表查询 */
+function noResidualProcess(pattern: string): boolean {
+  const res = spawnSync("pgrep", ["-f", pattern], { encoding: "utf-8" });
+  return res.status === 1;
+}
+
+// ── 验收5：cw verify exit 语义（dispatch 层） ─────────────────
+
+let caseNo = 0;
+let cwd: string;
+let ledger: EventLedger;
+
+beforeEach(() => {
+  process.env.CW_HOME = cwHome;
+  caseNo += 1;
+  cwd = join(tmpRoot, `case-${caseNo}`);
+  ledger = new EventLedger(ledgerPath(cwHome, cwd));
+});
+
+interface Captured {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function run(args: readonly string[]): Promise<Captured> {
+  const origOut = process.stdout.write;
+  const origErr = process.stderr.write;
+  let stdout = "";
+  let stderr = "";
+  process.stdout.write = ((chunk: unknown) => {
+    stdout += String(chunk);
+    return true;
+  }) as typeof origOut;
+  process.stderr.write = ((chunk: unknown) => {
+    stderr += String(chunk);
+    return true;
+  }) as typeof origErr;
+  try {
+    const code = await dispatch(args, cwd);
+    return { code, stdout, stderr };
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+  }
+}
+
+/** 建 git 仓库 + 入账 UnitCreated / SpecSubmitted(可选) / EvidenceSubmitted(可选) */
+function makeVerifyFixture(opts: {
+  withSpec: boolean;
+  withEvidence: boolean;
+  acceptance?: AcceptanceItem[];
+}): string {
+  const [head] = makeGitRepo(cwd, [{ "seed.txt": "seed" }]);
+  ledger.append("UnitCreated", { unitId: "u-1", parentId: null, briefRef: "brief.md" });
+  if (opts.withSpec) {
+    ledger.append("SpecSubmitted", {
+      unitId: "u-1",
+      specHash: "0".repeat(64),
+      acceptance: opts.acceptance ?? [],
+      contracts: [],
+      split: [],
+    });
+  }
+  if (opts.withEvidence) {
+    ledger.append("EvidenceSubmitted", {
+      unitId: "u-1",
+      runId: "run-1",
+      commit: head,
+      paths: [],
+      sha256: [],
+      exitCode: 0,
+    });
+  }
+  return head;
+}
+
+interface VerifyRanFact {
+  runId: string;
+  reportHash: string;
+  result: string;
+  acceptanceIds: string[];
+}
+
+function verifyRans(): VerifyRanFact[] {
+  return ledger
+    .readAll()
+    .filter((e) => e.type === "VerifyRan")
+    .map((e) => {
+      const p = e.payload as VerifyRanFact;
+      return { runId: p.runId, reportHash: p.reportHash, result: p.result, acceptanceIds: p.acceptanceIds };
+    });
+}
+
+describe("验收5：cw verify exit 语义（dispatch 层）", () => {
+  it("全过 → exit 0 + stdout 逐行摘要 + VerifyRan(result=pass)；reportHash 与落盘 report.json 一致", async () => {
+    makeVerifyFixture({
+      withSpec: true,
+      withEvidence: true,
+      // u4b 适配：exit 0 无标记行会触发 e2e-sh 无区分力防线（fail），改输出标记行
+      acceptance: [{ ...ac("A1", `node -e "console.log('A1 PASS')"`, "e2e-real"), core: true }],
+    });
+
+    const res = await run(["verify", "--unit", "u-1"]);
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain("A1 pass");
+    expect(res.stdout).toContain("result=pass");
+
+    const runs = verifyRans();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.result).toBe("pass");
+    expect(runs[0]?.acceptanceIds).toEqual(["A1"]);
+    expect(runs[0]?.runId).toMatch(/^verify-/);
+
+    // reportHash 独立重算（node:crypto，不经被测代码的 sha256Hex）
+    const reportPath = join(evidenceDir(cwHome, cwd, "u-1", runs[0]?.runId ?? ""), "report.json");
+    const digest = createHash("sha256").update(readFileSync(reportPath)).digest("hex");
+    expect(runs[0]?.reportHash).toBe(digest);
+  });
+
+  it("有 fail → exit 1 + stderr 列失败 id 与原因；fail 也入账，acceptanceIds 含 pass 与 manual、不含 fail", async () => {
+    makeVerifyFixture({
+      withSpec: true,
+      withEvidence: true,
+      acceptance: [
+        { ...ac("A1", `node -e "console.log('A1 PASS')"`, "e2e-real"), core: true },
+        // u4b 适配：输出 A2 FAIL 标记（保留 exit 7 真挂事实），reason 语义为「执行失败」
+        { ...ac("A2", `node -e "console.log('A2 FAIL'); process.exit(7)"`, "e2e-real"), core: true },
+        ac("M1", undefined, "manual"),
+      ],
+    });
+
+    const res = await run(["verify", "--unit", "u-1"]);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("A2");
+    expect(res.stderr).toContain("执行失败");
+    expect(res.stdout).toContain("M1 manual");
+
+    const runs = verifyRans();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.result).toBe("fail");
+    expect(runs[0]?.acceptanceIds).toEqual(["A1", "M1"]);
+  });
+
+  it("缺 spec → exit 2（环境错误），无 VerifyRan 入账", async () => {
+    makeVerifyFixture({ withSpec: false, withEvidence: true });
+    const res = await run(["verify", "--unit", "u-1"]);
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain("spec");
+    expect(verifyRans()).toHaveLength(0);
+  });
+
+  it("缺 build 证据 → exit 2（环境错误），无 VerifyRan 入账", async () => {
+    makeVerifyFixture({ withSpec: true, withEvidence: false, acceptance: [ac("A1", "true")] });
+    const res = await run(["verify", "--unit", "u-1"]);
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain("build");
+    expect(verifyRans()).toHaveLength(0);
+  });
+
+  it("unit 不存在 → exit 2；缺 --unit → exit 1（用法错误）", async () => {
+    const noUnit = await run(["verify", "--unit", "ghost"]);
+    expect(noUnit.code).toBe(2);
+    expect(noUnit.stderr).toContain("ghost");
+
+    const noArg = await run(["verify"]);
+    expect(noArg.code).toBe(1);
+    expect(noArg.stderr).toContain("--unit");
+  });
+
+  it("--timeout-ms 500（minimist 解析为 number，非 string）+ sleep 2 验收 → 该条超时 fail + .timeout 标记落盘", async () => {
+    makeVerifyFixture({
+      withSpec: true,
+      withEvidence: true,
+      acceptance: [{ ...ac("T1", "sleep 2", "e2e-real"), core: true }],
+    });
+
+    const res = await run(["verify", "--unit", "u-1", "--timeout-ms", "500"]);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("T1");
+    expect(res.stderr).toContain("超时");
+
+    const runs = verifyRans();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.result).toBe("fail");
+    expect(existsSync(join(evidenceDir(cwHome, cwd, "u-1", runs[0]?.runId ?? ""), "T1.timeout"))).toBe(true);
+  });
+
+  it("非法 --timeout-ms（abc / 0）→ exit 1 用法错误，stderr 含合法形式与恢复动作，不入账", async () => {
+    makeVerifyFixture({ withSpec: true, withEvidence: true, acceptance: [ac("A1", "true")] });
+
+    const bad = await run(["verify", "--unit", "u-1", "--timeout-ms", "abc"]);
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toContain("--timeout-ms");
+    expect(bad.stderr).toContain("恢复动作");
+    expect(verifyRans()).toHaveLength(0);
+
+    const zero = await run(["verify", "--unit", "u-1", "--timeout-ms", "0"]);
+    expect(zero.code).toBe(1);
+    expect(zero.stderr).toContain("--timeout-ms");
+    expect(verifyRans()).toHaveLength(0);
+  });
+});

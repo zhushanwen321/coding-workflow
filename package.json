@@ -1,8 +1,8 @@
 {
   "name": "@zhushanwen/coding-workflow",
-  "version": "1.6.4",
+  "version": "2.0.0",
   "packageManager": "npm@11.6.2",
-  "description": "Agent-agnostic CLI for coding-workflow engine",
+  "description": "CI for AI coding agents: event-sourced ledger, evidence gates, and a deterministic runner that turns briefs into verified units",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -37,11 +37,12 @@
     "url": "https://github.com/zhushanwen321/coding-workflow/issues"
   },
   "scripts": {
-    "build": "tsc && node scripts/generate-schemas.js",
+    "build": "tsc",
     "check": "tsc --noEmit",
     "check:tests": "tsc --noEmit -p tsconfig.test.json",
     "check:all": "npm run check && npm run check:tests",
     "lint": "eslint src/ tests/",
+    "pretest": "npm run build",
     "test": "vitest run",
     "postinstall": "bash scripts/install-skill.sh",
     "preuninstall": "bash scripts/uninstall-skill.sh"

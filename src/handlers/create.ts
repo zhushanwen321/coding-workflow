@@ -1,93 +1,105 @@
 /**
- * v1 wave handler — create action（入口：从无到有创建 ExecutionUnit）。
+ * `cw create --id <slug> --brief <path> [--parent <unitId>]`（u2 验收文档锁定的 M0 规格）。
  *
- * 来源：v5 wave 附录 A §10（编排骨架）、core workunit.createWave 工厂（§1.4 / §5.3）。
- *
- * 职责：调 createWave 工厂初始化全部字段为空态 → save → 返回 status=created。
- * 不跑 gate（create 无 gate，guard 已在 dispatch 层做过）。
- *
- * 不变量：create 不接收已有 unit（它是入口）；产物字段全空态，各后续 handler 逐步填充。
+ * 校验序（便宜的先做）：slug 规则 → brief 可读 → 重复 unitId → parent 存在 +
+ * 深度上限 + parent 非 closed（fx-7 S-3：closed 父拒绝建子）。
+ * 深度限制：M0 上限 2 层（根 + 叶）——--parent 的目标 unit 自身不得再有 parent。
  */
-import { WAVE_STATUS_TO_ACTION } from "../core/status.js";
-import type { ExecutionUnit } from "../core/workunit.js";
-import { createWave } from "../core/workunit.js";
-import type { WaveAction } from "../rules/state-machine.js";
+import { deriveStatuses, fold } from "../core/fold.js";
+import type { CommandContext } from "../dispatch.js";
+import { checkSpecRules } from "../gates/spec-rules.js";
 import {
-  buildCreateIdempotentResult,
-  buildNextAction,
-  buildWaveCurrentActionGuidance,
-  isCreateEmptyState,
-  saveUnit,
-} from "./internal.js";
-import type { ActionResult, CreateInput,CwDeps } from "./types.js";
+  copyAttachmentToEvidence,
+  fail,
+  ledgerForCwd,
+  readOrErrno,
+  resolveAgainstCwd,
+  stringArg,
+  succeed,
+  tryAppend,
+  unitCreatedFacts,
+} from "./common.js";
 
-/** testCommand 提示（create 时告知 design 阶段要填 per-wave 测试命令）。 */
-const TEST_RUNNER_HINT = `
+/** unit slug 规则（验收文档锁定）：小写字母开头，仅小写字母/数字/连字符 */
+const SLUG_RE = /^[a-z][a-z0-9-]*$/;
 
-## design 阶段必须填 testCommand
-本 wave 的测试执行命令（testCommand）在 **design 阶段**填写——一个完整 shell 命令，能启动本 wave 的测试（如 \`npx vitest run src/quota/__tests__/index.test.ts\`）。
-
-**不要跑全量回归**：只限定本 wave 改动相关的最小测试文件集合。test 阶段 cw 执行你填的 testCommand，gate 只认命令退出码——跑全量会被仓库里任意预存 flaky/failing test 卡住，为不该负责的问题买单。
-
-测试文件此时可不存在（execute 阶段才创建，TDD），但路径要按项目测试约定先定好。
-
-**monorepo 多包项目必须填 testCwd**：指定 testCommand 在哪个子包目录跑（如 \`packages/auth\`），否则 cw 会在仓库根执行 testCommand，跑错目录。单包项目可不填（缺省 = 仓库根）。
-
-**testCwd 必须相对仓库根，禁止绝对路径**：跨 worktree 共享 store 后绝对路径会在其他 worktree 解析失败（ADR-0014 决策 4）。`;
-
-/**
- * 执行 create action。
- *
- * @param args create 参数（slug / objective / parentUnitId / basedOnParent）
- * @param deps 依赖注入（store / clock）
- * @returns 操作结果（status=created）
- */
-export function handleCreate(
-  args: CreateInput,
-  deps: CwDeps,
-): ActionResult & { unit: ExecutionUnit } {
-  // #2 create 幂等预检（D-002）：按 layer 定界（id=`wave:<slug>`），save 之前 load。
-  // slug 已存在且非 created 空态 → no-op 返回 existing（不覆盖、不 save）。
-  const existing = deps.store.load(`wave:${args.slug}`);
-  if (existing !== null && !isCreateEmptyState(existing)) {
-    const status = typeof existing.status === "string" ? existing.status : "created";
-    const currentAction = WAVE_STATUS_TO_ACTION[status];
-    const currentGuidance =
-      currentAction !== undefined
-        ? buildWaveCurrentActionGuidance(
-            // eslint-disable-next-line taste/no-unsafe-cast -- 只读 id/status/parentUnitId/slug（CurrentActionGuidance 仅用这 4 字段），record 是具名 unit 超集
-            existing as unknown as ExecutionUnit,
-            currentAction as WaveAction,
-          )
-        : "";
-    return {
-      ...buildCreateIdempotentResult({
-        existing,
-        layer: "wave",
-        currentAction,
-        currentGuidance,
-      }),
-      // eslint-disable-next-line taste/no-unsafe-cast -- 同上：existing 字段透传存储，断言安全
-      unit: existing as unknown as ExecutionUnit,
-    };
+export async function handleCreate(ctx: CommandContext): Promise<number> {
+  const unitId = stringArg(ctx.argv, "id");
+  if (unitId === undefined) {
+    return fail(
+      "cw create: 缺少 --id <slug>。恢复动作：cw create --id <slug> --brief <brief 路径> [--parent <unitId>]。",
+    );
+  }
+  if (!SLUG_RE.test(unitId)) {
+    return fail(
+      `cw create: 非法 unit id "${unitId}"：须匹配 ^[a-z][a-z0-9-]*$（小写字母开头，仅小写字母/数字/连字符）。` +
+        "恢复动作：改为合法 slug（如 my-unit-1）后重试。",
+    );
   }
 
-  const unit = createWave({
-    slug: args.slug,
-    objective: args.objective,
-    parentUnitId: args.parentUnitId,
-    basedOnParent: args.basedOnParent,
-    createdAt: deps.clock.now(),
-  });
-  saveUnit(deps, unit);
-  const nextAction = buildNextAction(unit, "create");
-  // create 时追加 testRunner 配置提示（monorepo 用户提前配置，避免 test 阶段卡住）
-  nextAction.guidance += TEST_RUNNER_HINT;
-  return {
-    unitId: unit.id,
-    status: unit.status,
-    ok: true,
-    unit,
-    nextAction,
-  };
+  const brief = stringArg(ctx.argv, "brief");
+  if (brief === undefined) {
+    return fail(
+      "cw create: 缺少 --brief <任务书路径>。恢复动作：cw create --id <slug> --brief <brief 路径>。",
+    );
+  }
+  const briefAbs = resolveAgainstCwd(brief);
+  const briefRead = readOrErrno(briefAbs);
+  if (!briefRead.ok) {
+    return fail(
+      `cw create: brief 文件不可读（${brief}，按执行目录 "${process.cwd()}" 解析为 ${briefAbs}）：${briefRead.errno}。` +
+        "恢复动作：确认路径正确且文件存在可读；brief 内容原样不解析，空文件亦可。",
+    );
+  }
+
+  const ledger = ledgerForCwd(ctx.cwd);
+  const facts = unitCreatedFacts(ledger);
+  if (facts.has(unitId)) {
+    return fail(
+      `cw create: unit "${unitId}" 已存在（账本内已有其 UnitCreated 事件）。` +
+        "恢复动作：账本 append-only 不支持重复创建；继续推进该 unit 用 evidence submit / review submit，或换一个新 slug。",
+    );
+  }
+
+  let parentId: string | null = null;
+  const parent = stringArg(ctx.argv, "parent");
+  if (parent !== undefined) {
+    const parentFact = facts.get(parent);
+    if (parentFact === undefined) {
+      return fail(
+        `cw create: --parent "${parent}" 不存在（账本内无其 UnitCreated 事件）。` +
+        `恢复动作：先创建父 unit（cw create --id ${parent} --brief <路径>），或去掉 --parent 创建根 unit。`,
+      );
+    }
+    if (parentFact.parentId !== null) {
+      return fail(
+        `cw create: 分解深度超限：--parent "${parent}" 自身已是子 unit（其 parent 为 "${parentFact.parentId}"），` +
+          "M0 上限 2 层（根 + 叶），不允许三层嵌套。恢复动作：把子 unit 挂到根 unit 下（--parent 指向根）。",
+      );
+    }
+    // closed 不可逆（canon L0）的 create 路径半边（fx-7 S-3）：--parent 指向树感知
+    // closed 的 unit 时拒绝——若放行，新子的 UnitCreated 会让 deriveStatusInTree
+    // 把根从 closed 拉回 verified（「全部直接子节点 closed」不再成立），历史结论
+    // 被一条新事件篡改；与 evidence-submit spec 重提路径的 closed 拒绝同族防线。
+    // 其余状态不拦：verified 根补建子 unit 是合法演进（根回到 verified 等新链路）
+    const parentStatus = deriveStatuses(fold(ledger.readAll()).units, checkSpecRules).get(parent);
+    if (parentStatus === "closed") {
+      return fail(
+        `cw create: --parent "${parent}" 已 closed（树感知状态，含全部子节点 closed），不可逆——closed 是账本上的最终结论，在其下新建子 unit 会把投影拉回 verified（篡改历史结论）。` +
+          `恢复动作：closed 不可逆；如需承接新工作，去掉 --parent 新建根 unit（cw create --id <slug> --brief <brief文件>），或以未 closed 的 unit 为父。`,
+      );
+    }
+    parentId = parent;
+  }
+
+  const result = tryAppend(ledger, "UnitCreated", { unitId, parentId, briefRef: brief });
+  if (!result.ok) {
+    return fail(result.message);
+  }
+  // fx-4 D4：unit 原始 brief 副本入 evidence——账本 briefRef 是路径引用，文件本体
+  // 是 designer 在父 worktree 写的 untracked、随 clean/reclaim 丢失留下死路径
+  copyAttachmentToEvidence(ctx.cwd, unitId, briefAbs, briefRead.raw);
+  return succeed(
+    `unit "${unitId}" 已创建${parentId !== null ? `（parent "${parentId}"）` : "（根）"}，seq ${result.envelope.seq}。`,
+  );
 }
