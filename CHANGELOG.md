@@ -308,3 +308,4 @@ Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold pro
 
 - quick-release skill for fast markdown-only publishing; tech-design problem-definition-first + review fact-severity grading (#16)
 - cw-cli skill: runner as default path for multi-unit tasks + stale-command fixes (--role/--evidence-refs/--no-red-phase/nine gate rules/four adapters) (#18)
+- cw-cli skill: fix factual errors from adversarial review (contract checks in reviewer checklist not designer brief; spec iteration count corrected to ledger-measured figures) (#19)
