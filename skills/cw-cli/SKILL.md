@@ -36,7 +36,7 @@ description: >-
 | unit 数 ≥2，或需要并行推进 | **runner（默认）** | `cw run --root <id> --spawn pi` |
 | 单 unit；调试验收命令 / gate 规则 / 适配器；学习流程；runner 不可用 | 手动（降级路径） | 逐步 `cw create → evidence → verify → review` |
 
-[MANDATORY] 多 unit 任务**禁止主 agent 手动逐 unit 派 subagent 编排替代 runner**：角色分工（designer / developer / 独立 reviewer）、每 unit worktree 隔离、集成 merge、死锁转人工全部是 runner 内建机制，手动编排等于放弃全部——实测代价（2026-08-20 session）：29 次手动 subagent、15 小时 session、root spec 迭代 7 次。
+[MANDATORY] 多 unit 任务**禁止主 agent 手动逐 unit 派 subagent 编排替代 runner**：角色分工（designer / developer / 独立 reviewer）、每 unit worktree 隔离、集成 merge、死锁转人工全部是 runner 内建机制，手动编排等于放弃全部——实测代价（2026-08-20 session）：29 次手动 subagent、15 小时 session、root spec 提交 5 次（spec-review 打回 2 次）。
 
 树深度上限 2 层（根 + 叶）。需要更深的任务拆成多个 root 分别 run，或先人工降层再走 CW。
 
@@ -90,9 +90,9 @@ designer 任务书含根节点拆分指引：brief 里有拆分建议时 designe
 
 ### 角色分工（review 独立）
 
-- **designer**：写 spec、修被打回的 spec、处置契约漂移。任务书内置已知契约坑的提醒——e2e-sh 标记行从哪产出、verify 在一次性干净 checkout 重跑（无提交者本机全局依赖）等——spec 一次写对的概率显著高于无提示手写
+- **designer**：写 spec、修被打回的 spec、处置契约漂移（首派任务书含验收五规则概要）
 - **developer**：实现 + 提交 build 证据 + 触发 verify
-- **reviewer**：spec-review 与 exec-review 由 runner 单独 spawn 的独立 reviewer 提交（developer 不自审）；模型可异源（见「模型配置」）
+- **reviewer**：spec-review 与 exec-review 由 runner 单独 spawn 的独立 reviewer 提交（developer 不自审）；spec-review 审查清单内嵌契约核对——e2e-sh 标记行从哪产出、干净 checkout 自含 install 等（机制生成的清单，不依赖转述质量）。契约错误因此在 spec-review 阶段被打回，而不是拖到 verify 解析失败后回炉；模型可异源（见「模型配置」）
 
 ### worktree 隔离与集成
 

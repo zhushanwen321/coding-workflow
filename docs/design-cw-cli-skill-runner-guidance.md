@@ -43,14 +43,14 @@ in scope：`skills/cw-cli/SKILL.md` 的结构与措辞。out of scope：cw 引�
 
 用户指令：「阅读文档……完后走 cw-cli 模式进行开发」。agent 实际行为序列（session 记录可查）：
 
-1. 读完 SKILL.md 全文（267 行）后，直接「建 cw 树并提交前两个可并行 unit 的 spec」——**模式选择的决策点从未出现**；
+1. 读完 SKILL.md 全文（266 行）后，直接「建 cw 树并提交前两个可并行 unit 的 spec」——**模式选择的决策点从未出现**；
 2. 全程手动：`cw create` × 6、手写 spec.json、`cw evidence submit` / `cw verify` / `cw review submit` 逐 unit 手动调；
 3. 用主 agent 的 subagent 工具派发 29 个 reviewer/dev（cw 要求 reviewer 身份，agent 正确地派了独立 subagent——但这正是 runner 内建的角色 spawn）；
-4. 后果：15 小时 session、root spec 迭代 7 次（e2e-sh 标记行契约、干净 checkout 缺 node_modules 两条教训）、29 个 subagent 0 个显式 close。
+4. 后果：15 小时 session、root spec 提交 5 次（spec-review 打回 2 次；e2e-sh 标记行契约、干净 checkout 缺 node_modules 两类教训都真实出现过）、29 个 subagent 0 个显式 close。（口径：提交数 / 重提数 / 打回数三个口径在事故 session 自审里混用——「迭代 7 次」实为 seq 跨度计数，账本实测 SpecSubmitted=5、fail=2）
 
 值得注意的是该 session 的自审环节也没发现模式问题：用户问「是否符合 cw-cli 的执行说明」，agent 用「手动流程的合规性」做基准给出了 B+ 评分，直到用户明确点破 runner 才意识到。**同一份 skill 既误导了执行，也误导了复盘**——说明问题在文档结构，不在 agent 一时的疏忽。
 
-### 2.2 文档结构测量（当前 SKILL.md，267 行）
+### 2.2 文档结构测量（当前 SKILL.md，266 行）
 
 | 证据 | 现状 | 效果 |
 |------|------|------|
@@ -66,7 +66,7 @@ in scope：`skills/cw-cli/SKILL.md` 的结构与措辞。out of scope：cw 引�
 
 两个加重因素（非根因，但解释了为什么没有任何纠偏信号）：
 
-1. **runner 的能力优势在 skill 里不可见**。runner 的 designer 任务书（`src/runner/brief.ts`）直接内置了 session 用 7 次 spec 迭代换来的两条教训——e2e-sh 标记行契约（"stdout 从哪产出 `<验收id> PASS` 标记行？"）与干净 checkout 自含 install（"verify 在一次性工作区重跑，没有提交者本机的全局依赖与环境"）。skill 完全没提这件事，agent 无法得知「走 runner = spec 一次写对的概率更高」。
+1. **runner 的能力优势在 skill 里不可见**。两条契约核对（e2e-sh 标记行追问「stdout 从哪产出 `<验收id> PASS` 标记行？」、干净 checkout 自含 install「verify 在一次性工作区重跑，没有提交者本机的全局依赖与环境」）确实内置于 runner——但位置在 **reviewer 审查清单**（`src/runner/brief.ts` 的 specReviewReviewerTasks）与 specContractBroken 回炉任务书，不在 designer 首派任务书（designerFirstTasks 只含验收五规则概要）。skill 完全没提 runner 的价值不在「spec 一次写对」（runner 不防写错，自动重派恰意味着允许多轮——specReviewDeadlock 预算默认 10 代），而在：契约错误在 spec-review 被**结构化拦截**（机制生成的清单，不依赖 agent 转述质量），比手动流程拖到 verify 解析失败后回炉更早更便宜，且不占主 agent 上下文。
 2. **上游 skill 的措辞错配**。pi-cw skill 三处称 cw-cli 为「单 agent 模式」（"能单 agent 线性走完的任务……走 cw-cli skill 单 agent 模式"），agent 读到的信号是「cw-cli = 我自己开车」。（该问题归 pi-cw 侧改造，见 xyz-agent 仓 `docs/todo/pi-cw-cw2-adaptation.md`。）
 
 ### 2.4 用户心智错配
@@ -87,8 +87,8 @@ in scope：`skills/cw-cli/SKILL.md` 的结构与措辞。out of scope：cw 引�
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 |
 |------|---------------|--------------|------|
-| **方案 1：结构重构（推荐）**——决策表后紧跟模式分流表；runner 章节提到手动流程之前并扩写（循环语义 / 角色 spawn / worktree / escalation / manual 验收语义 / 后台运行与监控）；「手动流程」改名为「手动流程（单 unit 调试与降级路径）」；Self-Check 拆双路径；description 改写 | 文档结构与 cw 2.0 组件定位一致：runner 是编排层，手动命令是账本原语。新增模式只改分流表一行 | 重写约 40% 内容（runner 节从 15 行扩到约 60 行，其余为移动与改名） | 低：纯文档；风险点是扩写内容的准确性——所有运行时断言须与 `src/runner/` 源码逐条核对（本设计 §3.3 已核对） |
-| 方案 2：最小补丁——决策表加一行 + 一句 [MANDATORY]「多 unit 必须 runner」 | 差：100 行手动流程的篇幅惯性仍在；session 教训证明 agent 自审时都不会回看 15 行的 runner 节，加一行表难以对抗整体结构 | 最低（~10 行改动） | 高：大概率高估效果，等于没改 |
+| **方案 1：结构重构（推荐）**——决策表后紧跟模式分流表；runner 章节提到手动流程之前并扩写（循环语义 / 角色 spawn / worktree / escalation / manual 验收语义 / 后台运行与监控）；「手动流程」改名为「手动流程（单 unit 调试与降级路径）」；Self-Check 拆双路径；description 改写 | 文档结构与 cw 2.0 组件定位一致：runner 是编排层，手动命令是账本原语。新增模式只改分流表一行 | 重写约 40% 内容（runner 节从 15 行扩到约 60 行，其余为移动与改名） | 中：纯文档，但 40% 重写有引入新事实错误的风险（本设计 D2⑦ 命令面错误即现成实例，靠 E6 逐条核对兑底） |
+| 方案 2：最小补丁——决策表加一行 + 一句 [MANDATORY]「多 unit 必须 runner」 | 差：100 行手动流程的篇幅惯性仍在；session 教训证明 agent 自审时都不会回看 15 行的 runner 节，加一行表难以对抗整体结构 | 最低（~10 行改动） | 高：大概率只能部分生效（分流表与 [MANDATORY] 与方案 1 共享，若其无效则两方案同存疑；但「结构惯性压过单行规则」的论证无实测支撑，不断言「等于没改」） |
 | 方案 3：拆两个 skill（cw-cli-manual + cw-runner） | 中：路由更硬，但 skill 发现层按 description 竞争，两 skill 描述必然大面积重叠，触发不稳定；用户「走 cw-cli」的心智要重训 | 高：发布两个 skill、处理发现竞争 | 中：触发不确定引入新失败模式 |
 
 **推荐方案 1**。理由：问题本质是信息架构，不是缺一行规则；方案 2 是对症状下药（session 自审已证明「有一节讲 runner」不足以让 agent 在决策点想起它）；方案 3 引入的发现层复杂度大于收益。
@@ -98,16 +98,16 @@ in scope：`skills/cw-cli/SKILL.md` 的结构与措辞。out of scope：cw 引�
 ### 3.3 关键决策与权衡
 
 - **D1：分流判据用「unit 数 ≥2 或需并行」，不用任务规模主观词**。判据必须机器可判（agent 建树前数得出来），「复杂任务」这类词会重新引入自由裁量。深度上限 2（根 + 叶）内的多 unit 全部适用 runner；超过 2 层的树 cw 2.0 不支持，skill 需明说此边界（超出时拆成多个 root 分别 run，或先人工降层）。
-- **D2：runner 扩写内容的边界 = 使用必需的运行时语义，不复制引擎文档**。入选标准：agent 不用就会踩坑的语义。清单（均已对照源码核实）：① 循环 = frontier → 批次派发 → 等退出 → 证据回收 → 重算，直到 root closed 或仅剩转人工（`src/runner/loop.ts`）；② 角色 spawn 与独立 reviewer 强制（mx-1，designer 任务书不含自审步骤）；③ 每 unit 独立 worktree + 集成 merge 回流（`worktree.ts` / `integrate.ts`）；④ manual 型免机器验证自动并入覆盖（`verify/run.ts`、`loop.ts`）；⑤ 转人工出口：specReviewDeadlock（默认打回 10 代）/ specContractDeadlock（回炉 ≥2 代）/ flakeReview（连挂 ≥2）→ stderr + 无其他可派发时 exit 1；⑥ `cw run` 前台阻塞长跑、Ctrl-C 后重跑从投影续接——实操上应用后台方式运行并定期 `cw status` 观察；⑦ 模型链：developer / designer 走 `CW_AGENT_MODEL`（缺省 `xiaomi-token-plan-cn/mimo-v2.5-pro`）；reviewer 走 `--reviewer-model` > `CW_REVIEWER_MODEL` > 回落 developer 同款（`cw run` CLI 面无 `--model` flag——实施时修正：原文「--model / CW_AGENT_MODEL / 默认」是 pi 适配器内部的 resolvePiModel 三级解析链，不是 run 的命令面）。✅ 以上 7 条均已读源码核实（2026-08-21，cw 2.0.0 dist；⑦ 按 `src/handlers/run.ts` / `src/runner/spawn/pi.ts` 实测修正）。
+- **D2：runner 扩写内容的边界 = 使用必需的运行时语义，不复制引擎文档**。入选标准：agent 不用就会踩坑的语义。清单（均已对照源码核实）：① 循环 = frontier → 批次派发 → 等退出 → 证据回收 → 重算，直到 root closed 或仅剩转人工（`src/runner/loop.ts`）；② 角色 spawn 与独立 reviewer 强制（mx-1，designer 任务书不含自审步骤）；③ 每 unit 独立 worktree + 集成 merge 回流（`worktree.ts` / `integrate.ts`）；④ manual 型免机器验证自动并入覆盖（`verify/run.ts`、`loop.ts`）；⑤ 转人工出口：specReviewDeadlock（默认打回 10 代）/ specContractDeadlock（回炉 ≥2 代）/ flakeReview（连挂 ≥2）/ 同 unit spawn 连续 2 次 TIMEOUT（期间无账本进展，不自动换模型重试）→ stderr + 无其他可派发时 exit 1；⑥ `cw run` 前台阻塞长跑、Ctrl-C 后重跑从投影续接——实操上应用后台方式运行并定期 `cw status` 观察；⑦ 模型链：developer / designer 走 `CW_AGENT_MODEL`（缺省 `xiaomi-token-plan-cn/mimo-v2.5-pro`）；reviewer 走 `--reviewer-model` > `CW_REVIEWER_MODEL` > 回落 developer 同款（`cw run` CLI 面无 `--model` flag——实施时修正：原文「--model / CW_AGENT_MODEL / 默认」是 pi 适配器内部的 resolvePiModel 三级解析链，不是 run 的命令面）。✅ 以上 7 条均已读源码核实（2026-08-21，cw 2.0.0 dist；⑦ 按 `src/handlers/run.ts` / `src/runner/spawn/pi.ts` 实测修正）。
 - **D3：手动流程内容保留，除事实性修复**。问题在位置与定性，不在教学结构；但实施核对（E6）发现两处命令照文档执行会 exit 1（spec-review 缺必填 `--role reviewer`（mx-3）；exec-review 缺必填 `--evidence-refs`（rv-2））及三处过时（verify 红阶段 flag 方向实为 `--no-red-phase`（默认执行）；spec gate 表只列 ①-⑥ 实为九规则；「两个适配器」实为四个），实施时一并修复（见文末「实施修正记录」）。「session 验证了可操作性」的说法不成立——session 是靠 exit 1 错误文案现场自救补的参数，不是文档准确。
 - **D4：description 两模式并陈，消除手动暗示**。改为「…两种模式：多 unit 任务用 runner 自动调度（`cw run --spawn pi`），单 unit 调试用手动逐步交证据（create → evidence → verify）…」。description 是 skill 触发层面的第一印象，与正文分流表口径一致。
 - **D5：Self-Check 拆双路径**。runner 路径判据 = root closed + 无未处置的转人工清单 + `cw report --root <id>` 验收覆盖无 ✗；手动路径维持现 5 条。防止「runner 跑完了但一半单元转人工没人管」被当成完成。
 
 ## 4. 验收
 
-> 全部在真实 pi session 验证（skill 的消费场景就是 agent 读 skill），非单测非文档走读。实施方式：coding-workflow 仓改完 SKILL.md 后无需重新发版即可测——`~/.agents/skills/cw-cli` 是指向 npm 安装目录的 symlink，但本地仓改动要等发版才生效；测试期可用 `XYZ_EXTENSION_PATHS` 或直接改 npm 目录下的副本模拟（以实际测试环境为准，实施时确认最快的生效路径）。
+> 全部在真实 pi session 验证（skill 的消费场景就是 agent 读 skill），非单测非文档走读。实施方式：`~/.agents/skills/cw-cli` 是指向 npm 安装目录的 symlink，pi 环境下**直接改 npm 目录下的副本即刻全局生效**（无需 XYZ_EXTENSION_PATHS——那是 xyz-agent 的机制；副作用是影响所有 session 且会被下次 `npm install -g` 覆盖，测后需恢复）；正式生效走发版。
 
-- **场景 1（回溯 G1/G4，核心场景）**：开一个全新 pi session，给它一个 ≥3 unit 的真实编码任务（例：「走 cw-cli 模式开发 Y」，Y 选自 xyz-agent 或 coding-workflow 仓的真实小特性，需拆 3+ unit），观察：agent 是否在不加任何提示的情况下选择 `cw run --root <id> --spawn pi` 并后台运行；全程是否不手动派 dev/reviewer subagent。通过标准 = agent 首轮行动即建树 + 启动 runner，且能说出 escalation 出现时的处理路径。
+- **场景 1（回溯 G1/G4，核心场景）**：开一个全新 pi session，给它一个 ≥3 unit 的真实编码任务（例：「走 cw-cli 模式开发 Y」，Y 选自 xyz-agent 或 coding-workflow 仓的真实小特性，需拆 3+ unit），观察：agent 是否在不加任何提示的情况下选择 `cw run --root <id> --spawn pi` 并后台运行；全程是否不手动派 dev/reviewer subagent。通过标准 = agent 首轮行动即建树 + 启动 runner。另补一个恰为 2 unit 的案例（D1 判据临界值零覆盖问题）：验证 2-unit 任务同样路由到 runner。escalation 处理能力用提问式验证（session 中直接问 agent「若 stderr 出现转人工指引你怎么办」——escalation 未必自然发生，不能作为被动观察项）；事后回看方式：session jsonl / subagent 调用记录。
 - **场景 2（回溯 G2）**：全新 session 给单 unit 任务（例：「给 cw 的 frontier 输出加 --json 之外的一个只读小改动并走 CW 验证」）。通过标准 = agent 走手动流程且不启动 runner。
 - **场景 3（回溯 G3，manual 语义）**：全新 session 给含人工 GUI 验收的多 unit 任务。通过标准 = agent 不把这些验收声明为 manual 型后放任 runner 自动并入覆盖，而是采用 gate 脚本方案或显式说明人工验收点在 runner 之外。
 - **场景 4（回溯 G1，复盘视角）**：全新 session 里粘贴 §2.1 的失败案例摘要，问「这个 session 符合 cw-cli skill 吗」。通过标准 = agent 的首次回答即指出模式选择错误（应走 runner），而非只对齐手动流程做合规评分。
@@ -134,10 +134,11 @@ in scope：`skills/cw-cli/SKILL.md` 的结构与措辞。out of scope：cw 引�
 1. **D3「原样保留」与 E6 矛盾**：手动流程两处命令照抄必 exit 1——spec-review 缺 `--role reviewer`（`src/handlers/review-submit.ts`，mx-3 起 spec-review 的 role 必填且必须 reviewer）；exec-review 缺 `--evidence-refs`（rv-2 起必填 ≥1 已入账 runId）。D3 已改写为「内容保留，除事实性修复」。教训：写「原样保留」前应先核对内容是否仍与实现一致——skill 写于 mx/rv 波次之前，后续波次改了命令面没回写 skill。
 2. **D2 ⑦ 模型链原文不准确**：`cw run` CLI 面无 `--model` flag（`src/handlers/run.ts:2`）；原文三级链是 pi 适配器内部解析（`src/runner/spawn/pi.ts` resolvePiModel）。实际面 = developer 走 `CW_AGENT_MODEL`（缺省 mimo）、reviewer 走 `--reviewer-model` / `CW_REVIEWER_MODEL` > 回落 developer 同款。D2 ⑦ 已改写。
 3. **测试生效路径已确认**（§4 待验证检查点 ①）：`~/.agents/skills/cw-cli` symlink 直指 npm 安装目录（`~/.nvm/versions/node/v24.11.1/lib/node_modules/@zhushanwen/coding-workflow/skills/cw-cli`），直接编辑 npm 目录下的 SKILL.md 副本即对新 session 生效；正式生效走 quick-release 发版（本次实施走发版）。
-4. E6 兜底核对补充修复：spec gate 表补全 ⑦⑧⑨（含 pytest 禁 `-q`/`--quiet` 及前缀缩写、vitest/playwright 的 `--reporter=json` 等号形态唯一幂等等契约）；适配器节改四适配器（vitest / e2e-sh / pytest / playwright，后两者需显式 `runner` 声明）；命令一览补 `report --root`、`run --reviewer-model` / `--max-spec-rejects`、`review submit --role` / `--evidence-refs`；环境变量表补 `CW_REVIEWER_MODEL`；转人工四出口阈值全部源码核实（specReviewDeadlock 默认 10 代 / specContractDeadlock 回炉 ≥2 代 / flakeReview 连挂 ≥2 / spawn 连续 2 次 TIMEOUT）；verify 超时默认值核实（unit 600000ms / e2e 1800000ms，`src/verify/run.ts` 常量）；前置检查补「`--spawn pi` 需 PATH 有 pi」。
+4. E6 兑底核对补充修复：spec gate 表补全 ⑦⑧⑨（含 pytest 禁 `-q`/`--quiet` 及前缀缩写、vitest/playwright 的 `--reporter=json` 等号形态唯一幂等等契约）；适配器节改四适配器（vitest / e2e-sh / pytest / playwright，后两者需显式 `runner` 声明）；命令一览补 `report --root`、`run --reviewer-model` / `--max-spec-rejects`、`review submit --role` / `--evidence-refs`；环境变量表补 `CW_REVIEWER_MODEL`；转人工四出口阈值全部源码核实（specReviewDeadlock 默认 10 代 / specContractDeadlock 回炉 ≥2 代 / flakeReview 连挂 ≥2 / spawn 连续 2 次 TIMEOUT）；verify 超时默认值核实（unit 600000ms / e2e 1800000ms，`src/verify/run.ts` 常量）；前置检查补「`--spawn pi` 需 PATH 有 pi」。
+5. **对抗式审查修正（2026-08-22，依 docs/design-cw-cli-skill-runner-guidance.review.md）**：实施后收到对抗式审查报告（3 must-fix / 7 suggestions），逐条源码与账本复核后采纳——① D2⑦ 命令面错误已在实施时发现修正（见第 2 条）；② §2.3「designer 任务书内置两条教训」定位错误：契约核对实际在 reviewer 审查清单（specReviewReviewerTasks）与回炉任务书，SKILL.md「角色分工」节同步把契约拦截表述从 designer 条目移到 reviewer 条目，删除「spec 一次写对概率更高」的未验证因果；③ §2.1「迭代 7 次」与账本不符（实测 SpecSubmitted=5 / fail=2），SKILL.md 模式分流表同步改为实测口径；④ suggestions 采纳 6 条（266 行计数、D2⑤ 补 TIMEOUT×2 第四出口、方案对比风险对称化、场景 1 补 2-unit 临界案例与提问式验证、测试生效路径去 XYZ_EXTENSION_PATHS、附录 T005-T007 定位修正）。教训：「锚点已核实」的声明本身要被对抗审查——本设计的 ⑦ 与 §2.3 两条恰是「把事故 session 自审的未验证说法当作已核实事实」。本条记录与 review.md（认知外产物，不入 git）构成修正的完整依据。
 
 ## 附：交叉引用
 
-- 事故 session：pi session `01a01fda-caa8-7ebc-8cd4-4db98745056a`（T005-T007 含该 session 的自审与改进提案原文）
+- 事故 session：pi session `01a01fda-caa8-7ebc-8cd4-4db98745056a`（自审 / B+ 评分 / 用户点破原话位于 session 中后段，部分在 compaction 折叠区，session_read 常规检索不可见；复现：grep 原始 jsonl「我记得 cw-cli」「Root unit spec」。T005-T007 实为 UI 小优化，不含自审内容）
 - pi-cw / cw-tool 侧配套改造设计：xyz-agent 仓 `docs/todo/pi-cw-cw2-adaptation.md`
-- 相关源码锚点：`src/runner/loop.ts`（调度循环与转人工）、`src/runner/brief.ts`（designer 任务书内置契约）、`src/runner/spawn/pi.ts`（pi 无头 spawn 形态）、`src/verify/run.ts`（manual 免机器验证）
+- 相关源码锚点：`src/runner/loop.ts`（调度循环与转人工）、`src/runner/brief.ts`（reviewer 审查清单契约与回炉任务书）、`src/runner/spawn/pi.ts`（pi 无头 spawn 形态）、`src/verify/run.ts`（manual 免机器验证）
