@@ -307,3 +307,4 @@ Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold pro
 - refactor(config): sink testRunner.cwd to per-wave testCwd (wave 1) (3e29a00)
 
 - quick-release skill for fast markdown-only publishing; tech-design problem-definition-first + review fact-severity grading (#16)
+- cw-cli skill: runner as default path for multi-unit tasks + stale-command fixes (--role/--evidence-refs/--no-red-phase/nine gate rules/four adapters) (#18)

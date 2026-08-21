@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/coding-workflow",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "packageManager": "npm@11.6.2",
   "description": "CI for AI coding agents: event-sourced ledger, evidence gates, and a deterministic runner that turns briefs into verified units",
   "type": "module",
