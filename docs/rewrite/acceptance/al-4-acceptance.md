@@ -79,6 +79,6 @@ npx eslint tests/al-4-e2e-layer.test.ts tests/fixtures/<新增>（如有）
 
 ## 8. status
 
-pending → building → **pending 派发**（2026-08-22 基线入 git，builder 派发；al-2 committed 0902c53 + al-3 committed 23f4163，模型与防线均在场）
+pending → building（两任接力：前任配额中断留 814 行，续任逐项源码核对零修改保留）→ built → verifying → **verified**（2026-08-22：verifier 独立验收 PASS，报告 al-4-report.md——防篡改 diff 空 + sha256 48663707…；**代笔保真度深查**：integrateLikeLoop 与 loop.ts runIntegrationDispatch 逐字段对照（唯一偏差 timeoutMs 已披露行为等价）+ 真实 loop（--spawn human）pass/fail 双向复验 acceptanceIds/reportHash 无偏差——无「自说自话」缺口；对抗 4 条全过（R1 反向注入端到端拦截/红阶段零回归/drift 任务书渲染/真实 loop 对照）；波后三项全过——S4 真实 pi reviewer verdict=fail 且 comment 第六维原文精确命中（证据 .xyz-harness/al4-s4-evidence/）、G6 文档核对 F1-F7 处置栏无待定、A1/A6 独立副本重放（A6 全真实 loop）。全量 79 文件 618 用例一次全绿）
 
 > 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
