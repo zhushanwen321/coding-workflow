@@ -30,6 +30,31 @@ import type { AgentRole } from "./spawn/types.js";
 const MS_PER_MINUTE = 60_000;
 
 /**
+ * spec-review 代数中间档出声阈值（lv-3，设计 D5）：打回代数 ≥3 且 < 预算逐代
+ * 一声一行提示（不进停派 map、不改变派发行为——给用户 3 代即可介入的可见性，
+ * 不必等 10 代爆发一次性转人工）。与 brief.ts 的审查上下文历史截断
+ * SPEC_REVIEW_HISTORY_MAX = 3 同源校准（3-9 代最多 7 行，非噪音）。
+ */
+const SPEC_REVIEW_PROGRESS_NOTICE_MIN = 3;
+
+/**
+ * spec-review 代数中间档的一行提示（lv-3）：文本含代数与预算值与介入命令——
+ * 不停派、无强制动作，只给「若往返持续可提前介入」的选择权（复杂 spec 合理
+ * 往返 3-5 代存在，3 代即停派会误杀——中间档与停派是两件事）
+ */
+function specProgressNoticeLine(
+  rootId: string,
+  unitId: string,
+  failCount: number,
+  maxSpecRejects: number,
+): string {
+  return (
+    `cw run: unit "${unitId}" 的 spec-review 已打回 ${failCount} 代（预算 ${maxSpecRejects}）` +
+    `——若往返持续，可提前人工介入：cw run --root ${rootId} --spawn human`
+  );
+}
+
+/**
  * 转人工指引（连续 TIMEOUT 封顶时逐 unit 打印；错误指向恢复动作，规则 16）。
  * lv-2 起单次 spawn 超时可经 --spawn-timeout-ms / CW_SPAWN_TIMEOUT_MS 调大——
  * 第 3 条显示本循环实际值与入口（spawnTimeoutMs 由 loop 传入，非固定常量）。
@@ -225,18 +250,20 @@ function contractAnnounceSignature(facts: SpecContractFacts): string {
 
 /**
  * 四类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
- * 打回活锁 / lv-2 buildDrift 缓慢进展）：事实来自账本重放（flakeReviewFacts /
- * specContractFacts / specReviewFailCounts——全部「重提清连挂、代数类计数不清
- * 零」语义；buildDriftFacts 由 loop 算好传入——facts 只算一次，出声与派发计算
- * 消费同一份），人工处置写入新事件后投影自然消失。出声去重分两档（fx-6 X5）：
- * flake 与回炉活锁按稳定签名（unitId + 排序后 acceptanceId 集合，回炉再加代数
- * 档）——连挂 runId 单调追加只改文本不改本质事实，不重出；spec 打回维度维持完
- * 整消息文本比较（mx-3 语义）——各代打回意见不同是有意重出（新代意见是新事实）
- * ；buildDrift 签名 = specEpoch:capped（lv-2——必须含 specEpoch：新 spec 周期
- * 再次达预算时签名变化重出声，防「回炉后二次触发静默」；同周期内证据数继续
- * 增长不重出）。消息文本本身不变（仍含 runIds 与恢复指引）。返回事实映射供
- * computeDispatchTargets 复用（派发排除与出声同口径同源，不重放两遍）。其他
- * root 的 unit（同一账本多 root）不在本 run 职责内，跳过。
+ * 打回活锁 / lv-2 buildDrift 缓慢进展）+ lv-3 spec-review 代数中间档：事实来自
+ * 账本重放（flakeReviewFacts / specContractFacts / specReviewFailCounts——全部
+ * 「重提清连挂、代数类计数不清零」语义；buildDriftFacts 由 loop 算好传入——
+ * facts 只算一次，出声与派发计算消费同一份），人工处置写入新事件后投影自然
+ * 消失。出声去重分两档（fx-6 X5）：flake 与回炉活锁按稳定签名（unitId + 排序后
+ * acceptanceId 集合，回炉再加代数档）——连挂 runId 单调追加只改文本不改本质
+ * 事实，不重出；spec 打回维度维持完整消息文本比较（mx-3 语义）——各代打回
+ * 意见不同是有意重出（新代意见是新事实）；中间档同为完整文本比较（lv-3——
+ * 代数进文本必然逐代不同，同代数不重出）；buildDrift 签名 = specEpoch:capped
+ * （lv-2——必须含 specEpoch：新 spec 周期再次达预算时签名变化重出声，防「回炉
+ * 后二次触发静默」；同周期内证据数继续增长不重出）。消息文本本身不变（仍含
+ * runIds 与恢复指引）。返回事实映射供 computeDispatchTargets 复用（派发排除
+ * 与出声同口径同源，不重放两遍）。其他 root 的 unit（同一账本多 root）不在本
+ * run 职责内，跳过。
  */
 export function announceManualEscalations(
   rootId: string,
@@ -250,6 +277,8 @@ export function announceManualEscalations(
     flake: Map<string, string>;
     contract: Map<string, string>;
     spec: Map<string, string>;
+    /** lv-3：spec-review 代数中间档（3 ≤ 代数 < 预算）出声去重（完整文本比较） */
+    specProgress: Map<string, string>;
     buildDrift: Map<string, string>;
   },
 ): {
@@ -288,10 +317,27 @@ export function announceManualEscalations(
   }
   // mx-1 MF2 specReviewDeadlock：spec-review 打回代数 ≥ 预算（mx-4 参数化）。
   // 去重维持完整消息文本比较（fx-6 X5 不改本维度）：各代打回意见内嵌在消息里，
-  // 代数从 N 到 N+1 意味着新代 fail 意见——是有意重出
+  // 代数从 N 到 N+1 意味着新代 fail 意见——是有意重出。
+  // lv-3 中间档：3 ≤ 代数 < 预算逐代一声一行提示（区间与停派互斥——达预算走
+  // 下方完整转人工文案；dedup 同为完整文本比较：代数进文本必然逐代不同，同代
+  // 数不重出；不进停派 map、不改变任何派发行为）
   const specFails = specReviewFailCounts(events);
   for (const [unitId, failCount] of specFails) {
-    if (!subtreeIds.has(unitId) || failCount < maxSpecRejects) {
+    if (!subtreeIds.has(unitId)) {
+      continue;
+    }
+    if (
+      failCount >= SPEC_REVIEW_PROGRESS_NOTICE_MIN &&
+      failCount < maxSpecRejects
+    ) {
+      const notice = specProgressNoticeLine(rootId, unitId, failCount, maxSpecRejects);
+      if (dedup.specProgress.get(unitId) !== notice) {
+        dedup.specProgress.set(unitId, notice);
+        emitErr(notice);
+      }
+      continue;
+    }
+    if (failCount < maxSpecRejects) {
       continue;
     }
     const message = specDeadlockEscalationMessage(

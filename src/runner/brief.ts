@@ -40,12 +40,14 @@ import { unitBranchName } from "./worktree.js";
 
 /**
  * 会派发 spawn 的 frontier 维度（specReviewDeadlock / flakeReview /
- * specContractDeadlock 是转人工维度，无任务书——loop 的派发排除清单与本 Exclude
- * 三处联动，设计 mx-5 D2「specReviewDeadlock 同款」）
+ * specContractDeadlock / buildDrift 是转人工维度，无任务书——loop 的派发排除
+ * 清单、DISPATCH_SHAPE 与本 Exclude 三处联动，设计 mx-5 D2「specReviewDeadlock
+ * 同款」；lv-3 起 buildDrift 入列：三处全量枚举回到与 frontier 停派维度实态
+ * 对齐的单一事实源，DISPATCH_SHAPE 随之回收为完整 Record）
  */
 export type DispatchDimension = Exclude<
   keyof FrontierGroups,
-  "specReviewDeadlock" | "flakeReview" | "specContractDeadlock"
+  "specReviewDeadlock" | "flakeReview" | "specContractDeadlock" | "buildDrift"
 >;
 
 /** brief 渲染的派发目标（loop 的 DispatchTarget 结构子集——渲染只需这三元组） */
@@ -74,6 +76,40 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
 };
 
 /**
+ * reviewer 审查上下文的历代意见截断上限（lv-3，设计 D5）：任务书只内嵌最近
+ * SPEC_REVIEW_HISTORY_MAX 代 fail comment 全文——10 代意见全文可达数千字，任务书
+ * 膨胀会挤压 spec 空间；截断保留代数总览（头行「共 N 代，以下为最近 3 代」），
+ * 完整历史见账本 verdict。与 escalations 的中间档阈值 3 同源校准
+ */
+const SPEC_REVIEW_HISTORY_MAX = 3;
+
+/**
+ * lv-3「审查上下文」段（设计 D5）：打回历史 ≥1 代时插在 reviewer 任务书头部。
+ * N = 当前代数 = failHistory.length + 1（本代是第 N 代审查）；每代摘要 = 该代
+ * 首条 fail comment 全文（调用侧传入的 specReviewFailComments 本就取每代首条
+ * ——口径天然对齐）。截断时保留全局代数编号（「截最近 3 代」不重编号——第 k 代
+ * 的 k 是全局序，reviewer 交叉对照账本时不产生偏移）。0 代历史返回空数组（首审
+ * 零噪音，R7）。
+ */
+function specReviewContextSection(failHistory: readonly string[]): string[] {
+  if (failHistory.length === 0) {
+    return [];
+  }
+  const total = failHistory.length;
+  const recent = failHistory.slice(-SPEC_REVIEW_HISTORY_MAX);
+  const firstGeneration = total - recent.length + 1;
+  return [
+    `## 审查上下文（第 ${total + 1} 代）`,
+    `本 spec 已被打回 ${total} 代。历代意见摘要（全文见账本 verdict）：`,
+    ...(total > SPEC_REVIEW_HISTORY_MAX
+      ? [`共 ${total} 代，以下为最近 ${SPEC_REVIEW_HISTORY_MAX} 代：`]
+      : []),
+    ...recent.map((comment, i) => `  - 第 ${firstGeneration + i} 代：${comment}`),
+    "审查指引：前代意见已修复的不重复打回（除非修复引入回归）；聚焦本轮增量。",
+  ];
+}
+
+/**
  * mx-1：spec-review 的 reviewer 任务书（specReviewPending 派发形态）。审查语义
  * 按 canon §1.3 信任链与 D3「reviewer 第一审对象是验收集合」逐项列出。spec 原文经
  * attachments 绝对路径内嵌（S2：渲染时由 attachmentsDir 计算，不依赖相对路径
@@ -89,15 +125,23 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
  * al-3：追加第六维「验收成本与层级归属」（设计《验收分层与成本治理》D6）——
  * gate 规则⑪的词法检查对 wrapper/别名封装形态不可见，第六维是全量回归下放
  * 的唯一语义防线；pass 逐项显式「核过无问题」的既有约定句对⑥同样生效。
+ *
+ * lv-3：签名加第三参 failHistory（历代打回意见，接口锚定 = 历史重建需要原始
+ * 事件流、投影无跨类型顺序——loop 侧用 specReviewFailComments 算好传入，渲染层
+ * 保持纯函数）；历史 ≥1 代时头部插入「审查上下文」段（D5：reviewer 看得到前
+ * 几代挑过什么，审查焦点不再每轮重掷——无历史时每代 reviewer 是无状态重 spawn，
+ * 同一问题反复争论或每轮挑新问题的方差根源）。
  */
 function specReviewReviewerTasks(
   unit: SequencedUnitProjection,
   projectCwd: string,
+  failHistory: readonly string[],
 ): string {
   const attachDir = attachmentsDir(getCwHome(), projectCwd, unit.unitId);
   return [
     "## 你的任务（reviewer：spec-review）",
     "你是独立 reviewer——审查他人提交的 spec 并给出结论（pass / fail），不修改 spec。",
+    ...specReviewContextSection(failHistory),
     "",
     `1. 读 spec 原文：最后一条 SpecSubmitted 的原文副本在 ${attachDir}/ 下`,
     `   （内容寻址文件 = <sha256>.<原文件名>；结构化视图可 cw report --unit ${unit.unitId}）。`,
@@ -121,6 +165,9 @@ function specReviewReviewerTasks(
     "      冻结契约——签名 / 期望文件任一不符，集成期必炸（不得只看本 unit 自身声明）。",
     "   ⑤ 干净 checkout 可执行性：命令用到的依赖是否全在 package.json 声明、命令是否",
     "      自带 install（verify 在一次性工作区重跑，没有提交者本机的全局依赖与环境）。",
+    "      命令不得引用检出树外的绝对路径/工作区路径（绝对 cd、~ 起始路径、.cw-worktrees",
+    "      ——gate 规则⑫词法漏报面在此语义兜底：引号包裹/动态构造/相对上跳/自定义工作区",
+    "      名词法拦不住）。",
     "   ⑥ 验收成本与层级归属：全量回归形态是否出现在叶子 spec 的 unit 层——含裸命令",
     "      （无文件参数的全量 vitest / 全仓 lint、test script）与封装形态（command 指向",
     "      wrapper 脚本或 script 别名的，须追进脚本/别名内容看实际跑什么——gate 规则⑪",
@@ -452,6 +499,7 @@ function renderBrief(
   rootId: string,
   projectCwd: string,
   workdir: string,
+  specReviewFailHistory: readonly string[] = [],
 ): string {
   let briefContent: string;
   try {
@@ -475,7 +523,7 @@ function renderBrief(
           : target.dimension === "specContractBroken"
             ? specContractBrokenTasks(unit, projectCwd)
             : target.dimension === "specReviewPending"
-              ? specReviewReviewerTasks(unit, projectCwd)
+              ? specReviewReviewerTasks(unit, projectCwd, specReviewFailHistory)
               : target.dimension === "specReady"
                 ? designerFirstTasks(unit, projection)
                 : target.dimension === "buildReady"
@@ -506,6 +554,10 @@ function renderBrief(
  * brief 落盘到 <artifactDir>/<unitId>.<role>.brief.md（fx-4：产物根随 run 级 topic
  * 目录，worktree 内不再有任何 cw 自身文件）。覆盖写语义不变——brief 内容随投影
  * 变化，append 会拼接出多版本任务书（设计 D2）。
+ *
+ * lv-3：可选参 specReviewFailHistory（specReviewPending 形态的「审查上下文」段
+ * 输入——历代打回意见，loop 侧用 specReviewFailComments(events, unitId) 算好传入；
+ * 历史重建需原始事件流（投影无跨类型顺序），渲染层保持纯函数不读账本）。
  */
 export function writeBriefFile(
   artifactDir: string,
@@ -515,9 +567,13 @@ export function writeBriefFile(
   rootId: string,
   projectCwd: string,
   workdir: string,
+  specReviewFailHistory?: readonly string[],
 ): string {
   const path = join(artifactDir, `${target.unitId}.${target.role}.brief.md`);
   mkdirSync(artifactDir, { recursive: true });
-  writeFileSync(path, renderBrief(projection, unit, target, rootId, projectCwd, workdir));
+  writeFileSync(
+    path,
+    renderBrief(projection, unit, target, rootId, projectCwd, workdir, specReviewFailHistory),
+  );
   return path;
 }

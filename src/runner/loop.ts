@@ -135,6 +135,7 @@ import {
   SPEC_CONTRACT_MAX_GENERATIONS,
   SPEC_REVIEW_DEADLOCK_FAILS,
   type SpecContractFacts,
+  specReviewFailComments,
   specVerdictTsBySeq,
   splitChildrenNotCreated,
   splitOf,
@@ -336,14 +337,17 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
  * 活锁 / 随机挂 / 回炉活锁 / 缓慢进展对机器无解），转人工指引由 runLoopMain 的
  * specDeadlockEscalationMessage / flakeEscalationMessage /
  * specContractDeadlockEscalationMessage / buildDriftEscalationMessage 出声。
- * lv-2 起 Partial：buildDrift 属停派维度无派发形态（DispatchDimension 的
- * Exclude 清单在 brief.ts，本文件不代改——消费侧 undefined 防御兜底）。
+ * lv-3 回收完整 Record：buildDrift 已入 DispatchDimension 的 Exclude 清单
+ * （brief.ts——四处停派维度单一事实源），computeDispatchTargets 的派发排除
+ * 黑名单先 continue 封死停派维度的到表路径，本表对 DispatchDimension 必然满射
+ * ——lv-2 的 Partial 化与 shape === undefined 防御分支随之退役（类型即证明）。
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
  * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
  * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
  * 模板（内嵌解析失败原文，非 reviewer comment）。 */
-const DISPATCH_SHAPE: Partial<
-  Record<DispatchDimension, { role: AgentRole; integration: boolean }>
+const DISPATCH_SHAPE: Record<
+  DispatchDimension,
+  { role: AgentRole; integration: boolean }
 > = {
   specReady: { role: "designer", integration: false },
   specReviewPending: { role: "reviewer", integration: false },
@@ -355,6 +359,67 @@ const DISPATCH_SHAPE: Partial<
   buildReady: { role: "developer", integration: false },
   execReviewReady: { role: "reviewer", integration: false },
 };
+
+/**
+ * 连续 TIMEOUT 计数的进展清零 + 转人工判定（runLoopMain 每轮派发计算之前调用）。
+ * 清零先于判定：被超时 kill 的 agent 若死前已写账本，本轮先清零——不冤枉有产出
+ * 的 agent；清零后仍达阈值的才转人工（本轮派发计算即排除）。顺序不能反：先判定
+ * 后清零会把「有产出的第二次 TIMEOUT」也误转人工。返回最新水位（调用侧回写）。
+ */
+function settleTimeoutEscalations(
+  events: readonly LedgerEvent[],
+  timeoutStreaks: Map<string, TimeoutStreak>,
+  lastUnitSeqs: Map<string, number>,
+  escalated: Map<string, AgentRole>,
+  rootId: string,
+  artifactDir: string,
+  spawnTimeoutMs: number,
+): Map<string, number> {
+  const unitSeqs = unitEventHighWaterSeqs(events);
+  for (const [unitId, seq] of unitSeqs) {
+    if (seq > (lastUnitSeqs.get(unitId) ?? 0)) {
+      timeoutStreaks.delete(unitId);
+    }
+  }
+  for (const [unitId, streak] of timeoutStreaks) {
+    if (streak.count >= AGENT_TIMEOUT_ESCALATION_AFTER && !escalated.has(unitId)) {
+      escalated.set(unitId, streak.role);
+      // lv-2：文案第 3 条显示本循环实际的 spawn 超时值与调大入口
+      emitErr(escalationMessage(rootId, unitId, streak.role, artifactDir, spawnTimeoutMs));
+    }
+  }
+  return unitSeqs;
+}
+
+/**
+ * brief 落盘（lv-3 起带审查上下文取数）：specReviewPending 形态注入历代打回
+ * 意见——历史重建需原始事件流（投影无跨类型顺序），loop 侧用
+ * specReviewFailComments 算好传入，渲染层保持纯函数；其他形态不注入
+ * （writeBriefFile 的可选参透传，无该段渲染）
+ */
+function writeBriefWithHistory(
+  artifactDir: string,
+  target: DispatchTarget,
+  unit: SequencedUnitProjection,
+  projection: SequencedProjection,
+  rootId: string,
+  projectCwd: string,
+  workdir: string,
+  events: readonly LedgerEvent[],
+): string {
+  return writeBriefFile(
+    artifactDir,
+    target,
+    unit,
+    projection,
+    rootId,
+    projectCwd,
+    workdir,
+    target.dimension === "specReviewPending"
+      ? specReviewFailComments(events, target.unitId)
+      : undefined,
+  );
+}
 
 /**
  * 派发对象集合：消费 readonly/frontier.ts 的 computeFrontier（与 `cw frontier`
@@ -420,10 +485,6 @@ function computeDispatchTargets(
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
-    if (shape === undefined) {
-      // 类型防御（DISPATCH_SHAPE Partial 化）：停派维度无派发形态，不可达
-      continue;
-    }
     const unitInFlight = inFlight.some(
       (flight) => flight.unitId === unit.unitId,
     );
@@ -1110,6 +1171,8 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // mx-1 MF2 spec 打回活锁转人工的出声去重（维持 mx-3 完整消息文本签名：各代
   // 打回意见不同是有意重出，fx-6 X5 明确不改本维度）
   const announcedDeadlock = new Map<string, string>();
+  // lv-3 spec-review 代数中间档出声去重（完整文本比较：代数进文本必然逐代不同，同代数不重出）
+  const announcedSpecProgress = new Map<string, string>();
   // mx5-2 解析失败回炉活锁转人工的出声去重（fx-6 X5 改稳定签名：排序后条目
   // 集合 + 代数档，runId 追加与上限内代数增长不重出）
   const announcedContractDeadlock = new Map<string, string>();
@@ -1212,24 +1275,9 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       return 0;
     }
 
-    // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前：被超时 kill 的
-    // agent 若死前已写账本，本轮先清零——不冤枉有产出的 agent；清零后仍达阈值的
-    // 才转人工，本轮流派发即排除）。顺序不能反：先判定后清零会把「有产出的
-    // 第二次 TIMEOUT」也误转人工
-    const unitSeqs = unitEventHighWaterSeqs(events);
-    for (const [unitId, seq] of unitSeqs) {
-      if (seq > (lastUnitSeqs.get(unitId) ?? 0)) {
-        timeoutStreaks.delete(unitId);
-      }
-    }
-    lastUnitSeqs = unitSeqs;
-    for (const [unitId, streak] of timeoutStreaks) {
-      if (streak.count >= AGENT_TIMEOUT_ESCALATION_AFTER && !escalated.has(unitId)) {
-        escalated.set(unitId, streak.role);
-        // lv-2：文案第 3 条显示本循环实际的 spawn 超时值与调大入口
-        emitErr(escalationMessage(opts.rootId, unitId, streak.role, artifactsDir, spawnTimeoutMs));
-      }
-    }
+    // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前——顺序语义见
+    // settleTimeoutEscalations 注释）
+    lastUnitSeqs = settleTimeoutEscalations(events, timeoutStreaks, lastUnitSeqs, escalated, opts.rootId, artifactsDir, spawnTimeoutMs);
 
     // 三类转人工出口的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
     // 打回活锁 / lv-2 buildDrift 缓慢进展——语义与去重见 announceManualEscalations
@@ -1241,6 +1289,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       flake: announcedFlake,
       contract: announcedContractDeadlock,
       spec: announcedDeadlock,
+      specProgress: announcedSpecProgress,
       buildDrift: announcedBuildDrift,
     });
 
@@ -1366,7 +1415,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         );
         continue;
       }
-      const briefPath = writeBriefFile(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir);
+      const briefPath = writeBriefWithHistory(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir, events);
       // mx-1 S3：reviewer role 注入异源模型（复用 pi 的 CW_AGENT_MODEL → --model
       // 翻译链，req.env 级；未配置时不注入——reviewer 与 developer 同模型链）。
       // mx-3 S7：reviewer flight 的存活窗口登记（抢答豁免收紧后，豁免只认

@@ -107,7 +107,7 @@ verify（干净重跑）的判定链，共同原则是**伪造成本 ≥ 干活�
 
 verify 重跑产物的失败二分类（mx5-1/mx5-2）：
 
-- **解析失败** = `AcceptanceRunResult.parseError === true`（无法产出可判定产物）。来源**非穷举**——完整集合以四适配器 parse/translate 实现（`src/testrun/`）与 `src/verify/run.ts` 的路由为准，代表形态：适配器 parse 抛错（vitest / playwright stdout 非法 JSON 或 JSON 合法但形状不符；e2e-sh 无标记行且 exit 0、或标记 id 与验收 id 不符）、零条目且 exit 0 防线（playwright / pytest 判无区分力抛错）、translate 抛错（如 runner 显式声明 e2e-sh 的条目 command 缺省）、路由不到适配器的旁路（非法 runner 绕过 gate）。入账字段 = VerifyRan 的 `parseFailedAcceptanceIds`。不含 e2e-sh「无标记行且 exit≠0」——该形态无法确定性归因 spec（命令挂可能是实现缺陷），照旧断言失败路径
+- **解析失败** = `AcceptanceRunResult.parseError === true`（无法产出可判定产物）。来源**非穷举**——完整集合以四适配器 parse/translate 实现（`src/testrun/`）与 `src/verify/run.ts` 的路由为准，代表形态：适配器 parse 抛错（vitest / playwright stdout 非法 JSON 或 JSON 合法但形状不符；e2e-sh 无标记行——无论 exit code：0 = 无区分力、≠0 = 脚本未按契约跑到输出点疑似崩溃/环境断链，或标记 id 与验收 id 不符）、零条目且 exit 0 防线（playwright / pytest 判无区分力抛错）、translate 抛错（如 runner 显式声明 e2e-sh 的条目 command 缺省）、路由不到适配器的旁路（非法 runner 绕过 gate）。入账字段 = VerifyRan 的 `parseFailedAcceptanceIds`。e2e-sh「无标记行且 exit≠0」自 lv-3 起归解析失败（原「no-markers 整体 fail」形态废止——脚本崩溃/环境断链连挂 2 走回炉修 spec，不再混入 flake「随机性 or 真 bug」的错误二选一；真测试红的正道形态 = 有 FAIL 标记 + exit≠0，不受影响）
 - **断言失败** = 产物合法可解析但 case 判 fail
 
 解析失败是确定性 spec 缺陷（错的不是语义而是命令契约）：不计入 flake 连挂（拆「确定性挂被误判随机挂」死局），连挂 ≥2 走回炉通道；豁免条目（`nondeterministic`）不入解析失败清单（豁免 = 不计入任何聚合）。pass/fail 判定本身不变——解析失败的 case 照旧判 fail（伪造成本 ≥ 干活成本）。
@@ -132,7 +132,7 @@ spec-review 环的防活锁计数（mx-3 语义、mx-4 预算 2→10）：同一
 
 ### 停派（stopped dispatch）
 
-runner 对某 unit 停止自动派发的状态类 = 三个转人工维度（`src/readonly/frontier.ts` 的 `stoppedDispatchState`）：`specReviewDeadlock`（打回代数达预算）/ `flakeReview`（e2e 断言失败连挂）/ `specContractDeadlock`（回炉代数达上限）。机器派发无出口，loop 停派 + stderr 转人工指引；人工处置写入账本后投影自然消失（自愈）。TIMEOUT 结算行在停派态下如实陈述「本次超时不触发重派」（mx5-2 诚实化）。
+runner 对某 unit 停止自动派发的状态类 = 四个投影转人工维度（`src/readonly/frontier.ts` 的 `stoppedDispatchState`）：`specReviewDeadlock`（打回代数达预算）/ `flakeReview`（e2e 断言失败连挂）/ `specContractDeadlock`（回炉代数达上限）/ `buildDrift`（build 证据达预算无 pass，缓慢进展——lv-2）；另有连续 TIMEOUT 封顶的进程态停派（单进程内存态、跨 run 归零，不属投影维度）。机器派发无出口，loop 停派 + stderr 转人工指引；人工处置写入账本后投影自然消失（自愈）。TIMEOUT 结算行在停派态下如实陈述「本次超时不触发重派」（mx5-2 诚实化）。
 
 ### 集成 verify（内部节点的 verify）
 
@@ -140,7 +140,7 @@ runner 对某 unit 停止自动派发的状态类 = 三个转人工维度（`src
 
 ### frontier（就绪集合）
 
-对投影算「哪些单元的哪个阶段现在可以派发」（`src/readonly/frontier.ts`，十二维）：
+对投影算「哪些单元的哪个阶段现在可以派发」（`src/readonly/frontier.ts`，十三组——十二个推进/转人工维度 + lv-2 的 buildDrift 缓慢进展停派组）：
 
 - `specReady`：created 且无 spec——待 designer 撰写 spec（首派）
 - `specReviewPending`：created 且有 spec、最后 spec 后无任何 spec-review verdict——待独立 reviewer 审查（designer 不自审）
@@ -152,6 +152,7 @@ runner 对某 unit 停止自动派发的状态类 = 三个转人工维度（`src
 - `specContractBroken`：当前 spec 周期内某验收解析失败连挂 ≥2 且回炉代数 <2——待 designer 回炉修验收命令契约（任务书内嵌逐轮解析失败原文，新 spec 照旧过独立 reviewer）
 - `specContractDeadlock`：解析失败连挂 ≥2 且回炉代数 ≥2（两轮回炉仍解析失败）——转人工，防回炉活锁
 - `flakeReview`：当前 spec 周期内某 e2e 级验收断言失败连挂 ≥2（解析失败条目不计入，走回炉通道）——转人工判定（停派 developer）
+- `buildDrift`：本 spec 周期内 build 证据 ≥K（默认 5，`--max-build-attempts` 可注入）且无 pass verify——缓慢进展转人工（lv-2，停派 developer）
 - `buildReady`：spec-frozen 叶子且子全部 closed（rootLast）——待 developer
 - `execReviewReady`：verified 且未 closed——待 reviewer（exec-review）
 
@@ -178,7 +179,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
 | `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |
-| `cw frontier [--json]` | 只读 | 就绪集合（十二维，见上 frontier 小节） |
+| `cw frontier [--json]` | 只读 | 就绪集合（十三组，见上 frontier 小节） |
 | `cw tree` | 只读 | 分解树 |
 | `cw report [--unit <id>]` | 只读 | 证据链汇总（逐验收覆盖标记 ✓/✗ + hash 前 12 位） |
 

@@ -7,10 +7,12 @@
  * parse：逐行扫描 `^<id> (PASS|FAIL)$` 标记行 → cases（标记行第一列 = 验收 id
  * 全文，不要求任何前缀；id 可含 `.` `_` `-`——与 spec gate 规则⑦同源字符集；
  * name 记标记行原文）；同一 id 多次出现以最后一次为准。
- * 防伪造语义（验收文档同节）：
- *   - 标记缺失 + exitCode≠0 → 该验收整体 fail（name="no-markers"），不抛错；
+ * 防伪造语义（验收文档同节；lv-3 起标记缺失无论 exit code 均抛错）：
  *   - 标记缺失 + exitCode=0 → 抛错（无区分力——echo ok 类假命令在旧树新树都绿，
  *     parse 侧必须拒绝这种「看似成功」的产物）；
+ *   - 标记缺失 + exitCode≠0 → 抛错（解析失败类——脚本未按契约跑到输出点，疑似
+ *     崩溃/环境断链，连挂 2 走 specContractBroken 回炉，不再混入 flake 通道；
+ *     真测试红的正道形态 = 有 FAIL 标记 + exit≠0，不受本改道影响）；
  *   - 标记 id 全部与验收 id 不符 → 抛错（脚本输出与当前验收无关）。条目 5/6 的
  *     相容口径：一次运行可输出多条验收的标记（如 A1/A2），但至少一条须命中当前
  *     parse 的验收 id，否则视为张冠李戴。
@@ -33,9 +35,31 @@ const ID_CHARSET_SOURCE = ACCEPTANCE_ID_RE.source.replace(/^\^/, "").replace(/\$
  * id 不经标记行，不受此正则约束）
  */
 const MARKER_RE = new RegExp(`^(${ID_CHARSET_SOURCE}) (PASS|FAIL)$`);
-const NO_MARKERS_NAME = "no-markers";
 /**
- * fx-1 R3：marker 约定的显式格式说明，追加在两类 parse 错误的 message 里——
+ * stdout 首行摘要上限（lv-3）：首个非空行 trim 后超此长度截断加 `…`——解析失败
+ * 原文要内嵌进回炉任务书（连挂 2 → specContractBroken），崩溃现场首行是 designer
+ * 定位断链点的最小事实，超长首行（如整行 JSON）截断防任务书膨胀
+ */
+const FIRST_LINE_SUMMARY_MAX = 200;
+/** stdout 无任何非空行时的占位（127 形态崩溃现场 stdout 常为空——占位明示而非留空） */
+const EMPTY_STDOUT_PLACEHOLDER = "（stdout 为空）";
+
+/** stdout 首个非空行 trim 后截 {@link FIRST_LINE_SUMMARY_MAX} 字符（超出加 `…`） */
+function firstNonEmptyLineSummary(stdout: string): string {
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed !== "") {
+      return trimmed.length > FIRST_LINE_SUMMARY_MAX
+        ? `${trimmed.slice(0, FIRST_LINE_SUMMARY_MAX)}…`
+        : trimmed;
+    }
+  }
+  return EMPTY_STDOUT_PLACEHOLDER;
+}
+
+/**
+ * fx-1 R3：marker 约定的显式格式说明，追加在各 parse 错误的 message 里（lv-3
+ * 起标记缺失两形态均抛错，消费点 +1）——
  * 历史教训（final-gate-report.md §5 R3）：约定只在实现里隐含时，终验中 pi 试错
  * 3 轮才悟出；错误信息直接给出约定本身。旧版约定要求 A 前缀（`A<id> PASS`），
  * 审查实测把 agent 引向 `AA1 PASS` 类错误写法（id=A1 时按文案执行产出被拒），
@@ -79,11 +103,16 @@ function parse(stdoutPath: string, exitCode: number, acceptance: AcceptanceItem)
           `脚本须输出 "<验收id> (PASS|FAIL)" 标记行（期望出现验收 ${acceptance.id} 的标记）。${MARKER_FORMAT_NOTE}`,
       );
     }
-    return {
-      exitCode,
-      cases: [{ id: acceptance.id, name: NO_MARKERS_NAME, status: "fail" }],
-      rawPath: stdoutPath,
-    };
+    // lv-3（D4 改道）：零标记 + exit≠0 = 脚本未按契约跑到输出点的自证（契约要求
+    // exit code 与标记行一致——崩溃/断链/依赖缺失中途死掉都到不了标记输出点），
+    // 从 no-markers fail case 改道解析失败抛错——上层既有捕获连挂 2 走
+    // specContractBroken 回炉，脚本崩溃/环境断链不再混入 flake「随机性 or 真
+    // bug」的错误二选一
+    throw new Error(
+      `e2e-sh 适配器 parse 失败：${stdoutPath} 无标记行且 exitCode=${exitCode}` +
+        `——脚本未按 e2e-sh 契约跑到输出点（exit code 与标记行须一致），疑似脚本崩溃/环境断链` +
+        `（stdout 首行：${firstNonEmptyLineSummary(stdout)}）。期望出现验收 ${acceptance.id} 的标记。${MARKER_FORMAT_NOTE}`,
+    );
   }
 
   if (!markers.has(acceptance.id)) {
