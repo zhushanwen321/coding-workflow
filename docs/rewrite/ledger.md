@@ -81,6 +81,16 @@
 | al-3 | w3 防线层（gate 规则⑩⑪ + reviewer 第六维 + designer 防下放 + D8 文档同步） | committed | 5852c49 | verifier PASS（sha256 75a38c7d…，报告 al-3-report.md）：T/W/B 十六条证实 + 对抗 8 组（词法边界 12 变体 / ⑩与 fx-3 R5.1 正交咬合 / fail 路径零 warning 混入 / 第六维 13 项自由文本）+ 波后三场景与设计 §3.1 逐项吻合。**两处偏离主 agent 追认**：al-2 L1/L5/L6 与 mx5-3 两处 B3 快照机械适配（基线 §3 未列豁免条款的疏漏——规则⑩落地必然翻红，verifier 逐行深查「最小必要无掩盖回归」）。全量 78 文件 608 用例绿 |
 | al-4 | w4 端到端验收（S1 执行点唯一性 / S6 触发案例对照 / S4 波后 manual） | committed | 141347b | verifier PASS（sha256 48663707…，报告 al-4-report.md）：A1/A6 七条款 + 事件序证实；**代笔保真度**经真实 loop（--spawn human）pass/fail 双向复验无「自说自话」缺口；对抗 4 条（R1 反向注入端到端拦截 / 红阶段零回归 / drift 任务书渲染）；波后三项全过——S4 真实 pi reviewer 第六维精确命中（证据 .xyz-harness/al4-s4-evidence/）+ G6 F1-F7 核对 + A6 全真实 loop 重放。两任接力（前任配额中断，续作零修改保留）。全量 79 文件 618 用例绿 |
 
+## M6 = 自治运行活性与契约防护（2026-08-22 立项）
+
+> 依据设计 `.tmp/design-autonomy-liveness.md`（gitignore 目录，磁盘可读不入 git）。触发案例：xyz-agent 仓 agent-managed-session 任务（2026-08-22 终止，4/9 closed）——u1 路径逃逸 7 轮打回假循环 / u4 六次 TIMEOUT ≈3h 无限重派 / u6 环境断链被当 flake / u7 审查往返 5 代无可见性。设计判定 = 失败分类学系统性缺口（非零散 bug），四个补强点：① buildDrift 停派维度 + spawn 超时可调（D1/D2）② gate 规则⑫ 路径逃逸词法拦截（D3）③ e2e-sh「零标记行 + exit≠0」改道契约失败类走回炉（D4）④ reviewer 历史注入 + 打回代数中间档出声（D5）；越权 verdict 维持弱声明记档（D7 不实施）。与 M5 正交（活性/契约面 vs 成本/执行点面），唯一交叠 = M5 F6 记档被 u4 命中触发升级（D6 要求回写 M5 设计文档）。波次 lv-1（gate）与 lv-2（活性）领地仅 CONTEXT/AGENTS 段落级相交**并行**（段落契约见各自基线 §3/§4）；lv-3（契约路由 + 收敛）依赖 lv-2（共享 escalations.ts）串行。
+
+| unit | 模块 | 状态 | 验收基线 commit | 备注 |
+|------|------|------|----------------|------|
+| lv-1 | gate 规则⑫ 路径逃逸词法拦截（fail 级 + u3 基线/CONTEXT/AGENTS 同步） | building | <本 commit> | — |
+| lv-2 | buildDrift 停派维度 + --max-build-attempts/--spawn-timeout-ms（frontier/loop/escalations/run） | building | <本 commit> | — |
+| lv-3 | e2e-sh 零标记+exit≠0 改道解析失败（u5 基线强制连带）+ reviewer 历史注入 + 代数中间档出声 | pending | — | 依赖 lv-2 commit 后派发（escalations.ts 同文件） |
+
 ## 里程碑 gate
 
 | gate | 内容 | 状态 |
