@@ -59,10 +59,10 @@ npx eslint src/events/types.ts src/handlers/spec-schema.ts tests/al-2-layer-mode
 
 ## 7. 波后验收（verifier 执行，真实场景）
 
-取真实存量账本（本仓 `~/.cw` 或重写期 fixture 副本，无 layer 字段），改造后代码重放 `cw report --json` 全量输出与改造前（verifier 用 git stash / 基线 commit checkout 对照跑）**结构化逐字段一致**；再对 L1 产出的带 layer 账本重放同命令验证 L5。对照设计 S2 场景（三条只读命令 + 既有套件全绿）。
+取真实存量账本（本仓 `~/.cw` 或重写期 fixture 副本，无 layer 字段），改造后代码重放 `cw status --json` 与 `cw report` 双形态（结构化 + 人可读——report 无 --json flag，仅 status/frontier 提供，本句为 2026-08-22 勘误：原文误写 `cw report --json`，verifier 已按本形态以等强口径完成验收）全量输出与改造前（verifier 用 git worktree checkout 基线对照跑）**结构化逐字段一致**；再对 L1 产出的带 layer 账本重放同命令验证 L5。对照设计 S2 场景（三条只读命令 + 既有套件全绿）。
 
 ## 8. status
 
-pending → building → **pending 派发**（2026-08-22 基线入 git，builder 派发）
+pending → building → built → verifying → **verified**（2026-08-22：verifier 独立验收 PASS，报告 al-2-report.md——防篡改 diff 空 + sha256 9518d086…（§7 勘误前）；L1-L7 逐条证实；真实性四点（L3 行级断言 / L4 账本真实 / L6 双 unit 产物级对照 / CONTEXT 纯追加）全实；对抗 6 条（边界变体 / 全链不变形 / 零泄漏 / 幽灵注入防御 / types 纯追加）全过；波后基线 worktree 真对照四命令逐字节一致。§7 措辞勘误由主 agent 例外备案修订——rv1/mx5-1 同款先例，勘误记录入 ledger 事件）
 
-> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
+> 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改（§7 勘误为授权例外，事实未变仅纠命令形态笔误）。

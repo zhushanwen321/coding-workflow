@@ -13,6 +13,14 @@
 export type AcceptanceType = "unit" | "integration" | "e2e-real" | "e2e-mock" | "manual";
 
 /**
+ * 验收层级枚举（al-2，《验收分层与成本治理》设计 §3.3 D1）：条目的执行层归属。
+ * 与 AcceptanceType 正交——type 说「用例本身长什么样」，layer 说「在哪一层被执行」。
+ * 合法值单一事实源 = 本类型；spec-schema 的 Union Literals 与此逐字符一致
+ * （两处一致性由 al-2 验收文档单点维护，注释互相指向）。
+ */
+export type AcceptanceLayer = "unit" | "topic";
+
+/**
  * 验收 id 字符集（rv-2 规则⑦与 e2e-sh marker 的同源锚）：字母数字开头，后续可含
  * `.` `_` `-`；禁空格与中文。id 是 e2e-sh 标记行第一列与 nameMatch 名字比对的锚，
  * 字符集外的 id 产出的 e2e 用例永远无法匹配标记行。spec gate（规则⑦）与 e2e-sh
@@ -55,6 +63,18 @@ export interface AcceptanceItem {
    * 投影——声明条目的连挂治理依赖 spec-review 把关与人工审计 report.json。
    */
   nondeterministic?: true;
+  /**
+   * 验收层级（al-2，设计《验收分层与成本治理》§3.3 D1）：声明本条目的执行层
+   * 归属。"unit"（缺省）= 本 unit 的 verify 路径执行；"topic" = 归集成层，
+   * 唯一执行点 = 所属节点的集成验证。该字段不改变任何执行器行为——
+   * runAcceptances / integrate / fold / frontier 一律不读它，效力来自 al-3
+   * 交付的 spec gate 规则⑩声明位置约束：topic 条目只能声明在 split 非空的
+   * spec（无子 = 无集成执行点 = 声明即真空，提交期拒绝）+ 集成装配的既有
+   * 行为。缺省语义靠键缺失表达：旧 spec / 旧账本无此字段 = 行为逐字节不变
+   * （重放兼容先例：VerifyRanPayload.parseFailedAcceptanceIds 的「旧账本缺
+   * 字段 = 无」口径；显式声明才经 JSON.stringify 入账）。
+   */
+  layer?: AcceptanceLayer;
 }
 
 /** 契约（Contract）——跨单元接口承诺，随 spec 一起 hash 冻结 */

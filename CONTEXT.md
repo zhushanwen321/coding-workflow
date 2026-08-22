@@ -30,6 +30,7 @@ unit 的定义 = 它的**验收集合 + 契约**（验收是一等工作单元�
 - `command`：可执行命令（e2e 级用例必填）
 - `runner`（可选）：测试框架显式声明，合法值 = `knownAdapterTypes()`（vitest / e2e-sh / pytest / playwright，大小写敏感）；缺省按 type 推导（unit/integration→vitest、e2e 级→e2e-sh），显式声明优先
 - `nondeterministic`（可选，`true`）：随机性声明——豁免名字比对必过集合与单次 fail 的整体判定，但执行照跑、产物照录（声明 ≠ 逃逸；滥用由 spec-review 语义审查把关，flake 转人工永不以声明为豁免条件）
+- `layer`（可选）：验收层级——执行层归属，`"unit"`（缺省）= 本 unit 的 verify 路径执行，`"topic"` = 归集成层（见「验收层级（layer）」词条）
 
 弱验收过不了 spec gate（见「spec gate 九规则」）。
 
@@ -44,6 +45,10 @@ spec gate 规则⑨入账前静态检查（`src/gates/spec-rules.ts` 的 `ADAPTE
 - e2e-sh / manual 型：无静态规则（诚实边界：标记行产出无法静态证明——可能在脚本内、可能条件执行），漏网形态由 reviewer 任务书契约清单 + 回炉通道兜底
 
 例：`npx vitest run --reporter=verbose tests/x.spec.ts` 被⑨当场拒（reporter 值非 json）；裸 `pnpm build` 过得了⑨（e2e 型无静态规则）但 verify 时永不产出 `A3 PASS` 标记行 → 解析失败 → 回炉。
+
+### 验收层级（layer）
+
+验收条目的执行层归属（al-2，《验收分层与成本治理》设计 §3.3 D1）——与 `type`（用例形态）正交的另一根轴：`layer: "unit"`（缺省）= 本 unit 的 verify 路径执行；`layer: "topic"` = 归集成层，唯一执行点 = 所属节点的集成验证（子树全 verified 后受影响验收重跑）。声明位置约束：topic 条目只能声明在 split 非空的 spec——spec gate 规则⑩机器强制（无子节点 = 无集成执行点，声明 topic = 条目永无执行点，提交期拒绝）。`layer` 字段本身不改变任何执行器行为（verify / 集成 / fold 均不读它），效力来自声明位置约束 + 集成装配的既有行为。缺省 `"unit"` 且缺省不写键：旧 spec / 旧账本无 `layer` 字段 = 行为逐字节不变（重放兼容）。
 
 ### 证据（Evidence）
 
