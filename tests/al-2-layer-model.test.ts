@@ -137,10 +137,16 @@ interface StatusJsonShape {
   totalEvents: number;
 }
 
-/** 建 unit + 提 spec + spec-review pass（终态 spec-frozen）的最小真实链 */
-function freezeUnit(repoDir: string, unitId: string, specFile: string): void {
+/** 建 unit + 提 spec + spec-review pass（终态 spec-frozen）的最小真实链。
+ * splitChildId（可选）：spec 含 layer: "topic" 条目时按规则⑩要求先建子并让
+ * spec.split 声明它（al-3 起叶子/无子形态的 topic 条目在 gate 被拒）。 */
+function freezeUnit(repoDir: string, unitId: string, specFile: string, splitChildId?: string): void {
   const created = runCli(repoDir, ["create", "--id", unitId, "--brief", "brief.md"]);
   expect(created.code, created.stderr).toBe(0);
+  if (splitChildId !== undefined) {
+    const child = runCli(repoDir, ["create", "--id", splitChildId, "--brief", "brief.md", "--parent", unitId]);
+    expect(child.code, child.stderr).toBe(0);
+  }
   const submitted = runCli(repoDir, [
     "evidence",
     "submit",
@@ -180,11 +186,17 @@ describe("L1：schema 合法值入账", () => {
           { id: "A2", core: false, title: "单元行为", type: "unit" },
         ],
         contracts: [],
-        split: [],
+        // al-3 规则⑩：topic 条目要求 split 非空——夹具按 root+子已建形态构造
+        //（主 agent 2026-08-22 授权的最小修订，layer 键入账断言语义不变）
+        split: [{ unitId: "u-l1-leaf", dependsOn: [] }],
       }),
     });
 
     expect(runCli(repoDir, ["create", "--id", "u-l1", "--brief", "brief.md"]).code).toBe(0);
+    // fx-3 R5.1：split 声明的子必须先 cw create 入账
+    expect(
+      runCli(repoDir, ["create", "--id", "u-l1-leaf", "--brief", "brief.md", "--parent", "u-l1"]).code,
+    ).toBe(0);
     const submit = runCli(repoDir, [
       "evidence",
       "submit",
@@ -372,19 +384,21 @@ describe("L5：带 layer 账本只读健康", () => {
           { id: "A2", core: false, title: "单元行为", type: "unit" },
         ],
         contracts: [],
-        split: [],
+        // al-3 规则⑩：topic 条目要求 split 非空（夹具同步修订，见 L1 注）
+        split: [{ unitId: "u-l5-leaf", dependsOn: [] }],
       }),
     });
-    freezeUnit(repoDir, "u-l5", "spec.json");
+    freezeUnit(repoDir, "u-l5", "spec.json", "u-l5-leaf");
 
-    // status --json：spec-frozen 状态与 L4 无 layer 账本同形态（fold 不读 layer）
+    // status --json：spec-frozen 状态与 L4 无 layer 账本同形态（fold 不读 layer）。
+    // 账本含 split 子 u-l5-leaf（规则⑩要求的 root 形态），按 unitId 定位断言
     const statusJson = runCli(repoDir, ["status", "--json"]);
     expect(statusJson.code).toBe(0);
     const parsed = JSON.parse(statusJson.stdout) as StatusJsonShape;
-    expect(parsed.units).toHaveLength(1);
-    expect(parsed.units[0]?.status).toBe("spec-frozen");
+    const uL5 = parsed.units.find((u) => u.unitId === "u-l5");
+    expect(uL5?.status).toBe("spec-frozen");
     // layer 键原样透传（声明在账在，未声明不注入）
-    const acceptance = parsed.units[0]?.specs[0]?.acceptance ?? [];
+    const acceptance = uL5?.specs[0]?.acceptance ?? [];
     expect(acceptance.find((ac) => ac["id"] === "A1")?.["layer"]).toBe("unit");
     expect(acceptance.find((ac) => ac["id"] === "T1")?.["layer"]).toBe("topic");
     expect(Object.hasOwn(acceptance.find((ac) => ac["id"] === "A2") ?? {}, "layer")).toBe(false);
@@ -420,11 +434,13 @@ describe("L6：执行行为不变（D2 结构性验证）", () => {
           acceptance: [
             // 规则⑤需要一条 type: "unit" 用例；runner 显式声明 e2e-sh 让它走标记行契约
             { id: "A1", core: false, title: "单元行为", type: "unit", runner: "e2e-sh", command: "sh scripts/a1.sh" },
-            // 本波 gate 尚无规则⑩：叶子 spec 带 topic 条目可入账——构造期诚实利用该窗口
+            // al-3 规则⑩：topic 条目要求 split 非空——u-6a 按 root+子已建形态构造
+            //（夹具同步修订，主 agent 2026-08-22 授权；手动 cw verify 对内部节点
+            //  照常全价执行 topic 条目，设计 D2 的既有语义，L6 验证点不变）
             { id: "T1", core: false, title: "topic 回归", type: "e2e-real", command: "sh scripts/t1.sh", layer: "topic" },
           ],
           contracts: [],
-          split: [],
+          split: [{ unitId: "u-6a-leaf", dependsOn: [] }],
         }),
         "spec-plain.json": JSON.stringify({
           acceptance: [
@@ -436,10 +452,12 @@ describe("L6：执行行为不变（D2 结构性验证）", () => {
         }),
       });
 
-      // 两个同命令 spec 的 unit：唯一差异 = T1 条目带不带 layer
+      // 两个同命令 spec 的 unit：spec 层差异 = T1 条目带不带 layer；u-6a 因规则⑩
+      // 须为 root（split 子先入账，fx-3 R5.1），u-6b 保持叶子（无 topic 条目不受影响）
       for (const unitId of ["u-6a", "u-6b"]) {
         expect(runCli(repoDir, ["create", "--id", unitId, "--brief", "brief.md"]).code).toBe(0);
       }
+      expect(runCli(repoDir, ["create", "--id", "u-6a-leaf", "--brief", "brief.md", "--parent", "u-6a"]).code).toBe(0);
       const specFiles: Array<[string, string]> = [
         ["u-6a", "spec-topic.json"],
         ["u-6b", "spec-plain.json"],

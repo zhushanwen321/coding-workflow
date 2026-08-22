@@ -85,6 +85,10 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
  * 转述子任务书时又恰好丢掉被违反的两条）。清单进机制生成的任务书模板本体，
  * 不再依赖人转述；输出分级（must-fix / suggestion / info）+ pass 逐项显式
  * 「核过无问题」，针对性反制含糊放行。
+ *
+ * al-3：追加第六维「验收成本与层级归属」（设计《验收分层与成本治理》D6）——
+ * gate 规则⑪的词法检查对 wrapper/别名封装形态不可见，第六维是全量回归下放
+ * 的唯一语义防线；pass 逐项显式「核过无问题」的既有约定句对⑥同样生效。
  */
 function specReviewReviewerTasks(
   unit: SequencedUnitProjection,
@@ -97,7 +101,7 @@ function specReviewReviewerTasks(
     "",
     `1. 读 spec 原文：最后一条 SpecSubmitted 的原文副本在 ${attachDir}/ 下`,
     `   （内容寻址文件 = <sha256>.<原文件名>；结构化视图可 cw report --unit ${unit.unitId}）。`,
-    "2. 按五维度对抗式核对清单逐条核对（reviewer 的第一审对象是验收集合，不是文风；",
+    "2. 按六维度对抗式核对清单逐条核对（reviewer 的第一审对象是验收集合，不是文风；",
     "   对 spec 的每条验收逐项过——任何一条不过即 fail，不得以「较弱/可补充」为由放行）：",
     "   ① 验收命令契约逐条核对（cw verify 按适配器解析命令产物——契约错 = 实现再对也恒 fail）：",
     "      若验收显式声明 runner，按声明适配器核对（与规则⑨同路由——runner 优先于",
@@ -117,6 +121,13 @@ function specReviewReviewerTasks(
     "      冻结契约——签名 / 期望文件任一不符，集成期必炸（不得只看本 unit 自身声明）。",
     "   ⑤ 干净 checkout 可执行性：命令用到的依赖是否全在 package.json 声明、命令是否",
     "      自带 install（verify 在一次性工作区重跑，没有提交者本机的全局依赖与环境）。",
+    "   ⑥ 验收成本与层级归属：全量回归形态是否出现在叶子 spec 的 unit 层——含裸命令",
+    "      （无文件参数的全量 vitest / 全仓 lint、test script）与封装形态（command 指向",
+    "      wrapper 脚本或 script 别名的，须追进脚本/别名内容看实际跑什么——gate 规则⑪",
+    "      的词法检查对封装形态不可见，这里是唯一语义防线）。集成口径必然重跑 root",
+    "      验收，叶子重复声明 = 每轮 fix 全价双付。此类条目 must-fix：上收 root spec",
+    '      并标 layer: "topic"；确属本 unit 范围的加文件参数收窄。wrapper 自限建议：',
+    "      回归脚本内部可自限并发（如 vitest --max-workers），避免单条命令打满全部核。",
     "   语义关（canon D3 既有要求）：e2e-mock 用例的 mockFidelityNote 是否说明与真实环境的",
     "   差异边界；nondeterministic 声明是否被滥用（声明 ≠ 逃逸执行，随机性判定是语义判断）。",
     "3. 提交结论（输出分级格式约定——--comment 缺分级清单的 verdict 视为无效审查）：",
@@ -148,7 +159,7 @@ function specFixPendingTasks(unit: SequencedUnitProjection): string {
         verdict.verdictKind === "spec-review"
       ) {
         if (verdict.verdict === "fail") {
-          failComment = verdict.comment ?? "（reviewer 未附 comment——按不合格项自行核对验收五规则）";
+          failComment = verdict.comment ?? "（reviewer 未附 comment——按不合格项自行核对验收规则，src/gates/spec-rules.ts）";
         }
         break;
       }
@@ -163,7 +174,7 @@ function specFixPendingTasks(unit: SequencedUnitProjection): string {
     failComment ?? "（账本内未见打回 verdict 的 comment——不可达：本任务书仅在 fail 后派发）",
     "",
     "### 修 spec 指令",
-    `1. 按上述意见修正 spec.json（验收五规则见 src/gates/spec-rules.ts）。`,
+    `1. 按上述意见修正 spec.json（验收规则见 src/gates/spec-rules.ts）。`,
     `2. 重提：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "3. 重提后 unit 自动回流 spec-review 待审队列——由独立 reviewer 再审，你无需（也不得）",
     "   自行提交 review 结论；reviewer 再 fail 将累计打回代数（重提不清零，达预算——默认",
@@ -309,7 +320,9 @@ function specContractBrokenTasks(
  * 询问，终验第 3 次现场）升级为系统任务书的指令化步骤，与 fx-3 R5.1 gate
  *（先建子后提 spec）口径对齐。条件收窄到 root 无子：已有子的 root 重派 /
  * 叶子首派不重复教建子。mx-1：不再含 spec-review 自审步骤——审查由独立
- * reviewer spawn 接手，完成标志 = spec 已提交入账。
+ * reviewer spawn 接手，完成标志 = spec 已提交入账。al-3：第 1 步追加回归防
+ * 下放指引（全量回归归 root spec 声明并标 layer: "topic"，子 unit spec 不得
+ * 复制回归条目——写入链的源头防线，设计《验收分层与成本治理》D6）。
  */
 function designerFirstTasks(unit: SequencedUnitProjection, projection: SequencedProjection): string {
   const isRootWithoutChildren =
@@ -325,9 +338,12 @@ function designerFirstTasks(unit: SequencedUnitProjection, projection: Sequenced
   return [
     "## 你的任务（designer）",
     ...stepZero,
-    `1. 撰写该 unit 的 spec.json。验收五规则（src/gates/spec-rules.ts）：验收非空；`,
+    `1. 撰写该 unit 的 spec.json。验收规则（src/gates/spec-rules.ts）：验收非空；`,
     "   核心 case 的 type 须为 e2e-real / e2e-mock 且带可执行 command；含 mock 须附",
     "   mock 保真度说明；至少一条 unit 级用例。",
+    "   root 级回归型验收（全仓 lint / 全量 vitest 等全量回归）归 root spec 声明并标",
+    '   layer: "topic"（由集成阶段统一执行，只在集成跑一次）；子 unit spec 只声明本',
+    "   unit 的功能验收，不得复制回归条目（叶子重复声明 = 每轮 fix 全价双付）。",
     `2. 提交 spec：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "完成标志：spec 已提交入账（spec-review 由独立 reviewer 在下一轮接手，无需自审）。",
   ].join("\n");

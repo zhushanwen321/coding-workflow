@@ -32,7 +32,7 @@ unit 的定义 = 它的**验收集合 + 契约**（验收是一等工作单元�
 - `nondeterministic`（可选，`true`）：随机性声明——豁免名字比对必过集合与单次 fail 的整体判定，但执行照跑、产物照录（声明 ≠ 逃逸；滥用由 spec-review 语义审查把关，flake 转人工永不以声明为豁免条件）
 - `layer`（可选）：验收层级——执行层归属，`"unit"`（缺省）= 本 unit 的 verify 路径执行，`"topic"` = 归集成层（见「验收层级（layer）」词条）
 
-弱验收过不了 spec gate（见「spec gate 九规则」）。
+弱验收过不了 spec gate（见「spec gate 十一规则」）。
 
 ### 验收命令契约（acceptance command contract）
 
@@ -85,13 +85,13 @@ closed        = verified ∧ exec-review verdict = pass
 
 补录（先干活后走账）在此模型下结构性不可能——没有「声明状态」的命令，只有「交证据」的命令。账本同时是跨上下文记忆：任何 agent 或人只读账本即可零上下文接手。
 
-### spec gate 九规则
+### spec gate 十一规则
 
 spec 提交时的确定性检查（多缺口全列、不短路，`src/gates/spec-rules.ts`）：
 
-① 验收非空；② core 用例自身 type 必须为 e2e-real / e2e-mock；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空 mock 保真度说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内（合法值与注册表逐字符一致，大小写敏感）；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`；pytest 禁 `-q` / `--quiet`（含短选项合写）；e2e / manual 无静态规则（见「验收命令契约」词条）。
+① 验收非空；② core 用例自身 type 必须为 e2e-real / e2e-mock；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空 mock 保真度说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内（合法值与注册表逐字符一致，大小写敏感）；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`；pytest 禁 `-q` / `--quiet`（含短选项合写）；e2e / manual 无静态规则（见「验收命令契约」词条）；⑩ `layer: "topic"` 条目要求 spec.split 非空（al-3，fail 级）——叶子/无子节点 unit 声明 topic = 条目永无执行点的真空（split 非空 ⟺ 有子节点 ⟺ 有集成执行点），提交期拒绝并给两个恢复方向（上收 root spec 标 topic / 去 layer 按 unit 层声明）；已知边界：单 unit topic（root 无子、split 空）同样不能声明 topic 层；⑪ unit 层条目 command 纯词法命中全量回归形态（al-3，warning 级成本启发式，不执行命令）——形态 A：`[npx/pnpm/yarn/bun/bunx 可选前缀] vitest run` 且 run 后无位置参数；形态 B：首 token `npm/pnpm/yarn/bun`（允许 `run` 中缀）script 名恰为 `test`/`lint` 且其后无位置参数——命中 → 入账继续（`ok` 判定只看 failures 不变）+ `SpecRulesResult.warnings` 交 `evidence submit` stderr 逐条打印；wrapper 脚本 / script 别名封装 / `make test` 显式不枚举（诚实漏报面，reviewer 任务书第六维语义审兜底）；warning 级理由：静态形态判定有误杀面，硬拒会逼出 wrapper 规避动作。
 
-另有 handler 级防线串联在 spec 提交路径（不在九规则内）：children-first——split 声明的子 unit 必须已创建且 parent 匹配，缺子/错配分类清单拒收（`src/handlers/evidence-submit.ts`）。
+另有 handler 级防线串联在 spec 提交路径（不在上述规则清单内）：children-first——split 声明的子 unit 必须已创建且 parent 匹配，缺子/错配分类清单拒收（`src/handlers/evidence-submit.ts`）。
 
 「验收强不强」这类语义判断由独立 reviewer 审，不在机器规则职责内。
 
@@ -168,7 +168,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | 命令 | 类别 | 用途 |
 |------|------|------|
 | `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit（深度上限 2） |
-| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过九规则 + children-first 后入账冻结） |
+| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过十一规则 + children-first 后入账冻结；规则⑪ warning 命中时入账继续 + stderr 警告） |
 | `cw evidence submit --unit <id> --kind build --commit <hash> --run-id <id> --file <产物>...` | 写 | 提交构建证据（commit 经 git cat-file 实存校验，产物 sha256 入账） |
 | `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；spec-review verdict 必填 `--role reviewer`——缺/错 exit 1 拒收，mx-3 入账层强校验；exec-review 的 `--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |

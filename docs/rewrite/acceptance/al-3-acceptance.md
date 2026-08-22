@@ -135,6 +135,6 @@ npx eslint src/gates/spec-rules.ts src/events/types.ts src/handlers/evidence-sub
 
 ## 8. status
 
-pending → building → **pending 派发**（2026-08-22 基线入 git，builder 派发；al-2 已 committed 0902c53，AcceptanceLayer 在场）
+pending → building → built → verifying → **verified**（2026-08-22：verifier 独立验收 PASS，报告 al-3-report.md——防篡改 diff 空 + sha256 75a38c7d…；两处主 agent 追认偏离逐行深查均判定「最小必要无掩盖回归」（al-2 夹具 root 形态化是⑩落地必然，L6 三重断言原样保留；mx5-3 快照 toBe 逐字节机器证实）；规则①-⑨零变更铁证（diff 删除行恰 5 行全为注释与 return 扩展）；对抗 8 组全过（词法边界 12 变体 / ⑩与 R5.1 正交咬合 / fail 路径零 warning 混入 / 旧账本只读兼容 / 输出时序 / 第六维 13 项自由文本）；波后三场景与设计 §3.1 要素逐项吻合。裁量观察 3 条全接受：O1 词条外三行计数引用同步为必要连带、O2 单条目单 warning、O3 W5 别名负向探针补证。全量 78 文件 608 用例绿）
 
 > 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。

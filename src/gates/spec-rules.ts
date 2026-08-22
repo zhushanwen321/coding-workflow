@@ -1,5 +1,5 @@
 /**
- * spec gate 五规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
+ * spec gate 十一规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
  * 判定语义与 M0 口径锁定于 docs/rewrite/acceptance/u3-acceptance.md）。
  *
  * ① 验收非空；② core 用例自身 type 必须为 e2e-real/e2e-mock（M0 口径：核心 case
@@ -12,7 +12,12 @@
  * 入口，verify 侧 adapterTypeFor 不二次校验——非法 runner 靠此处拦截）；
  * ⑨ 验收命令契约（mx5-1，mx-5 设计 D1：按最终适配器路由分派的输出契约
  * 静态检查——M4 gate 三跑实证 `--reporter=verbose` 与 cw 自动追加的
- * `--reporter=json` 冲突致 JSON 解析恒挂；禁令清单见 ADAPTER_FLAG_CONTRACTS）。
+ * `--reporter=json` 冲突致 JSON 解析恒挂；禁令清单见 ADAPTER_FLAG_CONTRACTS）；
+ * ⑩ topic 层条目要求 split 非空（al-3，《验收分层与成本治理》D4：叶子/无子
+ * 节点 unit 声明 topic = 条目永无执行点的真空，fail 级提交期拒绝）；
+ * ⑪ unit 层条目 command 命中全量回归形态（al-3，同设计 D5：warning 级成本
+ * 启发式，词法判定不执行命令——命中入账继续 + warnings 交 evidence submit
+ * 打 stderr；形态枚举见 FULL_REGRESSION_FORMS）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -37,11 +42,13 @@ function isE2eType(type: AcceptanceType): boolean {
 
 /**
  * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
- * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加）。确定性检查（对同一 spec + 同一 PATH 环境结果
- * 恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，不在本函数职责内。
+ * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加）。确定性检查（对同一 spec +
+ * 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，
+ * 不在本函数职责内。
  */
 export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   const failures: string[] = [];
+  const warnings: string[] = [];
 
   // ① 验收非空
   if (spec.acceptance.length === 0) {
@@ -155,7 +162,67 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
     }
   }
 
-  return { ok: failures.length === 0, failures };
+  // ⑩ topic 层条目要求 split 非空（al-3，设计 D4，fail 级结构规则）。语义闭环：
+  // split 非空 ⟺ 有子节点 ⟺ 有集成执行点 ⟺ topic 条目会被执行（集成批次本就
+  // 含 root 全部验收）；split 为空却声明 topic = 该条目永无执行点（真空声明）→
+  // 提交期拒绝，不允许「声明了却永不执行」进账本。与两道 handler 级防线正交、
+  // 无绕过面：fx-1 R1 拦叶子的一切 split 声明（叶子 split 必空 → 叶子声明 topic
+  // 必被本规则拦），fx-3 R5.1 保证 split 非空 ⟹ 子已入账（执行点对象在提交时点
+  // 已存在）——本规则在 gate 层从另一侧收口。已知边界（写进文案不静默）：单
+  // unit topic（root 无子、split 空）也不能声明 topic 层——它本就没有集成执行
+  // 点，全部验收按 unit 层跑。注意规则⑤不豁免 topic 条目：root 上收回归后仍须
+  // 至少一条 type: "unit" 用例（提示归 designer 指引，不属本规则文案职责）
+  if (spec.split.length === 0) {
+    for (const ac of spec.acceptance) {
+      if (ac.layer !== "topic") {
+        continue;
+      }
+      failures.push(
+        `规则⑩: 验收 ${ac.id} 声明了 layer: "topic"，但本 spec 的 split 为空——叶子/无子节点 ` +
+          `unit 没有集成执行点，topic 层条目将永不被执行（声明即真空）。已知边界：单 unit ` +
+          `topic（root 无子、split 为空）同样不能声明 topic 层——它本就没有集成执行点，全部验收按 unit 层跑。` +
+          `恢复动作（二选一）：topic 层验收归有子节点的 root spec 声明（其执行点是内部节点集成）` +
+          `——若本条是全量回归，上收 root spec 并标 layer: "topic"；若确属本 unit 功能验收，` +
+          `去掉 layer 字段按 unit 层声明。`,
+      );
+    }
+  }
+
+  // ⑪ unit 层全量回归形态 warning（al-3，设计 D5，成本启发式——纯词法判定，
+  // 不执行命令）。warning 级而非 fail 级的理由：静态形态判定有误杀面（小仓的
+  // 全量单测可能就是叶子的合理范围），硬拒会逼出规避动作（把命令包进 wrapper
+  // 脚本绕开启发式）；硬防线在 reviewer 第六维语义审（brief.ts）。与规则⑨对
+  // e2e/manual「无静态规则，漏网走回炉通道」的诚实边界哲学同款。作用域：layer
+  // 未声明或 unit 层（topic 条目已归集成层，不查）；命中一条 command 只出一条
+  // warning（多形态叠加无增量信息）
+  for (const ac of spec.acceptance) {
+    if (ac.layer === "topic") {
+      continue;
+    }
+    const tokens = (ac.command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+    if (tokens.length === 0) {
+      continue;
+    }
+    for (const match of FULL_REGRESSION_FORMS) {
+      const form = match(tokens);
+      if (form === null) {
+        continue;
+      }
+      warnings.push(
+        spec.split.length === 0
+          ? `规则⑪: 验收 ${ac.id} 的 command 是全量回归形态（${form}），且本 spec 的 split 为空 ` +
+              `（叶子）——叶子 verify 每轮 fix（含红阶段）都会全价重跑它。` +
+              `建议：若为全量回归，上收 root spec 并标 layer: "topic"（集成层唯一执行）；` +
+              `若确为本 unit 范围，为 command 加文件参数收窄。`
+          : `规则⑪: 验收 ${ac.id} 的 command 是全量回归形态（${form}），且本 spec 的 split 非空 ` +
+              `（内部节点的 unit 层回归，执行点与 topic 层相同）。` +
+              `建议显式标 layer: "topic"（成本归属可审计）。`,
+      );
+      break;
+    }
+  }
+
+  return { ok: failures.length === 0, failures, warnings };
 }
 
 // ── 规则⑨：验收命令契约检查（单一事实源，可扩展枚举） ──────────────
@@ -297,6 +364,84 @@ const ADAPTER_FLAG_CONTRACTS: Readonly<
   playwright: jsonProductContract,
   pytest: noQuietContract,
 };
+
+// ── 规则⑪：全量回归形态枚举（单一事实源，可扩展，与 ADAPTER_FLAG_CONTRACTS 同型组织） ──
+
+/** 形态 A 的 vitest 前允许的包管理器前缀 token（`npm vitest run` 非合法调用形态，不列） */
+const VITEST_PREFIX_TOKENS: readonly string[] = ["npx", "pnpm", "yarn", "bun", "bunx"];
+
+/** 形态 B 的包管理器首 token（script 调用形态） */
+const SCRIPT_MANAGER_TOKENS: readonly string[] = ["npm", "pnpm", "yarn", "bun"];
+
+/** 形态 B 触发成本警告的 script 名（全仓作用域的 test / lint） */
+const WHOLE_REPO_SCRIPT_NAMES: readonly string[] = ["test", "lint"];
+
+/** 形态 A 的词法锚跨距：`vitest run` 两 token（run 之后首个 token 的偏移） */
+const VITEST_RUN_TOKEN_SPAN = 2;
+
+/** 命中形态的人读描述（进规则⑪ warning 的事实段：形态 + 原文命令，供审计定位） */
+function formLabel(kind: string, command: string): string {
+  return `${kind}，原文 "${command}"`;
+}
+
+/** from 起「无位置参数」判定：无后续 token，或后续 token 全部以 `-` 开头（flag） */
+function noPositionalArgs(tokens: readonly string[], from: number): boolean {
+  return tokens.slice(from).every((t) => t.startsWith("-"));
+}
+
+/**
+ * 形态 A（vitest 全量）：token 序列 = [可选包管理器前缀] vitest run [flag...]，
+ * 且 run 之后无位置参数（后续 token 全部 `-` 开头或无后续）→ 全仓 vitest run。
+ * run 之后存在不以 `-` 开头的 token（文件/目录参数）→ 已收窄，不命中。
+ */
+function vitestFullRunForm(tokens: readonly string[]): string | null {
+  let i = 0;
+  if (VITEST_PREFIX_TOKENS.includes(tokens[0] ?? "")) {
+    i = 1;
+  }
+  if (tokens[i] !== "vitest" || tokens[i + 1] !== "run") {
+    return null;
+  }
+  if (!noPositionalArgs(tokens, i + VITEST_RUN_TOKEN_SPAN)) {
+    return null;
+  }
+  return formLabel("无文件参数的全量 vitest run", tokens.join(" "));
+}
+
+/**
+ * 形态 B（全仓 script）：首 token 为包管理器（npm/pnpm/yarn/bun），其后允许
+ * `run` 中缀，script 名恰为 test / lint，且 script 名之后无位置参数 → 全仓
+ * test / lint script 调用。
+ */
+function wholeRepoScriptForm(tokens: readonly string[]): string | null {
+  if (!SCRIPT_MANAGER_TOKENS.includes(tokens[0] ?? "")) {
+    return null;
+  }
+  let i = 1;
+  if (tokens[i] === "run") {
+    i += 1;
+  }
+  const script = tokens[i];
+  if (script === undefined || !WHOLE_REPO_SCRIPT_NAMES.includes(script)) {
+    return null;
+  }
+  if (!noPositionalArgs(tokens, i + 1)) {
+    return null;
+  }
+  return formLabel(`全仓 ${script} script`, tokens.join(" "));
+}
+
+/**
+ * 规则⑪形态枚举（单一事实源内的可扩展枚举）：每个成员 = 一种全量回归形态的
+ * 词法判定，命中返回形态描述、不命中返回 null。显式不枚举（诚实漏报面，设计
+ * D5）：wrapper 脚本（`bash xxx.sh`——内部跑什么词法不可见，触发案例 E7 的
+ * 实际形态）、script 别名封装、`make test` 等——这些形态的语义审查归 reviewer
+ * 任务书第六维（须追进脚本/别名内容，brief.ts），gate 词法层不猜。新形态在此
+ * 一处追加，禁止散落多个函数。
+ */
+const FULL_REGRESSION_FORMS: readonly ((
+  tokens: readonly string[],
+) => string | null)[] = [vitestFullRunForm, wholeRepoScriptForm];
 
 /**
  * `which` 等价检查：含路径分隔符时直接验证该文件可执行，否则遍历 PATH

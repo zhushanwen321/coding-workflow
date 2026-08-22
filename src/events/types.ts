@@ -223,6 +223,14 @@ export interface SpecRulesResult {
   ok: boolean;
   /** 可操作错误信息：每条指向具体缺口（验收 id + 缺什么） */
   failures: string[];
+  /**
+   * 成本启发式警告（al-3 规则⑪）：不构成拒绝——ok 判定只看 failures，warnings
+   * 非空照样入账（唯一消费方 = evidence submit 的 stderr 打印；fold / 只读命令
+   * 不读它）。缺省 = 旧行为逐字节兼容：旧 SpecGate 实现无此键，消费方 `?? []`
+   * 防御（重放兼容先例：VerifyRanPayload.parseFailedAcceptanceIds 的「旧账本缺
+   * 字段 = 无」口径）。
+   */
+  warnings?: string[];
 }
 
 /** 单个 unit 的原始投影（事件性事实，fold 直出；语义状态由 deriveStatus 派生） */

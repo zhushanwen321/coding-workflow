@@ -362,6 +362,10 @@ const B3_CASES: readonly B3Case[] = [
  * mx5-2 备案（基线 §2③ 授权的 D6 过时文案修复）：designer-spec-fix 快照第 3
  * 条的「累计 2 次 fail 转人工」句与 mx-3 代数计数 / mx-4 预算 10 语义不符，
  * 已随 brief.ts 同步为代数口径（mx5-3 §3 允许的最小断言调整）。
+ * al-3 备案（主 agent 2026-08-22 授权的最小同步）：designerFirstTasks 落地
+ * 防下放指引 + 「验收五规则」→「验收规则」drift 对齐（al-3 基线 §4.E/§4.F
+ * 锁定形状），designer-spec-ready / designer-spec-fix 两快照随之同步——除该
+ * 指引段与数字措辞外逐字节不变，生成方式同上（对 al-3 后 dist 真实渲染）。
  */
 const B3_SNAPSHOTS: Record<B3CaseName, string> = {
   "designer-spec-ready": `# designer 任务书：unit "mx53-root"
@@ -379,9 +383,12 @@ const B3_SNAPSHOTS: Record<B3CaseName, string> = {
 0. 本 unit 是根节点且尚无子 unit——若任务书/brief 含拆分建议：先为每个子执行
    cw create --id <slug> --brief <子brief文件> --parent mx53-root（子 brief 可为占位文件），
    再进入第 1 步（spec.split 声明的子必须已创建，否则提交会被拒）。
-1. 撰写该 unit 的 spec.json。验收五规则（src/gates/spec-rules.ts）：验收非空；
+1. 撰写该 unit 的 spec.json。验收规则（src/gates/spec-rules.ts）：验收非空；
    核心 case 的 type 须为 e2e-real / e2e-mock 且带可执行 command；含 mock 须附
    mock 保真度说明；至少一条 unit 级用例。
+   root 级回归型验收（全仓 lint / 全量 vitest 等全量回归）归 root spec 声明并标
+   layer: "topic"（由集成阶段统一执行，只在集成跑一次）；子 unit spec 只声明本
+   unit 的功能验收，不得复制回归条目（叶子重复声明 = 每轮 fix 全价双付）。
 2. 提交 spec：cw evidence submit --kind spec --unit mx53-root --file spec.json
 完成标志：spec 已提交入账（spec-review 由独立 reviewer 在下一轮接手，无需自审）。
 
@@ -408,7 +415,7 @@ unit "mx53-root" 的 spec 被独立 reviewer 判 fail——请按以下失败事
 不合格项：A1 命令未产出标记行；恢复动作：命令追加标记行输出后重提
 
 ### 修 spec 指令
-1. 按上述意见修正 spec.json（验收五规则见 src/gates/spec-rules.ts）。
+1. 按上述意见修正 spec.json（验收规则见 src/gates/spec-rules.ts）。
 2. 重提：cw evidence submit --kind spec --unit mx53-root --file spec.json
 3. 重提后 unit 自动回流 spec-review 待审队列——由独立 reviewer 再审，你无需（也不得）
    自行提交 review 结论；reviewer 再 fail 将累计打回代数（重提不清零，达预算——默认

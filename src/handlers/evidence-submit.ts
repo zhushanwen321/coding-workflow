@@ -203,6 +203,17 @@ function submitSpec(
   // fx-4 D4：spec 原文副本入 evidence（此前只存账本 specHash，本体随 reset 丢失
   // 即审计断点）；内容 hash 命名幂等，重复提交零增长
   copyAttachmentToEvidence(ctx.cwd, unitId, fileAbs, fileRead.raw);
+  // al-3 规则⑪：gate 通过但命中成本启发式 → spec 已入账事实先行，stderr 逐条
+  // 打印警告（警告非拒绝——入账与 exit 0 不受影响，ok 判定只看 failures）。
+  // 打印点在 append 成功之后，保证「已入账」陈述与账本一致；无 warning 时本
+  // 路径零输出（成功提交的 stderr 与旧行为逐字节一致）
+  const warnings = gate.warnings ?? [];
+  if (warnings.length > 0) {
+    process.stderr.write(
+      `cw evidence submit --kind spec: spec 已入账（unit "${unitId}"），但规则⑪ 触发成本警告（入账不受影响，警告非拒绝）：\n` +
+        warnings.map((w) => `  ${w}\n`).join(""),
+    );
+  }
   return succeed(
     `unit "${unitId}" 的 spec 已入账（specHash ${payload.specHash}，seq ${result.envelope.seq}）。`,
   );
