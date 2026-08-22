@@ -76,10 +76,10 @@
 
 | unit | 模块 | 状态 | 验收基线 commit | 备注 |
 |------|------|------|----------------|------|
-| al-1 | w1 nice 减震双落点（execBashTree + spawnProcess，预检降级） | verified | a8b5ed7 | verifier PASS（sha256 5c26c7eb…，报告 al-1-report.md）：N/D/R 十条证实 + 对抗 4 条（两形态产物逐字节全等 / 嵌套累加父 10→子 20 实证 / nice 组长整树 kill）+ 波后真实 CLI 自报 ni=10 产物链完整。**观察项移交：rv5 T3/T8 间歇挂 = 存量竞态**（humanAdapter.spawn baselineSeq 读取与 runner 投影快照窗口——无 nice 基线 dist 10 次 5 挂同位置，与 al-1 零交集；挂账候选 minor 清账波） |
-| al-2 | w2 layer 层级轴（AcceptanceLayer + schema + CONTEXT 词条，纯声明零行为） | verified | a8b5ed7 | verifier PASS（sha256 9518d086…，报告 al-2-report.md）：L1-L7 证实 + 对抗 6 条 + 波后基线 worktree 真对照（160 事件存量账本 × 四命令逐字节一致）。§7「report --json」笔误主 agent 例外备案勘误（report 无 --json，verifier 以 status --json + report 双形态等强验收）。全量 76 文件 590 用例绿（576 + al-2×7 + al-1×7） |
+| al-1 | w1 nice 减震双落点（execBashTree + spawnProcess，预检降级） | committed | a8b5ed7 | verifier PASS（sha256 5c26c7eb…，报告 al-1-report.md）：N/D/R 十条证实 + 对抗 4 条（两形态产物逐字节全等 / 嵌套累加父 10→子 20 实证 / nice 组长整树 kill）+ 波后真实 CLI 自报 ni=10 产物链完整。**观察项移交：rv5 T3/T8 间歇挂 = 存量竞态**（humanAdapter.spawn baselineSeq 读取与 runner 投影快照窗口——无 nice 基线 dist 10 次 5 挂同位置，与 al-1 零交集；挂账候选 minor 清账波） |
+| al-2 | w2 layer 层级轴（AcceptanceLayer + schema + CONTEXT 词条，纯声明零行为） | committed | a8b5ed7 | verifier PASS（sha256 9518d086…，报告 al-2-report.md）：L1-L7 证实 + 对抗 6 条 + 波后基线 worktree 真对照（160 事件存量账本 × 四命令逐字节一致）。§7「report --json」笔误主 agent 例外备案勘误（report 无 --json，verifier 以 status --json + report 双形态等强验收）。全量 76 文件 590 用例绿（576 + al-2×7 + al-1×7） |
 | al-3 | w3 防线层（gate 规则⑩⑪ + reviewer 第六维 + designer 防下放 + D8 文档同步） | committed | 5852c49 | verifier PASS（sha256 75a38c7d…，报告 al-3-report.md）：T/W/B 十六条证实 + 对抗 8 组（词法边界 12 变体 / ⑩与 fx-3 R5.1 正交咬合 / fail 路径零 warning 混入 / 第六维 13 项自由文本）+ 波后三场景与设计 §3.1 逐项吻合。**两处偏离主 agent 追认**：al-2 L1/L5/L6 与 mx5-3 两处 B3 快照机械适配（基线 §3 未列豁免条款的疏漏——规则⑩落地必然翻红，verifier 逐行深查「最小必要无掩盖回归」）。全量 78 文件 608 用例绿 |
-| al-4 | w4 端到端验收（S1 执行点唯一性 / S6 触发案例对照 / S4 波后 manual） | verified | 141347b | verifier PASS（sha256 48663707…，报告 al-4-report.md）：A1/A6 七条款 + 事件序证实；**代笔保真度**经真实 loop（--spawn human）pass/fail 双向复验无「自说自话」缺口；对抗 4 条（R1 反向注入端到端拦截 / 红阶段零回归 / drift 任务书渲染）；波后三项全过——S4 真实 pi reviewer 第六维精确命中（证据 .xyz-harness/al4-s4-evidence/）+ G6 F1-F7 核对 + A6 全真实 loop 重放。两任接力（前任配额中断，续作零修改保留）。全量 79 文件 618 用例绿 |
+| al-4 | w4 端到端验收（S1 执行点唯一性 / S6 触发案例对照 / S4 波后 manual） | committed | 141347b | verifier PASS（sha256 48663707…，报告 al-4-report.md）：A1/A6 七条款 + 事件序证实；**代笔保真度**经真实 loop（--spawn human）pass/fail 双向复验无「自说自话」缺口；对抗 4 条（R1 反向注入端到端拦截 / 红阶段零回归 / drift 任务书渲染）；波后三项全过——S4 真实 pi reviewer 第六维精确命中（证据 .xyz-harness/al4-s4-evidence/）+ G6 F1-F7 核对 + A6 全真实 loop 重放。两任接力（前任配额中断，续作零修改保留）。全量 79 文件 618 用例绿 |
 
 ## 里程碑 gate
 
