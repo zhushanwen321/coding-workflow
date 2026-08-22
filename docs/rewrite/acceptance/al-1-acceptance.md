@@ -87,6 +87,6 @@ npx eslint src/verify/run.ts src/runner/spawn/lifecycle.ts tests/al-1-nice.test.
 
 ## 8. status
 
-pending → building → **pending 派发**（2026-08-22 基线入 git，builder 派发）
+pending → building → built → verifying → **verified**（2026-08-22：verifier 独立验收 PASS，报告 al-1-report.md——防篡改 diff 空 + sha256 5c26c7eb…；§5 N/D/R 十条全证实（真实性非空洞：断言读产物文件 / tmp bin 真只含 bash / R1 ESRCH 轮询真查进程死亡）；对抗 4 条全过（两形态产物逐字节全等 / CLI 超时产物三件完整 / lifecycle 四态 + nice 组长整树 kill / 嵌套累加父 10→子 20 实证）；波后 §7 真实 CLI 干净 checkout 内自报 ni=10 + 产物链完整。rv5 T3/T8 间歇挂为存量竞态（humanAdapter.spawn baselineSeq 窗口，无 nice 基线 dist 10 次 5 挂同位置），与 al-1 零交集——观察项移交 ledger）
 
 > 本节（§8 status）由主 agent 流转更新，不属于防篡改范围；§1-§7 禁止修改。
