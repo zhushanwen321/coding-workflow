@@ -1279,19 +1279,25 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
     // settleTimeoutEscalations 注释）
     lastUnitSeqs = settleTimeoutEscalations(events, timeoutStreaks, lastUnitSeqs, escalated, opts.rootId, artifactsDir, spawnTimeoutMs);
 
-    // 三类转人工出口的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
+    // 四类转人工维度的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
     // 打回活锁 / lv-2 buildDrift 缓慢进展——语义与去重见 announceManualEscalations
     // 注释）。buildDriftFacts 每轮只算一次：出声与派发计算消费同一份（对齐
     // flakes/contractFacts 复用模式）；人工处置写入新事件后投影自然消失、循环自愈
     const subtreeIds = new Set(subtreeUnits(projection, opts.rootId).map((u) => u.unitId));
     const driftFacts = buildDriftFacts(events, maxBuildAttempts);
-    const escalatedFacts = announceManualEscalations(opts.rootId, events, subtreeIds, maxSpecRejects, driftFacts, maxBuildAttempts, artifactsDir, {
-      flake: announcedFlake,
-      contract: announcedContractDeadlock,
-      spec: announcedDeadlock,
-      specProgress: announcedSpecProgress,
-      buildDrift: announcedBuildDrift,
-    });
+    const escalatedFacts = announceManualEscalations(
+      opts.rootId,
+      events,
+      subtreeIds,
+      { maxSpecRejects, driftFacts, maxBuildAttempts, artifactDir: artifactsDir },
+      {
+        flake: announcedFlake,
+        contract: announcedContractDeadlock,
+        spec: announcedDeadlock,
+        specProgress: announcedSpecProgress,
+        buildDrift: announcedBuildDrift,
+      },
+    );
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
@@ -1345,7 +1351,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       escalatedFacts.contractFacts,
       escalatedFacts.specFails,
       maxSpecRejects,
-      escalatedFacts.buildDrifts,
+      driftFacts,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {

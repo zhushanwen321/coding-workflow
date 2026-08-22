@@ -45,6 +45,15 @@ function isE2eType(type: AcceptanceType): boolean {
 }
 
 /**
+ * command 空白切分（规则⑨⑪⑫ 共用口径，单一事实源防漂移）：缺失按空串处理，
+ * trim 后按空白切分并剔除空 token——三处的「command 缺失或 tokenize 后为空则
+ * 跳过」判定同源。
+ */
+function tokenizeCommand(command: string | undefined): string[] {
+  return (command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+}
+
+/**
  * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
  * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加，⑫ 为 lv-1 追加）。确定性检查（对同一 spec +
  * 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，
@@ -151,7 +160,7 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   // 无 flag 可查，不触发。非法 runner 由规则⑧拦截，路由结果不在
   // ADAPTER_FLAG_CONTRACTS 表中即跳过（不双重报错）
   for (const ac of spec.acceptance) {
-    const tokens = (ac.command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+    const tokens = tokenizeCommand(ac.command);
     if (tokens.length === 0) {
       continue;
     }
@@ -203,7 +212,7 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
     if (ac.layer === "topic") {
       continue;
     }
-    const tokens = (ac.command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+    const tokens = tokenizeCommand(ac.command);
     if (tokens.length === 0) {
       continue;
     }
@@ -245,7 +254,7 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
       continue;
     }
     const command = ac.command ?? "";
-    const tokens = command.trim().split(/\s+/).filter((t) => t !== "");
+    const tokens = tokenizeCommand(command);
     if (tokens.length === 0) {
       continue;
     }

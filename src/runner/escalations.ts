@@ -204,7 +204,7 @@ function specContractDeadlockEscalationMessage(
  * 收束退出；人工处置（--max-build-attempts 续跑 / 新 spec 入账重置周期 / 人工
  * 完成）写入账本后投影自然消失，运行中的循环下轮自愈。
  */
-export function buildDriftEscalationMessage(
+function buildDriftEscalationMessage(
   rootId: string,
   unitId: string,
   fact: BuildDriftFact,
@@ -249,6 +249,24 @@ function contractAnnounceSignature(facts: SpecContractFacts): string {
 }
 
 /**
+ * 出声去重同构骨架（五维度共用）：签名与已记录值不同才重出，get → set →
+ * emitErr 顺序固定。render 用 thunk——出声文本只在签名变化时求值（specDeadlock
+ * 分支的 specReviewFailComments 是每轮全量事件扫描，签名未变时跳过；纯函数，
+ * 求值时机无观测差异）。
+ */
+function announceOnce(
+  map: Map<string, string>,
+  unitId: string,
+  signature: string,
+  render: () => string,
+): void {
+  if (map.get(unitId) !== signature) {
+    map.set(unitId, signature);
+    emitErr(render());
+  }
+}
+
+/**
  * 四类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
  * 打回活锁 / lv-2 buildDrift 缓慢进展）+ lv-3 spec-review 代数中间档：事实来自
  * 账本重放（flakeReviewFacts / specContractFacts / specReviewFailCounts——全部
@@ -269,10 +287,16 @@ export function announceManualEscalations(
   rootId: string,
   events: readonly LedgerEvent[],
   subtreeIds: ReadonlySet<string>,
-  maxSpecRejects: number,
-  buildDrifts: ReadonlyMap<string, BuildDriftFact>,
-  maxBuildAttempts: number,
-  artifactDir: string,
+  opts: {
+    /** spec 打回活锁的代数预算（mx-4；cw run --max-spec-rejects 注入） */
+    maxSpecRejects: number;
+    /** loop 每轮算好的 buildDrift 事实（出声与派发计算消费同一份） */
+    driftFacts: ReadonlyMap<string, BuildDriftFact>;
+    /** buildDrift 停派预算 K（--max-build-attempts，进指引文案） */
+    maxBuildAttempts: number;
+    /** run 级 topic 产物目录（指引里的 stdout 路径锚） */
+    artifactDir: string;
+  },
   dedup: {
     flake: Map<string, string>;
     contract: Map<string, string>;
@@ -285,18 +309,20 @@ export function announceManualEscalations(
   flakes: ReadonlyMap<string, readonly FlakeReviewFact[]>;
   contractFacts: ReadonlyMap<string, SpecContractFacts>;
   specFails: ReadonlyMap<string, number>;
-  buildDrifts: ReadonlyMap<string, BuildDriftFact>;
 } {
+  const { maxSpecRejects, driftFacts, maxBuildAttempts, artifactDir } = opts;
   const flakes = flakeReviewFacts(events);
   for (const [unitId, facts] of flakes) {
     if (!subtreeIds.has(unitId)) {
       continue;
     }
     const signature = flakeAnnounceSignature(facts);
-    if (dedup.flake.get(unitId) !== signature) {
-      dedup.flake.set(unitId, signature);
-      emitErr(flakeEscalationMessage(rootId, unitId, facts));
-    }
+    announceOnce(
+      dedup.flake,
+      unitId,
+      signature,
+      () => flakeEscalationMessage(rootId, unitId, facts),
+    );
   }
   // mx5-2 specContractDeadlock：解析失败连挂 ≥2 且回炉代数达上限（两代完整回炉
   // 仍失败）→ 停派转人工（computeDispatchTargets 同口径不派）
@@ -310,10 +336,12 @@ export function announceManualEscalations(
       continue;
     }
     const signature = contractAnnounceSignature(facts);
-    if (dedup.contract.get(unitId) !== signature) {
-      dedup.contract.set(unitId, signature);
-      emitErr(specContractDeadlockEscalationMessage(rootId, unitId, facts));
-    }
+    announceOnce(
+      dedup.contract,
+      unitId,
+      signature,
+      () => specContractDeadlockEscalationMessage(rootId, unitId, facts),
+    );
   }
   // mx-1 MF2 specReviewDeadlock：spec-review 打回代数 ≥ 预算（mx-4 参数化）。
   // 去重维持完整消息文本比较（fx-6 X5 不改本维度）：各代打回意见内嵌在消息里，
@@ -331,39 +359,51 @@ export function announceManualEscalations(
       failCount < maxSpecRejects
     ) {
       const notice = specProgressNoticeLine(rootId, unitId, failCount, maxSpecRejects);
-      if (dedup.specProgress.get(unitId) !== notice) {
-        dedup.specProgress.set(unitId, notice);
-        emitErr(notice);
-      }
+      announceOnce(dedup.specProgress, unitId, notice, () => notice);
       continue;
     }
     if (failCount < maxSpecRejects) {
       continue;
     }
-    const message = specDeadlockEscalationMessage(
-      rootId,
+    // 签名 = 打回代数（数值串），与消息一一对应（意见按代取首条、账本只追加
+    // 不可变，意见条数 = 代数）——等价于既有「完整消息文本比较」去重语义；
+    // 消息构造（含 specReviewFailComments 全量事件扫描）经 thunk 只在代数
+    // 变化时求值
+    announceOnce(
+      dedup.spec,
       unitId,
-      specReviewFailComments(events, unitId),
-      maxSpecRejects,
+      String(failCount),
+      () =>
+        specDeadlockEscalationMessage(
+          rootId,
+          unitId,
+          specReviewFailComments(events, unitId),
+          maxSpecRejects,
+        ),
     );
-    if (dedup.spec.get(unitId) !== message) {
-      dedup.spec.set(unitId, message);
-      emitErr(message);
-    }
   }
   // lv-2 buildDrift：本 spec 周期内 build 证据 ≥K 且无 pass verify——缓慢进展
   // 停派转人工（computeDispatchTargets 同口径不派）。签名 = specEpoch:capped：
   // 新 spec 周期再次达预算时签名变化重出声（防「回炉后二次触发静默」），同周期
   // 内证据数继续增长（buildCount 5→6→…）不重出
-  for (const [unitId, fact] of buildDrifts) {
+  for (const [unitId, fact] of driftFacts) {
     if (!subtreeIds.has(unitId)) {
       continue;
     }
     const signature = `${fact.specEpoch}:capped`;
-    if (dedup.buildDrift.get(unitId) !== signature) {
-      dedup.buildDrift.set(unitId, signature);
-      emitErr(buildDriftEscalationMessage(rootId, unitId, fact, maxBuildAttempts, artifactDir));
-    }
+    announceOnce(
+      dedup.buildDrift,
+      unitId,
+      signature,
+      () =>
+        buildDriftEscalationMessage(
+          rootId,
+          unitId,
+          fact,
+          maxBuildAttempts,
+          artifactDir,
+        ),
+    );
   }
-  return { flakes, contractFacts, specFails, buildDrifts };
+  return { flakes, contractFacts, specFails };
 }

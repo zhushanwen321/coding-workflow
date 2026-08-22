@@ -726,11 +726,7 @@ export function buildDriftFacts(
  * （lv-2）同理：省略时 buildDrift 维度恒空。maxSpecRejects（mx-4）：
  * specReviewDeadlock 的打回代数阈值——缺省回落常量
  * SPEC_REVIEW_DEADLOCK_FAILS（默认 10）；cw run 经 --max-spec-rejects 注入运行
- * 策略值，只读命令恒用默认。maxBuildAttempts（lv-2）：buildDrift 的停派预算
- * K——缺省回落常量 BUILD_DRIFT_MAX_ATTEMPTS（默认 5）；注意 K 的注入点在
- * buildDriftFacts 调用侧而非本函数内部（本函数只消费已算好的 facts map——
- * loop 把 --max-build-attempts 值传给 buildDriftFacts(events, maxBuildAttempts)，
- * 此处参数仅为调用方预算语义的显式声明，不参与判定）。
+ * 策略值，只读命令恒用默认。
  *
  * created 态内 spec 相关维度的互斥推导（mx-1 重排，if/else 序保证单组归属）：
  * specs===0 → specReady；failCount ≥ 阈值 → specReviewDeadlock（优先于审/修，
@@ -756,12 +752,6 @@ export function computeFrontier(
     buildDriftFacts?: ReadonlyMap<string, BuildDriftFact>;
     /** specReviewDeadlock 的打回代数阈值（mx-4；缺省回落 SPEC_REVIEW_DEADLOCK_FAILS） */
     maxSpecRejects?: number;
-    /**
-     * buildDrift 的停派预算 K（lv-2；缺省回落 BUILD_DRIFT_MAX_ATTEMPTS）。注意：
-     * K 的注入点在 buildDriftFacts 调用侧而非本函数内部——本函数只消费已算好
-     * 的 facts map（loop 把 --max-build-attempts 值传给 buildDriftFacts）。
-     */
-    maxBuildAttempts?: number;
   },
 ): FrontierGroups {
   const groups: FrontierGroups = {
