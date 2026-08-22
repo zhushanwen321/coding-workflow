@@ -1,9 +1,11 @@
 /**
  * `cw run --root <unitId> [--spawn human|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>]
- * [--reviewer-model <m>] [--max-spec-rejects <n>]`（u7 验收文档锁定：--spawn 路由到后端无关调度循环
+ * [--reviewer-model <m>] [--max-spec-rejects <n>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]`
+ * （u7 验收文档锁定：--spawn 路由到后端无关调度循环
  * src/runner/loop.ts + AgentSpawn 适配器；mx-1 增补 --reviewer-model；mx-4 增补
  * --max-spec-rejects——runner 侧 spec 打回代数转人工预算，只影响本循环判定，
- * 只读命令恒用默认值）。
+ * 只读命令恒用默认值；lv-2 增补 --max-build-attempts（buildDrift 停派预算）
+ * 与 --spawn-timeout-ms（单次 spawn 超时，env CW_SPAWN_TIMEOUT_MS 同链））。
  *
  * M1 起 --spawn 缺省 human 的语义 = 循环 + humanAdapter（u6b）；M0 的 human-loop.ts
  * 直连路径退役（文件与导出保留兼容既有单测，本文件不再调用）。
@@ -14,9 +16,12 @@
  * 自然生效，无需改代码。
  */
 import type { CommandContext } from "../dispatch.js";
-import { SPEC_REVIEW_DEADLOCK_FAILS } from "../readonly/frontier.js";
+import {
+  BUILD_DRIFT_MAX_ATTEMPTS,
+  SPEC_REVIEW_DEADLOCK_FAILS,
+} from "../readonly/frontier.js";
 import { loadLedger } from "../readonly/load.js";
-import { runLoop } from "../runner/loop.js";
+import { AGENT_SPAWN_TIMEOUT_MS, runLoop } from "../runner/loop.js";
 import type { AgentSpawnAdapter } from "../runner/spawn/types.js";
 import { fail, stringArg } from "./common.js";
 
@@ -109,7 +114,8 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
   if (rootId === undefined) {
     return fail(
       "cw run: 缺少 --root <unitId>。恢复动作：cw run --root <rootUnitId> [--spawn human|pi] " +
-        "[--poll-ms <毫秒>] [--max-idle-ms <毫秒>] [--max-concurrency <n>] [--max-spec-rejects <n>]。",
+        "[--poll-ms <毫秒>] [--max-idle-ms <毫秒>] [--max-concurrency <n>] [--max-spec-rejects <n>] " +
+        "[--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]。",
     );
   }
 
@@ -147,6 +153,34 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
   if (!maxSpecRejects.ok) {
     return fail(maxSpecRejects.error);
   }
+  // lv-2：buildDrift 停派预算（默认值单一事实源 = frontier.ts 的
+  // BUILD_DRIFT_MAX_ATTEMPTS）。只影响本循环的派发判定，只读命令恒用默认
+  const maxBuildAttempts = parsePositiveIntFlag(
+    ctx.argv["max-build-attempts"],
+    "--max-build-attempts",
+    BUILD_DRIFT_MAX_ATTEMPTS,
+    "次",
+  );
+  if (!maxBuildAttempts.ok) {
+    return fail(maxBuildAttempts.error);
+  }
+  // lv-2：单次 spawn 超时可调入口。env 合流在本层（与 CW_REVIEWER_MODEL 在
+  // loop 层合流不同）——差异理由：数字校验与 exit 1 可操作错误天然属 CLI 层
+  //（loop 是库化函数，非法值只能 throw 栈而非可操作输出）。优先级：
+  // --spawn-timeout-ms flag > CW_SPAWN_TIMEOUT_MS > 缺省常量
+  const spawnTimeoutFallback = spawnTimeoutEnvFallback();
+  if (!spawnTimeoutFallback.ok) {
+    return fail(spawnTimeoutFallback.error);
+  }
+  const spawnTimeoutMs = parsePositiveIntFlag(
+    ctx.argv["spawn-timeout-ms"],
+    "--spawn-timeout-ms",
+    spawnTimeoutFallback.value,
+    "毫秒",
+  );
+  if (!spawnTimeoutMs.ok) {
+    return fail(spawnTimeoutMs.error);
+  }
 
   // mx-1：reviewer 异源模型（可选）。flag 优先于进程环境 CW_REVIEWER_MODEL
   //（runLoop 启动时按同一优先级读取）；未配置时 reviewer spawn 回落 developer
@@ -181,8 +215,33 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
     maxIdleMs: maxIdle.value,
     maxConcurrency: maxConcurrency.value,
     maxSpecRejects: maxSpecRejects.value,
+    maxBuildAttempts: maxBuildAttempts.value,
+    spawnTimeoutMs: spawnTimeoutMs.value,
     ...(reviewerModel !== undefined ? { reviewerModel } : {}),
   });
+}
+
+/**
+ * CW_SPAWN_TIMEOUT_MS env 的合法化回落（lv-2）：未设置 = 缺省常量；已设置但
+ * 非 `/^\d+$/ 或 ≤0 = 可操作 fail（含原文与合法形态——错误指向恢复动作）。
+ * 读取点在 handleRun 启动时一次定格（与 CW_REVIEWER_MODEL 语义一致，运行中改
+ * env 不生效）。
+ */
+function spawnTimeoutEnvFallback(): { ok: true; value: number } | { ok: false; error: string } {
+  const raw = process.env.CW_SPAWN_TIMEOUT_MS;
+  if (raw === undefined || raw === "") {
+    return { ok: true, value: AGENT_SPAWN_TIMEOUT_MS };
+  }
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    return {
+      ok: false,
+      error:
+        `cw run: 非法 CW_SPAWN_TIMEOUT_MS "${raw}"：须为正整数（毫秒）。` +
+        `恢复动作：如 CW_SPAWN_TIMEOUT_MS=3600000；或改用 --spawn-timeout-ms <毫秒>（flag 优先于本变量）；` +
+        `清掉该变量则回默认 ${AGENT_SPAWN_TIMEOUT_MS}ms。`,
+    };
+  }
+  return { ok: true, value: Number(raw) };
 }
 
 /**

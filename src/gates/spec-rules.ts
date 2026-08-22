@@ -1,5 +1,5 @@
 /**
- * spec gate 十一规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
+ * spec gate 十二规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
  * 判定语义与 M0 口径锁定于 docs/rewrite/acceptance/u3-acceptance.md）。
  *
  * ① 验收非空；② core 用例自身 type 必须为 e2e-real/e2e-mock（M0 口径：核心 case
@@ -17,7 +17,11 @@
  * 节点 unit 声明 topic = 条目永无执行点的真空，fail 级提交期拒绝）；
  * ⑪ unit 层条目 command 命中全量回归形态（al-3，同设计 D5：warning 级成本
  * 启发式，词法判定不执行命令——命中入账继续 + warnings 交 evidence submit
- * 打 stderr；形态枚举见 FULL_REGRESSION_FORMS）。
+ * 打 stderr；形态枚举见 FULL_REGRESSION_FORMS）；
+ * ⑫ 验收 command 路径逃逸词法拦截（lv-1，M6 设计《cw 自治运行活性与契约防护》
+ * D3，fail 级：".cw-worktrees" 子串或目录选择词法族后随剥引号 /~ 开头 token——
+ * 逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit，语义失效同⑩真空
+ * 声明；词法族见 DIRECTORY_FLAG_TOKENS，漏报面由 reviewer 第五维语义审兜底）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -42,7 +46,7 @@ function isE2eType(type: AcceptanceType): boolean {
 
 /**
  * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
- * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加）。确定性检查（对同一 spec +
+ * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加，⑫ 为 lv-1 追加）。确定性检查（对同一 spec +
  * 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，
  * 不在本函数职责内。
  */
@@ -219,6 +223,38 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
               `建议显式标 layer: "topic"（成本归属可审计）。`,
       );
       break;
+    }
+  }
+
+  // ⑫ 验收 command 路径逃逸词法拦截（lv-1，M6 设计《cw 自治运行活性与契约防护》
+  // D3，fail 级——同规则⑩「真空声明」哲学：逃逸使 verify 语义失效，结果绑定
+  // 执行瞬间的工作区状态而非账本 commit，防线从「verify 挂后人工修 spec」提前
+  // 到提交期。触发案例：agent-managed-session u1 的 cd <开发worktree绝对路径>
+  // 打回 7 轮假循环）。作用域：全部非 manual 型条目（manual 不执行命令豁免——
+  // 同规则③作用域先例逻辑；unit/integration/e2e 级 command 都会被执行，逃逸面
+  // 相同），不含 layer 维度（topic/unit 层条目同等受检——逃逸面与层级正交）。
+  // command 缺失或 tokenize 后为空则跳过（同规则⑨先例）；tokenize 口径与规则⑨
+  // 一致。诚实漏报面（不静默，由 reviewer 任务书第五维「干净 checkout 可执行
+  // 性」语义审兜底，lv-3 将在第五维文案点名路径逃逸）：cd ../.. 类相对上跳
+  // （不以 / 或 ~ 开头）；bash -c 'cd /abs && …' 类引号包裹关键词（'cd 非裸
+  // token）；$(echo cd) /abs 类动态构造与 env 拼接；CW_WORKTREE_HOME 自定义
+  // 非默认工作区名（子串检查只盖默认 .cw-worktrees——自定义名依赖用户配置，
+  // 词法层不可枚举）
+  for (const ac of spec.acceptance) {
+    if (ac.type === "manual") {
+      continue;
+    }
+    const command = ac.command ?? "";
+    const tokens = command.trim().split(/\s+/).filter((t) => t !== "");
+    if (tokens.length === 0) {
+      continue;
+    }
+    for (const gap of pathEscapeGaps(command, tokens)) {
+      failures.push(
+        `规则⑫: 验收 ${ac.id} 的 command 含路径逃逸（${gap.hit}）` +
+          `——verify 在干净 checkout 执行（cwd = 检出树根），绝对路径 cd / .cw-worktrees 引用会让结果绑定执行瞬间的工作区状态而非账本 commit。` +
+          `恢复动作：改用相对路径（cd packages/app && …）或 git -C <相对路径>；引用的脚本/文件必须提交进仓库（干净 checkout 只含账本 commit 的内容）。`,
+      );
     }
   }
 
@@ -442,6 +478,85 @@ function wholeRepoScriptForm(tokens: readonly string[]): string | null {
 const FULL_REGRESSION_FORMS: readonly ((
   tokens: readonly string[],
 ) => string | null)[] = [vitestFullRunForm, wholeRepoScriptForm];
+
+// ── 规则⑫：路径逃逸词法拦截（单一事实源，与 ADAPTER_FLAG_CONTRACTS 同型组织） ──
+
+/** cw 专属工作区目录名（规则⑫判据一的子串锚）：验收命令零合法引用面 */
+const CW_WORKTREE_DIR_NAME = ".cw-worktrees";
+
+/**
+ * 目录选择词法族（规则⑫判据二，单一事实源内的可扩展枚举，与
+ * ADAPTER_FLAG_CONTRACTS / FULL_REGRESSION_FORMS 同型组织）：族成员后随剥引号
+ * 以 `/` 或 `~` 开头的 token → 路径逃逸拦截（`vitest --root /abs/worktree` 与
+ * `cd /abs` 逃逸语义完全等价 = 换树执行）。`git -C` 由 `-C` 成员覆盖（token
+ * 序列判定不区分宿主命令）；判定要求后随绝对路径 token，`grep -C 2` 类数值
+ * 后随不误拦。后续按真实逃逸案例增补，禁止散落多个函数。
+ */
+const DIRECTORY_FLAG_TOKENS: readonly string[] = [
+  "cd",
+  "-C",
+  "--dir",
+  "--prefix",
+  "--root",
+];
+
+/** 单个路径逃逸缺口（对齐规则⑨ FlagGap 形态）：文案要素 = 命中片段 */
+interface EscapeGap {
+  /** 命中片段：判据一 ".cw-worktrees"（子串），判据二 "<族token> <绝对路径token>" */
+  hit: string;
+}
+
+/** 成对引号的最小 token 长度（首尾各占一个引号字符，短于此必非成对包裹） */
+const MIN_QUOTED_TOKEN_LENGTH = 2;
+
+/**
+ * 剥引号：去除成对首尾单/双引号一层（`cd "/abs/path"` 的值 token 剥后以 /
+ * 开头即拦）。非成对包裹原样返回。族成员本身须裸 token——`'cd'` 带引号前缀
+ * 不匹配（诚实漏报面，见规则⑫注释）。
+ */
+function stripPairedQuotes(token: string): string {
+  if (token.length < MIN_QUOTED_TOKEN_LENGTH) {
+    return token;
+  }
+  const first = token[0];
+  if ((first === '"' || first === "'") && token[token.length - 1] === first) {
+    return token.slice(1, -1);
+  }
+  return token;
+}
+
+/**
+ * 规则⑫两判据（纯词法不执行命令，对齐规则③⑨⑪形态）：① 子串——command
+ * 原文含 ".cw-worktrees"（cw 专属工作区目录名，verify 在干净 checkout 执行，
+ * 引用开发工作区即绑定执行瞬间状态）；② 词法族——某 token 命中
+ * DIRECTORY_FLAG_TOKENS 且下一 token 剥引号后以 `/` 或 `~` 开头。一条 command
+ * 命中两判据（如 cd /x/.cw-worktrees/y）出两条缺口——多缺口全列不短路，对齐
+ * 模块头既有约定。
+ */
+function pathEscapeGaps(
+  command: string,
+  tokens: readonly string[],
+): EscapeGap[] {
+  const gaps: EscapeGap[] = [];
+  if (command.includes(CW_WORKTREE_DIR_NAME)) {
+    gaps.push({ hit: `"${CW_WORKTREE_DIR_NAME}"` });
+  }
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i] ?? "";
+    if (!DIRECTORY_FLAG_TOKENS.includes(token)) {
+      continue;
+    }
+    const next = tokens[i + 1];
+    if (next === undefined) {
+      continue;
+    }
+    const stripped = stripPairedQuotes(next);
+    if (stripped.startsWith("/") || stripped.startsWith("~")) {
+      gaps.push({ hit: `"${token} ${next}"` });
+    }
+  }
+  return gaps;
+}
 
 /**
  * `which` 等价检查：含路径分隔符时直接验证该文件可执行，否则遍历 PATH

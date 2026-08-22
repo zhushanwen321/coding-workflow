@@ -47,6 +47,11 @@
  *     转人工，与 specReviewDeadlock 同款三处联动）。已知逃逸面（设计记档）：
  *     新 SpecSubmitted 整体重置该 unit 全部连挂状态——断言失败条目的 flake
  *     连挂同样被清，每 unit 至多被清 2 次（代数上界）且计数可重建
+ *   - buildDrift：spec-frozen 且当前 spec 周期内 build 证据（EvidenceSubmitted
+ *     计数）≥K（默认 5）且无 pass verify——缓慢进展转人工（lv-2，回溯「做
+ *     不完的单元」的有限成本出口：每轮有产出但期望完成时间发散，布尔进展
+ *     判定对其失明）。停派 + stderr 转人工（三选一：人工接手 / 拆 unit /
+ *     调大 K 续跑）；账本态跨 run 持久（Ctrl-C 重跑计数不丢）
  *   - buildReady：spec-frozen 叶子（split 空 ∨ 自引用按叶子语义）且子全部
  *     closed（rootLast）——待 developer
  *   - execReviewReady：verified 且未 closed——待 reviewer（exec-review）
@@ -89,15 +94,19 @@ export interface FrontierGroups {
   specContractDeadlock: string[];
   /** rv-5：e2e 验收连挂 ≥2 的 unit（转人工判定，机器派发无出口） */
   flakeReview: string[];
+  /** lv-2：本 spec 周期内 build 证据 ≥K 且无 pass verify 的 unit（缓慢进展转人工，机器派发无出口） */
+  buildDrift: string[];
   buildReady: string[];
   execReviewReady: string[];
 }
 
 /**
  * 组的展示序 = 生命周期推进序（spec → 审 → 修 → 审死锁转人工 → 子 → 集成 →
- * 契约回炉 / 回炉死锁转人工 → flake 转人工 → build → 收尾审查）。specContract
- * 两组插在 flakeReview 之前与 computeFrontier 的判定序同步（单组归属，序即裁决
- * ——混合 unit 两谓词同真时回炉优先，见设计 mx-5 D2 并存语义）。
+ * 契约回炉 / 回炉死锁转人工 → flake 转人工 → build 预算转人工 → build → 收尾
+ * 审查）。specContract 两组插在 flakeReview 之前与 computeFrontier 的判定序同步
+ * （单组归属，序即裁决——混合 unit 两谓词同真时回炉优先，见设计 mx-5 D2 并存
+ * 语义）。lv-2 buildDrift 位次 = flakeReview 之后、buildReady 之前（「flake 转人
+ * 工 → build 预算转人工 → build 推进」的生命周期序）。
  */
 const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
   "specReady",
@@ -110,6 +119,7 @@ const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
   "specContractBroken",
   "specContractDeadlock",
   "flakeReview",
+  "buildDrift",
   "buildReady",
   "execReviewReady",
 ];
@@ -612,16 +622,115 @@ export function specContractFacts(
   return facts;
 }
 
+// ---- lv-2：缓慢进展停派投影（buildDrift 维度的判定输入） ----
+
+/**
+ * buildDrift 的停派预算默认值（lv-2）：本 spec 周期内 build 证据计数 ≥K 且无
+ * pass verify 即判「缓慢进展」（每轮有产出但期望完成时间发散——u4 案例 6 次
+ * spawn ≈3h 无限重派的直接对策；布尔进展判定对「有产出但做不完」失明）。
+ * K=5 依据：正常单元 1-3 次证据，u4 案例 8 次已太晚。runner 侧可经
+ * cw run --max-build-attempts 注入运行策略值；只读命令（frontier/status）
+ * 恒用本默认值（转人工预算是运行策略，默认值是投影展示语义——对齐
+ * maxSpecRejects 先例）。
+ */
+export const BUILD_DRIFT_MAX_ATTEMPTS = 5;
+
+/** 单 unit 的缓慢进展事实（buildDrift 出口的转人工指引消费） */
+export interface BuildDriftFact {
+  /** 当前 spec 周期内的 EvidenceSubmitted 计数（返回值恒 ≥ 注入的 maxAttempts） */
+  buildCount: number;
+  /** 该 unit 累计 SpecSubmitted 次数（出声去重签名的周期维度——新周期再达预算时签名变化重出声） */
+  specEpoch: number;
+}
+
+/**
+ * 各 unit 当前 spec 周期内的 build 证据计数与 pass 事实（lv-2，纯投影——事件流
+ * 重放，与 flakeReviewFacts 同构范式）。口径锁定（lv-2 基线 §4.A / 设计 D1）：
+ *   - 事实源 = EvidenceSubmitted 事件即 build 证据（spec 提交走独立的
+ *     SpecSubmitted 事件——payload 无 kind 区分，仓内事实源如此），逐条 +1；
+ *   - 周期锚 = SpecSubmitted 入账即重置（buildCount=0、hasPass=false；specEpoch
+ *     累计 +1）——对齐 flakeReviewFacts 的周期重置锚（入账只保证过 gate，与
+ *     reviewer 过审无关）；
+ *   - pass 豁免：非集成 VerifyRan 且 result=pass → hasPass=true（**不清零
+ *     buildCount**——「计数 ≥K 且无 pass」是谓词合取，pass 过的 unit 能完成，
+ *     不属「做不完」；已知边界：pass 后 exec-review 打回再卡 build 循环不触发，
+ *     记档不静默）；
+ *   - 集成排除：runId 以 integrate- 开头的 VerifyRan 跳过（不计数、不清零、
+ *     不置 pass——对齐 flakeReviewFacts 的跳过口径，防口径漂移）；
+ *   - 无 spec 周期锚的 EvidenceSubmitted / VerifyRan 忽略（flake 同款防御）；
+ *   - 外露：仅 buildCount ≥ maxAttempts ∧ !hasPass 的 unit 进 map（谓词不成立
+ *     不外露，同 flakeReviewFacts 只外露 active 的范式）。
+ * 回炉边界（记档）：specContractBroken 回炉重提 spec 时计数随周期清零、预算
+ * 重建——最坏「回炉 × buildDrift」交织成本 ≤ 2 代回炉上限 × K，有界不发散，
+ * specContractDeadlock 兜底。
+ * 调用方 = computeFrontier（buildDrift 维度）与 loop（每轮重读账本后计算，
+ * 转人工指引与派发排除——K 注入点在本函数调用侧，computeFrontier 只消费
+ * 已算好的 facts map）。
+ */
+export function buildDriftFacts(
+  events: readonly LedgerEvent[],
+  maxAttempts: number = BUILD_DRIFT_MAX_ATTEMPTS,
+): Map<string, BuildDriftFact> {
+  interface UnitDriftState {
+    buildCount: number;
+    hasPass: boolean;
+    specEpoch: number;
+  }
+  const states = new Map<string, UnitDriftState>();
+  for (const record of events) {
+    const event = record as DiscriminatedEvent;
+    if (event.type === "SpecSubmitted") {
+      // spec 变更即周期重置：计数与 pass 清零、周期数累计（出声去重的签名维度）
+      const previous = states.get(event.payload.unitId);
+      states.set(event.payload.unitId, {
+        buildCount: 0,
+        hasPass: false,
+        specEpoch: (previous?.specEpoch ?? 0) + 1,
+      });
+    } else if (event.type === "EvidenceSubmitted") {
+      const state = states.get(event.payload.unitId);
+      if (state === undefined) {
+        continue; // 无 spec 周期锚的证据：正常流程不可达（handler 先查 spec）
+      }
+      state.buildCount += 1;
+    } else if (event.type === "VerifyRan") {
+      if (event.payload.runId.startsWith("integrate-")) {
+        continue;
+      }
+      const state = states.get(event.payload.unitId);
+      if (state === undefined) {
+        continue; // 无 spec 周期锚的 verify：正常流程不可达（handler 先查 spec）
+      }
+      if (event.payload.result === "pass") {
+        // pass 豁免（不清零 buildCount）：pass 过的 unit 能完成，不属「做不完」
+        state.hasPass = true;
+      }
+    }
+  }
+  const facts = new Map<string, BuildDriftFact>();
+  for (const [unitId, state] of states) {
+    if (state.buildCount >= maxAttempts && !state.hasPass) {
+      facts.set(unitId, { buildCount: state.buildCount, specEpoch: state.specEpoch });
+    }
+  }
+  return facts;
+}
+
 /**
  * 就绪集合计算（纯函数，维度语义见模块头）。consecutiveIntegrationFails 省略时
  * 上限判定退化为「无 fail 记录」——仅供无账本上下文的纯函数调用；命令与 loop
  * 消费时必须传入真实计数，否则 integrationDrift / integrationReady 判定分叉。
  * flakeReviewFacts 同理：省略时 flakeReview 维度恒空；specReviewFailCounts 同理：
  * 省略时 specReviewDeadlock 维度恒空（纯函数调用方）；specContractFacts（mx5-2）
- * 同理：省略时 specContractBroken / specContractDeadlock 恒空。maxSpecRejects
- * （mx-4）：specReviewDeadlock 的打回代数阈值——缺省回落常量
+ * 同理：省略时 specContractBroken / specContractDeadlock 恒空；buildDriftFacts
+ * （lv-2）同理：省略时 buildDrift 维度恒空。maxSpecRejects（mx-4）：
+ * specReviewDeadlock 的打回代数阈值——缺省回落常量
  * SPEC_REVIEW_DEADLOCK_FAILS（默认 10）；cw run 经 --max-spec-rejects 注入运行
- * 策略值，只读命令恒用默认。
+ * 策略值，只读命令恒用默认。maxBuildAttempts（lv-2）：buildDrift 的停派预算
+ * K——缺省回落常量 BUILD_DRIFT_MAX_ATTEMPTS（默认 5）；注意 K 的注入点在
+ * buildDriftFacts 调用侧而非本函数内部（本函数只消费已算好的 facts map——
+ * loop 把 --max-build-attempts 值传给 buildDriftFacts(events, maxBuildAttempts)，
+ * 此处参数仅为调用方预算语义的显式声明，不参与判定）。
  *
  * created 态内 spec 相关维度的互斥推导（mx-1 重排，if/else 序保证单组归属）：
  * specs===0 → specReady；failCount ≥ 阈值 → specReviewDeadlock（优先于审/修，
@@ -643,8 +752,16 @@ export function computeFrontier(
     /** mx5-2：解析失败连挂 + 回炉代数（specContract 两维度判定输入） */
     specContractFacts?: ReadonlyMap<string, SpecContractFacts>;
     specReviewFailCounts?: ReadonlyMap<string, number>;
+    /** lv-2：本 spec 周期内 build 证据 ≥K 且无 pass 的事实（buildDrift 维度判定输入） */
+    buildDriftFacts?: ReadonlyMap<string, BuildDriftFact>;
     /** specReviewDeadlock 的打回代数阈值（mx-4；缺省回落 SPEC_REVIEW_DEADLOCK_FAILS） */
     maxSpecRejects?: number;
+    /**
+     * buildDrift 的停派预算 K（lv-2；缺省回落 BUILD_DRIFT_MAX_ATTEMPTS）。注意：
+     * K 的注入点在 buildDriftFacts 调用侧而非本函数内部——本函数只消费已算好
+     * 的 facts map（loop 把 --max-build-attempts 值传给 buildDriftFacts）。
+     */
+    maxBuildAttempts?: number;
   },
 ): FrontierGroups {
   const groups: FrontierGroups = {
@@ -658,6 +775,7 @@ export function computeFrontier(
     specContractBroken: [],
     specContractDeadlock: [],
     flakeReview: [],
+    buildDrift: [],
     buildReady: [],
     execReviewReady: [],
   };
@@ -665,6 +783,7 @@ export function computeFrontier(
   const flakes = opts?.flakeReviewFacts;
   const contracts = opts?.specContractFacts;
   const specFails = opts?.specReviewFailCounts;
+  const buildDrifts = opts?.buildDriftFacts;
   const maxSpecRejects = opts?.maxSpecRejects ?? SPEC_REVIEW_DEADLOCK_FAILS;
   for (const unit of projection.units.values()) {
     const status = unitStatus(unit);
@@ -711,8 +830,14 @@ export function computeFrontier(
         }
         // 子已建未全 verified：等待子树推进，无组
       } else if (childrenAllClosed(projection, unit)) {
-        // 叶子（split 空 ∨ 自引用按叶子语义，fx-1 R1）：rootLast 等待条件
-        groups.buildReady.push(unit.unitId);
+        // 叶子（split 空 ∨ 自引用按叶子语义，fx-1 R1）：rootLast 等待条件。
+        // lv-2 buildDrift 优先于 buildReady（单组归属，序即裁决——预算耗尽的
+        // 缓慢进展 unit 停派转人工，不再喂 developer 重派循环）
+        if (buildDrifts?.has(unit.unitId)) {
+          groups.buildDrift.push(unit.unitId);
+        } else {
+          groups.buildReady.push(unit.unitId);
+        }
       }
     } else if (status === "verified") {
       groups.execReviewReady.push(unit.unitId);
@@ -731,11 +856,14 @@ export function renderFrontier(groups: FrontierGroups): string {
 
 /**
  * 该 unit 当前的停派态描述（mx5-2 D6：TIMEOUT 结算行诚实化的输入）。停派态 =
- * 三个转人工维度之一（specContractDeadlock / flakeReview / specReviewDeadlock
- * ——TIMEOUT 封顶的转人工是单进程内存态且封顶后不再有新 spawn，无需投影判定）。
- * 停派态下的「可重派」承诺不兑现（三跑现场五：flake 停派中的 developer TIMEOUT
- * 结算行写可重派，死局），文案须改述真实行为。纯投影：调用方传入结算时刻的
- * 最新事件流（被 kill 的 agent 死前可能已写入处置事件）。
+ * 四个转人工维度之一（specContractDeadlock / flakeReview / specReviewDeadlock
+ * / buildDrift——TIMEOUT 封顶的转人工是单进程内存态且封顶后不再有新 spawn，
+ * 无需投影判定）。停派态下的「可重派」承诺不兑现（三跑现场五：flake 停派中的
+ * developer TIMEOUT 结算行写可重派，死局），文案须改述真实行为。纯投影：调用方
+ * 传入结算时刻的最新事件流（被 kill 的 agent 死前可能已写入处置事件）。检查序
+ * 按 computeFrontier 单组归属下各停派维度互斥（同一 unit 只能进一组），
+ * buildDrift 插入位次 = 第四，理由：与三个停派维度单组互斥，序不裁决语义
+ * （防御性文档化——先匹配先返回）。
  */
 export function stoppedDispatchState(
   events: readonly LedgerEvent[],
@@ -746,6 +874,7 @@ export function stoppedDispatchState(
     flakeReviewFacts: flakeReviewFacts(events),
     specContractFacts: specContractFacts(events),
     specReviewFailCounts: specReviewFailCounts(events),
+    buildDriftFacts: buildDriftFacts(events),
   });
   if (groups.specContractDeadlock.includes(unitId)) {
     return "specContractDeadlock（验收命令解析失败已 2 代回炉，防活锁转人工）";
@@ -756,6 +885,9 @@ export function stoppedDispatchState(
   if (groups.specReviewDeadlock.includes(unitId)) {
     return "specReviewDeadlock（spec 打回代数达预算转人工）";
   }
+  if (groups.buildDrift.includes(unitId)) {
+    return "buildDrift（build 证据达预算无 pass，缓慢进展转人工）";
+  }
   return null;
 }
 
@@ -764,8 +896,8 @@ const JSON_INDENT = 2;
 
 export async function frontierHandler(ctx: CommandContext): Promise<number> {
   // 直接读原始事件流（loadLedger 只回投影；integrationDrift / flakeReview /
-  // specContract 两类维度需要事件重放的计数）。existsSync 前置探测保持只读保证
-  //（不构造 EventLedger 建目录）
+  // specContract / buildDrift 各维度需要事件重放的计数）。existsSync 前置探测
+  // 保持只读保证（不构造 EventLedger 建目录）
   const path = ledgerPath(getCwHome(), ctx.cwd);
   const events = existsSync(path) ? new EventLedger(path).readAll() : [];
   const projection = fold(events);
@@ -774,6 +906,9 @@ export async function frontierHandler(ctx: CommandContext): Promise<number> {
     flakeReviewFacts: flakeReviewFacts(events),
     specContractFacts: specContractFacts(events),
     specReviewFailCounts: specReviewFailCounts(events),
+    // lv-2：只读命令恒用默认 K（转人工预算是运行策略，默认值是投影展示语义
+    //——对齐 maxSpecRejects 先例；--max-build-attempts 只作用于 cw run 循环）
+    buildDriftFacts: buildDriftFacts(events),
   });
 
   if (ctx.argv.json === true) {

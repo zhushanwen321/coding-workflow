@@ -1,15 +1,17 @@
 /**
  * 转人工（escalation）出声函数族（fx-6 F1 自 loop.ts 整体迁入，函数体逐字节
- * 不变；先例 = mx5-2 四投影函数迁 frontier.ts，commit 9703d9f）：三类停派维度
- * （TIMEOUT 封顶 / spec 打回活锁 / flake 连挂 / 回炉活锁）的 stderr 指引与每轮
- * 出声去重。与 loop.ts 的归属边界：本文件只做出声文本与出声时机判定，不感知
- * 派发循环；emitErr 与 spawn 超时常量是 loop 其余逻辑共用项，留在 loop.ts 并
- * import 之（循环 import 安全——两侧顶层均只定义，运行时调用时已初始化完毕）。
+ * 不变；先例 = mx5-2 四投影函数迁 frontier.ts，commit 9703d9f）：停派维度
+ * （TIMEOUT 封顶 / spec 打回活锁 / flake 连挂 / 回炉活锁 / buildDrift 缓慢进展）
+ * 的 stderr 指引与每轮出声去重。与 loop.ts 的归属边界：本文件只做出声文本与
+ * 出声时机判定，不感知派发循环；emitErr 与 spawn 超时常量是 loop 其余逻辑共用项，
+ * 留在 loop.ts 并 import 之（循环 import 安全——两侧顶层均只定义，运行时调用时
+ * 已初始化完毕）。
  */
 import { join } from "node:path";
 
 import type { LedgerEvent } from "../events/types.js";
 import {
+  type BuildDriftFact,
   type FlakeReviewFact,
   flakeReviewFacts,
   SPEC_CONTRACT_MAX_GENERATIONS,
@@ -19,7 +21,6 @@ import {
   specReviewFailCounts,
 } from "../readonly/frontier.js";
 import {
-  AGENT_SPAWN_TIMEOUT_MS,
   AGENT_TIMEOUT_ESCALATION_AFTER,
   emitErr,
 } from "./loop.js";
@@ -30,10 +31,16 @@ const MS_PER_MINUTE = 60_000;
 
 /**
  * 转人工指引（连续 TIMEOUT 封顶时逐 unit 打印；错误指向恢复动作，规则 16）。
- * spawn 超时是 src/runner/loop.ts 的固定常量（30min），cw run 无调大 flag——
- * 如实告知现状而非指向不存在的入口。
+ * lv-2 起单次 spawn 超时可经 --spawn-timeout-ms / CW_SPAWN_TIMEOUT_MS 调大——
+ * 第 3 条显示本循环实际值与入口（spawnTimeoutMs 由 loop 传入，非固定常量）。
  */
-export function escalationMessage(rootId: string, unitId: string, role: AgentRole, artifactDir: string): string {
+export function escalationMessage(
+  rootId: string,
+  unitId: string,
+  role: AgentRole,
+  artifactDir: string,
+  spawnTimeoutMs: number,
+): string {
   // 产物根随 fx-4 迁 run 级 topic 目录（stdout/stderr append 累积本 run 历次输出）
   const stdoutPath = join(artifactDir, `${unitId}.${role}.stdout`);
   return (
@@ -42,7 +49,7 @@ export function escalationMessage(rootId: string, unitId: string, role: AgentRol
     "防静默降级；本循环继续处理其余 unit）。恢复动作（按序）：\n" +
     `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
     `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（本次 run 的历次输出；跨 run 历史在 ~/.cw/topic/ 下按 runTs 目录可查）\n` +
-    `  3. 若任务量确超单次 spawn 上限（${AGENT_SPAWN_TIMEOUT_MS / MS_PER_MINUTE}min 固定值，cw run 暂无调大入口）：` +
+    `  3. 若任务量确超单次 spawn 上限（--spawn-timeout-ms / CW_SPAWN_TIMEOUT_MS 可调，当前 ${spawnTimeoutMs / MS_PER_MINUTE}min）：` +
     "人工接手完成该 unit，或拆小任务另建 unit"
   );
 }
@@ -164,6 +171,35 @@ function specContractDeadlockEscalationMessage(
 }
 
 /**
+ * buildDrift 缓慢进展转人工指引（lv-2，设计 §3.1 成功路径全文锁定）：本 spec
+ * 周期内 build 证据 ≥K 且无 pass verify——每轮有产出但期望完成时间发散（布尔
+ * 进展判定对其失明），停派转人工。恢复动作三选一（人工接手 / 拆 unit / 调大 K
+ * 续跑）。出口形态复用 fx-2 上限出口的「审计-不喂-idle」模式：停派后无新
+ * developer spawn 即无新 build 证据，若树内无其他可推进目标，空转由 maxIdleMs
+ * 收束退出；人工处置（--max-build-attempts 续跑 / 新 spec 入账重置周期 / 人工
+ * 完成）写入账本后投影自然消失，运行中的循环下轮自愈。
+ */
+export function buildDriftEscalationMessage(
+  rootId: string,
+  unitId: string,
+  fact: BuildDriftFact,
+  maxBuildAttempts: number,
+  artifactDir: string,
+): string {
+  // 产物根随 fx-4 迁 run 级 topic 目录（stdout/stderr append 累积本 run 历次输出）
+  const stdoutPath = join(artifactDir, `${unitId}.developer.stdout`);
+  return (
+    `cw run: unit "${unitId}" 的 build 证据已达 ${fact.buildCount} 次（--max-build-attempts 预算 ${maxBuildAttempts}）` +
+    "且本 spec 周期内无 pass verify——判定缓慢进展（每轮有产出但期望完成时间发散），\n" +
+    "停止自动重派，转人工处理（本循环继续处理其余 unit）。恢复动作（按序）：\n" +
+    `  1. 人工接手：cw run --root ${rootId} --spawn human（账本即状态，${fact.buildCount} 次证据的进度不丢）\n` +
+    `  2. 定位卡点：${stdoutPath}（历次输出）\n` +
+    "  3. 三选一：人工完成该 unit；或拆小任务另建 unit（cw create 深度上限内）；\n" +
+    `     或确认可继续自动跑：cw run --root ${rootId} --max-build-attempts <更大值>`
+  );
+}
+
+/**
  * flake 出声的稳定签名（fx-6 X5）：排序后的连挂 acceptanceId 集合（dedup map 按
  * unitId 键控，签名语义 = unitId + 该集合）。「本质事实变化才重出」——同一组
  * acceptanceId 连挂时 runId 单调追加 / 连挂计数增长只会改消息文本（四跑异常-1：
@@ -188,31 +224,39 @@ function contractAnnounceSignature(facts: SpecContractFacts): string {
 }
 
 /**
- * 三类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
- * 打回活锁）：事实来自账本重放（flakeReviewFacts / specContractFacts /
- * specReviewFailCounts——全部「重提清连挂、代数类计数不清零」语义），人工处置
- * 写入新事件后投影自然消失。出声去重分两档（fx-6 X5）：flake 与回炉活锁按稳定
- * 签名（unitId + 排序后 acceptanceId 集合，回炉再加代数档）——连挂 runId 单调
- * 追加只改文本不改本质事实，不重出；spec 打回维度维持完整消息文本比较（mx-3
- * 语义）——各代打回意见不同是有意重出（新代意见是新事实）。消息文本本身不变
- * （仍含 runIds 与恢复指引）。返回三类事实映射供 computeDispatchTargets 复用
- * （派发排除与出声同口径同源，不重放两遍）。其他 root 的 unit（同一账本多
- * root）不在本 run 职责内，跳过。
+ * 四类转人工维度的每轮出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
+ * 打回活锁 / lv-2 buildDrift 缓慢进展）：事实来自账本重放（flakeReviewFacts /
+ * specContractFacts / specReviewFailCounts——全部「重提清连挂、代数类计数不清
+ * 零」语义；buildDriftFacts 由 loop 算好传入——facts 只算一次，出声与派发计算
+ * 消费同一份），人工处置写入新事件后投影自然消失。出声去重分两档（fx-6 X5）：
+ * flake 与回炉活锁按稳定签名（unitId + 排序后 acceptanceId 集合，回炉再加代数
+ * 档）——连挂 runId 单调追加只改文本不改本质事实，不重出；spec 打回维度维持完
+ * 整消息文本比较（mx-3 语义）——各代打回意见不同是有意重出（新代意见是新事实）
+ * ；buildDrift 签名 = specEpoch:capped（lv-2——必须含 specEpoch：新 spec 周期
+ * 再次达预算时签名变化重出声，防「回炉后二次触发静默」；同周期内证据数继续
+ * 增长不重出）。消息文本本身不变（仍含 runIds 与恢复指引）。返回事实映射供
+ * computeDispatchTargets 复用（派发排除与出声同口径同源，不重放两遍）。其他
+ * root 的 unit（同一账本多 root）不在本 run 职责内，跳过。
  */
 export function announceManualEscalations(
   rootId: string,
   events: readonly LedgerEvent[],
   subtreeIds: ReadonlySet<string>,
   maxSpecRejects: number,
+  buildDrifts: ReadonlyMap<string, BuildDriftFact>,
+  maxBuildAttempts: number,
+  artifactDir: string,
   dedup: {
     flake: Map<string, string>;
     contract: Map<string, string>;
     spec: Map<string, string>;
+    buildDrift: Map<string, string>;
   },
 ): {
   flakes: ReadonlyMap<string, readonly FlakeReviewFact[]>;
   contractFacts: ReadonlyMap<string, SpecContractFacts>;
   specFails: ReadonlyMap<string, number>;
+  buildDrifts: ReadonlyMap<string, BuildDriftFact>;
 } {
   const flakes = flakeReviewFacts(events);
   for (const [unitId, facts] of flakes) {
@@ -261,5 +305,19 @@ export function announceManualEscalations(
       emitErr(message);
     }
   }
-  return { flakes, contractFacts, specFails };
+  // lv-2 buildDrift：本 spec 周期内 build 证据 ≥K 且无 pass verify——缓慢进展
+  // 停派转人工（computeDispatchTargets 同口径不派）。签名 = specEpoch:capped：
+  // 新 spec 周期再次达预算时签名变化重出声（防「回炉后二次触发静默」），同周期
+  // 内证据数继续增长（buildCount 5→6→…）不重出
+  for (const [unitId, fact] of buildDrifts) {
+    if (!subtreeIds.has(unitId)) {
+      continue;
+    }
+    const signature = `${fact.specEpoch}:capped`;
+    if (dedup.buildDrift.get(unitId) !== signature) {
+      dedup.buildDrift.set(unitId, signature);
+      emitErr(buildDriftEscalationMessage(rootId, unitId, fact, maxBuildAttempts, artifactDir));
+    }
+  }
+  return { flakes, contractFacts, specFails, buildDrifts };
 }

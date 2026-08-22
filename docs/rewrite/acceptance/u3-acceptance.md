@@ -29,12 +29,13 @@
 
 ## 规则口径追加（后续波次授权追加；本节由 al-3 基线 D8 同步）
 
-u3 只交付①-⑤；⑥-⑨由 fx-1 / rv-2 / mx-2 / mx5-1 各自基线追加（口径出处 = 各自验收文档）。al-3（《验收分层与成本治理》设计 D4/D5，详见 `docs/rewrite/acceptance/al-3-acceptance.md`）追加两条：
+u3 只交付①-⑤；⑥-⑨由 fx-1 / rv-2 / mx-2 / mx5-1 各自基线追加（口径出处 = 各自验收文档）。al-3（《验收分层与成本治理》设计 D4/D5，详见 `docs/rewrite/acceptance/al-3-acceptance.md`）追加两条；lv-1（M6 自治运行活性与契约防护设计 D3，详见 `docs/rewrite/acceptance/lv-1-acceptance.md`）追加一条：
 
 | # | 规则 | 级别 | 判定 |
 |---|------|------|------|
 | ⑩ | topic 层条目要求 split 非空 | fail | `spec.acceptance` 存在 `layer === "topic"` 条目而 `spec.split.length === 0` → 逐条目列缺口（多缺口全列不短路）。语义闭环：split 非空 ⟺ 有子节点 ⟺ 有集成执行点 ⟺ topic 条目会被执行；split 空声明 topic = 条目永无执行点的真空，提交期拒绝。已知边界：单 unit topic（root 无子、split 空）同样拒绝——它本就没有集成执行点。错误文案含两个恢复方向（上收 root spec 标 topic / 去 layer 按 unit 层声明） |
 | ⑪ | unit 层全量回归形态成本启发式 | warning | `layer` 未声明或 `"unit"` 的条目，command 空白切分 token 纯词法命中全量回归形态（不执行命令）→ 入账继续（ok 判定只看 failures 不变）+ `SpecRulesResult.warnings` 交 `evidence submit` stderr 逐条打印。形态 A：`[npx/pnpm/yarn/bun/bunx 可选前缀] vitest run` 且 run 后无位置参数（后续 token 全 `-` 开头或无）；形态 B：首 token `npm/pnpm/yarn/bun`，允许 `run` 中缀，script 名恰为 `test`/`lint` 且其后无位置参数。wrapper 脚本 / script 别名封装 / `make test` 显式不枚举（诚实漏报面，reviewer 任务书第六维语义审兜底）；warning 级理由：静态形态判定有误杀面，硬拒会逼出 wrapper 规避动作 |
+| ⑫ | 验收 command 路径逃逸词法拦截 | fail | 作用域 = 全部非 manual 型条目（manual 不执行命令豁免）；command 缺失或空白切分后为空则跳过（同规则⑨先例），tokenize 口径与规则⑨一致。纯词法两判据（不执行命令）：① command 原文含 `.cw-worktrees` 子串（cw 专属工作区目录名，验收命令零合法引用面）；② 某 token 命中目录选择词法族（`cd` / `-C` / `--dir` / `--prefix` / `--root`，单一事实源 = `DIRECTORY_FLAG_TOKENS`，`git -C` 由 `-C` 成员覆盖）且下一 token 剥引号（去成对首尾单/双引号一层）后以 `/` 或 `~` 开头（`grep -C 2` 数值后随不误拦）。一条 command 命中两判据出两条 failure（多缺口全列不短路）。理由：逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit（语义失效，同⑩「真空声明」哲学）。恢复方向：改用相对路径（`cd packages/app && …`）或 `git -C <相对路径>`，引用的脚本/文件须提交进仓库。诚实漏报面：`cd ../..` 相对上跳、`bash -c 'cd /abs'` 引号包裹关键词（`'cd` 非裸 token）、`$(echo cd) /abs` 动态构造与 env 拼接、`CW_WORKTREE_HOME` 自定义非默认工作区名——由 reviewer 第五维语义审兜底 |
 
 ⑩⑪ warning/缺口文案要素、多缺口排序（规则序号升序）与既有①-⑤ 错误信息要求同源：每条含规则编号 + 具体条目 id（当适用）+ 恢复方向。
 

@@ -32,7 +32,7 @@ unit 的定义 = 它的**验收集合 + 契约**（验收是一等工作单元�
 - `nondeterministic`（可选，`true`）：随机性声明——豁免名字比对必过集合与单次 fail 的整体判定，但执行照跑、产物照录（声明 ≠ 逃逸；滥用由 spec-review 语义审查把关，flake 转人工永不以声明为豁免条件）
 - `layer`（可选）：验收层级——执行层归属，`"unit"`（缺省）= 本 unit 的 verify 路径执行，`"topic"` = 归集成层（见「验收层级（layer）」词条）
 
-弱验收过不了 spec gate（见「spec gate 十一规则」）。
+弱验收过不了 spec gate（见「spec gate 十二规则」）。
 
 ### 验收命令契约（acceptance command contract）
 
@@ -85,11 +85,11 @@ closed        = verified ∧ exec-review verdict = pass
 
 补录（先干活后走账）在此模型下结构性不可能——没有「声明状态」的命令，只有「交证据」的命令。账本同时是跨上下文记忆：任何 agent 或人只读账本即可零上下文接手。
 
-### spec gate 十一规则
+### spec gate 十二规则
 
 spec 提交时的确定性检查（多缺口全列、不短路，`src/gates/spec-rules.ts`）：
 
-① 验收非空；② core 用例自身 type 必须为 e2e-real / e2e-mock；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空 mock 保真度说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内（合法值与注册表逐字符一致，大小写敏感）；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`；pytest 禁 `-q` / `--quiet`（含短选项合写）；e2e / manual 无静态规则（见「验收命令契约」词条）；⑩ `layer: "topic"` 条目要求 spec.split 非空（al-3，fail 级）——叶子/无子节点 unit 声明 topic = 条目永无执行点的真空（split 非空 ⟺ 有子节点 ⟺ 有集成执行点），提交期拒绝并给两个恢复方向（上收 root spec 标 topic / 去 layer 按 unit 层声明）；已知边界：单 unit topic（root 无子、split 空）同样不能声明 topic 层；⑪ unit 层条目 command 纯词法命中全量回归形态（al-3，warning 级成本启发式，不执行命令）——形态 A：`[npx/pnpm/yarn/bun/bunx 可选前缀] vitest run` 且 run 后无位置参数；形态 B：首 token `npm/pnpm/yarn/bun`（允许 `run` 中缀）script 名恰为 `test`/`lint` 且其后无位置参数——命中 → 入账继续（`ok` 判定只看 failures 不变）+ `SpecRulesResult.warnings` 交 `evidence submit` stderr 逐条打印；wrapper 脚本 / script 别名封装 / `make test` 显式不枚举（诚实漏报面，reviewer 任务书第六维语义审兜底）；warning 级理由：静态形态判定有误杀面，硬拒会逼出 wrapper 规避动作。
+① 验收非空；② core 用例自身 type 必须为 e2e-real / e2e-mock；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空 mock 保真度说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内（合法值与注册表逐字符一致，大小写敏感）；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`；pytest 禁 `-q` / `--quiet`（含短选项合写）；e2e / manual 无静态规则（见「验收命令契约」词条）；⑩ `layer: "topic"` 条目要求 spec.split 非空（al-3，fail 级）——叶子/无子节点 unit 声明 topic = 条目永无执行点的真空（split 非空 ⟺ 有子节点 ⟺ 有集成执行点），提交期拒绝并给两个恢复方向（上收 root spec 标 topic / 去 layer 按 unit 层声明）；已知边界：单 unit topic（root 无子、split 空）同样不能声明 topic 层；⑪ unit 层条目 command 纯词法命中全量回归形态（al-3，warning 级成本启发式，不执行命令）——形态 A：`[npx/pnpm/yarn/bun/bunx 可选前缀] vitest run` 且 run 后无位置参数；形态 B：首 token `npm/pnpm/yarn/bun`（允许 `run` 中缀）script 名恰为 `test`/`lint` 且其后无位置参数——命中 → 入账继续（`ok` 判定只看 failures 不变）+ `SpecRulesResult.warnings` 交 `evidence submit` stderr 逐条打印；wrapper 脚本 / script 别名封装 / `make test` 显式不枚举（诚实漏报面，reviewer 任务书第六维语义审兜底）；warning 级理由：静态形态判定有误杀面，硬拒会逼出 wrapper 规避动作；⑫ 全部非 manual 型条目 command 纯词法路径逃逸拦截（lv-1，fail 级）——command 原文含 `.cw-worktrees` 子串，或目录选择词法族（`cd` / `-C` / `--dir` / `--prefix` / `--root`，`git -C` 由 `-C` 成员覆盖，单一事实源 = `DIRECTORY_FLAG_TOKENS`）后随剥引号以 `/` 或 `~` 开头的 token → 拒入账：逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit（语义失效，同⑩真空声明哲学）；诚实漏报面：`cd ../..` 相对上跳、`bash -c 'cd /abs'` 引号包裹关键词、`$(echo cd) /abs` 动态构造、`CW_WORKTREE_HOME` 自定义工作区名，由 reviewer 第五维语义审兜底。
 
 另有 handler 级防线串联在 spec 提交路径（不在上述规则清单内）：children-first——split 声明的子 unit 必须已创建且 parent 匹配，缺子/错配分类清单拒收（`src/handlers/evidence-submit.ts`）。
 
@@ -115,6 +115,10 @@ verify 重跑产物的失败二分类（mx5-1/mx5-2）：
 ### flake（随机性疑似判定）
 
 e2e 级验收**断言失败**在当前 spec 周期内连挂 ≥2 次（`FLAKE_MIN_CONSECUTIVE_FAILS = 2`）触发的随机性疑似判定（rv-5）：frontier `flakeReview` 维度转人工判定（停派 developer、stderr 列连挂 runId），不自动豁免（防 Goodhart）；处置 = 修稳定性 / 声明 nondeterministic 重提 spec / 修真 bug。口径（`src/readonly/frontier.ts` 的 `flakeReviewFacts`）：只认 e2e 级条目；中间任何一次 pass 或新 spec 提交即清零；integrate- 前缀 runId 不参与计数也不清零；**解析失败条目不计入**（跳过 = 本次 run 对该条目既不计数也不清零，mx5-2——解析失败是确定性挂，走回炉通道）。
+
+### buildDrift（缓慢进展停派）
+
+「做不完的单元」的有限成本出口（lv-2）：本 spec 周期内 build 证据（`EvidenceSubmitted` 计数）≥K 且无 pass verify → frontier `buildDrift` 维度停派转人工（每轮有产出但期望完成时间发散，机器派发无出口；stderr 指引三选一：人工接手 / 拆小任务另建 unit / 调大 K 续跑）。K 默认 5（`BUILD_DRIFT_MAX_ATTEMPTS`）经 `cw run --max-build-attempts` 注入（只读命令恒用默认——转人工预算是运行策略）。口径（`src/readonly/frontier.ts` 的 `buildDriftFacts`）：周期锚 = SpecSubmitted 入账清零（specEpoch 累计，出声去重签名维度）；集成 run（integrate- 前缀 runId）跳过——不计数不清零不置 pass；pass 豁免（非集成 VerifyRan pass 后永不触发，计数不清零）；跨 run 持久——账本态非进程态（Ctrl-C 重跑计数不丢）。
 
 ### 回炉（reheat）与回炉代数
 
@@ -168,11 +172,11 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | 命令 | 类别 | 用途 |
 |------|------|------|
 | `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit（深度上限 2） |
-| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过十一规则 + children-first 后入账冻结；规则⑪ warning 命中时入账继续 + stderr 警告） |
+| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过十二规则 + children-first 后入账冻结；规则⑪ warning 命中时入账继续 + stderr 警告） |
 | `cw evidence submit --unit <id> --kind build --commit <hash> --run-id <id> --file <产物>...` | 写 | 提交构建证据（commit 经 git cat-file 实存校验，产物 sha256 入账） |
 | `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；spec-review verdict 必填 `--role reviewer`——缺/错 exit 1 拒收，mx-3 入账层强校验；exec-review 的 `--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
-| `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
+| `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |
 | `cw frontier [--json]` | 只读 | 就绪集合（十二维，见上 frontier 小节） |
 | `cw tree` | 只读 | 分解树 |
@@ -187,6 +191,7 @@ runner 的角色派发规则（对投影每轮重算，维度 → 派发形态�
 | `CW_HOME` | 存储根目录（per-cwd 隔离的父目录） | `~/.cw`（须绝对路径，相对值报错） |
 | `CW_AGENT_MODEL` | pi 后端派发 agent 用的模型（`--model` 参数） | `xiaomi-token-plan-cn/mimo-v2.5-pro` |
 | `CW_REVIEWER_MODEL` | reviewer spawn 的异源模型（优先级：`--reviewer-model` flag > 本变量 > 回落 developer 同款模型链；注入点 = reviewer spawn 的 `CW_AGENT_MODEL`） | 未设置（回落 developer 同款） |
+| `CW_SPAWN_TIMEOUT_MS` | 单次 agent spawn 超时（优先级：`--spawn-timeout-ms` flag > 本变量 > 缺省 30min 常量 `AGENT_SPAWN_TIMEOUT_MS`；须正整数毫秒，非法 exit 1） | 未设置（30min） |
 | `CW_WORKTREE_HOME` | unit worktree 根目录（须绝对路径） | `~/.cw-worktrees` |
 | `CW_PROJECT_DIR` | 项目目录锚点：agent 在 worktree 内执行 cw 命令时经它锚定项目账本与 git 操作（须绝对路径） | 进程 cwd |
 
