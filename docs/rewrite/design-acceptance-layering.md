@@ -1,6 +1,6 @@
 # cw 验收分层与成本治理机制设计
 
-> **一句话结论**：CPU 爆满的根因不是「并行跑测试」，而是「同一条全量回归验收在叶子 fix 循环、红阶段、集成三个执行点被串行地重复全价执行，且成本维度不在任何一道防线里」。治理方案 = 给验收模型加 `layer` 层级轴（topic 层条目只能长在有集成执行点的节点上，由集成唯一执行）+ spec gate 加结构规则⑩与成本启发式⑪ + reviewer 清单加第六维 + verify 子进程 nice 减震。执行器（runAcceptances / integrate / fold）零改动。
+> **一句话结论**：CPU 爆满的根因不是「并行跑测试」，而是「同一条全量回归验收在叶子 fix 循环、红阶段、集成三个执行点被串行地重复全价执行，且成本维度不在任何一道防线里」。治理方案 = 给验收模型加 `layer` 层级轴（topic 层条目只能长在有集成执行点的节点上，由集成唯一执行）+ spec gate 加结构规则⑩与成本启发式⑪ + reviewer 清单加第六维 + 执行路径统一 nice 减震（验收命令 + runner 派发的 agent 进程）。执行器（runAcceptances / integrate / fold）零改动。全部资源风险面的全景排查与处置记档见 §2.5 / D9。
 
 ## §0 层声明
 
@@ -15,7 +15,7 @@
 - **S（情境）**：cw 是「agent 工作的 CI」——把编码任务分解为 unit 树（深度上限 2：root + 叶子），用机器证据而非 agent 声明判定完成。核心信任机制：叶子 unit 的验收在干净 checkout 里重跑（`cw verify`），内部节点的验收 = 集成（merge 子树后重跑「全部子节点验收 ∪ root 自身验收」）。
 - **C（冲突）**：实测案例（xyz-agent 仓 scoped-model topic，2026-08-22）中，叶子 unit 的 spec 里被放进了一条全量回归验收（全仓 lint + 5 个包的 vitest 全量）。该条目因 3 个与本功能无关的既有测试挂掉而反复 fail，unit 经历 5 轮 build 证据 + 6 次 verify，**每轮都在干净 checkout 里全价重跑全量回归**，红阶段再翻倍，CPU 长时间打满。账本与产物在 `~/.cw/__Users__zhushanwen__Code__xyz-agent-workspace__feat-provider-coding-plan-auth-8e2d2d6c/`。
 - **Q（问题）**：如何让「全量回归只在集成层执行」成为**机制**（结构保证 + 机器防线），而不是依赖 agent 写 spec 时的自觉？同时给验收执行补上成本维度防线与资源减震？
-- **A（答案）**：验收条目引入 `layer: "unit" | "topic"` 层级轴；topic 层条目的唯一执行点是所属节点的集成（结构性保证，靠 gate 规则⑩强制声明位置，而非执行器分支）；成本启发式进 gate（warning 级）；「验收成本与层级归属」进 reviewer 对抗清单与 designer 任务书；verify 子进程 nice 降优先级。
+- **A（答案）**：验收条目引入 `layer: "unit" | "topic"` 层级轴；topic 层条目的唯一执行点是所属节点的集成（结构性保证，靠 gate 规则⑩强制声明位置，而非执行器分支）；成本启发式进 gate（warning 级）；「验收成本与层级归属」进 reviewer 对抗清单与 designer 任务书；执行路径统一 nice 降优先级（验收命令 + runner 派发的 agent 进程）。
 
 **系统是什么**（补基本认知）：cw 的状态不存储、只计算——唯一真相源是 append-only 事件账本，`status = fold(events)` 纯函数投影。验收的完整生命周期：designer 写 spec（含验收列表）→ spec gate 机器前置规则 → 独立 reviewer 审 spec → developer 实现 → `cw verify` 干净重跑验收 → exec-review → closed。root 等内部节点不走 `cw verify`，走集成（merge 子分支进 root 分支后重跑验收 + 契约比对）。
 
@@ -26,8 +26,9 @@
 - **G3**：成本维度进入机制防线——gate 有成本启发式检查，reviewer 清单有「验收成本与层级归属」维度，designer 任务书有防下放指引；不再只靠 agent 自觉。
 - **G4**：验收执行对本机负载有减震——单条验收从「瞬间打满全部核」降为「后台高占用」，不抢占交互负载。
 - **G5**：旧账本重放兼容（spec 无 `layer` 字段 = 行为逐字节不变），既有测试套件（61 文件 450 用例）全绿。
+- **G6**：cw 的资源风险面有**全景盘点与明确处置**——每个面要么有机制治理，要么显式记档并附触发条件（什么信号出现时升级治理），不留未盘点的暗面（§2.5 / D9）。
 
-**Out of scope**：① xyz-agent 触发案例侧的止损（修挂测试、移除叶子 E7、`--no-red-phase`）——那是该 topic 的事，与本机制改造是两件事；② 多 topic 并行时的全局资源调度信号量（未来工作，见 §5 待验证）；③ 条目级 pass 缓存（fix 循环里 commit 每轮变化，缓存键不命中，收益不足，且「缓存命中 = 没真跑」会削弱干净重跑的信任根基）；④ vitest 内部并行模型改造（第三方包，不归我们管）。
+**Out of scope**：① xyz-agent 触发案例侧的止损（修挂测试、移除叶子 E7、`--no-red-phase`）——那是该 topic 的事，与本机制改造是两件事；② 多 `cw run` 进程并存 / 多 topic 并行的全局资源协调（§2.5 F3 记档，附触发条件）；③ 条目级 pass 缓存（fix 循环里 commit 每轮变化，缓存键不命中，收益不足，且「缓存命中 = 没真跑」会削弱干净重跑的信任根基）；④ vitest 内部并行模型改造（第三方包，不归我们管）；⑤ 统一资源调度器（容量/背压的形式化机制）——本轮确立词汇与锚点（D9），不造调度器（理由见 D9）。
 
 ## §2 现状与问题分析
 
@@ -39,7 +40,7 @@
 - **CPU 爆满来自三个乘数**：
   - **(a) 单条命令内部并行**：vitest 默认 worker 池 = CPU 核数（vitest 官方默认行为，外部事实）。一条 `vitest run` 全量命令瞬间占满所有核。
   - **(b) 重复频次**：同一条全量回归在 ① 叶子 verify 每轮 fix 全价重跑（`runRegularVerify` 把 spec 验收全集传给 `runAcceptances`，manual 由其内部跳过，`src/handlers/verify.ts:164`）② 红阶段在父树上再跑同一列表（`executeRedPhase`，rv-4 起默认开，`src/handlers/verify.ts:348`）③ 集成 M2 保守口径「全部子节点验收 ∪ root 自身验收」再跑一遍（`src/runner/integrate.ts` 头注释步骤 3）。触发案例中 = 每轮 fix 付 2 次全价（verify + 红阶段），集成再付第 3 次。
-  - **(c) 单条超时预算**：`timeoutForAcceptance`（`src/verify/run.ts:74`）e2e 型单条 30 分钟——全量回归声明为 e2e 型时，单条预算即半小时打满。
+  - **(c) 单条超时预算**：`timeoutForAcceptance`（`src/verify/run.ts:73`）e2e 型单条 30 分钟——全量回归声明为 e2e 型时，单条预算即半小时打满。
 
 **结论：治理对象是「执行点冗余 + 成本无防线 + 资源无配额」，不是并发调度**。给 cw 加锁限流是治错方向（cw 本来就串行）。
 
@@ -72,7 +73,32 @@ root designer 写 root spec（含全量回归条目 R1：lint + 全量 vitest）
 | R2 | **执行点冗余无去重**：叶子 verify（含红阶段 ×2）与集成 M2 保守口径对同类回归重复全价执行；root 验收天然会在集成跑，叶子再声明 = 结构性双跑 | `src/handlers/verify.ts:164,348`；`src/runner/integrate.ts` 步骤 3 |
 | R3 | **成本维度不在任何防线**：gate / reviewer / 任务书全是正确性导向 | `src/gates/spec-rules.ts`；`src/runner/brief.ts:89` |
 | R4 | **防下放靠 agent 文案自觉**：写入链逐层自由裁量，root designer 把回归复制进子 brief 无任何机制拦截 | §2.2 链路 |
-| R5 | **资源无配额**：验收子进程继承全部环境，无 nice / worker 上限；e2e 单条超时 30min | `src/verify/run.ts` execBashTree、`:63` |
+| R5 | **资源无配额**：验收子进程继承全部环境，无 nice / worker 上限；e2e 单条超时 30min | `src/verify/run.ts` execBashTree、`:73` |
+
+### 2.5 资源风险面全景排查（架构层）
+
+顺着触发案例把 cw 全部「执行工作」的代码路径走一遍，排查是否还有同类重复执行 / 并行执行的资源风险。结论先行：**真正的并行面只有一个——runner 的并发 agent 派发（含不占额度的集成重叠）；其余面要么有界、要么频次将随本方案落地自然下降。**逐面事实（锚点均已核实）：
+
+| # | 面 | 机制现状（锚点） | 量级/性质判定 | 处置 |
+|---|----|----------------|--------------|------|
+| F1 | **runner 并发派发 agent** | `--max-concurrency` 默认 3（`src/runner/loop.ts:175`）；每路 agent（pi 子进程）在各自 worktree 里可自由跑构建/测试 | **真实并行面**：最多 3 路并发，每路若跑 vitest 默认吃满全核 → 3× 核数超额订阅。这是 cw 内唯一的并行执行路径 | 治理：D7 扩展（agent spawn 整体 nice，子进程继承）+ D9 容量语义记档 |
+| F2 | **集成不占并发额度** | 内部节点的集成由 loop 内联执行 `runIntegrationVerify`（确定性代码），「不占 in-flight 并发额度」（`src/runner/loop.ts:243` 注释）——集成可与最多 3 路在飞 agent **时间上重叠** | 真实重叠窗口：集成全量验收（每条命令全核）与 3 路 agent 测试同时抢核。但 rv-4 MAX=1 限定集成频次（首败即转处置），且 D7 的 nice 经 runAcceptances 覆盖集成侧后，性质从「爆满」降为「后台高占用争用」 | 记档 + 触发条件（D9），不改调度 |
+| F3 | **多 `cw run` 跨进程并存** | 账本文件锁只保护事件写入（短事务），不限制执行侧；不同项目/topic 的多个 `cw run`、手动 `cw verify` 可任意并存，无跨进程资源协调 | 真实面，量级取决于使用习惯（单开发机通常 1-2 个） | 记档 + 触发条件（D9） |
+| F4 | **runner 轮询每轮全量重读账本 + fold** | 每轮（默认 1000ms，`loop.ts:171`）`readAll()` + `fold(events)` 全量重放（`loop.ts:1109`），底部进展检查再 `loadLedger`（又一次 readAll+fold，`loop.ts:1409`）——每进程每秒 O(事件数) × 2 的磁盘+CPU（另：spawn 以 TIMEOUT 收尾的轮次，结算路径条件性再 +1 次事件性重读，`loop.ts:1386`） | 有界但随账本增长的持续后台开销。**诚实标注：当前无量测数据，不断言其影响量级**（括号内为未量测的估计：events.log 为 JSONL 行 append，千级事件的单次重放估计为毫秒级） | 记档 + 未来方向（mtime/size 短路）+ 触发条件（D9） |
+| F5 | **每轮 verify 干净 checkout** | `cleanCheckout` = 整仓 `git clone` 到临时目录（`src/verify/checkout.ts:45`）；verify + 红阶段 = 每轮 fix 2 次 clone | 有界：git 本地 clone 对象库默认 hardlink（git 官方行为），开销在工作区文件展开与临时目录删除；频次随 layer 落地（回归不再进叶子）自然下降 | 记档（无需动作） |
+| F6 | **单命令/单 spawn 超时预算** | 验收 unit 10min / e2e 30min（`run.ts:73`）；agent spawn 固定 30min（`loop.ts:179`） | 预算是**正确性兜底**（防挂死）而非容量语义——30min × 3 路的最坏占位真实存在但属设计容量 | 记档（D9 词汇锚点） |
+| F7 | execBashTree 哨兵轮询 / 进程组回收 | `sleep 0.05` 轮询哨兵文件（`run.ts`）；回收后小睡 0.05s | 可忽略（毫秒级 bash 轮询，无忙等自旋） | 无需动作（核实记档） |
+
+完备性注记：上表覆盖「执行工作」的路径；其余 git 本地操作（worktree 创建/回收、集成 merge、提交前的 git 探测等）均为串行一次性毫秒级操作，不单列。
+
+**架构层综合（rethink 结论）**：cw 是一个「派发工作」的系统，但此前没有**资源模型**——成本、执行位置、并发容量、争用处置四个维度散落在互不相识的常量与约定里（超时分档 / layer 缺失 / max-concurrency / maxIdle 退出）。本方案确立四个设计词汇，让后续所有资源类改动有处可归，不再打地鼠：
+
+- **成本档（cost tier）**：一条工作花多少。现有雏形 = 验收超时分档 + 本方案新增的 `layer` 轴（执行频次档）。
+- **执行点（execution point）**：一条工作在哪跑、跑几次。本方案治理的核心（G2）。
+- **容量（capacity）**：多少工作可同时跑。现状 = `--max-concurrency`（只管 agent spawn 数，不管每路内部引爆的核数、不管集成、不管跨进程）。
+- **背压（backpressure）**：争用时怎么办。现状 = 无资源语义的背压（maxIdle 退出与转人工是活性/正确性语义）。
+
+本方案治理「执行点」与「单命令足迹」（D7 nice），「容量」「背压」不造机制、只立锚点（D9）——理由：单机单用户的现实负载下，nice 已把「爆满」降为「后台高占用」，形式化调度器的复杂度不抵收益（减法优先）；若未来负载形态变化（多 topic 并行常态化），锚点已在，按 D9 的触发条件升级。
 
 ## §3 解决方案
 
@@ -191,11 +217,12 @@ cw evidence submit --kind spec: spec 已入账（unit "sm-e2e"），但规则⑪
 - 注意 print / spawn 双形态任务书共用渲染层，两种模式都要读通（既有约束）。
 - 被否：只改 reviewer 不改 designer——写入链的起点是 designer（§2.2），下游防线拦不住上游源头。
 
-**D7：verify 子进程 nice 减震（P4，独立先行）。**
+**D7：nice 减震（P4，独立先行）——两个落点覆盖全部执行路径。**
 
-- 落点：`src/verify/run.ts` 的 `execBashTree`——spawn 包 `nice -n 10 bash -c ...`（POSIX；与 `bashResolvable` 同型做 `nice` 预检，不可解析时降级为裸 spawn，Windows 自然落此分支）。
+- 落点一（验收命令）：`src/verify/run.ts` 的 `execBashTree`——spawn 包 `nice -n 10 bash -c ...`（POSIX；与 `bashResolvable` 同型做 `nice` 预检，不可解析时降级为裸 spawn，Windows 自然落此分支）。覆盖：叶子 verify、红阶段、集成（三者都经 runAcceptances → execBashTree）。
+- 落点二（agent spawn，F1 的治理）：`src/runner/spawn/lifecycle.ts` 的 `spawnProcess`——runner 派发的 designer / developer / reviewer agent 进程整体 nice。必要性：agent 在各自 worktree 里自行跑的测试/构建**不经 execBashTree**，落点一盖不住；max-concurrency 3 路并发 × vitest 全核是 cw 内唯一的并行超额订阅面（§2.5 F1）。
+- 运行时探针：✅ 已测（macOS：`which nice` → `/usr/bin/nice` 可执行；`nice -n 10` 的子进程 sh 实测 ni=10——**nice 值 POSIX 继承**，agent spawn 包一层即覆盖其全部孙进程；嵌套 nice 累加——agent(10) 内跑 verify 的验收命令再包一层为 20，更谦卑，语义无害，接受不做去重）。
 - 零语义变化：nice 只影响调度优先级，不影响执行结果、产物、超时语义。
-- 运行时探针：✅ 已测（macOS：`which nice` → `/usr/bin/nice`，`nice -n 10 true` 正常执行）。
 - vitest worker 上限 env 注入：⛔ **实施期门**——vitest 是否有官方 env 变量控制 worker 上限未核实（本仓 node_modules 当前不可查）。实施时查证：若存在官方 env（且语义为上限而非精确值），注入缺省上限（如核数一半）且不覆盖用户已设值；若不存在，不做（命令是 spec 作者的，cw 不能改命令——规则⑨ 契约下注入 CLI flag 不可行），仅在 reviewer 第六维文案中建议 wrapper 自限。
 - 被否：cgroup / cpuset——macOS 无此物，跨平台成本过高；条目级缓存——§3.2 方案 D 已否。
 
@@ -205,6 +232,16 @@ cw evidence submit --kind spec: spec 已入账（unit "sm-e2e"），但规则⑪
 - `CONTEXT.md` 概念词典加 `layer` 词条；`AGENTS.md` 核心约定的「spec gate 九规则」表述更新。
 - 新增 unit 的验收基线先行入 git（仓 orchestration 纪律）。
 - 仓外同步记档（不在本方案实施范围）：用户侧 skill（cw-cli / pi-cw）的 spec 指引未覆盖 `layer` 字段，上线后需另行同步。
+
+**D9：容量与背压不造机制，逐面记档 + 触发条件（§2.5 排查的处置收口）。**
+
+- F1（runner 并发 agent）：治理由 D7 落点二承担；容量语义记档——`--max-concurrency`（默认 3）是**用户侧的容量旋钮**，共享开发机上可调低。**触发条件**：出现「3 路并发常态化仍打满」的真实反馈 → 评估「按估计核数加权」的容量语义升级。
+- F2（集成与在飞 agent 重叠）：记档不改调度。理由：集成频次被 rv-4 MAX=1 限定（首败即转 designer 处置），且 D7 落点一经 runAcceptances 覆盖集成侧，重叠的性质是「后台高占用争用」而非「爆满」。**触发条件**：真实出现集成与并发 agent 抢核导致的超时/失败案例 → 评估集成派发等待在飞排空或占用并发额度。
+- F3（多 `cw run` 跨进程并存）：记档。**触发条件**：多 topic 并行成为常态用法 → 评估机器级信号量或全局并发协调。
+- F4（轮询每秒全量重读 + fold ×2）：记档，当前无量测数据不断言影响。未来方向：按 events.log 的 mtime/size 短路（无变化不重放）。**触发条件**：实测 loop 空转 CPU 占比可感知，或单 topic 事件数达万级。
+- F5（每轮 fix 2 次整仓 clone）：记档无需动作（本地 clone 对象库 hardlink，开销有界；频次随 layer 落地自然下降）。
+- F6/F7：记档（超时预算是正确性兜底；哨兵轮询可忽略）。
+- 统一原则：所有「记档」项 = **已知边界 + 显式触发条件**，不是被遗忘的暗面——触发条件命中时回本文档升级对应决策（准则：错误/风险必须指向恢复动作，记档必须指向升级路径）。
 
 ### 3.4 错误规格（每个错误配恢复指引）
 
@@ -239,9 +276,11 @@ cw evidence submit --kind spec: spec 已入账（unit "sm-e2e"），但规则⑪
 - 步骤与通过标准：① 机器可断言部分（进自动化测试）：生成的 reviewer 任务书文本含第六维「验收成本与层级归属」全文（结构化断言，走既有 brief 渲染测试形态）；② 语义部分定为 **manual 型验收**：spawn 真实 reviewer subagent（pi 环境）审该 spec，人工核验其 verdict comment 命中第六维（指出成本/层级问题并给上收指引）。不用 LLM 输出做自动化断言（概率性输出进 e2e 会 flaky，与仓「机器证据判定完成」哲学相抵）。
 
 **S5：nice 减震生效（回溯 G4）**
-- 场景：fixture 仓跑一条真实 unit 级验收。
-- 步骤：verify 执行期间 `ps -o ni -p <子进程pid>` 观察验收子进程。
-- 通过标准：子进程 nice 值 = 10；verify 结果与产物与无 nice 时一致（零语义变化的实证）。
+- 场景：fixture 仓跑一条真实 unit 级验收 + 一次真实 runner 派发。
+- 步骤：① verify 执行期间 `ps -o ni -p <验收子进程pid>`；② `cw run --spawn pi` 派发 agent 期间断言 agent 进程 ni=10（仓内先例：tests/u6c-pi-adapter.test.ts 的 PI_OFFLINE 形态可离线 spawn 真实 pi，该步可自动化）。
+- 通过标准：验收子进程 nice 值 = 10；agent 进程 nice 值 = 10；verify 结果与产物与无 nice 时一致（零语义变化的实证）。孙进程继承性不在本场景断言——已由 D7 探针实测覆盖（nice 值 POSIX 继承，子进程 ni=10）。
+
+**G6 的验收方式**（不接 S 编号的说明）：G6 的交付物是文档内容本身（§2.5 全景表 + D9 逐面处置与触发条件），非运行时行为——验收 = 实施评审 / verifier 核对两点：① §2.5 每个面均有「处置」栏（治理 / 记档 + 触发条件），无「待定」空格；② D9 的触发条件均可观测（有明确信号与升级路径）。该核对挂进 w1-w4 各波次的验收基线评审检查点。
 
 **S6：触发案例形态对照（回溯 G1，端到端）**
 - 场景：复刻 xyz-agent 案例形态——fixture 仓内置 1 个与本功能无关的既有挂测试，root spec 按 D1a 形态一声明 topic 层全量回归，叶子正常开发。
@@ -253,7 +292,7 @@ cw evidence submit --kind spec: spec 已入账（unit "sm-e2e"），但规则⑪
 
 | 波次 | 内容 | 文件改动地图 | justification |
 |------|------|-------------|---------------|
-| w1（独立，可先行合入） | D7 nice 减震 | `src/verify/run.ts`（execBashTree spawn 包 nice + 预检降级）；新增 tests | 零语义变化、单点、不依赖 layer 模型——先行合入立刻缓解「爆满」体感 |
+| w1（独立，可先行合入） | D7 nice 减震（双落点） | `src/verify/run.ts`（execBashTree spawn 包 nice + 预检降级）、`src/runner/spawn/lifecycle.ts`（agent spawn 包 nice + 预检降级）；新增 tests | 零语义变化、不依赖 layer 模型——先行合入立刻缓解「爆满」体感；两个落点同语义（包 nice + 降级）同波次落地 |
 | w2（模型层） | D1 `layer` 字段 | `src/events/types.ts`（AcceptanceItem + 注释）、`src/handlers/spec-schema.ts`（AcceptanceItemSchema 加 optional layer）、`CONTEXT.md` 词条；重放兼容测试 | 纯声明、零行为变化——schema 先行，后续波次依赖类型；单独成波让「模型变更」与「行为变更」评审解耦 |
 | w3（防线层，依赖 w2） | D4 规则⑩ + D5 规则⑪ + D6 reviewer 第六维与 designer 指引 + D8 文档同步 | `src/gates/spec-rules.ts`（⑩ fail 级 + ⑪ warning + 形态枚举单一事实源）、`src/events/types.ts`（SpecRulesResult.warnings）、`src/handlers/evidence-submit.ts`（warnings 打印）、`src/runner/brief.ts`（第六维 + designerFirstTasks 指引，print/spawn 双形态读通；顺手对齐既有 drift：任务书文案仍写「验收五规则」而 gate 已是九规则）、`docs/rewrite/acceptance/u3-acceptance.md`（规则口径）、`AGENTS.md`（九规则表述）；S3 用例 | 三道防线同属「写入链治理」一个语义单元，一起过 reviewer 才能闭环；brief.ts 两处改动同文件同波次避免重复冲突 |
 | w4（端到端验收，依赖 w2+w3） | S1 / S4 / S6 真实场景验收 | tests e2e（真实 CLI 子进程 + fixture 仓）；verifier 独立验收报告 | e2e 验收需要模型与防线都在位；与 w1/w2/w3 的验证型测试分层（测试设计按 test-quality 方法论另出） |
@@ -263,6 +302,7 @@ cw evidence submit --kind spec: spec 已入账（unit "sm-e2e"），但规则⑪
 1. ⛔ vitest 官方 worker 上限 env 是否存在（D7）——w1 实施时查证，存在才注入，不存在则只做 nice。
 2. ⛔ nice 在 Linux（CI 环境）的同等可用性——POSIX 同源低风险，w1 落地时在 CI 实测确认。
 3. 规则⑪ 的形态枚举校准——w3 上线后按真实 topic 观察双向命中率：误伤面（小仓合理全量单测被 warning）与**漏报面**（wrapper 脚本 / script 别名封装形态不命中，观察 reviewer 第六维的实际拦截率是否能兜住），双向校准枚举与文案。
-4. 多 topic 并行时的全局资源占用（out of scope 项②）——nice 是逐进程减震，多个 `cw run` 并发时是否仍需全局信号量，待真实并行案例出现后评估。
+4. F4 轮询重 fold 的量测——若实测 loop 空转 CPU 可感知或单 topic 事件数达万级，按 D9 触发条件启动 mtime/size 短路优化（记档项，非本方案实施范围）。
+5. 多 `cw run` 并存 / 多 topic 并行（F3）——nice 是逐进程减震，并行常态化时按 D9 触发条件评估全局协调（记档项，非本方案实施范围）。
 
-**本设计明确不改的清单**（防范围蔓延）：`src/verify/run.ts` 的 runAcceptances 执行范围逻辑、`src/runner/integrate.ts` 的批次装配、`src/core/fold.ts` 的 verified 公式、`src/readonly/frontier.ts` 的分组逻辑——执行点唯一性由声明位置约束结构性保证（D2），这些文件零改动是方案 A 的核心论据，实施期若发现不得不改其中任何一个 = 设计假设崩塌，回到本文档重新评审。
+**本设计明确不改的清单**（防范围蔓延）：`src/verify/run.ts` 的 runAcceptances 执行范围逻辑、`src/runner/integrate.ts` 的批次装配、`src/core/fold.ts` 的 verified 公式、`src/readonly/frontier.ts` 的分组逻辑、`src/runner/loop.ts` 的调度循环与并发额度语义（F2/F4 的处置是记档 + 触发条件，见 D9）——执行点唯一性由声明位置约束结构性保证（D2），这些文件零改动是方案 A 的核心论据，实施期若发现不得不改其中任何一个 = 设计假设崩塌，回到本文档重新评审。
