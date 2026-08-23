@@ -1,7 +1,7 @@
 # cw 四流程重构设计（design / dev / test / closeout）
 
 > **当前层 → 下一层**：产品流程架构层 → 可实施的波次 unit 拆分层（§5）。不设计到函数签名。
-> 口径前提（已定）：① dev 流程单测允许 mock；test 流程必须真实 E2E。② design 反思环节采用「同 session 二轮用户消息」形态（探针 P1 已实测可行，见 §3.3 D3）。
+> 口径前提（已定）：① dev 流程单测允许 mock；test 流程必须真实 E2E。② design 反思环节采用「同 session 二轮用户消息」形态（探针 P1 已实测可行，见 §3.3 D3）。③ 交互模型 = 混合模式：design 流程用户在场手动跑（真对话真提问），spec 提交后 `cw run` 接管后续全自动（见 D12）。
 
 **一句话结论**：在现有「事件账本 + fold 投影 + runner 派发」地基上，把 unit 生命周期显式组织为四个流程（design / dev / test / closeout），每个流程 = 「agent 执行 + 机器/异源验收 + 打回环 + 预算转人工」——新增 1 个状态（built）、3 类事件扩展（stage / kind / assumptions）、4 个新环节（反思、code-review、test 分离、retrospect），旧账本重放逐字节兼容。
 
@@ -22,12 +22,12 @@
 |---|------|-----------|
 | G1 | 每 layer 只有 4 个流程 | 观察者跑 `cw status` 能直接回答「这个 unit 现在在哪个流程、卡在哪一环」 |
 | G2 | 每流程 = 执行 + 验收 loop | 每个流程的产物都有明确验收方（机器或异源 reviewer），fail 有打回环，环有预算，预算尽转人工 |
-| G3 | design 含 clarify / plan / 反思 / review | designer 出 spec 前强制澄清假设；spec 产出后收到「用户口吻」的固定反思提问并可能自行修订；独立 reviewer 六维审 |
+| G3 | design 含 clarify / plan / 反思 / review | design 澄清假设进 spec.assumptions（root 推荐混合模式：用户在场对话澄清，D12；自动模式自声明）；spec 产出后收到「用户口吻」的固定反思提问并可能自行修订；独立 reviewer 七维审 |
 | G4 | dev = TDD + 影响面单测 + 规范 review + code-simplify | developer 按测试先行迭代、只跑受影响单测（禁全量）；代码被异源 reviewer 按四维规范审；提交前过简化自查 |
 | G5 | test = 真实 E2E | test 流程在干净 checkout 真实执行全部验收，core 验收必须 e2e-real（真实环境跑流程），dev 单测的 mock 不进入 test 判定 |
 | G6 | closeout = retrospect + 文档更新 | unit closed 前必有 retrospect 产物入账（复盘 + 文档更新动作），root closeout 产出整树总账 |
 
-**in-scope**：状态机与事件扩展、四流程环节定义、brief 模板重组、frontier 维度归桶、新旧账本兼容、环预算。
+**in-scope**：状态机与事件扩展、四流程环节定义、brief 模板重组、frontier 维度归桶、新旧账本兼容、环预算、cw-cli skill 混合模式入口路由（D12）。
 **out-of-scope**：分层深度放开（仍 2 层）、spawn 并发模型、多语言适配器、npm 发版流程、pi 之外的 agent harness 适配细节。
 
 ## 2. 现状与问题分析
@@ -58,6 +58,7 @@ developer 的全部任务书（`brief.ts` 实现 3 步）：实现冻结验收 �
 | 1 | 13 个 frontier 维度按失败类型散布（design 侧 7 个、closeout 仅 1 个），无「流程」概念 | 观察者无法按流程心智模型回答「现在在哪一步」 | G1 |
 | 2 | 7 个环已具备「验收+预算+转人工」雏形，但按失败类型切分；exec-review 环无预算无出口 | 环结构存在但未按流程归组；closeout 环预算缺失 | G2 |
 | 3 | designer 一次 spawn 出 spec（root 含建子）；歧义靠 reviewer 事后打回；无任何自我审视机制；spec-review 六维审查强健 | clarify（事前假设声明）、反思（产出自省）缺失 | G3 |
+| 3b | runner 模式下 designer 是 print 模式 spawn 子进程——一次性执行、无用户回传通道，物理上无法向用户提问（用户实证从未遇到提问）；歧义只能靠「假设 + 事后打回」消化，design 猜错方向全链返工 | 交互模型缺「用户在场」形态——clarify 无对话通道（D12 混合模式补） | G3 |
 | 4 | 红阶段只保证「验收测试有区分力」（TDD 的判定半边），不强制时序；规则⑪全量回归仅 warning；exec-review 不审代码；任何阶段无 code-simplify | dev 四环（TDD 时序 / 影响面 / 规范审 / 简化）全部缺位 | G4 |
 | 5 | core 验收允许 e2e-mock（规则②只要求「e2e 级」）；manual 免机器验证；五枚举无占比约束 | test 流程未强制真实 E2E | G5 |
 | 6 | closed 是终态，之后只有资源回收；ledger/CHANGELOG/经验沉淀全靠人工波次动作 | closeout 结构性缺失 | G6 |
@@ -85,6 +86,8 @@ spawn 产物：~/.cw/topic/<encoded-cwd>/<runTs>-<rootId>/（brief/stdout/stderr
 ## 3. 解决方案
 
 ### 3.1 终态（使用者视角）
+
+**入口形态两种（D12）**：① 混合模式（推荐）——design 前半（clarify 对话/建子/写 spec/反思）用户在场手动跑，`cw evidence submit --kind spec` 后 `cw run --root <id>` 接管，从 specReviewPending 起全自动；② 全程 runner——`cw create` 后直接 `cw run`，design 全环节由 runner 派发（clarify 退化为 assumptions 自声明）。下述时间线以全程 runner 视角展开（混合模式的手动段等价替换时间线的 designer spawn ① 前半）。
 
 **一个叶子 unit 的完整四流程生命周期**（时间线叙事，含每环节验收锚点）：
 
@@ -155,14 +158,14 @@ spawn 产物：~/.cw/topic/<encoded-cwd>/<runTs>-<rootId>/（brief/stdout/stderr
 - **证据**：fold 现有 verified 分支只看 VerifyRan（`src/core/fold.ts` deriveStatus）；可选字段缺省重放先例 `VerifyRanPayload.parseFailedAcceptanceIds`（`src/events/types.ts` 注释明示「旧账本缺字段 = 无解析失败，重放兼容」）。
 - **效果**：G1 的流程心智模型有状态锚；G4 的两个质量环节（code-review、simplify 后置审）有挂载态。
 
-**D2：design 流程 = clarify（assumptions 字段）+ plan（既有 split）+ 反思（二轮消息）+ review（六维+1）（选定）**
-- **采用**：clarify 落地为 `spec.assumptions[]`（每条：假设内容 / 依据 / 若错的影响面），designer 任务书强制步骤，reviewer 新增第七维「关键歧义未声明假设 = must-fix」。plan 不新增机制——spec.split 与各子验收边界就是 plan 产物，受 reviewer 覆盖度维审查。反思见 D3。
-- **被否**：clarify 走「停派转人工问用户」——破坏零人工收敛目标，且假设声明在无人工场景是唯一诚实出口；plan 单独出文档再审——多一次 spawn 换不来额外信息（split 本身就是被审对象）。
-- **证据**：现状歧义处理无机制出口（designer 任务书无澄清步骤，reviewer 以 fail comment 事后暴露——调研 A 报告 §3.2）。
-- **效果**：G3 的 clarify/plan 落地；假设清单让 reviewer 的审查从「猜歧义」变「审假设」。
+**D2：design 流程 = clarify（双模式，锚定 assumptions 字段）+ plan（既有 split）+ 反思（D3）+ review（六维+1）（选定）**
+- **采用**：clarify 双模式，共用同一落点 `spec.assumptions[]`（每条：假设内容 / 依据 / 若错的影响面）——**手动模式（root design 主路径，D12）**：用户在场对话澄清，对话确认的假设落笔进 assumptions（来源从「agent 自声明」扩为「对话确认后留痕」，字段语义不变）；**runner 自动模式**（叶子 unit 或用户不介入 root 时）：designer spawn 内自声明假设，任务书强制步骤。reviewer 新增第七维「关键歧义未声明假设 = must-fix」对两种来源一视同仁。plan 不新增机制——spec.split 与各子验收边界就是 plan 产物，受 reviewer 覆盖度维审查。反思见 D3。
+- **被否**：clarify 走 runner 内 blocking 提问（designer 停派转人工问用户）——spawn 子进程无用户回传通道（物理不可行），停派形态粒度粗（只覆盖「无法安全假设的歧义」，非全程对话）且阻塞收敛；plan 单独出文档再审——多一次 spawn 换不来额外信息（split 本身就是被审对象）。
+- **证据**：现状歧义处理无机制出口（designer 任务书无澄清步骤，reviewer 以 fail comment 事后暴露——调研 A 报告 §3.2）；用户实证「runner 模式 designer 从未提问」（spawn print 模式结构性无通道）。
+- **效果**：G3 的 clarify/plan 落地且 root design 真提问（手动模式）；假设清单让 reviewer 的审查从「猜歧义」变「审假设」。
 
 **D3：反思环节 = 同 session 二轮用户消息（选定）**
-- **采用**：时序 = SpecSubmitted 入账后、spec-review 派发前。机制 = designer spawn① 结束时 session 已落盘（mx-3 交付：`--session-dir <topic目录> --name <unitId>-designer`）；runner 观察到新 SpecSubmitted 且该 unit 无反思记录 → 以 `pi -p --session <session文件> "<反思固定文案>"` 二轮 spawn 同一 session——agent 看到的是「用户发来的新消息」，上下文含其刚写的 spec。反思产物留痕 = session 文件追加 + spawn stdout 落 topic 目录（fx-4 机制照搬）。若反思结论要修订：agent 自行重写 spec 提交新 SpecSubmitted（无 fail verdict，天然不计打回代数——代数只由 fail verdict 驱动，`frontier.ts` specReviewFailCounts 语义）。反思的完成锚点与预算（对抗审查 MF2 修订）：① **spec 级锚点** = topic 目录产物文件 `<unitId>-reflect-<specHash>.stdout`（specHash = 被反思那版 spec 的入账锚 hash）——判定「当前最新 SpecSubmitted 是否有对应反思产物」精确可判、跨 run 稳健；打回重提的新 spec 是新 hash，需重新反思（spec 级语义）。② **半截反思不误判**：产物先写 `.tmp`，spawn settle 后原子 rename 为最终名，判定只认最终名（spawn 启动即建文件的既有行为不污染锚点）。③ **预算**：unit 级反思 ≤2 轮（**轮次按 spawn 尝试数计，含 TIMEOUT——产物未产出也计轮**，防 TIMEOUT 反复逃出预算），超出不再派反思、直接走 specReviewPending（防「反思→修订→再反思」无出口循环，显式降级语义）。④ **派发互斥**：反思 spawn 纳入 in-flight 管理（复用同 unit 缓派 gate），reflectionPending 判定序先于 specReviewPending——反思未完成时不派 reviewer。⑤ **session 定位**：pi session 文件名实测为 `<ts>_<uuid>.jsonl` 不含 --name，跨打回多 session 时 runner 以 topic 目录内 mtime 最新 + JSONL 内 name 字段校验消歧（实施期联测）。固定文案见附录 A（七问）。
+- **采用**：时序 = SpecSubmitted 入账后、spec-review 派发前。机制 = designer spawn① 结束时 session 已落盘（mx-3 交付：`--session-dir <topic目录> --name <unitId>-designer`）；runner 观察到新 SpecSubmitted 且该 unit 无反思记录 → 以 `pi -p --session <session文件> "<反思固定文案>"` 二轮 spawn 同一 session——agent 看到的是「用户发来的新消息」，上下文含其刚写的 spec。反思产物留痕 = session 文件追加 + spawn stdout 落 topic 目录（fx-4 机制照搬）。若反思结论要修订：agent 自行重写 spec 提交新 SpecSubmitted（无 fail verdict，天然不计打回代数——代数只由 fail verdict 驱动，`frontier.ts` specReviewFailCounts 语义）。反思的完成锚点与预算（对抗审查 MF2 修订）：① **spec 级锚点** = topic 目录产物文件 `<unitId>-reflect-<specHash>.stdout`（specHash = 被反思那版 spec 的入账锚 hash）——判定「当前最新 SpecSubmitted 是否有对应反思产物」精确可判、跨 run 稳健；打回重提的新 spec 是新 hash，需重新反思（spec 级语义）。② **半截反思不误判**：产物先写 `.tmp`，spawn settle 后原子 rename 为最终名，判定只认最终名（spawn 启动即建文件的既有行为不污染锚点）。③ **预算**：unit 级反思 ≤2 轮（**轮次按 spawn 尝试数计，含 TIMEOUT——产物未产出也计轮**，防 TIMEOUT 反复逃出预算），超出不再派反思、直接走 specReviewPending（防「反思→修订→再反思」无出口循环，显式降级语义）。④ **派发互斥**：反思 spawn 纳入 in-flight 管理（复用同 unit 缓派 gate），reflectionPending 判定序先于 specReviewPending——反思未完成时不派 reviewer。⑤ **session 定位**：pi session 文件名实测为 `<ts>_<uuid>.jsonl` 不含 --name，跨打回多 session 时 runner 以 topic 目录内 mtime 最新 + JSONL 内 name 字段校验消歧（实施期联测）。**混合模式形态（D12）**：手动段用户直接用附录 A 七问问 design agent（提问库即文案）——这是手动段唯一的反思形态；reflectionPending 判定含「存在可 resume 的 designer session」前置（session 只随 spawn 落盘，spawn/pi.ts:78-95；手动段零 session）——手动提交的 spec 无 session 时直入 specReviewPending（不派反思 spawn，幂等补一轮仅适用于 spawn 来源 spec）。反思留痕可写入 run 无关的稳定路径 `.cw/reflect/<unitId>-<specHash>.md`（与 run 级 topic 目录解耦），留痕缺失不影响流程，仅损失审计载体。固定文案见附录 A（七问）。
 - **被否**：反思清单内嵌任务书（降级路径，见 P1 探针）——agent 知道是任务书一部分，临场感弱，但机制改动最小（纯 brief 模板），作为 pi resume 形态失效时的降级；独立反思 spawn——丢设计上下文且与 reviewer 职能重叠，「自我反思」变「他人审查」。
 - **证据**：**探针 P1 ✅ 已实测**（2026-08-23）：`pi -p --session <file> "问题"` 二轮消息正确续接上下文（暗号召回实验通过；审查方独立复跑亦过）；session 落盘 ✅（mx-3 交付，M4 gate 三/四跑 19×19、45×45 session 一一对应有案）；代数计数不污染 ✅（推理自 `frontier.ts` 打回代数 = fail verdict 驱动，实施期以单测锁）；session 文件名不含 --name 为实测事实（消歧见采用⑤，runner 侧定位联测 ⛔ ph-2）。
 - **效果**：G3 反思落地；「以为用户在指导」的形态由 P1 探针背书。
@@ -214,6 +217,11 @@ spawn 产物：~/.cw/topic/<encoded-cwd>/<runTs>-<rootId>/（brief/stdout/stderr
 - **被否**：时间界线豁免（「上线 commit 之前入账」）——npm 分发场景用户账本与 cw 版本无锚定力，跨机器重放不严谨；账本级粒度（上述复活缺陷）。
 - **证据**：可选字段缺省重放先例（parseFailedAcceptanceIds 同族）；五类事件均含 unitId，fold 已按 unit 折叠，unit 事件子集可稳定切分；SpecSubmittedPayload.specHash / EvidenceSubmittedPayload.commit 本就存在（sha256/commit 锚，零 schema 增量）。
 - **效果**：S2（旧账本逐字节重放）与混合账本常态均逻辑可达；兼容与防线共用单一机制，无双事实源。
+**D12：交互模型——design 手动在场 + run 接管（选定）**
+- **采用**：cw-cli 入口从「unit 数量分界」（多 unit 走 runner / 单 unit 手动）改为「流程阶段分界」的混合模式。**手动段（design 前半）**：用户在自己的 agent 会话里跑——clarify 对话提问（agent 遇歧义直接问用户，D2 手动模式）→ plan（`cw create` 建 root + 子）→ 写 spec（对话确认的假设落 assumptions）→ 反思（用户用附录 A 七问，D3 手动形态）→ `cw evidence submit --kind spec`。**接管点**：`cw run --root <id>` 从账本续接（既有机制，与 Ctrl-C 恢复同语义——账本是共享真相源，run 每轮重读重算 frontier）→ specReviewPending 派异源 reviewer（mx-3 role 强校验照旧，不因手动段弱化）→ 过审 spec-frozen → dev/test/closeout 全自动（并发派发/worktree 隔离/环预算全保留）。**叶子 design 可选归属**：用户在场时顺便写叶 spec（推荐——歧义集中期一次解决）或留给 runner（specReady 派 designer，D2 自动模式）；两种形态都是合法账本状态，frontier 自然路由。全程 runner 模式（用户完全不介入）仍完整支持——混合模式是可选增量，不是替代。**旧路径兼容**：cw-cli 既有「单 unit 手动调试」路径（create → evidence submit → verify → review submit 逐步）不做删除——它收敛为混合模式的手动段 + 人工执行验收环节（verify/review submit 本就是命令面），四流程化后该路径自然覆盖单 unit 的 design/dev 手动形态。
+- **被否**：全程 runner（designer spawn 无用户回传通道，clarify 从不提问——用户实证从未遇到，design 猜错方向全链返工，返工经济学最差）；全程手动（并发/隔离/预算全失——dev/test 是机械执行段，人工陪伴无增值）；runner 内 blocking 提问（停派转人工粒度粗且阻塞收敛，见 D2 被否）。
+- **证据**：账本续接机制现成（AGENTS.md「Ctrl-C 后重跑 cw run 从投影续接」）；specReviewPending 维度现成（手动提交的 spec 与 runner spawn 提交的 spec 在账本中不可区分、同路由）；命令面手动路径现成（create / evidence submit / run）。
+- **效果**：G3 clarify 在 root design 真提问；用户控制点落在最便宜的纠错位置（design 错全链返工 → design 对则后面全自动）；runner 价值保留在它最强的机械段；「流程不好控制」与「designer 不提问」两个痛点同时解决。
 ### 3.4 探针清单
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
@@ -253,7 +261,7 @@ spawn 产物：~/.cw/topic/<encoded-cwd>/<runTs>-<rootId>/（brief/stdout/stderr
 | ph-3 | dev 流程：developer 任务书四步 + dev-verify（--stage dev 分支）+ codeReviewPending 维度 + code-review 任务书与 verdict 强校验 + P4 探针 | dev 环节强耦合（code-review 挂 dev-verify 之后），拆开无独立价值；领地 brief.ts + verify + frontier | S6、P4 |
 | ph-4 | test 流程：test-verify 直跑派发（loop 直跑形态对齐集成）+ 规则②收紧（core 必须 e2e-real）| test 拆分依赖 stage 字段（ph-1）与 built 态（ph-3 派发前提）；规则②独立可测 | S4 |
 | ph-5 | closeout：retrospect 任务书（designer 第六形态）+ kind=retrospect 入账 + closed 判定收紧 + exec-review 连挂预算 + P6 探针 | closeout 三件（retrospect/预算/判定收紧）互相咬合，单拆任一件都产生中间态不一致 | S7、P6 |
-| ph-6 | 观测面归桶 + 文档同步（CONTEXT 词条/AGENTS/规则清单）+ S1 终验（真实 pi 全链） | 观测面是纯展示层放最后避免与波次中间态打架；终验收口全波 | S1、S3 |
+| ph-6 | 观测面归桶 + cw-cli skill 混合模式路由更新（模式分界从 unit 数量改为流程阶段，D12：design 手动可选 + run 接管指引）+ 文档同步（CONTEXT 词条/AGENTS/规则清单）+ S1/S9 终验（真实 pi 全链 + 混合模式全链） | 观测面是纯展示层放最后避免与波次中间态打架；skill 路由依赖四流程稳定后一次改齐；终验收口全波 | S1、S3、S9 |
 
 **文件改动地图**：`src/events/types.ts`（字段/枚举）、`src/handlers/spec-schema.ts`（assumptions）、`src/handlers/verify.ts` + `src/verify/*`（stage 分支）、`src/core/fold.ts`（built/verified/closed 判定）、`src/readonly/frontier.ts`（新维度 + 归桶）、`src/runner/brief.ts`（四流程模板重组）、`src/runner/loop.ts`（反思 resume 派发 + test-verify 直跑 + exec-review 预算）、`src/runner/escalations.ts`（新转人工签名）。
 
