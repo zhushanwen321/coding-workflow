@@ -19,7 +19,7 @@
 ### e2e-sh 适配器（`src/testrun/e2e-sh.ts`）
 
 - `translate(acceptance)`：command 原样返回（e2e 脚本自写标记行，translate 不改写）；command 缺失抛错。
-- `parse(stdoutPath, exitCode, acceptance)`：逐行扫描 `^A([A-Za-z0-9-]+) (PASS|FAIL)$` 标记行 → cases（id 取自标记、status 映射）；同一 id 多次出现以**最后一次**为准；**标记行缺失且 exitCode≠0** → 该验收整体 fail（id=验收 id, name="no-markers"）；标记缺失且 exitCode=0 → 抛错（无区分力——echo ok 类假命令防线的 parse 侧表达）；标记的 id 与验收 id 不符 → 抛错（报告指明出现的 id 与期望）。
+- `parse(stdoutPath, exitCode, acceptance)`：逐行扫描 `^([A-Za-z0-9][A-Za-z0-9._-]*) (PASS|FAIL)$` 标记行 → cases（标记行第一列即验收 id 全文，id 字母数字开头、可含 `.` `_` `-`——字符集与 `ACCEPTANCE_ID_RE` 同源；status 映射）（勘误 2026-08-23：原文的 A 前缀形态系 rv-2 前旧约定，现约定为第一列即验收 id 全文）；同一 id 多次出现以**最后一次**为准；**标记行缺失且 exitCode≠0** → 抛错（解析失败类——脚本未按契约跑到输出点，疑似崩溃/环境断链，连挂 2 走 specContractBroken 回炉；lv-3 改道，原「该验收整体 fail（id=验收 id, name="no-markers"）」形态废止）；标记缺失且 exitCode=0 → 抛错（无区分力——echo ok 类假命令防线的 parse 侧表达）；标记的 id 与验收 id 不符 → 抛错（报告指明出现的 id 与期望）。
 
 ### 注册表（`src/testrun/registry.ts`）
 
@@ -40,7 +40,7 @@
 3. vitest stdout 非法 JSON → parse 抛错（不伪造）。
 4. translate：已有 --reporter=json 不重复追加；无 command 默认命令含 --reporter=json（断言生成串）。
 5. **e2e-sh fixture 真实生成**：tmp 写脚本输出 `A1 PASS`/`A2 FAIL` 两行 + exit 1 → 执行落盘 → parse → cases=[A1 pass, A2 fail]。
-6. e2e-sh 标记缺失 + exit 0 → 抛错（无区分力防线）；标记缺失 + exit≠0 → 整体 fail 不抛；标记 id 与验收 id 不符 → 抛错且信息含两边 id。
+6. e2e-sh 标记缺失 + exit 0 → 抛错（无区分力防线）；标记缺失 + exit≠0 → 抛错（解析失败类——脚本未按契约跑到输出点，疑似崩溃/环境断链，连挂 2 走 specContractBroken 回炉；lv-3 改道）；标记 id 与验收 id 不符 → 抛错且信息含两边 id。真测试红的正道形态 = 有 FAIL 标记 + exit≠0，不受改道影响。
 7. 同 id 重复标记以最后为准（fixture 脚本真实输出重复行）。
 8. registry：defaultRegistry 含两 key，type 字段与 key 一致。
 

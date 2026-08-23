@@ -30,8 +30,9 @@ unit 的定义 = 它的**验收集合 + 契约**（验收是一等工作单元�
 - `command`：可执行命令（e2e 级用例必填）
 - `runner`（可选）：测试框架显式声明，合法值 = `knownAdapterTypes()`（vitest / e2e-sh / pytest / playwright，大小写敏感）；缺省按 type 推导（unit/integration→vitest、e2e 级→e2e-sh），显式声明优先
 - `nondeterministic`（可选，`true`）：随机性声明——豁免名字比对必过集合与单次 fail 的整体判定，但执行照跑、产物照录（声明 ≠ 逃逸；滥用由 spec-review 语义审查把关，flake 转人工永不以声明为豁免条件）
+- `layer`（可选）：验收层级——执行层归属，`"unit"`（缺省）= 本 unit 的 verify 路径执行，`"topic"` = 归集成层（见「验收层级（layer）」词条）
 
-弱验收过不了 spec gate（见「spec gate 九规则」）。
+弱验收过不了 spec gate（见「spec gate 十二规则」）。
 
 ### 验收命令契约（acceptance command contract）
 
@@ -44,6 +45,10 @@ spec gate 规则⑨入账前静态检查（`src/gates/spec-rules.ts` 的 `ADAPTE
 - e2e-sh / manual 型：无静态规则（诚实边界：标记行产出无法静态证明——可能在脚本内、可能条件执行），漏网形态由 reviewer 任务书契约清单 + 回炉通道兜底
 
 例：`npx vitest run --reporter=verbose tests/x.spec.ts` 被⑨当场拒（reporter 值非 json）；裸 `pnpm build` 过得了⑨（e2e 型无静态规则）但 verify 时永不产出 `A3 PASS` 标记行 → 解析失败 → 回炉。
+
+### 验收层级（layer）
+
+验收条目的执行层归属（al-2，《验收分层与成本治理》设计 §3.3 D1）——与 `type`（用例形态）正交的另一根轴：`layer: "unit"`（缺省）= 本 unit 的 verify 路径执行；`layer: "topic"` = 归集成层，唯一执行点 = 所属节点的集成验证（子树全 verified 后受影响验收重跑）。声明位置约束：topic 条目只能声明在 split 非空的 spec——spec gate 规则⑩机器强制（无子节点 = 无集成执行点，声明 topic = 条目永无执行点，提交期拒绝）。`layer` 字段本身不改变任何执行器行为（verify / 集成 / fold 均不读它），效力来自声明位置约束 + 集成装配的既有行为。缺省 `"unit"` 且缺省不写键：旧 spec / 旧账本无 `layer` 字段 = 行为逐字节不变（重放兼容）。
 
 ### 证据（Evidence）
 
@@ -80,13 +85,13 @@ closed        = verified ∧ exec-review verdict = pass
 
 补录（先干活后走账）在此模型下结构性不可能——没有「声明状态」的命令，只有「交证据」的命令。账本同时是跨上下文记忆：任何 agent 或人只读账本即可零上下文接手。
 
-### spec gate 九规则
+### spec gate 十二规则
 
 spec 提交时的确定性检查（多缺口全列、不短路，`src/gates/spec-rules.ts`）：
 
-① 验收非空；② core 用例自身 type 必须为 e2e-real / e2e-mock；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空 mock 保真度说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内（合法值与注册表逐字符一致，大小写敏感）；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`；pytest 禁 `-q` / `--quiet`（含短选项合写）；e2e / manual 无静态规则（见「验收命令契约」词条）。
+① 验收非空；② core 用例自身 type 必须为 e2e-real / e2e-mock；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空 mock 保真度说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内（合法值与注册表逐字符一致，大小写敏感）；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`；pytest 禁 `-q` / `--quiet`（含短选项合写）；e2e / manual 无静态规则（见「验收命令契约」词条）；⑩ `layer: "topic"` 条目要求 spec.split 非空（al-3，fail 级）——叶子/无子节点 unit 声明 topic = 条目永无执行点的真空（split 非空 ⟺ 有子节点 ⟺ 有集成执行点），提交期拒绝并给两个恢复方向（上收 root spec 标 topic / 去 layer 按 unit 层声明）；已知边界：单 unit topic（root 无子、split 空）同样不能声明 topic 层；⑪ unit 层条目 command 纯词法命中全量回归形态（al-3，warning 级成本启发式，不执行命令）——形态 A：`[npx/pnpm/yarn/bun/bunx 可选前缀] vitest run` 且 run 后无位置参数；形态 B：首 token `npm/pnpm/yarn/bun`（允许 `run` 中缀）script 名恰为 `test`/`lint` 且其后无位置参数——命中 → 入账继续（`ok` 判定只看 failures 不变）+ `SpecRulesResult.warnings` 交 `evidence submit` stderr 逐条打印；wrapper 脚本 / script 别名封装 / `make test` 显式不枚举（诚实漏报面，reviewer 任务书第六维语义审兜底）；warning 级理由：静态形态判定有误杀面，硬拒会逼出 wrapper 规避动作；⑫ 全部非 manual 型条目 command 纯词法路径逃逸拦截（lv-1，fail 级）——command 原文含 `.cw-worktrees` 子串，或目录选择词法族（`cd` / `-C` / `--dir` / `--prefix` / `--root`，`git -C` 由 `-C` 成员覆盖，单一事实源 = `DIRECTORY_FLAG_TOKENS`）后随剥引号以 `/` 或 `~` 开头的 token（`-C` 紧贴前缀形态 `-C/abs` / `-C~x` 亦拦——git 短选项合法写法，剥 `-C` 前缀后即绝对路径）→ 拒入账：逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit（语义失效，同⑩真空声明哲学）；诚实漏报面：`cd ../..` 相对上跳、`bash -c 'cd /abs'` 引号包裹关键词、`cd "/abs path"` 引号包裹含空白绝对路径（tokenize 按空白切分，引号不成对剥不掉）、`$(echo cd) /abs` 动态构造、`CW_WORKTREE_HOME` 自定义工作区名，由 reviewer 第五维语义审兜底。
 
-另有 handler 级防线串联在 spec 提交路径（不在九规则内）：children-first——split 声明的子 unit 必须已创建且 parent 匹配，缺子/错配分类清单拒收（`src/handlers/evidence-submit.ts`）。
+另有 handler 级防线串联在 spec 提交路径（不在上述规则清单内）：children-first——split 声明的子 unit 必须已创建且 parent 匹配，缺子/错配分类清单拒收（`src/handlers/evidence-submit.ts`）。
 
 「验收强不强」这类语义判断由独立 reviewer 审，不在机器规则职责内。
 
@@ -102,7 +107,7 @@ verify（干净重跑）的判定链，共同原则是**伪造成本 ≥ 干活�
 
 verify 重跑产物的失败二分类（mx5-1/mx5-2）：
 
-- **解析失败** = `AcceptanceRunResult.parseError === true`（无法产出可判定产物）。来源**非穷举**——完整集合以四适配器 parse/translate 实现（`src/testrun/`）与 `src/verify/run.ts` 的路由为准，代表形态：适配器 parse 抛错（vitest / playwright stdout 非法 JSON 或 JSON 合法但形状不符；e2e-sh 无标记行且 exit 0、或标记 id 与验收 id 不符）、零条目且 exit 0 防线（playwright / pytest 判无区分力抛错）、translate 抛错（如 runner 显式声明 e2e-sh 的条目 command 缺省）、路由不到适配器的旁路（非法 runner 绕过 gate）。入账字段 = VerifyRan 的 `parseFailedAcceptanceIds`。不含 e2e-sh「无标记行且 exit≠0」——该形态无法确定性归因 spec（命令挂可能是实现缺陷），照旧断言失败路径
+- **解析失败** = `AcceptanceRunResult.parseError === true`（无法产出可判定产物）。来源**非穷举**——完整集合以四适配器 parse/translate 实现（`src/testrun/`）与 `src/verify/run.ts` 的路由为准，代表形态：适配器 parse 抛错（vitest / playwright stdout 非法 JSON 或 JSON 合法但形状不符；e2e-sh 无标记行——无论 exit code：0 = 无区分力、≠0 = 脚本未按契约跑到输出点疑似崩溃/环境断链，或标记 id 与验收 id 不符）、零条目且 exit 0 防线（playwright / pytest 判无区分力抛错）、translate 抛错（如 runner 显式声明 e2e-sh 的条目 command 缺省）、路由不到适配器的旁路（非法 runner 绕过 gate）。入账字段 = VerifyRan 的 `parseFailedAcceptanceIds`。e2e-sh「无标记行且 exit≠0」自 lv-3 起归解析失败（原「no-markers 整体 fail」形态废止——脚本崩溃/环境断链连挂 2 走回炉修 spec，不再混入 flake「随机性 or 真 bug」的错误二选一；真测试红的正道形态 = 有 FAIL 标记 + exit≠0，不受影响）
 - **断言失败** = 产物合法可解析但 case 判 fail
 
 解析失败是确定性 spec 缺陷（错的不是语义而是命令契约）：不计入 flake 连挂（拆「确定性挂被误判随机挂」死局），连挂 ≥2 走回炉通道；豁免条目（`nondeterministic`）不入解析失败清单（豁免 = 不计入任何聚合）。pass/fail 判定本身不变——解析失败的 case 照旧判 fail（伪造成本 ≥ 干活成本）。
@@ -110,6 +115,10 @@ verify 重跑产物的失败二分类（mx5-1/mx5-2）：
 ### flake（随机性疑似判定）
 
 e2e 级验收**断言失败**在当前 spec 周期内连挂 ≥2 次（`FLAKE_MIN_CONSECUTIVE_FAILS = 2`）触发的随机性疑似判定（rv-5）：frontier `flakeReview` 维度转人工判定（停派 developer、stderr 列连挂 runId），不自动豁免（防 Goodhart）；处置 = 修稳定性 / 声明 nondeterministic 重提 spec / 修真 bug。口径（`src/readonly/frontier.ts` 的 `flakeReviewFacts`）：只认 e2e 级条目；中间任何一次 pass 或新 spec 提交即清零；integrate- 前缀 runId 不参与计数也不清零；**解析失败条目不计入**（跳过 = 本次 run 对该条目既不计数也不清零，mx5-2——解析失败是确定性挂，走回炉通道）。
+
+### buildDrift（缓慢进展停派）
+
+「做不完的单元」的有限成本出口（lv-2）：本 spec 周期内 build 证据（`EvidenceSubmitted` 计数）≥K 且无 pass verify → frontier `buildDrift` 维度停派转人工（每轮有产出但期望完成时间发散，机器派发无出口；stderr 指引三选一：人工接手 / 拆小任务另建 unit / 调大 K 续跑）。K 默认 5（`BUILD_DRIFT_MAX_ATTEMPTS`）经 `cw run --max-build-attempts` 注入（只读命令恒用默认——转人工预算是运行策略）。口径（`src/readonly/frontier.ts` 的 `buildDriftFacts`）：周期锚 = SpecSubmitted 入账清零（specEpoch 累计，出声去重签名维度）；集成 run（integrate- 前缀 runId）跳过——不计数不清零不置 pass；pass 豁免（非集成 VerifyRan pass 后永不触发，计数不清零）；跨 run 持久——账本态非进程态（Ctrl-C 重跑计数不丢）。
 
 ### 回炉（reheat）与回炉代数
 
@@ -123,7 +132,7 @@ spec-review 环的防活锁计数（mx-3 语义、mx-4 预算 2→10）：同一
 
 ### 停派（stopped dispatch）
 
-runner 对某 unit 停止自动派发的状态类 = 三个转人工维度（`src/readonly/frontier.ts` 的 `stoppedDispatchState`）：`specReviewDeadlock`（打回代数达预算）/ `flakeReview`（e2e 断言失败连挂）/ `specContractDeadlock`（回炉代数达上限）。机器派发无出口，loop 停派 + stderr 转人工指引；人工处置写入账本后投影自然消失（自愈）。TIMEOUT 结算行在停派态下如实陈述「本次超时不触发重派」（mx5-2 诚实化）。
+runner 对某 unit 停止自动派发的状态类 = 四个投影转人工维度（`src/readonly/frontier.ts` 的 `stoppedDispatchState`）：`specReviewDeadlock`（打回代数达预算）/ `flakeReview`（e2e 断言失败连挂）/ `specContractDeadlock`（回炉代数达上限）/ `buildDrift`（build 证据达预算无 pass，缓慢进展——lv-2）；另有连续 TIMEOUT 封顶的进程态停派（单进程内存态、跨 run 归零，不属投影维度）。机器派发无出口，loop 停派 + stderr 转人工指引；人工处置写入账本后投影自然消失（自愈）。TIMEOUT 结算行在停派态下如实陈述「本次超时不触发重派」（mx5-2 诚实化）。
 
 ### 集成 verify（内部节点的 verify）
 
@@ -131,7 +140,7 @@ runner 对某 unit 停止自动派发的状态类 = 三个转人工维度（`src
 
 ### frontier（就绪集合）
 
-对投影算「哪些单元的哪个阶段现在可以派发」（`src/readonly/frontier.ts`，十二维）：
+对投影算「哪些单元的哪个阶段现在可以派发」（`src/readonly/frontier.ts`，十三组——十二个推进/转人工维度 + lv-2 的 buildDrift 缓慢进展停派组）：
 
 - `specReady`：created 且无 spec——待 designer 撰写 spec（首派）
 - `specReviewPending`：created 且有 spec、最后 spec 后无任何 spec-review verdict——待独立 reviewer 审查（designer 不自审）
@@ -143,6 +152,7 @@ runner 对某 unit 停止自动派发的状态类 = 三个转人工维度（`src
 - `specContractBroken`：当前 spec 周期内某验收解析失败连挂 ≥2 且回炉代数 <2——待 designer 回炉修验收命令契约（任务书内嵌逐轮解析失败原文，新 spec 照旧过独立 reviewer）
 - `specContractDeadlock`：解析失败连挂 ≥2 且回炉代数 ≥2（两轮回炉仍解析失败）——转人工，防回炉活锁
 - `flakeReview`：当前 spec 周期内某 e2e 级验收断言失败连挂 ≥2（解析失败条目不计入，走回炉通道）——转人工判定（停派 developer）
+- `buildDrift`：本 spec 周期内 build 证据 ≥K（默认 5，`--max-build-attempts` 可注入）且无 pass verify——缓慢进展转人工（lv-2，停派 developer）
 - `buildReady`：spec-frozen 叶子且子全部 closed（rootLast）——待 developer
 - `execReviewReady`：verified 且未 closed——待 reviewer（exec-review）
 
@@ -152,7 +162,7 @@ AgentSpawn 契约中子进程退出的四种归因：`exit≠0` / `TIMEOUT` / `C
 
 ### children-first 工作流
 
-designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designer 首派任务书第 0 步就是创建 split 声明的子 unit；spec gate 规则⑦机器强制（子未建/parent 错配的 spec 被拒）。此工作流消灭「root spec-frozen 等不存在的子」类死锁。
+designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designer 首派任务书第 0 步就是创建 split 声明的子 unit；handler 级 children-first 防线（fx-3 R5.1）机器强制（子未建/parent 错配的 spec 被拒）。此工作流消灭「root spec-frozen 等不存在的子」类死锁。
 
 ### developer
 
@@ -163,13 +173,13 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | 命令 | 类别 | 用途 |
 |------|------|------|
 | `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit（深度上限 2） |
-| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过九规则 + children-first 后入账冻结） |
+| `cw evidence submit --unit <id> --kind spec --file spec.json` | 写 | 提交 spec（过十二规则 + children-first 后入账冻结；规则⑪ warning 命中时入账继续 + stderr 警告） |
 | `cw evidence submit --unit <id> --kind build --commit <hash> --run-id <id> --file <产物>...` | 写 | 提交构建证据（commit 经 git cat-file 实存校验，产物 sha256 入账） |
 | `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；spec-review verdict 必填 `--role reviewer`——缺/错 exit 1 拒收，mx-3 入账层强校验；exec-review 的 `--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
-| `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
+| `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |
-| `cw frontier [--json]` | 只读 | 就绪集合（十二维，见上 frontier 小节） |
+| `cw frontier [--json]` | 只读 | 就绪集合（十三组，见上 frontier 小节） |
 | `cw tree` | 只读 | 分解树 |
 | `cw report [--unit <id>]` | 只读 | 证据链汇总（逐验收覆盖标记 ✓/✗ + hash 前 12 位） |
 
@@ -182,6 +192,7 @@ runner 的角色派发规则（对投影每轮重算，维度 → 派发形态�
 | `CW_HOME` | 存储根目录（per-cwd 隔离的父目录） | `~/.cw`（须绝对路径，相对值报错） |
 | `CW_AGENT_MODEL` | pi 后端派发 agent 用的模型（`--model` 参数） | `xiaomi-token-plan-cn/mimo-v2.5-pro` |
 | `CW_REVIEWER_MODEL` | reviewer spawn 的异源模型（优先级：`--reviewer-model` flag > 本变量 > 回落 developer 同款模型链；注入点 = reviewer spawn 的 `CW_AGENT_MODEL`） | 未设置（回落 developer 同款） |
+| `CW_SPAWN_TIMEOUT_MS` | 单次 agent spawn 超时（优先级：`--spawn-timeout-ms` flag > 本变量 > 缺省 30min 常量 `AGENT_SPAWN_TIMEOUT_MS`；须正整数毫秒，非法 exit 1） | 未设置（30min） |
 | `CW_WORKTREE_HOME` | unit worktree 根目录（须绝对路径） | `~/.cw-worktrees` |
 | `CW_PROJECT_DIR` | 项目目录锚点：agent 在 worktree 内执行 cw 命令时经它锚定项目账本与 git 操作（须绝对路径） | 进程 cwd |
 

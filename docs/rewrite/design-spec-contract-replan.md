@@ -156,7 +156,7 @@ export interface VerifyRanPayload {
 
 投影与派发语义：
 
-- **提取锚（封闭枚举）**：`AcceptanceRunResult.parseError === true` 才入列，即适配器 parse 抛错的形态：vitest/playwright stdout 非法 JSON；e2e-sh 两种——无标记行且 exit 0、标记 id 与验收 id 不符（`src/testrun/e2e-sh.ts`）。**诚实边界（记档）**：e2e-sh「无标记行且 exit≠0」返回 no-markers fail case **不抛错**（parseError=false）——该分支不进回炉通道、照旧计入 flake 连挂。边界合理性：exit≠0 时无法确定性归因 spec（命令挂可能是实现缺陷，标记行产出也可能由 developer 侧脚本负责补）；exit 0 且无标记则是命令自身永不可能产出契约输出的确定性 spec 缺陷。G2 回炉承诺只覆盖后者；exit≠0 形态留给 flake/exec-review 既有链路。三跑 A3 恰为 exit 0 形态（构建成功无标记），主死因在覆盖内
+- **提取锚（封闭枚举）**：`AcceptanceRunResult.parseError === true` 才入列，即适配器 parse 抛错的形态：vitest/playwright stdout 非法 JSON；e2e-sh 两种——无标记行且 exit 0、标记 id 与验收 id 不符（`src/testrun/e2e-sh.ts`）。**诚实边界（记档）**：e2e-sh「无标记行且 exit≠0」返回 no-markers fail case **不抛错**（parseError=false）——该分支不进回炉通道、照旧计入 flake 连挂。边界合理性：exit≠0 时无法确定性归因 spec（命令挂可能是实现缺陷，标记行产出也可能由 developer 侧脚本负责补）；exit 0 且无标记则是命令自身永不可能产出契约输出的确定性 spec 缺陷。G2 回炉承诺只覆盖后者；exit≠0 形态留给 flake/exec-review 既有链路。三跑 A3 恰为 exit 0 形态（构建成功无标记），主死因在覆盖内。**[2026-08-22 lv-3 勘误]**：本段边界（含上方接口注释的「不含 e2e-sh『无标记行且 exit≠0』」句）已被 M6 lv-3 推翻——u6 案例实证 exit≠0 无标记形态实为脚本崩溃/环境断链（被误归 flake 通道），该分支自 lv-3（commit 1d469a5）起改道 parse 抛错入 parseFailedAcceptanceIds、连挂 2 走本设计的回炉通道；设计依据与验收见 `.tmp/design-autonomy-liveness.md` D4 与 `docs/rewrite/acceptance/lv-3-acceptance.md`
 - **提取规则（豁免条目不入列）**：`exemptNondeterministic` 豁免的验收（声明 nondeterministic 且解析失败被改写为 pass，`src/verify/run.ts`）不进 parseFailedAcceptanceIds——豁免语义是「不计入任何聚合判定」，解析连挂同属聚合，否则 result=pass 的 VerifyRan 会携带非空失败清单污染审计口径
 - 连挂计数（frontier 消费侧）维持语义不变，但**输入排除 parseFailedAcceptanceIds**（解析失败 ≠ 随机挂——三跑 A3 误判源）
 - **解析失败连挂与 flake 连挂同构**（`flakeReviewFacts` 先例，frontier.ts）：per-acceptance 粒度逐条计数、该条目中间一次解析成功即清零、周期边界 = SpecSubmitted 事件（不比 specHash——同内容重提同样开新周期，与 flake 周期语义一致）、排除 `integrate-` 前缀 runId

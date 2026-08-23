@@ -29,11 +29,17 @@
  *   - ① 环境隔离：验收子进程的 CW_HOME 指向一次性 mkdtemp 目录（PATH 继承），
  *     防止验收命令读写真实 ~/.cw 账本，跑完即清理。
  *
+ * al-1 nice 减震（D7）：execBashTree 主命令 spawn 统一包 nice -n 10——叶子
+ * verify、红阶段、集成三者都经此函数，验收执行从「瞬间打满全部核」降为「后台
+ * 高占用」，不抢占交互负载。nice 不在子进程 PATH（Windows / 极简容器）时降级
+ * 裸 spawn，静默零语义变化（判定 / 产物 / 超时 / 回收语义均不变）。毫秒级哨兵
+ * 轮询辅助（spawnSync）与 reclaimGroup 的小睡不包——无资源面，包了反而拖慢哨兵响应。
+ *
  * manual 用例在此跳过（免机器验证语义）——并入 acceptanceIds 由 handler 负责。
  * AcceptanceRunResult 的 commandExit/parseError 是红阶段 gate 的判定输入（旧树
  * 「命令效果上成功但产物无效」= 无区分力），常规 verify 路径不消费。
  */
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, type SpawnOptions, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -482,6 +488,9 @@ type BashExecOutcome =
   | { kind: "done"; exitCode: number }
   | { kind: "spawn-error"; message: string };
 
+/** nice 减震增量（POSIX 增量语义，al-1 D7）：验收命令优先级 +10，验收负载不抢占交互负载 */
+const NICE_ADJUSTMENT = 10;
+
 /**
  * 导出仅为 fx-7 测试锚点（tests/fx7-verify-run-error.test.ts 直测引擎分支：
  * spawn 异步失败结算 / 正常退出码回归——runAcceptances 黑盒无法隔离触发
@@ -518,15 +527,24 @@ export function execBashTree(
       `( ${command} )\n` +
       `__cw_verify_ec=$?; printf '%s\\n' "$__cw_verify_ec" > ${sentinel}; exit "$__cw_verify_ec"`;
 
+    // spawn 选项两分支共用——cwd / env / stdio / detached 逐字段不变，仅命令前缀按 nice 预检分流
+    const spawnOptions: SpawnOptions = {
+      cwd,
+      env,
+      stdio: ["ignore", stdoutFd, stderrFd],
+      // 进程组隔离：组长 pid === pgid，kill(-pgid) 整树终止（含孙进程）
+      detached: true,
+    };
     let child: ChildProcess;
     try {
-      child = spawn("bash", ["-c", wrapped], {
-        cwd,
-        env,
-        stdio: ["ignore", stdoutFd, stderrFd],
-        // 进程组隔离：组长 pid === pgid，kill(-pgid) 整树终止（含孙进程）
-        detached: true,
-      });
+      // al-1 nice 减震：nice 在场时包一层降执行优先级。进程组不变式：detached
+      // 组长从 bash 变为 nice，但 nice(1) 对目标命令是 exec 自替换（GNU coreutils
+      // 与 BSD 实现同），pid 不变 ⟹ pgid === pid 与 kill(-pgid) 整树回收对直接
+      // 子进程与孙进程的覆盖不受影响。nice 不在子进程 PATH（Windows / 极简容器）
+      // → 降级裸 spawn，静默——不写 stderr 产物、不告警，零语义变化
+      child = niceResolvable(env)
+        ? spawn("nice", ["-n", String(NICE_ADJUSTMENT), "bash", "-c", wrapped], spawnOptions)
+        : spawn("bash", ["-c", wrapped], spawnOptions);
     } catch (e) {
       return { kind: "spawn-error", message: e instanceof Error ? e.message : String(e) };
     }
@@ -638,6 +656,19 @@ function bashResolvable(env: NodeJS.ProcessEnv): boolean {
     return true;
   }
   return path.split(delimiter).some((dir) => isExecutableFile(join(dir, "bash")));
+}
+
+/**
+ * nice 是否可按子进程 env 的 PATH 解析为可执行普通文件（与 bashResolvable 同型：
+ * 无 PATH 放行走系统默认）。不可解析（Windows / 极简容器）→ 调用方降级裸 spawn，
+ * 静默零语义变化——nice 是减震增强而非执行前提，缺失不构成 spawn-error。
+ */
+function niceResolvable(env: NodeJS.ProcessEnv): boolean {
+  const path = env.PATH;
+  if (path === undefined) {
+    return true;
+  }
+  return path.split(delimiter).some((dir) => isExecutableFile(join(dir, "nice")));
 }
 
 /** 是否为「存在的可执行普通文件」（statSync 跟随 symlink，与 execvp 解析一致） */

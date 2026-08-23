@@ -12,8 +12,8 @@
  * 防 skip 逃逸验收）。
  * 防伪造语义（§4「无区分力防线统一」，对齐 e2e-sh 家族）：
  *   - 零条目行 + exitCode=0 → 抛错（无区分力——echo ok 类假命令在旧树新树都绿）；
- *   - 零条目行 + exitCode≠0 → 单条 fail case（对齐 e2e-sh「标记缺失 + exit≠0」
- *     的 no-markers 语义：exit≠0 已具区分力，如实 fail 不抛错）。
+ *   - 零条目行 + exitCode≠0 → 单条 fail case（exit≠0 已具区分力，如实 fail
+ *     不抛错）。
  */
 import { readFileSync } from "node:fs";
 
@@ -37,7 +37,7 @@ const DEFAULT_COMMAND = `python3 -m pytest ${VERBOSE_FLAG} ${TRACEBACK_FLAG} ${N
 const ENTRY_RE = /^(\S+\.py)::(\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)(?:[ \t].*)?$/;
 /** 唯一被认可的通过态；FAILED/ERROR/SKIPPED/XFAIL/XPASS 全部映射 fail */
 const PASSED = "PASSED";
-/** 零条目行 + exitCode≠0 时的占位 name（对齐 e2e-sh 的 no-markers 家族语义） */
+/** 零条目行 + exitCode≠0 时的占位 name（exit≠0 已具区分力，如实折叠为单条 fail） */
 const NO_RESULTS_NAME = "no-results";
 
 /** 验收 → 可执行命令：保证产物含条目行且不写缓存（parse 的前置契约） */
