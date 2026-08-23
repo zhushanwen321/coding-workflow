@@ -1,7 +1,7 @@
 # cw × pi/xyz-agent 深度整合设计（harness 集成架构）
 
 > **当前层 → 下一层**：整合架构层 → 可实施的接口/适配器技术方案层（§5 拆分清单）。不设计到函数签名。
-> **口径前提（已定）**：① cw 内核（事件账本 + fold 投影 + spec gate + verify 三道 gate + 9 命令面）保持 agent-agnostic 纯 CLI，一字不动——本设计只动 spawn 适配器层与出声通道。② pi + xyz-agent 为整合主线（可定制度最高），zcode 为第二战场（降级体验，仿建跟随）。③ 四流程设计（design-4phase-process.md）的内核决策（built 态 / verify stage / mock 收紧 / closeout / 代际信号）与本设计正交，原样推进；本设计替换的是其编排传输层（D3 反思的 session 考古、D12 混合模式的双世界拼接）。
+> **口径前提（已定）**：① cw 内核（事件账本 + fold 投影 + spec gate + verify 三道 gate + 9 命令面）保持 agent-agnostic 纯 CLI，一字不动——本设计只动 spawn 适配器层与出声通道。② pi + xyz-agent 为整合主线（可定制度最高），zcode 为第二战场（降级体验，仿建跟随）。③ 四流程设计（design-4phase-process.md）的内核决策（built 态 / verify stage / mock 收紧 / closeout / 代际信号）与本设计正交，原样推进；本设计替换的是其编排传输层（D3 反思的 session 考古、D12 混合模式的双世界拼接）。④ 仓结构：cw 仓 npm workspaces 多包化——根级新增 per-agent 插件包（首个 `pi-coding-workflow-extension`，npm `@zhushanwen/pi-coding-workflow-extension` 首版 0.5.0），只装 pi 进程内跑的 extension；spawn 适配器仍属 cw 核心 `src/runner/spawn/`（详见 D12）。
 > **证据基础**：本设计的运行时断言全部来自 2026-08-23 两组源码调研（pi 0.84.2 dist + xyz-agent/main + ZCode.app 3.8.1），关键链路代码级亲验，文中锚点均带 file:line；推断与证实严格分离标注。
 
 **一句话结论**：cw 编排层从「无头后台 CLI + `pi -p` 一次性 spawn」迁移为「跑在用户主 pi 会话内的 pi-cw-runner extension + RPC 长驻子进程」——一举解锁 clarify 穿透提问（ask_user 链）、对话原生反思（followUp 热路径）、确定性 session 锚（get_state）、可靠升级出声（toast + 收件箱）；cw 内核与账本不动，`cw run` CLI 保留为无头兜底形态。
@@ -27,8 +27,8 @@
 | G4 | 内核零改动 | cw 账本/fold/gate/verify/9 命令面不变；旧账本重放语义不变；整合全部发生在 spawn 适配器与出声通道 |
 | G5 | 双 harness 形态 | pi 主线全能力；zcode 第二战场降级形态（编排可用、穿透提问绕行、通知被动回流） |
 
-**in-scope**：cw spawn 适配器层（新增 pi-rpc / zcode）、pi-cw-runner extension、npm subagent-workflow conversation 回合、反思/升级通道改造、xyz-agent 面板与收件箱、运行时环境收敛、命名治理。
-**out-of-scope**：cw 内核（账本 schema/fold/gate/verify 逻辑——四流程设计的 ph-1~ph-6 自行推进）、pi 上游源码修改（规则：不 fork 不提 PR）、zcode 本体扩展（穿透提问/通知推送/面板等其官方开放）、npm 发版流程、四流程本身的环节语义（reflection 七问文案、code-review 四维等照旧）。
+**in-scope**：cw spawn 适配器层（新增 pi-rpc / zcode）、pi-cw-runner extension（仓位 = cw 仓根级插件包 `pi-coding-workflow-extension/`，D12）、仓多包化与发版改造（D12）、npm subagent-workflow conversation 回合、反思/升级通道改造、xyz-agent 面板与收件箱、运行时环境收敛、命名治理。
+**out-of-scope**：cw 内核（账本 schema/fold/gate/verify 逻辑——四流程设计的 ph-1~ph-6 自行推进）、pi 上游源码修改（规则：不 fork 不提 PR）、zcode 本体扩展（穿透提问/通知推送/面板等其官方开放）、npm 发版流程细节（多包发版流水线的 CI 编排放 ph-i0 细化，本设计只定「各包独立发版」决策）、四流程本身的环节语义（reflection 七问文案、code-review 四维等照旧）。
 
 ## 2. 现状与问题分析
 
@@ -157,16 +157,16 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - **效果**：G1-G3 的一切行为断言有确定环境地基；G4 不受影响（内核不感知环境）。
 
 **D2：spawn 适配器升级 RPC 长驻（cw-1，基石）**
-- **采用**：新增 `src/runner/spawn/pi-rpc.ts`：`pi --mode rpc` 长驻子进程，用官方 SDK `./client` 的 RpcClient（类型化 32 命令 + waitForIdle + kill 梯度）；brief 走 stdin `prompt` 命令（替代 `@file` 拼接）；握手 `get_state` 回填 sessionId/sessionFile 入账（**mtime 消歧删除**）；超时管理改 `steer` WRAP_UP → `abort` → SIGTERM 梯度；`--spawn pi-rpc` 为新枚举值，旧 `-p` 适配器保留为无头兜底。账本侧零改动（spawn 是 runner 进程内行为，不入账）。
+- **采用**：新增 `src/runner/spawn/pi-rpc.ts`：`pi --mode rpc` 长驻子进程，**cw 自研薄 RPC client**（spawn + stdin JSON 命令 + stdout JSONL 事件流 + id 关联，先例 = xyz-agent packages/runtime/src/infra/pi/rpc-client.ts 同款自研——不能引用 pi 官方 RpcClient：pi 包 exports 仅暴露 `./`、`./rpc-entry`、`./client` 三出口，stdin/stdout RpcClient 未公开导出，消费者 bare 深路径 import 实测 ERR_PACKAGE_PATH_NOT_EXPORTED；`./client` 出口是 PiClient（CBOR 二进制传输、连接已运行 pi server 的形态），非本场景；自研面 = 协议子集：prompt / follow_up / steer / abort / get_state 五命令 + agent_settled 事件 + waitForIdle 语义，对齐 rpc-types 32 命令集实测枚举【2026-08-24 实测】）；brief 走 stdin `prompt` 命令（替代 `@file` 拼接）；握手 `get_state` 回填 sessionId/sessionFile 入账（**mtime 消歧删除**）；超时管理改 `steer` WRAP_UP → `abort` → SIGTERM 梯度；`--spawn pi-rpc` 为新枚举值，旧 `-p` 适配器保留为无头兜底。账本侧零改动（spawn 是 runner 进程内行为，不入账）。接口级细化见 design-hi-spawn-pi-rpc.md。
 - **被否**：继续 `-p` + 反思文件锚（四流程 D3 原案）——session 考古三件套（mtime/`.tmp`/specHash 文件）全是脆弱点，且拿不到穿透；workflow 引擎承载派发——workflow 与主 pi 进程同生共死（session_shutdown → pauseRun，代码证实），cw 的派发态应在账本不在 workflow callCache。
 - **证据**：RPC 32 命令集（rpc-types.ts:20-74）/ 长驻 + stdin EOF 优雅退出（rpc-mode.ts:801-803）/ get_state 返回 sessionId+sessionFile（rpc-types.ts:95-113）/ SDK 三出口（package.json exports）——全部【代码证实】0.84.2 dist。
 - **效果**：G1 的反思零考古；为 D4 穿透提供子进程前提；F2 根除。
 
-**D3：编排层 = pi-cw-runner extension，跑在用户主 pi 会话内（选定）**
-- **采用**：新 extension `@zhushanwen/pi-cw-runner`（xyz-agent extensions/universal/ 系）：加载后在主会话内跑派发循环——读 `cw frontier --json` → 经 subagent-workflow 派角色子进程 → 预算/停派判定**仍以 cw 投影为唯一权威**（extension 只做执行与浮现，不复制状态机）→ 升级经 ctx.ui.notify + 收件箱浮现。TUI 侧：setWidget 常显 frontier 摘要（pi-scheduler 同款机制）+ `/cw` 命令开全屏 overlay 看树。`cw run` CLI 保留为无头兜底（双形态共存：主会话在场用 extension，不在场用 CLI；两者不能同时跑同一账本——见 D8 派发锁）。
-- **被否**：runner 留在 cw CLI 后台进程（方案 B，穿透不可达）；复用 pi-subagent-workflow 的 workflow 脚本引擎做循环（断点重放语义 ≠ 账本续接语义，且 agent() 白名单无 conversation 字段，execute-options-mapper.ts:46-64【代码证实】）。
-- **证据**：穿透链父进程需有 UI（channel-handler.ts:170-190 分流 TUI/RPC【代码证实】）；cw-tool 已是 cw_query 只读封装先例（cw 整合不是从零开始）；pi extension API 面（registerTool/40+ 钩子/setWidget/sendMessage steer，types.ts:1281-1469【代码证实】）。
-- **效果**：G1 clarify 穿透成立（父进程有 UI 满足穿透链三条件之三）；G2 出声有桥。
+**D3：编排层 = pi-cw-runner extension，跑在用户主 pi 会话内（选定；形态 = A+B：import cw 引擎库 + 复用 pi-subagent-workflow 派发，2026-08-24 用户裁决；仓位 = cw 仓插件包，D12）**
+- **采用**：新 extension `@zhushanwen/pi-cw-runner`，落位 **cw 仓根级插件包 `pi-coding-workflow-extension/`**（npm `@zhushanwen/pi-coding-workflow-extension` 首版 0.5.0，独立于 cw 核心包发版，D12）——不再放 xyz-agent 仓 extensions/universal/（仓位改判理由见 D12 被否栏；安装通道两条 = 用户主会话 agentDir 安装 + 受控 agentDir 预装，细化见 design-hi-monorepo-split.md）。运行形态（A+B）：extension 将 cw 派发循环以库形态 import 进主会话进程（cw 核心包新增 runner 子路径导出 + 进度事件发射器），spawn 后端 = pi-subagent-workflow 编程 API（pi-1 扩围：npm 线回合 conversation 语义 + 暴露可编程 SpawnManager）——designer/developer/reviewer 均为 subagent 记录，直接呈现于用户现有 subagent 面板（可看进度/取消——用户裁决的核心理由）；穿透提问经 subagent-workflow 8.1.0 同款转发链到主会话 UI；预算/停派判定**仍以 cw 投影为唯一权威**（extension 只做执行与浮现，不复制状态机）→ 升级经 ctx.ui.notify + 收件箱浮现。TUI 侧：setWidget 常显 frontier 摘要（pi-scheduler 同款机制）+ `/cw` 命令开全屏 overlay 看树。`cw run` CLI 保留为无头兜底（双形态共存：主会话在场用 extension，不在场用 CLI；两者不能同时跑同一账本——见 D8 派发锁）。
+- **被否**：薄壳桥接（extension spawn `cw run --ui-bridge` 子进程 + ui-request 帧协议转发）——改动最小且进程隔离好，但子进程在现有 subagent 面板不可见，可见性要等 ph-i3 专用面板（用户明确要现有 GUI 可见性/可控性，2026-08-24 裁决弃）；runner 留在 cw CLI 后台进程（方案 B，穿透不可达）；复用 pi-subagent-workflow 的 workflow 脚本引擎做循环（断点重放语义 ≠ 账本续接语义，且 agent() 白名单无 conversation 字段，execute-options-mapper.ts:46-64【代码证实】）。
+- **证据**：用户裁决 2026-08-24（A+B vs C，核心判据 = 现有 GUI 可见性）；AgentSpawnAdapter 注入缝实存（src/runner/spawn/types.ts，spawn 后端可插）；npm subagent-workflow 0.3.1 无 conversation 字段（subagent-tool.ts:61 实测）→ pi-1 前置成立；穿透链父进程需有 UI（channel-handler.ts:170-190 分流 TUI/RPC【代码证实】）；pi extension API 面（registerTool/40+ 钩子/setWidget/sendMessage steer，types.ts:1281-1469【代码证实】）。
+- **效果**：G1 clarify 穿透成立（subagent-workflow 转发链 + 父进程有 UI）；G2 出声有桥；G3 过程可观测提前达成（现有 subagent 面板即观测面，ph-i3 cw-units 面板从主交付降为增强）。
 
 **D4：clarify = ask_user 穿透（三条件 + 显式降级）**
 - **采用**：designer 子进程 spawn 参数满足穿透链三条件：① `--mode rpc`（D2）；② 受控 agentDir 装 ask-user 且 `--tools` 白名单含 ask_user；③ 父进程 = 主会话（D3，TUI 或 xyz-agent RPC 均在分流覆盖内）。答案回写后 designer 落 spec.assumptions（四流程 D2 字段语义不变）。**降级链显式化**：任一条件不满足（无头 CLI runner / 扩展缺失）→ designer 任务书自动切「assumptions 自声明」形态（四流程 D2 自动模式原样兜底），任务书内注明「本次无提问通道」防 agent 空等。并发排队：多 unit designer 同时 clarify 由 DialogGlobalQueue FIFO 串行（dialog-queue.ts:161-310【代码证实】）——提问本来需要人答，人是串行的，接受排队不限流。
@@ -175,13 +175,13 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - **效果**：G1 clarify 成立；F1 根除。四流程 D12 从「用户换世界手动跑前半」升级为「通道来找用户」——混合模式文档段保留为无头降级说明。
 
 **D5：反思 = 同进程 followUp 追问（替代 session 考古）**
-- **采用**：designer 子进程首轮（提交 spec）后不收割，进程长驻 idle；runner 经 RPC `follow_up`（或 `prompt` + `streamingBehavior: followUp`）发附录 A 七问；崩溃/EPIPE 冷路径 = `--fork sessionFile` 重 spawn 续聊（8.1.0 语义，index.js:23290 同款）。审计锚：新增 `ReflectionRan` 事件（可选字段 append-only 加法，四流程 D11 代际信号同族兼容）——比文件锚干净且跨 run 稳健；specHash 语义保留（哪版 spec 的反思）。预算 ≤2 轮与「修订不计打回代数」语义照旧（四流程 D3③）。**前置依赖 pi-1**：npm subagent-workflow 0.3.1 无 conversation（白名单无字段【代码证实】），需把 TaiJi 8.1.0 的 conversation 语义（长驻 + followUp 热路径 + EPIPE 冷恢复 + resumable 持久化）回合到 npm 线——源码在 xyz-agent 主仓 extensions/，单仓维护。
+- **采用**：designer 子进程首轮（提交 spec）后不收割，进程长驻 idle；runner 经 RPC `follow_up`（或 `prompt` + `streamingBehavior: followUp`）发附录 A 七问；崩溃/EPIPE 冷路径 = `--fork sessionFile` 重 spawn 续聊（8.1.0 语义，index.js:23290 同款）。审计锚：新增 `ReflectionRan` 事件（可选字段 append-only 加法，四流程 D11 代际信号同族兼容）——比文件锚干净且跨 run 稳健；specHash 语义保留（哪版 spec 的反思）。预算 ≤2 轮与「修订不计打回代数」语义照旧（四流程 D3③）。**前置依赖 pi-1**：npm subagent-workflow 0.3.1 无 conversation（白名单无字段【代码证实】），需把 TaiJi 8.1.0 的 conversation 语义（长驻 + followUp 热路径 + EPIPE 冷恢复 + resumable 持久化）回合到 npm 线——源码在 xyz-agent 主仓 extensions/，单仓维护；扩围：同波次暴露可编程 SpawnManager API 导出（D3 A+B 形态的 extension 派发入口，非仅 LLM 工具面）。
 - **被否**：四流程 D3 原案（`pi -p --session <file>` 二轮 + 文件锚）——机制已被 D2/D4 取代，考古三件套删除；独立反思 spawn（丢上下文，四流程已否，维持）。
 - **证据**：conversation 长驻 + followUp 热路径 + 冷恢复【代码证实，TaiJi 8.1.0 index.js:23258/23290】；pi fork = 物理复制 + parentSession 血缘（session-manager.ts:1580-1631【代码证实】）。
 - **效果**：G1 反思零考古；四流程 ph-2 的 P1 探针（session 消歧联测）整体跳过，省一个波次的弯路。
 
 **D6：升级出声双通道 + 收件箱（cw-3 + xyz-2）**
-- **采用**：转人工事件双写——账本照写（SSOT 不动）+ 浮现通道：在主会话内时 `ctx.ui.notify` → 桌面 toast（event-adapter.ts:478-490 → NotificationHostController【代码证实】链路现成）+ 持久收件箱条目。收件箱 = xyz-agent MainPanel 新 view：汇总全部停派维度（数据源自 `cw frontier --json` 的 stoppedDispatchState 拉取 + 账本 watcher 推送），每条带证据链（cw report）+「接管」按钮（fork 该 unit 现场 session 为用户会话）。已读状态落 runtime JSON（不入账本——已读是 UI 态非事实源）。无头 CLI 形态降级：账本记录 + 下次主会话启动时收件箱补现（从投影重建，天然幂等）。
+- **采用**：转人工事件双写——账本照写（SSOT 不动）+ 浮现通道：在主会话内时 `ctx.ui.notify` → 桌面 toast（event-adapter.ts:478-490 → NotificationHostController【代码证实】链路现成）+ 持久收件箱条目。收件箱 = xyz-agent MainPanel 新 view：汇总全部停派维度（数据源自 `cw frontier --json` 的停派维度数组——specReviewDeadlock / specContractDeadlock / flakeReview / buildDrift 四组 unitId——拉取 + 账本 watcher 推送；frontier JSON 输出无 stoppedDispatchState 字段，其为 loop 内部辅助函数），每条带证据链（cw report）+「接管」按钮（fork 该 unit 现场 session 为用户会话）。已读状态落 runtime JSON（不入账本——已读是 UI 态非事实源）。无头 CLI 形态降级：账本记录 + 下次主会话启动时收件箱补现（从投影重建，天然幂等）。
 - **被否**：Electron 系统 Notification——全仓零命中（无先例基础设施），且收件箱已覆盖持久诉求，toast 覆盖即时诉求（减法）；已读状态入账本——UI 态污染事实源，破 append-only 语义纯粹性。
 - **证据**：toast 链路与 AskUserOverlay 组件实存【代码证实】；pi 进程内 EventBus 不出进程（pending:register 不到桌面【代码证实】）——跨端必须 WS 协议帧。
 - **效果**：G2 成立；F3 根除。
@@ -198,11 +198,10 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - **证据**：cw 现状 in-flight gate 语义（AGENTS.md「同 unit 存在任意 role 的 in-flight spawn 时本轮缓派」——进程内）；pi-cw-runner 与 CLI 双形态并存是本设计引入的新现实。
 - **效果**：双形态安全共存；G4 不破（锁在 runner 层）。
 
-**D9：命名治理——两个 coding-workflow 拆弹（前置）**
-- **采用**：整合前明确 `@zhushanwen/pi-coding-workflow` 0.4.1（xyz-agent 内 L1/L2/L3 编排 + test gate）与 `@zhushanwen/coding-workflow` 2.0 的分工或更名。建议：pi-coding-workflow 若已被 cw 2.0 取代则归档退役；若并存则更名（如 pi-legacy-orchestrator）。skill/workflow 命名空间同步清理。
-- **被否**：并存不管——用户认知冲突 + skill 触发词冲突（cw-cli skill 与 full-*/lite-* workflow 名空间）。
-- **证据**：pi-coding-workflow 0.4.1 实装于 xyz-agent 内（含 skills/workflows，调研发现）；两者同名不同物。
-- **效果**：整合叙事单一；避免用户/agent 路由错乱。
+**D9：命名治理——两个 coding-workflow 同名拆弹（已裁决：共存零动作）**
+- **裁决**：`@zhushanwen/pi-coding-workflow` 0.4.1（xyz-agent 内 L1/L2/L3 编排 + test gate）与新包 `@zhushanwen/pi-coding-workflow-extension` **同作者确认共存，不归档不更名**；新包版本从 **0.5.0** 起线（同一生态版本叙事：0.4.x 旧编排 → 0.5.x cw 2.0 时代的 pi 扩展宿主）。原「归档退役/更名」建议作废。活口：若实际使用中发生 agent 路由错乱（skill 触发词 / workflow 名空间冲突），再回头做归档。
+- **被否**：归档退役旧包——用户裁决两包并存无认知冲突（同作者、用途可分）；更名新包——用户已点名包名。
+- **效果**：ph-i0 不含命名治理动作（范围缩小为仓多包化 + agentDir 环境）；整合叙事无阻断。
 
 **D10：zcode 第二战场 = spawn 适配器 + 降级体验（仿建，跟随主线）**
 - **采用**：cw 新增 `--spawn zcode` 适配器：复用 zsub 的 driver 契约（`zcode.cjs --json --cwd --mode yolo --prompt` + stdout JSON + `--resume` 续聊；或 appserver runner 长驻协议）。体验降级显式化：clarify = 结构化问题清单回主会话转述（zcode headless 穿透提问结构性无解——askUserQuestionAutoResolutionEnabled 自动应答 + waiting 当轮终态【代码证实证据链】）；通知 = mailbox 被动回流（idle 滞留）；无面板。等 zcode 本体开放（交互队列协议化/通知推送/webview）再升级对等形态。
@@ -230,6 +229,12 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - **证据**：maxConcurrency 现状（loop.ts:184/1120/1396【代码证实】）；frontier 每轮重算语义（computeDispatchTargets）；DialogGlobalQueue FIFO（dialog-queue.ts:161-310【代码证实】）。
 - **效果**：epic 场景并发可控可配；G1 的 clarify 不被并发冲垮；G4 不破（全部在 runner/extension 层，内核零感知）。
 
+**D12：仓结构 = npm workspaces 多包 + per-agent 插件包（新增，2026-08-24 用户裁决三项）**
+- **裁决**：① cw 仓根 package.json 转 npm workspaces，根级并列新增插件包目录（首个 `pi-coding-workflow-extension/`，npm `@zhushanwen/pi-coding-workflow-extension` **首版 0.5.0**，独立发版节奏）；② 包边界 = **只装该 coding-agent 进程内跑的对接物**（pi-cw-runner extension 及后续 pi 侧扩展）——cw 进程内跑的 spawn 适配器（pi-rpc.ts / 未来 zcode.ts）**留 cw 核心 `src/runner/spawn/`**（AgentSpawnAdapter 缝契约不动，进程内函数调用无加载边界问题）；将来 zcode 若有插件形态再建 `zcode-coding-workflow-extension/`（zcode 现无 extension API，适配器在核心内即可，空包不建）；③ 安装通道两条 = 用户主会话 agentDir 安装（npm tarball，工具化见 design-hi-monorepo-split.md）+ 受控 agentDir 预装（D1 安装脚本）。
+- **被否**：extension 放 xyz-agent 仓 extensions/universal/（D3 原案仓位）——cw 编排演进与 xyz-agent 应用发版节奏耦合（面板要跟应用版本走，extension 不必）；extension 包同时装 spawn 适配器——cw 核心需引入动态加载/包解析协议，进程内函数调用硬拆成跨包接口纯增复杂度；单包子路径导出（`@zhushanwen/coding-workflow/extension`）——不实现 per-agent 隔离意图，zcode 包将来无处安放，且发版节奏绑死核心。
+- **证据**：用户裁决 2026-08-24（包边界 / 仓结构与发布 / 包名与版本线三问三答）；现有缝契约 `src/runner/spawn/types.ts`（AgentSpawnAdapter / SpawnHandle，进程内接口）；xyz-agent extensions/universal/ 独立 extension 形态先例。
+- **效果**：cw 核心保持 agent-agnostic（G4 加强——agent 差异被包边界显性化）；extension 独立版本化（HP6 版本握手可锚 npm 版本号）；xyz-agent 仓改动收窄为 subagent-workflow 回合 + renderer（面板照旧）。
+
 ### 3.5 探针清单
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
@@ -244,7 +249,7 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 
 ## 4. 验收（真实场景，非单测）
 
-改动规模：大（跨三仓：cw / xyz-agent extensions / xyz-agent renderer）。以下场景全部用真实 pi/xyz-agent/zcode + 真实账本；human 模式仅作确定性补充。
+改动规模：大（跨三仓：cw 核心包 + cw 插件包 / xyz-agent（subagent-workflow 回合 + renderer 面板）/ zcode 插件仓）。以下场景全部用真实 pi/xyz-agent/zcode + 真实账本；human 模式仅作确定性补充。
 
 | # | 场景（回溯目标） | 步骤 | 通过标准 |
 |---|----------------|------|---------|
@@ -265,9 +270,9 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 
 | unit | 内容 | justification（为什么这么拆） | 验收锚 |
 |------|------|------------------------------|--------|
-| ph-i0 | 命名治理（D9：pi-coding-workflow 归档/更名）+ 受控 agentDir 环境建立（D1：预装扩展清单 + 安装脚本 + 启动探针逻辑） | 无代码逻辑改动但阻断一切行为断言——环境不收敛，后续每波的探针都不可信 | HP1 前置 |
+| ph-i0 | 仓多包化（D12：根 package.json workspaces + `pi-coding-workflow-extension/` 包骨架与构建 + release.yml 多包发版）+ 受控 agentDir 环境建立（D1：预装扩展清单 + 安装脚本 + 启动探针逻辑；D9 已裁决共存零动作） | 包结构与环境不收敛，后续每波的探针与安装链路都不可信/无处安放；细设计见 design-hi-monorepo-split.md | HP1 前置 |
 | ph-i1 | cw 侧 RPC 适配器（D2：pi-rpc.ts + get_state 锚 + 超时梯度 + runner.lock D8）+ pi-1 conversation 回合 npm 线 + HP1/HP2/HP3 探针 | 适配器是全部上层的地基；conversation 回合与适配器互为验证（反思形态依赖其语义）；探针同波收口 | S2、S3、HP1-3 |
-| ph-i2 | pi-cw-runner extension（D3：frontier 拉取 + subagent 派发 + 降级分支 + D11 并发配置 `runner.maxConcurrency` 默认 2）+ D4 穿透接线 + D5 反思 followUp + HP5 | 编排迁移是单一连续动作（拆开会留「半个 runner 在两个进程」中间态）；穿透与反思是派发参数的延伸 | S1、S6、HP5 |
+| ph-i2 | pi-cw-runner extension（D3 A+B 形态：cw runner 库 import + onEvent 接线；subagent-workflow 编程 API 派发后端；降级分支 + D11 并发配置 `runner.maxConcurrency` 默认 2）+ D4 穿透接线 + D5 反思 followUp + HP5 | 编排迁移是单一连续动作（拆开会留「半个 runner 在两个进程」中间态）；穿透与反思是派发参数的延伸；细设计见 design-hi-cw-runner-extension.md | S1、S6、HP5 |
 | ph-i3 | xyz-agent 面板与收件箱（D6：cw-units 侧边栏 9 步 + 收件箱 view + toast 接线 + CW_* env 白名单 + reviewer Preset D7 近期形态）+ HP4 | 纯体验层，依赖 ph-i2 的浮现通道稳定后一次做齐；renderer 改动集中一仓 | S4、S5、S8、HP4 |
 | ph-i4 | zcode 适配器（D10：--spawn zcode + mailbox 通知 + 问题清单转述）+ HP7 | 第二战场独立推进，不阻塞主线；协议无官方文档需独立探针门 | S7、HP7 |
 
@@ -275,8 +280,10 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 
 **文件改动地图**：
 
-- cw 仓：`src/runner/spawn/pi-rpc.ts`（新）、`src/runner/spawn/pi.ts`（保留兜底）、`src/runner/loop.ts`（runner.lock + spawn 路由）、`src/dispatch.ts`（--spawn 枚举 + --force-dispatch）、`src/events/types.ts`（ReflectionRan 可选加法）、`src/readonly/frontier.ts`（reflectionPending 判定改事件锚）。
-- xyz-agent 仓：`extensions/universal/cw-runner/`（新，pi-cw-runner）、`extensions/universal/subagent-workflow/`（conversation 回合）、`extensions/universal/permission/`（config.ts 角色分支，远期）、`packages/runtime/src/`（cw WS domain + watcher service + ENV 白名单一行）、`packages/renderer/src/`（CwUnitList.vue + 收件箱 view + store/api 七跳）。
+- cw 仓（多包化，D12）：根 `package.json`（workspaces 声明 + exports `./runner` 子路径导出——extension 库形态 import 入口）、`pi-coding-workflow-extension/`（新插件包：pi-cw-runner extension 源码 + 构建 + 独立 package.json，首版 0.5.0）、`.github/workflows/release.yml`（多包发版）；cw 核心包源码：`src/runner/spawn/pi-rpc.ts`（新）、`src/runner/spawn/pi.ts`（保留兜底）、`src/runner/spawn/types.ts`（SpawnHandle 交互扩展：followUp/waitForIdle，两类后端同缝）、`src/runner/loop.ts`（runner.lock + spawn 路由 + onEvent 进度发射器）、`src/dispatch.ts`（--spawn 枚举 + --force-dispatch）、`src/events/types.ts`（ReflectionRan 可选加法）、`src/readonly/frontier.ts`（reflectionPending 判定改事件锚）。
+- xyz-agent 仓：`extensions/universal/subagent-workflow/`（pi-1：conversation 回合 + 可编程 SpawnManager API 导出）、`extensions/universal/permission/`（config.ts 角色分支，远期）、`packages/runtime/src/`（cw WS domain + watcher service + ENV 白名单一行）、`packages/renderer/src/`（CwUnitList.vue + 收件箱 view + store/api 七跳）——extension 本体不进此仓（D12 改判）。
 - zcode 插件仓：`z-subagent-workflow` 启用 + cw 侧 zcode 适配器复用其契约（本仓零改动或仅文档）。
+
+**实施层细设计（本总纲 → 波次开工的衔接文档，同目录）**：ph-i0 → design-hi-monorepo-split.md；ph-i1 → design-hi-spawn-pi-rpc.md；ph-i2 → design-hi-cw-runner-extension.md；ph-i3 / ph-i4 波次临近再写（避免设计过时）。
 
 **待验证检查点（诚实标注）**：① HP1/HP2 是全部上层设计的实证门，不过则 D4/D5 回降级路径——本设计的核心价值（穿透 + 对话原生）以探针为准，不以调研为准；② pi RPC 协议面无 semver 承诺，HP6 持续门是长期成本；③ zcode 本体内置 workflow 引擎（sqlite 四表）形态未深挖——若其官方化可能改变 ph-i4 选型；④ DialogGlobalQueue 排队的用户体感（HP5）可能要求在派发侧加 clarify 限流，属体验调优非架构变更；⑤ epic 场景派发优先级（修复类 > 新开类）在 S1 验收后评估是否立项（D11 预留增强位）。
