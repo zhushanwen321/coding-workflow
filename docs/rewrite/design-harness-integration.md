@@ -175,7 +175,7 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - **效果**：G1 clarify 成立；F1 根除。四流程 D12 从「用户换世界手动跑前半」升级为「通道来找用户」——混合模式文档段保留为无头降级说明。
 
 **D5：反思 = 同进程 followUp 追问（替代 session 考古）**
-- **采用**：designer 子进程首轮（提交 spec）后不收割，进程长驻 idle；runner 经 RPC `follow_up`（或 `prompt` + `streamingBehavior: followUp`）发附录 A 七问；崩溃/EPIPE 冷路径 = `--fork sessionFile` 重 spawn 续聊（8.1.0 语义，index.js:23290 同款）。审计锚：新增 `ReflectionRan` 事件（可选字段 append-only 加法，D11 代际信号同族兼容）——比文件锚干净且跨 run 稳健；specHash 语义保留（哪版 spec 的反思）。预算 ≤2 轮与「修订不计打回代数」语义照旧（四流程 D3③）。**前置依赖 pi-1**：npm subagent-workflow 0.3.1 无 conversation（白名单无字段【代码证实】），需把 TaiJi 8.1.0 的 conversation 语义（长驻 + followUp 热路径 + EPIPE 冷恢复 + resumable 持久化）回合到 npm 线——源码在 xyz-agent 主仓 extensions/，单仓维护。
+- **采用**：designer 子进程首轮（提交 spec）后不收割，进程长驻 idle；runner 经 RPC `follow_up`（或 `prompt` + `streamingBehavior: followUp`）发附录 A 七问；崩溃/EPIPE 冷路径 = `--fork sessionFile` 重 spawn 续聊（8.1.0 语义，index.js:23290 同款）。审计锚：新增 `ReflectionRan` 事件（可选字段 append-only 加法，四流程 D11 代际信号同族兼容）——比文件锚干净且跨 run 稳健；specHash 语义保留（哪版 spec 的反思）。预算 ≤2 轮与「修订不计打回代数」语义照旧（四流程 D3③）。**前置依赖 pi-1**：npm subagent-workflow 0.3.1 无 conversation（白名单无字段【代码证实】），需把 TaiJi 8.1.0 的 conversation 语义（长驻 + followUp 热路径 + EPIPE 冷恢复 + resumable 持久化）回合到 npm 线——源码在 xyz-agent 主仓 extensions/，单仓维护。
 - **被否**：四流程 D3 原案（`pi -p --session <file>` 二轮 + 文件锚）——机制已被 D2/D4 取代，考古三件套删除；独立反思 spawn（丢上下文，四流程已否，维持）。
 - **证据**：conversation 长驻 + followUp 热路径 + 冷恢复【代码证实，TaiJi 8.1.0 index.js:23258/23290】；pi fork = 物理复制 + parentSession 血缘（session-manager.ts:1580-1631【代码证实】）。
 - **效果**：G1 反思零考古；四流程 ph-2 的 P1 探针（session 消歧联测）整体跳过，省一个波次的弯路。
@@ -210,7 +210,27 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - **证据**：zcode app-server NDJSON 协议（session/create/send/list/subscribe + 状态机）zsub e2e 实测（runner-appserver.js:18-45 头注全录）；穿透缺失证据链（runner-appserver.js:72-81, 115-118 + zcode.cjs askUserQuestion 定义）；权限 10 档原生；本体内置 workflow 引擎（sqlite 四表，形态待深挖）。
 - **效果**：G5 成立；zcode 投入最小化（一个适配器文件），不被主线节奏阻塞。
 
-### 3.4 探针清单
+### 3.4 并发模型
+
+**epic 级场景（一个 root 挂多叶）的并发控制不需要新建排队队列——frontier 本身就是就绪队列**，cw 现有 CLI runner 的并发语义经 M0-M6 实战验证，pi-cw-runner 原样继承：
+
+| 机制 | 语义 | 锚点（代码证实） |
+|------|------|----------------|
+| 并发上限 | `cw run --max-concurrency <n>`（默认 3）；派发循环 `inFlight.length >= maxConcurrency` 即停派，本轮未派的 unit 留在下轮 frontier | `src/runner/loop.ts:184, 1120, 1396` |
+| frontier 即队列 | 每轮从账本投影重算就绪集（computeDispatchTargets），就绪但未派 = 排队等下轮，无独立队列结构 | loop.ts:437, 449 |
+| 同 unit 互斥 | 同 unit 任意 role 的 spawn 在飞 → 缓派（防 worktree reset 清在飞现场） | loop.ts in-flight gate |
+| 集成不占额度 | 内部节点集成 = 确定性代码直跑，不派 agent 不耗并发名额 | loop.ts:1356 |
+| 出队机制 | 停派五类（specReviewDeadlock / flakeReview / specContractDeadlock / buildDrift / 连续 TIMEOUT 封顶）把「派了也白派」的 unit 移出就绪集转人工 | frontier.ts stoppedDispatchState |
+
+迁入主会话形态后新增三个约束（主会话资源/体验、ask_user 弹窗串行、派发优先级），由 D11 处理。
+
+**D11：并发模型——frontier 即队列 + 双层限额（选定）**
+- **采用**：pi-cw-runner 不做独立排队队列，每轮读 `cw frontier --json` 即就绪队列（上表现状机制全部继承——它们是 loop 语义不是 CLI 专有）。双层限额：① spawn 并发上限 = extension 配置项 `runner.maxConcurrency`，**主会话形态默认 2**（主会话内每个 spawn = 一个 node 子进程 + 一路 LLM API 流 + widget/toast 刷新，比 CLI 形态默认 3 更保守；pi 侧 subagent 池自身上限 maxConcurrent=6 为硬顶）；② 同 unit in-flight gate / 集成不占额度 / 停派出队照旧。主会话形态特有的 clarify 吞吐约束：**ask_user 弹窗由 DialogGlobalQueue 全局 FIFO 串行**（同一时刻只弹一个提问）——design 阶段实际吞吐被「用户答题速度」天然限速，人是串行的，这是特性不是缺陷，派发侧不加限流（HP5 观察项兜底：排队体感过差再加）。epic 场景的派发优先级（修复类 > 新开类，让在飞 unit 先收敛）列为后续增强——首版无 epic 实战数据支撑排序规则（减法），S1 跑完再定。
+- **被否**：独立排队队列结构——frontier 已是队列，双队列 = 双事实源（排队态与投影态打架时谁对？）；首版上优先级排序——无数据支撑的规则是猜测；clarify 并发限流——DialogGlobalQueue 已串行，重复限流只增加调参面。
+- **证据**：maxConcurrency 现状（loop.ts:184/1120/1396【代码证实】）；frontier 每轮重算语义（computeDispatchTargets）；DialogGlobalQueue FIFO（dialog-queue.ts:161-310【代码证实】）。
+- **效果**：epic 场景并发可控可配；G1 的 clarify 不被并发冲垮；G4 不破（全部在 runner/extension 层，内核零感知）。
+
+### 3.5 探针清单
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |----|-----------|------|------|-----------------|
@@ -247,7 +267,7 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 |------|------|------------------------------|--------|
 | ph-i0 | 命名治理（D9：pi-coding-workflow 归档/更名）+ 受控 agentDir 环境建立（D1：预装扩展清单 + 安装脚本 + 启动探针逻辑） | 无代码逻辑改动但阻断一切行为断言——环境不收敛，后续每波的探针都不可信 | HP1 前置 |
 | ph-i1 | cw 侧 RPC 适配器（D2：pi-rpc.ts + get_state 锚 + 超时梯度 + runner.lock D8）+ pi-1 conversation 回合 npm 线 + HP1/HP2/HP3 探针 | 适配器是全部上层的地基；conversation 回合与适配器互为验证（反思形态依赖其语义）；探针同波收口 | S2、S3、HP1-3 |
-| ph-i2 | pi-cw-runner extension（D3：frontier 拉取 + subagent 派发 + 降级分支）+ D4 穿透接线 + D5 反思 followUp + HP5 | 编排迁移是单一连续动作（拆开会留「半个 runner 在两个进程」中间态）；穿透与反思是派发参数的延伸 | S1、S6、HP5 |
+| ph-i2 | pi-cw-runner extension（D3：frontier 拉取 + subagent 派发 + 降级分支 + D11 并发配置 `runner.maxConcurrency` 默认 2）+ D4 穿透接线 + D5 反思 followUp + HP5 | 编排迁移是单一连续动作（拆开会留「半个 runner 在两个进程」中间态）；穿透与反思是派发参数的延伸 | S1、S6、HP5 |
 | ph-i3 | xyz-agent 面板与收件箱（D6：cw-units 侧边栏 9 步 + 收件箱 view + toast 接线 + CW_* env 白名单 + reviewer Preset D7 近期形态）+ HP4 | 纯体验层，依赖 ph-i2 的浮现通道稳定后一次做齐；renderer 改动集中一仓 | S4、S5、S8、HP4 |
 | ph-i4 | zcode 适配器（D10：--spawn zcode + mailbox 通知 + 问题清单转述）+ HP7 | 第二战场独立推进，不阻塞主线；协议无官方文档需独立探针门 | S7、HP7 |
 
@@ -259,4 +279,4 @@ code-review 连续打回 → 本周期 build 证据 ≥5 → buildDrift 停派
 - xyz-agent 仓：`extensions/universal/cw-runner/`（新，pi-cw-runner）、`extensions/universal/subagent-workflow/`（conversation 回合）、`extensions/universal/permission/`（config.ts 角色分支，远期）、`packages/runtime/src/`（cw WS domain + watcher service + ENV 白名单一行）、`packages/renderer/src/`（CwUnitList.vue + 收件箱 view + store/api 七跳）。
 - zcode 插件仓：`z-subagent-workflow` 启用 + cw 侧 zcode 适配器复用其契约（本仓零改动或仅文档）。
 
-**待验证检查点（诚实标注）**：① HP1/HP2 是全部上层设计的实证门，不过则 D4/D5 回降级路径——本设计的核心价值（穿透 + 对话原生）以探针为准，不以调研为准；② pi RPC 协议面无 semver 承诺，HP6 持续门是长期成本；③ zcode 本体内置 workflow 引擎（sqlite 四表）形态未深挖——若其官方化可能改变 ph-i4 选型；④ DialogGlobalQueue 排队的用户体感（HP5）可能要求在派发侧加 clarify 限流，属体验调优非架构变更。
+**待验证检查点（诚实标注）**：① HP1/HP2 是全部上层设计的实证门，不过则 D4/D5 回降级路径——本设计的核心价值（穿透 + 对话原生）以探针为准，不以调研为准；② pi RPC 协议面无 semver 承诺，HP6 持续门是长期成本；③ zcode 本体内置 workflow 引擎（sqlite 四表）形态未深挖——若其官方化可能改变 ph-i4 选型；④ DialogGlobalQueue 排队的用户体感（HP5）可能要求在派发侧加 clarify 限流，属体验调优非架构变更；⑤ epic 场景派发优先级（修复类 > 新开类）在 S1 验收后评估是否立项（D11 预留增强位）。
