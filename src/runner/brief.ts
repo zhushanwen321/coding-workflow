@@ -40,12 +40,14 @@ import { unitBranchName } from "./worktree.js";
 
 /**
  * 会派发 spawn 的 frontier 维度（specReviewDeadlock / flakeReview /
- * specContractDeadlock 是转人工维度，无任务书——loop 的派发排除清单与本 Exclude
- * 三处联动，设计 mx-5 D2「specReviewDeadlock 同款」）
+ * specContractDeadlock / buildDrift 是转人工维度，无任务书——loop 的派发排除
+ * 清单、DISPATCH_SHAPE 与本 Exclude 三处联动，设计 mx-5 D2「specReviewDeadlock
+ * 同款」；lv-3 起 buildDrift 入列：三处全量枚举回到与 frontier 停派维度实态
+ * 对齐的单一事实源，DISPATCH_SHAPE 随之回收为完整 Record）
  */
 export type DispatchDimension = Exclude<
   keyof FrontierGroups,
-  "specReviewDeadlock" | "flakeReview" | "specContractDeadlock"
+  "specReviewDeadlock" | "flakeReview" | "specContractDeadlock" | "buildDrift"
 >;
 
 /** brief 渲染的派发目标（loop 的 DispatchTarget 结构子集——渲染只需这三元组） */
@@ -74,6 +76,40 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
 };
 
 /**
+ * reviewer 审查上下文的历代意见截断上限（lv-3，设计 D5）：任务书只内嵌最近
+ * SPEC_REVIEW_HISTORY_MAX 代 fail comment 全文——10 代意见全文可达数千字，任务书
+ * 膨胀会挤压 spec 空间；截断保留代数总览（头行「共 N 代，以下为最近 3 代」），
+ * 完整历史见账本 verdict。与 escalations 的中间档阈值 3 同源校准
+ */
+const SPEC_REVIEW_HISTORY_MAX = 3;
+
+/**
+ * lv-3「审查上下文」段（设计 D5）：打回历史 ≥1 代时插在 reviewer 任务书头部。
+ * N = 当前代数 = failHistory.length + 1（本代是第 N 代审查）；每代摘要 = 该代
+ * 首条 fail comment 全文（调用侧传入的 specReviewFailComments 本就取每代首条
+ * ——口径天然对齐）。截断时保留全局代数编号（「截最近 3 代」不重编号——第 k 代
+ * 的 k 是全局序，reviewer 交叉对照账本时不产生偏移）。0 代历史返回空数组（首审
+ * 零噪音，R7）。
+ */
+function specReviewContextSection(failHistory: readonly string[]): string[] {
+  if (failHistory.length === 0) {
+    return [];
+  }
+  const total = failHistory.length;
+  const recent = failHistory.slice(-SPEC_REVIEW_HISTORY_MAX);
+  const firstGeneration = total - recent.length + 1;
+  return [
+    `## 审查上下文（第 ${total + 1} 代）`,
+    `本 spec 已被打回 ${total} 代。历代意见摘要（全文见账本 verdict）：`,
+    ...(total > SPEC_REVIEW_HISTORY_MAX
+      ? [`共 ${total} 代，以下为最近 ${SPEC_REVIEW_HISTORY_MAX} 代：`]
+      : []),
+    ...recent.map((comment, i) => `  - 第 ${firstGeneration + i} 代：${comment}`),
+    "审查指引：前代意见已修复的不重复打回（除非修复引入回归）；聚焦本轮增量。",
+  ];
+}
+
+/**
  * mx-1：spec-review 的 reviewer 任务书（specReviewPending 派发形态）。审查语义
  * 按 canon §1.3 信任链与 D3「reviewer 第一审对象是验收集合」逐项列出。spec 原文经
  * attachments 绝对路径内嵌（S2：渲染时由 attachmentsDir 计算，不依赖相对路径
@@ -85,19 +121,31 @@ const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => str
  * 转述子任务书时又恰好丢掉被违反的两条）。清单进机制生成的任务书模板本体，
  * 不再依赖人转述；输出分级（must-fix / suggestion / info）+ pass 逐项显式
  * 「核过无问题」，针对性反制含糊放行。
+ *
+ * al-3：追加第六维「验收成本与层级归属」（设计《验收分层与成本治理》D6）——
+ * gate 规则⑪的词法检查对 wrapper/别名封装形态不可见，第六维是全量回归下放
+ * 的唯一语义防线；pass 逐项显式「核过无问题」的既有约定句对⑥同样生效。
+ *
+ * lv-3：签名加第三参 failHistory（历代打回意见，接口锚定 = 历史重建需要原始
+ * 事件流、投影无跨类型顺序——loop 侧用 specReviewFailComments 算好传入，渲染层
+ * 保持纯函数）；历史 ≥1 代时头部插入「审查上下文」段（D5：reviewer 看得到前
+ * 几代挑过什么，审查焦点不再每轮重掷——无历史时每代 reviewer 是无状态重 spawn，
+ * 同一问题反复争论或每轮挑新问题的方差根源）。
  */
 function specReviewReviewerTasks(
   unit: SequencedUnitProjection,
   projectCwd: string,
+  failHistory: readonly string[],
 ): string {
   const attachDir = attachmentsDir(getCwHome(), projectCwd, unit.unitId);
   return [
     "## 你的任务（reviewer：spec-review）",
     "你是独立 reviewer——审查他人提交的 spec 并给出结论（pass / fail），不修改 spec。",
+    ...specReviewContextSection(failHistory),
     "",
     `1. 读 spec 原文：最后一条 SpecSubmitted 的原文副本在 ${attachDir}/ 下`,
     `   （内容寻址文件 = <sha256>.<原文件名>；结构化视图可 cw report --unit ${unit.unitId}）。`,
-    "2. 按五维度对抗式核对清单逐条核对（reviewer 的第一审对象是验收集合，不是文风；",
+    "2. 按六维度对抗式核对清单逐条核对（reviewer 的第一审对象是验收集合，不是文风；",
     "   对 spec 的每条验收逐项过——任何一条不过即 fail，不得以「较弱/可补充」为由放行）：",
     "   ① 验收命令契约逐条核对（cw verify 按适配器解析命令产物——契约错 = 实现再对也恒 fail）：",
     "      若验收显式声明 runner，按声明适配器核对（与规则⑨同路由——runner 优先于",
@@ -117,6 +165,16 @@ function specReviewReviewerTasks(
     "      冻结契约——签名 / 期望文件任一不符，集成期必炸（不得只看本 unit 自身声明）。",
     "   ⑤ 干净 checkout 可执行性：命令用到的依赖是否全在 package.json 声明、命令是否",
     "      自带 install（verify 在一次性工作区重跑，没有提交者本机的全局依赖与环境）。",
+    "      命令不得引用检出树外的绝对路径/工作区路径（绝对 cd、~ 起始路径、.cw-worktrees",
+    "      ——gate 规则⑫词法漏报面在此语义兜底：引号包裹/动态构造/相对上跳/自定义工作区",
+    "      名词法拦不住）。",
+    "   ⑥ 验收成本与层级归属：全量回归形态是否出现在叶子 spec 的 unit 层——含裸命令",
+    "      （无文件参数的全量 vitest / 全仓 lint、test script）与封装形态（command 指向",
+    "      wrapper 脚本或 script 别名的，须追进脚本/别名内容看实际跑什么——gate 规则⑪",
+    "      的词法检查对封装形态不可见，这里是唯一语义防线）。集成口径必然重跑 root",
+    "      验收，叶子重复声明 = 每轮 fix 全价双付。此类条目 must-fix：上收 root spec",
+    '      并标 layer: "topic"；确属本 unit 范围的加文件参数收窄。wrapper 自限建议：',
+    "      回归脚本内部可自限并发（如 vitest --max-workers），避免单条命令打满全部核。",
     "   语义关（canon D3 既有要求）：e2e-mock 用例的 mockFidelityNote 是否说明与真实环境的",
     "   差异边界；nondeterministic 声明是否被滥用（声明 ≠ 逃逸执行，随机性判定是语义判断）。",
     "3. 提交结论（输出分级格式约定——--comment 缺分级清单的 verdict 视为无效审查）：",
@@ -148,7 +206,7 @@ function specFixPendingTasks(unit: SequencedUnitProjection): string {
         verdict.verdictKind === "spec-review"
       ) {
         if (verdict.verdict === "fail") {
-          failComment = verdict.comment ?? "（reviewer 未附 comment——按不合格项自行核对验收五规则）";
+          failComment = verdict.comment ?? "（reviewer 未附 comment——按不合格项自行核对验收规则，src/gates/spec-rules.ts）";
         }
         break;
       }
@@ -163,7 +221,7 @@ function specFixPendingTasks(unit: SequencedUnitProjection): string {
     failComment ?? "（账本内未见打回 verdict 的 comment——不可达：本任务书仅在 fail 后派发）",
     "",
     "### 修 spec 指令",
-    `1. 按上述意见修正 spec.json（验收五规则见 src/gates/spec-rules.ts）。`,
+    `1. 按上述意见修正 spec.json（验收规则见 src/gates/spec-rules.ts）。`,
     `2. 重提：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "3. 重提后 unit 自动回流 spec-review 待审队列——由独立 reviewer 再审，你无需（也不得）",
     "   自行提交 review 结论；reviewer 再 fail 将累计打回代数（重提不清零，达预算——默认",
@@ -309,7 +367,11 @@ function specContractBrokenTasks(
  * 询问，终验第 3 次现场）升级为系统任务书的指令化步骤，与 fx-3 R5.1 gate
  *（先建子后提 spec）口径对齐。条件收窄到 root 无子：已有子的 root 重派 /
  * 叶子首派不重复教建子。mx-1：不再含 spec-review 自审步骤——审查由独立
- * reviewer spawn 接手，完成标志 = spec 已提交入账。
+ * reviewer spawn 接手，完成标志 = spec 已提交入账。al-3：第 1 步追加回归防
+ * 下放指引（全量回归归 root spec 声明并标 layer: "topic"，子 unit spec 不得
+ * 复制回归条目——写入链的源头防线，设计《验收分层与成本治理》D6；同设计
+ * D1a 标记行契约与 D4 已知边界二「规则⑤不豁免 topic 条目」随指引一并给出，
+ * 防 designer 照指引上收后写裸命令 / 踩规则⑤连环拒）。
  */
 function designerFirstTasks(unit: SequencedUnitProjection, projection: SequencedProjection): string {
   const isRootWithoutChildren =
@@ -325,9 +387,16 @@ function designerFirstTasks(unit: SequencedUnitProjection, projection: Sequenced
   return [
     "## 你的任务（designer）",
     ...stepZero,
-    `1. 撰写该 unit 的 spec.json。验收五规则（src/gates/spec-rules.ts）：验收非空；`,
+    `1. 撰写该 unit 的 spec.json。验收规则（src/gates/spec-rules.ts）：验收非空；`,
     "   核心 case 的 type 须为 e2e-real / e2e-mock 且带可执行 command；含 mock 须附",
     "   mock 保真度说明；至少一条 unit 级用例。",
+    "   root 级回归型验收（全仓 lint / 全量 vitest 等全量回归）归 root spec 声明并标",
+    '   layer: "topic"（由集成阶段统一执行，只在集成跑一次）；子 unit spec 只声明本',
+    "   unit 的功能验收，不得复制回归条目（叶子重复声明 = 每轮 fix 全价双付）。",
+    "   e2e 型 topic 条目的 command 必须产出标记行 `<验收id> PASS` / `<验收id> FAIL`",
+    "   且 exit code 与标记一致（wrapper 脚本尾部输出）——裸 `pnpm vitest run` 类",
+    "   命令永不产出标记行，恒 fail；规则⑤不豁免 topic 条目——上收回归后 root",
+    '   spec 仍须至少一条 type: "unit" 的用例。',
     `2. 提交 spec：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "完成标志：spec 已提交入账（spec-review 由独立 reviewer 在下一轮接手，无需自审）。",
   ].join("\n");
@@ -436,6 +505,7 @@ function renderBrief(
   rootId: string,
   projectCwd: string,
   workdir: string,
+  specReviewFailHistory: readonly string[] = [],
 ): string {
   let briefContent: string;
   try {
@@ -459,7 +529,7 @@ function renderBrief(
           : target.dimension === "specContractBroken"
             ? specContractBrokenTasks(unit, projectCwd)
             : target.dimension === "specReviewPending"
-              ? specReviewReviewerTasks(unit, projectCwd)
+              ? specReviewReviewerTasks(unit, projectCwd, specReviewFailHistory)
               : target.dimension === "specReady"
                 ? designerFirstTasks(unit, projection)
                 : target.dimension === "buildReady"
@@ -490,6 +560,10 @@ function renderBrief(
  * brief 落盘到 <artifactDir>/<unitId>.<role>.brief.md（fx-4：产物根随 run 级 topic
  * 目录，worktree 内不再有任何 cw 自身文件）。覆盖写语义不变——brief 内容随投影
  * 变化，append 会拼接出多版本任务书（设计 D2）。
+ *
+ * lv-3：可选参 specReviewFailHistory（specReviewPending 形态的「审查上下文」段
+ * 输入——历代打回意见，loop 侧用 specReviewFailComments(events, unitId) 算好传入；
+ * 历史重建需原始事件流（投影无跨类型顺序），渲染层保持纯函数不读账本）。
  */
 export function writeBriefFile(
   artifactDir: string,
@@ -499,9 +573,13 @@ export function writeBriefFile(
   rootId: string,
   projectCwd: string,
   workdir: string,
+  specReviewFailHistory?: readonly string[],
 ): string {
   const path = join(artifactDir, `${target.unitId}.${target.role}.brief.md`);
   mkdirSync(artifactDir, { recursive: true });
-  writeFileSync(path, renderBrief(projection, unit, target, rootId, projectCwd, workdir));
+  writeFileSync(
+    path,
+    renderBrief(projection, unit, target, rootId, projectCwd, workdir, specReviewFailHistory),
+  );
   return path;
 }

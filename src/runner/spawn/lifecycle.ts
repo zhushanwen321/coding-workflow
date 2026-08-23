@@ -9,6 +9,12 @@
  * 平台假设：POSIX（detached + pgid 树 kill 针对 macOS/Linux；Windows detached 语义不同，
  * 不在 u6a 范围）。
  *
+ * al-1 nice 减震（D7）：主 spawn 统一包 nice -n 10——runner 派发的 designer /
+ * developer / reviewer agent 进程整体降优先级，agent 在 worktree 内自行跑的
+ * 测试/构建（不经 execBashTree）按 POSIX 继承全覆盖。nice 不在 childEnv 的
+ * PATH（Windows / 极简容器）时降级裸 spawn，静默零语义变化；嵌套累加（agent
+ * ni=10 内跑 verify 的验收命令再包一层 → 20，更谦卑）是接受的行为，不去重。
+ *
  * 两个实测约束（node v24.11.1，2026-08 探针）决定了实现形态：
  *   1. stdio 里传入的 stream 必须已持有 fd（fd:null 直接 ERR_INVALID_ARG_VALUE 同步抛），
  *      而 createWriteStream 惰性 open 是异步的——先 openSync 同步拿 fd 再包流，
@@ -16,7 +22,7 @@
  *   2. spawn 对不存在的可执行不抛同步错误，而是异步 error 事件（且该路径无 exit 事件），
  *      而契约要求同步抛带可执行名的 Error——故有 execvp 语义的可解析性预检。
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, type SpawnOptions } from "node:child_process";
 import {
   accessSync,
   closeSync,
@@ -99,6 +105,23 @@ function assertExecutableResolvable(
   }
 }
 
+/** nice 减震增量（POSIX 增量语义，al-1 D7）：agent 进程优先级 +10，cw 内唯一并行超额订阅面（F1）降级为后台高占用 */
+const NICE_ADJUSTMENT = 10;
+
+/**
+ * nice 是否可按子进程 env 的 PATH 解析为可执行普通文件（与 assertExecutableResolvable
+ * 的 PATH 逐段解析同型；无 PATH 放行走系统默认）。不可解析（Windows / 极简容器）→
+ * 调用方降级裸 spawn，静默零语义变化——nice 预检是工具可用性维度，失败只降级不抛
+ * （区别于 command 预检的同步抛 SPAWN_ERROR 契约）。
+ */
+function niceResolvable(childEnv: NodeJS.ProcessEnv): boolean {
+  const path = childEnv.PATH;
+  if (path === undefined) {
+    return true;
+  }
+  return path.split(delimiter).some((dir) => isExecutableFile(join(dir, "nice")));
+}
+
 export function spawnProcess(req: SpawnProcessRequest): SpawnHandle {
   // 产物目录：只管传入路径自身的 dirname（.cw-spawn/ 的命名约定由调用方负责）
   mkdirSync(dirname(req.stdoutPath), { recursive: true });
@@ -123,15 +146,25 @@ export function spawnProcess(req: SpawnProcessRequest): SpawnHandle {
   const stdoutStream = createWriteStream(req.stdoutPath, { fd: stdoutFd });
   const stderrStream = createWriteStream(req.stderrPath, { fd: stderrFd });
 
+  // spawn 选项两分支共用——cwd / env / stdio / detached 逐字段不变，仅命令前缀按 nice 预检分流
+  const spawnOptions: SpawnOptions = {
+    cwd: req.cwd,
+    env: childEnv,
+    stdio: ["ignore", stdoutStream, stderrStream],
+    // 进程组隔离：组长 pid === pgid，kill 用 kill(-pgid) 整树终止（含孙进程）
+    detached: true,
+  };
   let child: ChildProcess;
   try {
-    child = spawn(req.command, req.args, {
-      cwd: req.cwd,
-      env: childEnv,
-      stdio: ["ignore", stdoutStream, stderrStream],
-      // 进程组隔离：组长 pid === pgid，kill 用 kill(-pgid) 整树终止（含孙进程）
-      detached: true,
-    });
+    // al-1 nice 减震：nice 在场时包一层降执行优先级。进程组不变式：detached
+    // 组长从 req.command 变为 nice，但 nice(1) 对目标命令是 exec 自替换（GNU
+    // coreutils 与 BSD 实现同），pid 不变 ⟹ pgid === pid 与 kill(-pgid) 整树回收
+    // 不受影响。nice 不在 childEnv 的 PATH（Windows / 极简容器）→ 降级裸 spawn，
+    // 静默——不告警，零语义变化。嵌套累加（agent 内跑 verify 再包一层 → 20）是
+    // 接受的行为，不去重
+    child = niceResolvable(childEnv)
+      ? spawn("nice", ["-n", String(NICE_ADJUSTMENT), req.command, ...req.args], spawnOptions)
+      : spawn(req.command, req.args, spawnOptions);
   } catch (err) {
     stdoutStream.destroy();
     stderrStream.destroy();

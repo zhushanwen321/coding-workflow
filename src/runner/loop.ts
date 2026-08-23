@@ -66,6 +66,12 @@
  *     mx5-2）→ 不派任何 agent（两轮修复均经 verify 检验仍失败，判 spec/brief
  *     层更深问题），stderr 转人工（含 2 代回炉事实与恢复指引）；复用审计-不喂
  *     -idle 模式，人工处置（新 spec 过审 / 人工关闭）写入账本后投影自然消失
+ *   - spec-frozen 且当前 spec 周期内 build 证据 ≥K（默认 5，--max-build-attempts
+ *     可注入）且无 pass verify（buildDrift，lv-2）→ 不派任何 agent（缓慢进展：
+ *     每轮有产出但期望完成时间发散，布尔进展判定失明），stderr 转人工（三选一：
+ *     人工接手 / 拆 unit / 调大 K 续跑）；复用审计-不喂-idle 模式（停派后无新
+ *     developer spawn 即无新 build 证据，空转由 maxIdleMs 收束；账本态跨 run
+ *     持久——Ctrl-C 重跑计数不丢；--max-build-attempts 调大重跑即续，无账本副作用）
  *   - verified 且未 closed   → reviewer（exec-review；任务书含 rv-2 必填的
  *     --evidence-refs 与 mx-1 的 --role reviewer 自报）
  *
@@ -117,6 +123,9 @@ import type {
   VerifyRanPayload,
 } from "../events/types.js";
 import {
+  BUILD_DRIFT_MAX_ATTEMPTS,
+  type BuildDriftFact,
+  buildDriftFacts,
   computeFrontier,
   consecutiveIntegrationFails,
   type FlakeReviewFact,
@@ -126,6 +135,7 @@ import {
   SPEC_CONTRACT_MAX_GENERATIONS,
   SPEC_REVIEW_DEADLOCK_FAILS,
   type SpecContractFacts,
+  specReviewFailComments,
   specVerdictTsBySeq,
   splitChildrenNotCreated,
   splitOf,
@@ -218,6 +228,20 @@ export interface RunLoopOptions {
    * 是运行策略，默认值是投影展示语义。CLI 来源 = cw run --max-spec-rejects。
    */
   maxSpecRejects?: number;
+  /**
+   * buildDrift 的停派预算 K（lv-2，可选项——缺省回落 frontier.ts 的
+   * BUILD_DRIFT_MAX_ATTEMPTS 默认 5）。只影响本循环的 buildDrift 判定与
+   * escalation 出声；只读命令（frontier/status）恒用默认值——停派预算是运行
+   * 策略，默认值是投影展示语义。CLI 来源 = cw run --max-build-attempts。
+   */
+  maxBuildAttempts?: number;
+  /**
+   * 单次 agent spawn 超时上限（lv-2，可选项——缺省回落本文件 AGENT_SPAWN_TIMEOUT_MS
+   * 默认 30min）。只改超时上限不改任何判定语义。CLI 来源 = cw run
+   * --spawn-timeout-ms flag（优先）或进程环境 CW_SPAWN_TIMEOUT_MS（handleRun
+   * 层合流后传入）。
+   */
+  spawnTimeoutMs?: number;
 }
 
 /** in-flight 派发（mx-1 派发 gate 后同 unit 任意时刻至多一个在飞 spawn） */
@@ -308,10 +332,15 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
 }
 
 /** frontier 维度 → 派发形态（role 与集成直跑标记）。维度语义单一出处 = readonly/frontier.ts。
- * specReviewDeadlock / flakeReview / specContractDeadlock 无条目（mx-1 / rv-5 /
- * mx5-2）：三者都是转人工维度——不派任何 agent（打回活锁 / 随机挂 / 回炉活锁
- * 对机器无解），转人工指引由 runLoopMain 的 specDeadlockEscalationMessage /
- * flakeEscalationMessage / specContractDeadlockEscalationMessage 出声。
+ * specReviewDeadlock / flakeReview / specContractDeadlock / buildDrift 无条目
+ * （mx-1 / rv-5 / mx5-2 / lv-2）：四者都是转人工维度——不派任何 agent（打回
+ * 活锁 / 随机挂 / 回炉活锁 / 缓慢进展对机器无解），转人工指引由 runLoopMain 的
+ * specDeadlockEscalationMessage / flakeEscalationMessage /
+ * specContractDeadlockEscalationMessage / buildDriftEscalationMessage 出声。
+ * lv-3 回收完整 Record：buildDrift 已入 DispatchDimension 的 Exclude 清单
+ * （brief.ts——四处停派维度单一事实源），computeDispatchTargets 的派发排除
+ * 黑名单先 continue 封死停派维度的到表路径，本表对 DispatchDimension 必然满射
+ * ——lv-2 的 Partial 化与 shape === undefined 防御分支随之退役（类型即证明）。
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
  * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
  * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
@@ -332,6 +361,67 @@ const DISPATCH_SHAPE: Record<
 };
 
 /**
+ * 连续 TIMEOUT 计数的进展清零 + 转人工判定（runLoopMain 每轮派发计算之前调用）。
+ * 清零先于判定：被超时 kill 的 agent 若死前已写账本，本轮先清零——不冤枉有产出
+ * 的 agent；清零后仍达阈值的才转人工（本轮派发计算即排除）。顺序不能反：先判定
+ * 后清零会把「有产出的第二次 TIMEOUT」也误转人工。返回最新水位（调用侧回写）。
+ */
+function settleTimeoutEscalations(
+  events: readonly LedgerEvent[],
+  timeoutStreaks: Map<string, TimeoutStreak>,
+  lastUnitSeqs: Map<string, number>,
+  escalated: Map<string, AgentRole>,
+  rootId: string,
+  artifactDir: string,
+  spawnTimeoutMs: number,
+): Map<string, number> {
+  const unitSeqs = unitEventHighWaterSeqs(events);
+  for (const [unitId, seq] of unitSeqs) {
+    if (seq > (lastUnitSeqs.get(unitId) ?? 0)) {
+      timeoutStreaks.delete(unitId);
+    }
+  }
+  for (const [unitId, streak] of timeoutStreaks) {
+    if (streak.count >= AGENT_TIMEOUT_ESCALATION_AFTER && !escalated.has(unitId)) {
+      escalated.set(unitId, streak.role);
+      // lv-2：文案第 3 条显示本循环实际的 spawn 超时值与调大入口
+      emitErr(escalationMessage(rootId, unitId, streak.role, artifactDir, spawnTimeoutMs));
+    }
+  }
+  return unitSeqs;
+}
+
+/**
+ * brief 落盘（lv-3 起带审查上下文取数）：specReviewPending 形态注入历代打回
+ * 意见——历史重建需原始事件流（投影无跨类型顺序），loop 侧用
+ * specReviewFailComments 算好传入，渲染层保持纯函数；其他形态不注入
+ * （writeBriefFile 的可选参透传，无该段渲染）
+ */
+function writeBriefWithHistory(
+  artifactDir: string,
+  target: DispatchTarget,
+  unit: SequencedUnitProjection,
+  projection: SequencedProjection,
+  rootId: string,
+  projectCwd: string,
+  workdir: string,
+  events: readonly LedgerEvent[],
+): string {
+  return writeBriefFile(
+    artifactDir,
+    target,
+    unit,
+    projection,
+    rootId,
+    projectCwd,
+    workdir,
+    target.dimension === "specReviewPending"
+      ? specReviewFailComments(events, target.unitId)
+      : undefined,
+  );
+}
+
+/**
  * 派发对象集合：消费 readonly/frontier.ts 的 computeFrontier（与 `cw frontier`
  * 命令同一就绪判定，A4「零上下文接手」场景输出与真实派发一致），限定 root
  * 子树、按 BFS 序展开为 (role, unitId, dimension, integration)。派发 gate
@@ -339,10 +429,10 @@ const DISPATCH_SHAPE: Record<
  * 全部新角色——reviewer 派发前的 worktree reset 会清在飞 designer 的现场，
  * 同理修复既有 designer→developer 转换竞态；等待窗口 ≤ 一个 poll 周期。
  * excluded = 转人工 unit（连续 TIMEOUT 封顶后不再派发）。specReviewDeadlock /
- * flakeReview / specContractDeadlock 维度同样不派发——转人工指引由 runLoopMain
- * 出声，此处只负责不进 targets。spec-frozen 自引用的 stderr 警告保持每轮可见
- * ——判定半边在共享函数（按叶子语义入组），此处只保留可观测性半边（fx-1 R1
- * loop 级防御）。
+ * flakeReview / specContractDeadlock / buildDrift 维度同样不派发——转人工指引
+ * 由 runLoopMain 出声，此处只负责不进 targets。spec-frozen 自引用的 stderr
+ * 警告保持每轮可见——判定半边在共享函数（按叶子语义入组），此处只保留可观测
+ * 性半边（fx-1 R1 loop 级防御）。
  */
 function computeDispatchTargets(
   projection: SequencedProjection,
@@ -353,6 +443,7 @@ function computeDispatchTargets(
   contractFacts: ReadonlyMap<string, SpecContractFacts>,
   specFails: ReadonlyMap<string, number>,
   maxSpecRejects: number,
+  buildDrifts: ReadonlyMap<string, BuildDriftFact>,
   excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
   const groups = computeFrontier(projection, {
@@ -361,6 +452,7 @@ function computeDispatchTargets(
     specContractFacts: contractFacts,
     specReviewFailCounts: specFails,
     maxSpecRejects,
+    buildDriftFacts: buildDrifts,
   });
   const dimensionOf = new Map<string, keyof FrontierGroups>();
   for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
@@ -385,10 +477,11 @@ function computeDispatchTargets(
       dimension === undefined ||
       dimension === "flakeReview" ||
       dimension === "specReviewDeadlock" ||
-      dimension === "specContractDeadlock"
+      dimension === "specContractDeadlock" ||
+      dimension === "buildDrift"
     ) {
-      // 转人工维度（rv-5 flake / mx-1 spec 打回活锁 / mx5-2 回炉活锁）——不派
-      // 任何 agent，停摆等人工处置后投影自然消失
+      // 转人工维度（rv-5 flake / mx-1 spec 打回活锁 / mx5-2 回炉活锁 / lv-2
+      // 缓慢进展）——不派任何 agent，停摆等人工处置后投影自然消失
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
@@ -922,9 +1015,19 @@ function snapshotHeadCommit(cwd: string): string {
 function assertPositive(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(
-      `runLoop: 非法参数 ${name}=${value}：须为正数。恢复动作：检查 cw run 的对应 flag（--poll-ms / --max-idle-ms / --max-concurrency / --max-spec-rejects）取值。`,
+      `runLoop: 非法参数 ${name}=${value}：须为正数。恢复动作：检查 cw run 的对应 flag（--poll-ms / --max-idle-ms / --max-concurrency / --max-spec-rejects / --max-build-attempts / --spawn-timeout-ms）取值。`,
     );
   }
+}
+
+/**
+ * 停派态判定的运行预算（F1 修复：与 runLoopMain 解析后的注入值同源）。结算行的
+ * stoppedDispatchState 判定必须用派发侧同一预算，否则注入非默认值时结算行与下一轮
+ * 派发实态分叉（结算行谎报停派/谎报可重派）。
+ */
+interface DispatchBudgets {
+  maxBuildAttempts: number;
+  maxSpecRejects: number;
 }
 
 /**
@@ -941,6 +1044,7 @@ function settleFlightOutput(
   flight: InFlightSpawn,
   result: SpawnResult,
   events: readonly LedgerEvent[],
+  budgets: DispatchBudgets,
 ): void {
   const index = inFlight.indexOf(flight);
   if (index >= 0) {
@@ -951,7 +1055,7 @@ function settleFlightOutput(
   }
   const stopState =
     result.exitCode === "TIMEOUT"
-      ? stoppedDispatchState(events, flight.unitId)
+      ? stoppedDispatchState(events, flight.unitId, budgets)
       : null;
   emit([
     `[runner] ${new Date().toISOString()} ${flight.role} unit "${flight.unitId}" 退出 ${describeExit(result.exitCode, stopState)}`,
@@ -967,6 +1071,7 @@ function settleFlightOutput(
 async function reportSettledFlights(
   inFlight: InFlightSpawn[],
   events: readonly LedgerEvent[],
+  budgets: DispatchBudgets,
 ): Promise<void> {
   for (const flight of [...inFlight]) {
     const settled = await Promise.race<SpawnResult | null>([
@@ -974,7 +1079,7 @@ async function reportSettledFlights(
       sleep(0).then(() => null),
     ]);
     if (settled !== null) {
-      settleFlightOutput(inFlight, flight, settled, events);
+      settleFlightOutput(inFlight, flight, settled, events, budgets);
     }
   }
 }
@@ -1016,10 +1121,16 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // mx-4：spec 打回代数转人工预算（缺省回落常量默认 10——与只读命令同源，
   // flag 注入时仅本循环判定变紧/变宽，投影展示语义不变）
   const maxSpecRejects = opts.maxSpecRejects ?? SPEC_REVIEW_DEADLOCK_FAILS;
+  // lv-2：buildDrift 停派预算（默认 5）与单次 spawn 超时上限（默认 30min；
+  // flag/env 合流已在 handleRun 层完成——直调方非法值由 assertPositive 拦截）
+  const maxBuildAttempts = opts.maxBuildAttempts ?? BUILD_DRIFT_MAX_ATTEMPTS;
+  const spawnTimeoutMs = opts.spawnTimeoutMs ?? AGENT_SPAWN_TIMEOUT_MS;
   assertPositive("pollMs", pollMs);
   assertPositive("maxIdleMs", maxIdleMs);
   assertPositive("maxConcurrency", maxConcurrency);
   assertPositive("maxSpecRejects", maxSpecRejects);
+  assertPositive("maxBuildAttempts", maxBuildAttempts);
+  assertPositive("spawnTimeoutMs", spawnTimeoutMs);
 
   const initial = loadLedger(opts.cwd);
   if (!initial.projection.units.has(opts.rootId)) {
@@ -1053,7 +1164,8 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
 
   emit([
     `[runner] 循环启动：root=${opts.rootId} adapter=${opts.adapter.name} ` +
-      `poll=${pollMs}ms max-idle=${maxIdleMs}ms max-concurrency=${maxConcurrency} max-spec-rejects=${maxSpecRejects}`,
+      `poll=${pollMs}ms max-idle=${maxIdleMs}ms max-concurrency=${maxConcurrency} max-spec-rejects=${maxSpecRejects} ` +
+      `max-build-attempts=${maxBuildAttempts} spawn-timeout-ms=${spawnTimeoutMs}ms`,
   ]);
 
   let lastTotalEvents = initial.projection.totalEvents;
@@ -1071,9 +1183,15 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // mx-1 MF2 spec 打回活锁转人工的出声去重（维持 mx-3 完整消息文本签名：各代
   // 打回意见不同是有意重出，fx-6 X5 明确不改本维度）
   const announcedDeadlock = new Map<string, string>();
+  // lv-3 spec-review 代数中间档出声去重（完整文本比较：代数进文本必然逐代不同，同代数不重出）
+  const announcedSpecProgress = new Map<string, string>();
   // mx5-2 解析失败回炉活锁转人工的出声去重（fx-6 X5 改稳定签名：排序后条目
   // 集合 + 代数档，runId 追加与上限内代数增长不重出）
   const announcedContractDeadlock = new Map<string, string>();
+  // lv-2 buildDrift 缓慢进展转人工的出声去重（签名 = specEpoch:capped——必须含
+  // specEpoch：新 spec 周期再次达预算时签名变化重出声，防「回炉后二次触发静默」；
+  // 同周期内证据数继续增长不重出）
+  const announcedBuildDrift = new Map<string, string>();
   // mx-1 S7 抢答警告的去重水位：unitId → 已评估过的最高 spec-review verdict seq。
   // 初始值取本 run 启动时的账本现状（重跑场景下历史 verdict 不追警告，只看本
   // run 期间新入账的）
@@ -1150,7 +1268,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       // fx-6 X3a：killAll 前先补打印已退出 spawn 的结算行——race 的 sleep 分支
       // 先到点而 spawn 已退出时，末位（如 root exec-reviewer）的结算行会在此
       // 收束分支被跳过（四跑异常-2），此处兜底出声
-      await reportSettledFlights(inFlight, events);
+      await reportSettledFlights(inFlight, events, { maxBuildAttempts, maxSpecRejects });
       killAll(inFlight);
       // 退出清尾：run 已结束，本轮刚收集的 closed 子现场一并回收（延迟窗口语义
       // 已过点——产出已 merge 进 root 分支且证据链闭合，D5：现场无保留价值；
@@ -1169,33 +1287,29 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       return 0;
     }
 
-    // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前：被超时 kill 的
-    // agent 若死前已写账本，本轮先清零——不冤枉有产出的 agent；清零后仍达阈值的
-    // 才转人工，本轮流派发即排除）。顺序不能反：先判定后清零会把「有产出的
-    // 第二次 TIMEOUT」也误转人工
-    const unitSeqs = unitEventHighWaterSeqs(events);
-    for (const [unitId, seq] of unitSeqs) {
-      if (seq > (lastUnitSeqs.get(unitId) ?? 0)) {
-        timeoutStreaks.delete(unitId);
-      }
-    }
-    lastUnitSeqs = unitSeqs;
-    for (const [unitId, streak] of timeoutStreaks) {
-      if (streak.count >= AGENT_TIMEOUT_ESCALATION_AFTER && !escalated.has(unitId)) {
-        escalated.set(unitId, streak.role);
-        emitErr(escalationMessage(opts.rootId, unitId, streak.role, artifactsDir));
-      }
-    }
+    // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前——顺序语义见
+    // settleTimeoutEscalations 注释）
+    lastUnitSeqs = settleTimeoutEscalations(events, timeoutStreaks, lastUnitSeqs, escalated, opts.rootId, artifactsDir, spawnTimeoutMs);
 
-    // 三类转人工出口的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
-    // 打回活锁——语义与去重见 announceManualEscalations 注释）。事实映射回传给
-    // 派发计算（同口径同源）；人工处置写入新事件后投影自然消失、循环自愈
+    // 四类转人工维度的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
+    // 打回活锁 / lv-2 buildDrift 缓慢进展——语义与去重见 announceManualEscalations
+    // 注释）。buildDriftFacts 每轮只算一次：出声与派发计算消费同一份（对齐
+    // flakes/contractFacts 复用模式）；人工处置写入新事件后投影自然消失、循环自愈
     const subtreeIds = new Set(subtreeUnits(projection, opts.rootId).map((u) => u.unitId));
-    const escalatedFacts = announceManualEscalations(opts.rootId, events, subtreeIds, maxSpecRejects, {
-      flake: announcedFlake,
-      contract: announcedContractDeadlock,
-      spec: announcedDeadlock,
-    });
+    const driftFacts = buildDriftFacts(events, maxBuildAttempts);
+    const escalatedFacts = announceManualEscalations(
+      opts.rootId,
+      events,
+      subtreeIds,
+      { maxSpecRejects, driftFacts, maxBuildAttempts, artifactDir: artifactsDir },
+      {
+        flake: announcedFlake,
+        contract: announcedContractDeadlock,
+        spec: announcedDeadlock,
+        specProgress: announcedSpecProgress,
+        buildDrift: announcedBuildDrift,
+      },
+    );
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
@@ -1249,6 +1363,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       escalatedFacts.contractFacts,
       escalatedFacts.specFails,
       maxSpecRejects,
+      driftFacts,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {
@@ -1318,7 +1433,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         );
         continue;
       }
-      const briefPath = writeBriefFile(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir);
+      const briefPath = writeBriefWithHistory(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir, events);
       // mx-1 S3：reviewer role 注入异源模型（复用 pi 的 CW_AGENT_MODEL → --model
       // 翻译链，req.env 级；未配置时不注入——reviewer 与 developer 同模型链）。
       // mx-3 S7：reviewer flight 的存活窗口登记（抢答豁免收紧后，豁免只认
@@ -1342,7 +1457,8 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
           ...(target.role === "reviewer" && reviewerModel !== undefined
             ? { env: { CW_AGENT_MODEL: reviewerModel } }
             : {}),
-          timeoutMs: AGENT_SPAWN_TIMEOUT_MS,
+          // lv-2：超时用本循环解析后的值（--spawn-timeout-ms / CW_SPAWN_TIMEOUT_MS 注入）
+          timeoutMs: spawnTimeoutMs,
         });
       } catch (err) {
         // fx-7：适配器同步 throw（human 适配器 brief 落盘 IO 失败等 env 级异常）
@@ -1385,6 +1501,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         finished.result.exitCode === "TIMEOUT"
           ? new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll()
           : events,
+        { maxBuildAttempts, maxSpecRejects },
       );
       if (finished.result.exitCode === "SPAWN_ERROR") {
         killAll(inFlight);

@@ -21,7 +21,8 @@
  *   - JSON 非法/形状不符（顶层缺 suites 数组，如 `{}` 或 vitest JSON）→ 抛错，
  *     绝不伪造 cases；
  *   - 零 result 且 exitCode=0 → 抛错（无区分力——echo ok 类假命令）；
- *   - 零 result 且 exitCode≠0 → 单条 fail case（对齐 e2e-sh no-markers 语义）。
+ *   - 零 result 且 exitCode≠0 → 单条 fail case（exit≠0 已具区分力，如实 fail
+ *     不抛错）。
  */
 import { readFileSync } from "node:fs";
 
@@ -32,7 +33,7 @@ const JSON_REPORTER_FLAG = "--reporter=json";
 const DEFAULT_COMMAND = `npx playwright test ${JSON_REPORTER_FLAG}`;
 /** result 级唯一被认可的通过态；failed/timedOut/skipped/interrupted/didNotRun 均映射 fail */
 const PASSED = "passed";
-/** 零 result + exitCode≠0 时的占位 name（对齐 e2e-sh 的 no-markers 家族语义） */
+/** 零 result + exitCode≠0 时的占位 name（exit≠0 已具区分力，如实折叠为单条 fail） */
 const NO_RESULTS_NAME = "no-results";
 /** suite 路径与 spec 标题的连接符（">" 非 nameMatch 词字符，天然词边界） */
 const NAME_SEPARATOR = " > ";

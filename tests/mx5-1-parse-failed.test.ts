@@ -16,8 +16,9 @@
  *   - vitest 型解析失败：`echo not-json --reporter=verbose`——translate 自动
  *     追加 `--reporter=json` 后 stdout 是纯文本（echo 把 flag 原样打印），
  *     JSON.parse 恒挂，与三跑现场「verbose 与追加 json 并存」同构；
- *   - e2e-sh 无标记且 exit≠0：`echo boom >&2; exit 3`（no-markers fail case，
- *     parseError=false——诚实边界：不入列，照旧 fail）；
+ *   - e2e-sh 无标记且 exit≠0：`echo boom >&2; exit 3`（lv-3 改道：parse 抛错
+ *     parseError=true——入解析失败清单，连挂 2 走回炉通道，不再产 no-markers
+ *     fail case）；
  *   - e2e-sh 无标记且 exit 0：`echo done`（parse 抛错，parseError=true）。
  */
 import { spawnSync } from "node:child_process";
@@ -175,8 +176,8 @@ describe("P1 提取锚 = parseError===true（vitest 型解析失败入列，判�
   });
 });
 
-describe("P2 e2e-sh 无标记行且 exit≠0 不入列（诚实边界：no-markers fail case 不抛错）", () => {
-  it("e2e 型命令无标记且 exit 3 → 照旧 fail，事件不含该 id（字段缺失）", async () => {
+describe("P2 e2e-sh 无标记行且 exit≠0 入列（lv-3 改道：解析失败类，不再产 no-markers fail case）", () => {
+  it("e2e 型命令无标记且 exit 3 → parse 抛错入列 parseFailedAcceptanceIds", async () => {
     makeVerifyFixture([e2eItem("A1", "echo boom >&2; exit 3")]);
 
     const res = await run(["verify", "--unit", "u-1"]);
@@ -187,8 +188,9 @@ describe("P2 e2e-sh 无标记行且 exit≠0 不入列（诚实边界：no-marke
     expect(payloads).toHaveLength(1);
     const p = payloads[0] as Record<string, unknown>;
     expect(p.result).toBe("fail");
-    // 落盘字节层面不含该键（undefined 都不写）
-    expect("parseFailedAcceptanceIds" in p).toBe(false);
+    // lv-3 改道：exit≠0 无标记 = 脚本未跑到输出点（疑似崩溃/环境断链）——
+    // 解析失败类入列（连挂 2 走回炉），不再是「照旧 fail 不入列」的诚实边界
+    expect(p.parseFailedAcceptanceIds).toEqual(["A1"]);
   });
 });
 

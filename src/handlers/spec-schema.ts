@@ -31,6 +31,14 @@ export const AcceptanceItemSchema = Type.Object({
    * （错误指向字段路径，spec 作者改为删字段或写 true）。
    */
   nondeterministic: Type.Optional(Type.Literal(true)),
+  /**
+   * 验收层级（al-2，对齐领域类型 AcceptanceItem.layer?: AcceptanceLayer）：
+   * 合法值 "unit" | "topic" 与 AcceptanceLayer 联合逐字符一致（两处一致性由
+   * al-2 验收文档单点维护，注释互相指向）。schema 显式声明后非法值在入口被拒
+   * （错误含字段路径），不依赖 gate。缺省不写键 = unit——缺省语义靠键缺失
+   * 表达，旧账本重放兼容（显式声明才入账）。
+   */
+  layer: Type.Optional(Type.Union([Type.Literal("unit"), Type.Literal("topic")])),
 });
 
 export const ContractSchema = Type.Object({

@@ -13,6 +13,14 @@
 export type AcceptanceType = "unit" | "integration" | "e2e-real" | "e2e-mock" | "manual";
 
 /**
+ * 验收层级枚举（al-2，《验收分层与成本治理》设计 §3.3 D1）：条目的执行层归属。
+ * 与 AcceptanceType 正交——type 说「用例本身长什么样」，layer 说「在哪一层被执行」。
+ * 合法值单一事实源 = 本类型；spec-schema 的 Union Literals 与此逐字符一致
+ * （两处一致性由 al-2 验收文档单点维护，注释互相指向）。
+ */
+export type AcceptanceLayer = "unit" | "topic";
+
+/**
  * 验收 id 字符集（rv-2 规则⑦与 e2e-sh marker 的同源锚）：字母数字开头，后续可含
  * `.` `_` `-`；禁空格与中文。id 是 e2e-sh 标记行第一列与 nameMatch 名字比对的锚，
  * 字符集外的 id 产出的 e2e 用例永远无法匹配标记行。spec gate（规则⑦）与 e2e-sh
@@ -55,6 +63,18 @@ export interface AcceptanceItem {
    * 投影——声明条目的连挂治理依赖 spec-review 把关与人工审计 report.json。
    */
   nondeterministic?: true;
+  /**
+   * 验收层级（al-2，设计《验收分层与成本治理》§3.3 D1）：声明本条目的执行层
+   * 归属。"unit"（缺省）= 本 unit 的 verify 路径执行；"topic" = 归集成层，
+   * 唯一执行点 = 所属节点的集成验证。该字段不改变任何执行器行为——
+   * runAcceptances / integrate / fold / frontier 一律不读它，效力来自 al-3
+   * 交付的 spec gate 规则⑩声明位置约束：topic 条目只能声明在 split 非空的
+   * spec（无子 = 无集成执行点 = 声明即真空，提交期拒绝）+ 集成装配的既有
+   * 行为。缺省语义靠键缺失表达：旧 spec / 旧账本无此字段 = 行为逐字节不变
+   * （重放兼容先例：VerifyRanPayload.parseFailedAcceptanceIds 的「旧账本缺
+   * 字段 = 无」口径；显式声明才经 JSON.stringify 入账）。
+   */
+  layer?: AcceptanceLayer;
 }
 
 /** 契约（Contract）——跨单元接口承诺，随 spec 一起 hash 冻结 */
@@ -150,13 +170,15 @@ export interface VerifyRanPayload {
    * 来源**非穷举**——完整集合以四适配器 parse/translate 实现（`src/testrun/`）
    * 与 `src/verify/run.ts` 的路由为准，代表形态：①适配器 parse 抛错——
    * vitest/playwright stdout 非法 JSON 或 **JSON 合法但形状不符**；e2e-sh 无
-   * 标记行且 exit 0、或标记 id 与验收 id 不符；②零条目且 exit 0 防线——
+   * 标记行（无论 exit code：0 = 无区分力、≠0 = 脚本未按契约跑到输出点疑似
+   * 崩溃/环境断链）、或标记 id 与验收 id 不符；②零条目且 exit 0 防线——
    * playwright/pytest 零 result/条目行且 exit 0 判无区分力抛错；③translate
    * 抛错——如 `runner:"e2e-sh"` 显式声明的条目 command 缺省（unit 型合法缺省
    * 绕过规则③，适配器不代拟命令）；④路由不到适配器的旁路——非法 runner 绕过
-   * gate 规则⑧时 runOne 的 fail 分支同样置 parseError。不含 e2e-sh「无标记行
-   * 且 exit≠0」——该分支返回 no-markers fail case 不抛错，见投影语义的诚实
-   * 边界。result 仍为 "pass"|"fail" 不变，此字段只用于投影分类——解析失败是
+   * gate 规则⑧时 runOne 的 fail 分支同样置 parseError。e2e-sh「无标记行
+   * 且 exit≠0」自 lv-3 起亦抛错入此清单（原「no-markers 整体 fail」形态
+   * 废止——脚本崩溃/环境断链连挂 2 走 specContractBroken 回炉，不再混入
+   * flake 通道）。result 仍为 "pass"|"fail" 不变，此字段只用于投影分类——解析失败是
    * 确定性挂，不计入 flake 连挂。exemptNondeterministic 豁免条目不入列（豁免
    * 语义 = 不计入任何聚合判定）。无解析失败不写该键：旧账本缺字段 = 无解析
    * 失败，重放兼容。
@@ -203,6 +225,14 @@ export interface SpecRulesResult {
   ok: boolean;
   /** 可操作错误信息：每条指向具体缺口（验收 id + 缺什么） */
   failures: string[];
+  /**
+   * 成本启发式警告（al-3 规则⑪）：不构成拒绝——ok 判定只看 failures，warnings
+   * 非空照样入账（唯一消费方 = evidence submit 的 stderr 打印；fold / 只读命令
+   * 不读它）。缺省 = 旧行为逐字节兼容：旧 SpecGate 实现无此键，消费方 `?? []`
+   * 防御（重放兼容先例：VerifyRanPayload.parseFailedAcceptanceIds 的「旧账本缺
+   * 字段 = 无」口径）。
+   */
+  warnings?: string[];
 }
 
 /** 单个 unit 的原始投影（事件性事实，fold 直出；语义状态由 deriveStatus 派生） */

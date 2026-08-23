@@ -81,11 +81,13 @@ describe("e2e-sh 适配器 parse（真实脚本 fixture）", () => {
     expect(() => e2eShAdapter.parse(out, status, acc("A1"))).toThrow(/无标记行且 exitCode=0/);
   });
 
-  it("验收#6b 标记缺失 + exit≠0 → 整体 fail（id=验收 id，name=no-markers），不抛错", () => {
+  it("验收#6b 标记缺失 + exit≠0 → 抛错（解析失败类：脚本未跑到输出点，疑似崩溃/环境断链；lv-3 改道）", () => {
     const { out, status } = runScript('echo "boom"\nexit 1');
     expect(status).toBe(1);
-    const report = e2eShAdapter.parse(out, status, acc("A1"));
-    expect(report.cases).toEqual([{ id: "A1", name: "no-markers", status: "fail" }]);
+    // message 含 exit code 与 stdout 首行摘要（回炉任务书内嵌定位的最小事实）
+    expect(() => e2eShAdapter.parse(out, status, acc("A1"))).toThrow(/无标记行且 exitCode=1/);
+    expect(() => e2eShAdapter.parse(out, status, acc("A1"))).toThrow(/疑似脚本崩溃\/环境断链/);
+    expect(() => e2eShAdapter.parse(out, status, acc("A1"))).toThrow(/stdout 首行：boom/);
   });
 
   it("验收#6c 标记 id 与验收 id 不符 → 抛错且信息含两边 id", () => {

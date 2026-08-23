@@ -1,5 +1,5 @@
 /**
- * spec gate 五规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
+ * spec gate 十二规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
  * 判定语义与 M0 口径锁定于 docs/rewrite/acceptance/u3-acceptance.md）。
  *
  * ① 验收非空；② core 用例自身 type 必须为 e2e-real/e2e-mock（M0 口径：核心 case
@@ -12,7 +12,17 @@
  * 入口，verify 侧 adapterTypeFor 不二次校验——非法 runner 靠此处拦截）；
  * ⑨ 验收命令契约（mx5-1，mx-5 设计 D1：按最终适配器路由分派的输出契约
  * 静态检查——M4 gate 三跑实证 `--reporter=verbose` 与 cw 自动追加的
- * `--reporter=json` 冲突致 JSON 解析恒挂；禁令清单见 ADAPTER_FLAG_CONTRACTS）。
+ * `--reporter=json` 冲突致 JSON 解析恒挂；禁令清单见 ADAPTER_FLAG_CONTRACTS）；
+ * ⑩ topic 层条目要求 split 非空（al-3，《验收分层与成本治理》D4：叶子/无子
+ * 节点 unit 声明 topic = 条目永无执行点的真空，fail 级提交期拒绝）；
+ * ⑪ unit 层条目 command 命中全量回归形态（al-3，同设计 D5：warning 级成本
+ * 启发式，词法判定不执行命令——命中入账继续 + warnings 交 evidence submit
+ * 打 stderr；形态枚举见 FULL_REGRESSION_FORMS）；
+ * ⑫ 验收 command 路径逃逸词法拦截（lv-1，M6 设计《cw 自治运行活性与契约防护》
+ * D3，fail 级：".cw-worktrees" 子串或目录选择词法族后随剥引号 /~ 开头 token——
+ * 逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit，语义失效同⑩真空
+ * 声明；词法族见 DIRECTORY_FLAG_TOKENS / DIRECTORY_FLAG_EQUALS_PREFIXES
+ * （分离 / -C 紧贴 / 等号紧贴三形态均已覆盖），漏报面由 reviewer 第五维语义审兜底）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -36,12 +46,23 @@ function isE2eType(type: AcceptanceType): boolean {
 }
 
 /**
+ * command 空白切分（规则⑨⑪⑫ 共用口径，单一事实源防漂移）：缺失按空串处理，
+ * trim 后按空白切分并剔除空 token——三处的「command 缺失或 tokenize 后为空则
+ * 跳过」判定同源。
+ */
+function tokenizeCommand(command: string | undefined): string[] {
+  return (command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+}
+
+/**
  * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
- * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加）。确定性检查（对同一 spec + 同一 PATH 环境结果
- * 恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，不在本函数职责内。
+ * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加，⑫ 为 lv-1 追加）。确定性检查（对同一 spec +
+ * 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，
+ * 不在本函数职责内。
  */
 export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   const failures: string[] = [];
+  const warnings: string[] = [];
 
   // ① 验收非空
   if (spec.acceptance.length === 0) {
@@ -140,7 +161,7 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   // 无 flag 可查，不触发。非法 runner 由规则⑧拦截，路由结果不在
   // ADAPTER_FLAG_CONTRACTS 表中即跳过（不双重报错）
   for (const ac of spec.acceptance) {
-    const tokens = (ac.command ?? "").trim().split(/\s+/).filter((t) => t !== "");
+    const tokens = tokenizeCommand(ac.command);
     if (tokens.length === 0) {
       continue;
     }
@@ -155,7 +176,100 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
     }
   }
 
-  return { ok: failures.length === 0, failures };
+  // ⑩ topic 层条目要求 split 非空（al-3，设计 D4，fail 级结构规则）。语义闭环：
+  // split 非空 ⟺ 有子节点 ⟺ 有集成执行点 ⟺ topic 条目会被执行（集成批次本就
+  // 含 root 全部验收）；split 为空却声明 topic = 该条目永无执行点（真空声明）→
+  // 提交期拒绝，不允许「声明了却永不执行」进账本。与两道 handler 级防线正交、
+  // 无绕过面：fx-1 R1 拦叶子的一切 split 声明（叶子 split 必空 → 叶子声明 topic
+  // 必被本规则拦），fx-3 R5.1 保证 split 非空 ⟹ 子已入账（执行点对象在提交时点
+  // 已存在）——本规则在 gate 层从另一侧收口。已知边界（写进文案不静默）：单
+  // unit topic（root 无子、split 空）也不能声明 topic 层——它本就没有集成执行
+  // 点，全部验收按 unit 层跑。注意规则⑤不豁免 topic 条目：root 上收回归后仍须
+  // 至少一条 type: "unit" 用例（提示归 designer 指引，不属本规则文案职责）
+  if (spec.split.length === 0) {
+    for (const ac of spec.acceptance) {
+      if (ac.layer !== "topic") {
+        continue;
+      }
+      failures.push(
+        `规则⑩: 验收 ${ac.id} 声明了 layer: "topic"，但本 spec 的 split 为空——叶子/无子节点 ` +
+          `unit 没有集成执行点，topic 层条目将永不被执行（声明即真空）。已知边界：单 unit ` +
+          `topic（root 无子、split 为空）同样不能声明 topic 层——它本就没有集成执行点，全部验收按 unit 层跑。` +
+          `恢复动作（二选一）：topic 层验收归有子节点的 root spec 声明（其执行点是内部节点集成）` +
+          `——若本条是全量回归，上收 root spec 并标 layer: "topic"；若确属本 unit 功能验收，` +
+          `去掉 layer 字段按 unit 层声明。`,
+      );
+    }
+  }
+
+  // ⑪ unit 层全量回归形态 warning（al-3，设计 D5，成本启发式——纯词法判定，
+  // 不执行命令）。warning 级而非 fail 级的理由：静态形态判定有误杀面（小仓的
+  // 全量单测可能就是叶子的合理范围），硬拒会逼出规避动作（把命令包进 wrapper
+  // 脚本绕开启发式）；硬防线在 reviewer 第六维语义审（brief.ts）。与规则⑨对
+  // e2e/manual「无静态规则，漏网走回炉通道」的诚实边界哲学同款。作用域：layer
+  // 未声明或 unit 层（topic 条目已归集成层，不查）；命中一条 command 只出一条
+  // warning（多形态叠加无增量信息）
+  for (const ac of spec.acceptance) {
+    if (ac.layer === "topic") {
+      continue;
+    }
+    const tokens = tokenizeCommand(ac.command);
+    if (tokens.length === 0) {
+      continue;
+    }
+    for (const match of FULL_REGRESSION_FORMS) {
+      const form = match(tokens);
+      if (form === null) {
+        continue;
+      }
+      warnings.push(
+        spec.split.length === 0
+          ? `规则⑪: 验收 ${ac.id} 的 command 是全量回归形态（${form}），且本 spec 的 split 为空 ` +
+              `（叶子）——叶子 verify 每轮 fix（含红阶段）都会全价重跑它。` +
+              `建议：若为全量回归，上收 root spec 并标 layer: "topic"（集成层唯一执行）；` +
+              `若确为本 unit 范围，为 command 加文件参数收窄。`
+          : `规则⑪: 验收 ${ac.id} 的 command 是全量回归形态（${form}），且本 spec 的 split 非空 ` +
+              `（内部节点的 unit 层回归，执行点与 topic 层相同）。` +
+              `建议显式标 layer: "topic"（成本归属可审计）。`,
+      );
+      break;
+    }
+  }
+
+  // ⑫ 验收 command 路径逃逸词法拦截（lv-1，M6 设计《cw 自治运行活性与契约防护》
+  // D3，fail 级——同规则⑩「真空声明」哲学：逃逸使 verify 语义失效，结果绑定
+  // 执行瞬间的工作区状态而非账本 commit，防线从「verify 挂后人工修 spec」提前
+  // 到提交期。触发案例：agent-managed-session u1 的 cd <开发worktree绝对路径>
+  // 打回 7 轮假循环）。作用域：全部非 manual 型条目（manual 不执行命令豁免——
+  // 同规则③作用域先例逻辑；unit/integration/e2e 级 command 都会被执行，逃逸面
+  // 相同），不含 layer 维度（topic/unit 层条目同等受检——逃逸面与层级正交）。
+  // command 缺失或 tokenize 后为空则跳过（同规则⑨先例）；tokenize 口径与规则⑨
+  // 一致。诚实漏报面（不静默，由 reviewer 任务书第五维「干净 checkout 可执行
+  // 性」语义审兜底，lv-3 将在第五维文案点名路径逃逸）：cd ../.. 类相对上跳
+  // （不以 / 或 ~ 开头）；bash -c 'cd /abs && …' 类引号包裹关键词（'cd 非裸
+  // token）；引号包裹的含空白绝对路径（cd "/abs path"——tokenize 按空白切分，
+  // "/abs 与 path" 两 token 引号均不成对，剥引号剥不掉）；$(echo cd) /abs 类
+  // 动态构造与 env 拼接；CW_WORKTREE_HOME 自定义非默认工作区名（子串检查只盖
+  // 默认 .cw-worktrees——自定义名依赖用户配置，词法层不可枚举）
+  for (const ac of spec.acceptance) {
+    if (ac.type === "manual") {
+      continue;
+    }
+    const command = ac.command ?? "";
+    const tokens = tokenizeCommand(command);
+    if (tokens.length === 0) {
+      continue;
+    }
+    for (const gap of pathEscapeGaps(command, tokens)) {
+      failures.push(
+        `规则⑫: 验收 ${ac.id} 的 command 含路径逃逸（${gap.hit}）` +
+          `——verify 在干净 checkout 执行（cwd = 检出树根），绝对路径 cd / .cw-worktrees 引用会让结果绑定执行瞬间的工作区状态而非账本 commit。` +
+          `恢复动作：改用相对路径（cd packages/app && …）或 git -C <相对路径>；引用的脚本/文件必须提交进仓库（干净 checkout 只含账本 commit 的内容）。`,
+      );
+    }
+  }
+
+  return { ok: failures.length === 0, failures, warnings };
 }
 
 // ── 规则⑨：验收命令契约检查（单一事实源，可扩展枚举） ──────────────
@@ -297,6 +411,207 @@ const ADAPTER_FLAG_CONTRACTS: Readonly<
   playwright: jsonProductContract,
   pytest: noQuietContract,
 };
+
+// ── 规则⑪：全量回归形态枚举（单一事实源，可扩展，与 ADAPTER_FLAG_CONTRACTS 同型组织） ──
+
+/** 形态 A 的 vitest 前允许的包管理器前缀 token（`npm vitest run` 非合法调用形态，不列） */
+const VITEST_PREFIX_TOKENS: readonly string[] = ["npx", "pnpm", "yarn", "bun", "bunx"];
+
+/** 形态 B 的包管理器首 token（script 调用形态） */
+const SCRIPT_MANAGER_TOKENS: readonly string[] = ["npm", "pnpm", "yarn", "bun"];
+
+/** 形态 B 触发成本警告的 script 名（全仓作用域的 test / lint） */
+const WHOLE_REPO_SCRIPT_NAMES: readonly string[] = ["test", "lint"];
+
+/** 形态 A 的词法锚跨距：`vitest run` 两 token（run 之后首个 token 的偏移） */
+const VITEST_RUN_TOKEN_SPAN = 2;
+
+/** 命中形态的人读描述（进规则⑪ warning 的事实段：形态 + 原文命令，供审计定位） */
+function formLabel(kind: string, command: string): string {
+  return `${kind}，原文 "${command}"`;
+}
+
+/** from 起「无位置参数」判定：无后续 token，或后续 token 全部以 `-` 开头（flag） */
+function noPositionalArgs(tokens: readonly string[], from: number): boolean {
+  return tokens.slice(from).every((t) => t.startsWith("-"));
+}
+
+/**
+ * 形态 A（vitest 全量）：token 序列 = [可选包管理器前缀] vitest run [flag...]，
+ * 且 run 之后无位置参数（后续 token 全部 `-` 开头或无后续）→ 全仓 vitest run。
+ * run 之后存在不以 `-` 开头的 token（文件/目录参数）→ 已收窄，不命中。
+ */
+function vitestFullRunForm(tokens: readonly string[]): string | null {
+  let i = 0;
+  if (VITEST_PREFIX_TOKENS.includes(tokens[0] ?? "")) {
+    i = 1;
+  }
+  if (tokens[i] !== "vitest" || tokens[i + 1] !== "run") {
+    return null;
+  }
+  if (!noPositionalArgs(tokens, i + VITEST_RUN_TOKEN_SPAN)) {
+    return null;
+  }
+  return formLabel("无文件参数的全量 vitest run", tokens.join(" "));
+}
+
+/**
+ * 形态 B（全仓 script）：首 token 为包管理器（npm/pnpm/yarn/bun），其后允许
+ * `run` 中缀，script 名恰为 test / lint，且 script 名之后无位置参数 → 全仓
+ * test / lint script 调用。
+ */
+function wholeRepoScriptForm(tokens: readonly string[]): string | null {
+  if (!SCRIPT_MANAGER_TOKENS.includes(tokens[0] ?? "")) {
+    return null;
+  }
+  let i = 1;
+  if (tokens[i] === "run") {
+    i += 1;
+  }
+  const script = tokens[i];
+  if (script === undefined || !WHOLE_REPO_SCRIPT_NAMES.includes(script)) {
+    return null;
+  }
+  if (!noPositionalArgs(tokens, i + 1)) {
+    return null;
+  }
+  return formLabel(`全仓 ${script} script`, tokens.join(" "));
+}
+
+/**
+ * 规则⑪形态枚举（单一事实源内的可扩展枚举）：每个成员 = 一种全量回归形态的
+ * 词法判定，命中返回形态描述、不命中返回 null。显式不枚举（诚实漏报面，设计
+ * D5）：wrapper 脚本（`bash xxx.sh`——内部跑什么词法不可见，触发案例 E7 的
+ * 实际形态）、script 别名封装、`make test` 等——这些形态的语义审查归 reviewer
+ * 任务书第六维（须追进脚本/别名内容，brief.ts），gate 词法层不猜。新形态在此
+ * 一处追加，禁止散落多个函数。
+ */
+const FULL_REGRESSION_FORMS: readonly ((
+  tokens: readonly string[],
+) => string | null)[] = [vitestFullRunForm, wholeRepoScriptForm];
+
+// ── 规则⑫：路径逃逸词法拦截（单一事实源，与 ADAPTER_FLAG_CONTRACTS 同型组织） ──
+
+/** cw 专属工作区目录名（规则⑫判据一的子串锚）：验收命令零合法引用面 */
+const CW_WORKTREE_DIR_NAME = ".cw-worktrees";
+
+/**
+ * 目录选择词法族（规则⑫判据二，单一事实源内的可扩展枚举，与
+ * ADAPTER_FLAG_CONTRACTS / FULL_REGRESSION_FORMS 同型组织）：族成员后随剥引号
+ * 以 `/` 或 `~` 开头的 token → 路径逃逸拦截（`vitest --root /abs/worktree` 与
+ * `cd /abs` 逃逸语义完全等价 = 换树执行）。`git -C` 由 `-C` 成员覆盖（token
+ * 序列判定不区分宿主命令）；判定要求后随绝对路径 token，`grep -C 2` 类数值
+ * 后随不误拦。后续按真实逃逸案例增补，禁止散落多个函数。
+ */
+const DIRECTORY_FLAG_TOKENS: readonly string[] = [
+  "cd",
+  "-C",
+  "--dir",
+  "--prefix",
+  "--root",
+];
+
+/**
+ * 目录选择长 flag 等号紧贴形态前缀（规则⑫判据二的等号分支，单一事实源内的
+ * 可扩展枚举，与 DIRECTORY_FLAG_TOKENS 同型组织）：`--root=/abs` 这类 token
+ * 整体不等于裸 `--root`，严格相等匹配盖不住，前缀命中后取等号后的值部分剥
+ * 引号判定（`--root="/abs"` 整 token 引号形态也覆盖）。`cd` 与 `-C` 无 `=`
+ * 赋值语义，不入本清单；空值（`--root=`）无路径部分、逃逸面为零，不拦（对齐
+ * -C 紧贴分支的最小长度处理理由）。后续按真实逃逸案例增补，禁止散落多个函数。
+ */
+const DIRECTORY_FLAG_EQUALS_PREFIXES: readonly string[] = [
+  "--dir=",
+  "--prefix=",
+  "--root=",
+];
+
+/** 单个路径逃逸缺口（对齐规则⑨ FlagGap 形态）：文案要素 = 命中片段 */
+interface EscapeGap {
+  /** 命中片段：判据一 ".cw-worktrees"（子串），判据二 "<族token> <绝对路径token>" */
+  hit: string;
+}
+
+/** 成对引号的最小 token 长度（首尾各占一个引号字符，短于此必非成对包裹） */
+const MIN_QUOTED_TOKEN_LENGTH = 2;
+
+/**
+ * -C 紧贴绝对路径形态的最小 token 长度（"-C/" / "-C~" 本身；再短无路径部分，
+ * 裸 -C/ 的空值逃逸面为零）。lint 层 magic number 治理与语义命名兼得。
+ */
+const MIN_GLUED_ESCAPE_TOKEN_LENGTH = 3;
+
+/**
+ * 剥引号：去除成对首尾单/双引号一层（`cd "/abs/path"` 的值 token 剥后以 /
+ * 开头即拦）。非成对包裹原样返回。族成员本身须裸 token——`'cd'` 带引号前缀
+ * 不匹配（诚实漏报面，见规则⑫注释）。
+ */
+function stripPairedQuotes(token: string): string {
+  if (token.length < MIN_QUOTED_TOKEN_LENGTH) {
+    return token;
+  }
+  const first = token[0];
+  if ((first === '"' || first === "'") && token[token.length - 1] === first) {
+    return token.slice(1, -1);
+  }
+  return token;
+}
+
+/**
+ * 规则⑫两判据（纯词法不执行命令，对齐规则③⑨⑪形态）：① 子串——command
+ * 原文含 ".cw-worktrees"（cw 专属工作区目录名，verify 在干净 checkout 执行，
+ * 引用开发工作区即绑定执行瞬间状态）；② 词法族——某 token 命中
+ * DIRECTORY_FLAG_TOKENS 且下一 token 剥引号后以 `/` 或 `~` 开头，或 token
+ * 自身为 `-C` 紧贴绝对路径形态（`-C/abs`、`-C~x`——git 短选项合法写法，
+ * 严格相等匹配盖不住，剥 `-C` 前缀后即绝对路径），或 token 命中
+ * DIRECTORY_FLAG_EQUALS_PREFIXES 等号紧贴形态（`--root=/abs`——长 flag 合法
+ * 赋值写法，token 整体不等于裸 flag，取等号后值部分剥引号判定）。一条
+ * command 命中两判据（如 cd /x/.cw-worktrees/y）出两条缺口——多缺口全列
+ * 不短路，对齐模块头既有约定。
+ */
+function pathEscapeGaps(
+  command: string,
+  tokens: readonly string[],
+): EscapeGap[] {
+  const gaps: EscapeGap[] = [];
+  if (command.includes(CW_WORKTREE_DIR_NAME)) {
+    gaps.push({ hit: `"${CW_WORKTREE_DIR_NAME}"` });
+  }
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i] ?? "";
+    // -C 紧贴绝对路径（长度 >3：裸 -C/ 或 -C~ 无路径部分罕见且空值逃逸面为零）
+    if (
+      token.length > MIN_GLUED_ESCAPE_TOKEN_LENGTH &&
+      (token.startsWith("-C/") || token.startsWith("-C~"))
+    ) {
+      gaps.push({ hit: `"${token}"` });
+      continue;
+    }
+    // 长目录 flag 等号紧贴绝对路径（--root=/abs、--dir="~/x"：值部分剥引号后
+    // 以 / 或 ~ 开头才拦；空值 --root= 与相对/数值值不拦）
+    const equalsPrefix = DIRECTORY_FLAG_EQUALS_PREFIXES.find((prefix) =>
+      token.startsWith(prefix),
+    );
+    if (equalsPrefix !== undefined) {
+      const value = stripPairedQuotes(token.slice(equalsPrefix.length));
+      if (value.startsWith("/") || value.startsWith("~")) {
+        gaps.push({ hit: `"${token}"` });
+      }
+      continue;
+    }
+    if (!DIRECTORY_FLAG_TOKENS.includes(token)) {
+      continue;
+    }
+    const next = tokens[i + 1];
+    if (next === undefined) {
+      continue;
+    }
+    const stripped = stripPairedQuotes(next);
+    if (stripped.startsWith("/") || stripped.startsWith("~")) {
+      gaps.push({ hit: `"${token} ${next}"` });
+    }
+  }
+  return gaps;
+}
 
 /**
  * `which` 等价检查：含路径分隔符时直接验证该文件可执行，否则遍历 PATH
