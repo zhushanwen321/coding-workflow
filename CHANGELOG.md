@@ -309,3 +309,22 @@ Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold pro
 - quick-release skill for fast markdown-only publishing; tech-design problem-definition-first + review fact-severity grading (#16)
 - cw-cli skill: runner as default path for multi-unit tasks + stale-command fixes (--role/--evidence-refs/--no-red-phase/nine gate rules/four adapters) (#18)
 - cw-cli skill: fix factual errors from adversarial review (contract checks in reviewer checklist not designer brief; spec iteration count corrected to ledger-measured figures) (#19)
+
+## [v2.1.0] - 2026-08-23
+
+### Features
+- Merge pull request #20 from zhushanwen321/fix-cw-test-split (fe848c3)
+- feat(lv-3): route e2e-sh zero-marker crashes to contract-failure replan + inject review history and per-generation progress notices (1d469a5)
+- feat(lv-1+lv-2): gate rule 12 path-escape lexicon + buildDrift dispatch-stop dimension with tunable budgets (702a1c2)
+- feat(al-3): gate rules 10/11 + sixth reviewer dimension + doc sync (23f4163)
+- feat(al-1): demote acceptance commands and agent spawns via nice -n 10 (e5a6ba8)
+- feat(al-2): add AcceptanceItem.layer axis (pure declaration model layer) (0902c53)
+- feat(tech-design): harden skill from pi-smart-context review lessons (5e44835)
+
+### Bug Fixes
+- fix(gate): cover long-flag glued path-escape forms in rule 12 lexicon (c67f127)
+- fix(consistency): close design-vs-implementation gaps found by two-round adversarial review (6b66c99)
+
+### Refactoring
+- refactor(simplify): dedupe tokenize/dedup-emit patterns, drop dead param and passthrough, narrow exports across M5+M6 surface (70cd061)
+
