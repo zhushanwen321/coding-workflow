@@ -558,3 +558,99 @@ describe("T13 -C 紧贴绝对路径拦截与零误杀", () => {
     expect(specBooked(cwd)).toBe(true);
   });
 });
+
+// ================================================================
+// T14：长 flag 等号紧贴绝对路径形态（--root=/abs——token 整体既不等于裸
+// --root（分离分支盖不住），也非 -C 紧贴形态；等号后值剥引号判定）
+// ================================================================
+
+describe("T14 长目录 flag 等号紧贴形态拦截与零误杀", () => {
+  it("vitest --root=/abs/wt run → 拒（命中片段为等号 token 原文），单条 failure", () => {
+    const cwd = soloCase("t14a", "solo-14a");
+    const res = submitSpec(cwd, "solo-14a", [
+      {
+        id: "E1",
+        core: false,
+        title: "vitest --root 等号紧贴绝对值",
+        type: "unit",
+        command: "vitest --root=/abs/wt run",
+      },
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑫");
+    expect(res.stderr).toContain("E1");
+    expect(res.stderr).toContain("--root=/abs/wt");
+    expect(res.stderr.match(/规则⑫/g)).toHaveLength(1);
+    expect(specBooked(cwd)).toBe(false);
+  });
+
+  it('pnpm --dir="~/x" test → 拒（整 token 引号包裹，等号后值剥引号后以 ~ 开头）', () => {
+    const cwd = soloCase("t14b", "solo-14b");
+    const res = submitSpec(cwd, "solo-14b", [
+      {
+        id: "E1",
+        core: false,
+        title: "pnpm --dir 引号等号 home 值",
+        type: "unit",
+        command: 'pnpm --dir="~/x" test',
+      },
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑫");
+    expect(res.stderr).toContain('--dir="~/x"');
+    expect(specBooked(cwd)).toBe(false);
+  });
+
+  it("npm --prefix=relative/path test → 放行（等号后相对路径不在拦截面）", () => {
+    const cwd = soloCase("t14c", "solo-14c");
+    const res = submitSpec(cwd, "solo-14c", [
+      {
+        id: "E1",
+        core: false,
+        title: "npm --prefix 等号相对值",
+        type: "unit",
+        command: "npm --prefix=relative/path test",
+      },
+    ]);
+
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stderr).not.toContain("规则⑫");
+    expect(specBooked(cwd)).toBe(true);
+  });
+
+  it("vitest --root= run（空值）→ 放行（无路径部分，逃逸面为零）", () => {
+    const cwd = soloCase("t14d", "solo-14d");
+    const res = submitSpec(cwd, "solo-14d", [
+      {
+        id: "E1",
+        core: false,
+        title: "vitest --root 等号空值",
+        type: "unit",
+        command: "vitest --root= run",
+      },
+    ]);
+
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stderr).not.toContain("规则⑫");
+    expect(specBooked(cwd)).toBe(true);
+  });
+
+  it("grep --root=2 pattern file（非路径数值值）→ 放行（等号判定只认 / 与 ~ 前缀值）", () => {
+    const cwd = soloCase("t14e", "solo-14e");
+    const res = submitSpec(cwd, "solo-14e", [
+      {
+        id: "E1",
+        core: false,
+        title: "grep 等号数值值",
+        type: "unit",
+        command: "grep --root=2 pattern file",
+      },
+    ]);
+
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stderr).not.toContain("规则⑫");
+    expect(specBooked(cwd)).toBe(true);
+  });
+});

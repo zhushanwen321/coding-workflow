@@ -21,7 +21,8 @@
  * ⑫ 验收 command 路径逃逸词法拦截（lv-1，M6 设计《cw 自治运行活性与契约防护》
  * D3，fail 级：".cw-worktrees" 子串或目录选择词法族后随剥引号 /~ 开头 token——
  * 逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit，语义失效同⑩真空
- * 声明；词法族见 DIRECTORY_FLAG_TOKENS，漏报面由 reviewer 第五维语义审兜底）。
+ * 声明；词法族见 DIRECTORY_FLAG_TOKENS / DIRECTORY_FLAG_EQUALS_PREFIXES
+ * （分离 / -C 紧贴 / 等号紧贴三形态均已覆盖），漏报面由 reviewer 第五维语义审兜底）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -510,6 +511,20 @@ const DIRECTORY_FLAG_TOKENS: readonly string[] = [
   "--root",
 ];
 
+/**
+ * 目录选择长 flag 等号紧贴形态前缀（规则⑫判据二的等号分支，单一事实源内的
+ * 可扩展枚举，与 DIRECTORY_FLAG_TOKENS 同型组织）：`--root=/abs` 这类 token
+ * 整体不等于裸 `--root`，严格相等匹配盖不住，前缀命中后取等号后的值部分剥
+ * 引号判定（`--root="/abs"` 整 token 引号形态也覆盖）。`cd` 与 `-C` 无 `=`
+ * 赋值语义，不入本清单；空值（`--root=`）无路径部分、逃逸面为零，不拦（对齐
+ * -C 紧贴分支的最小长度处理理由）。后续按真实逃逸案例增补，禁止散落多个函数。
+ */
+const DIRECTORY_FLAG_EQUALS_PREFIXES: readonly string[] = [
+  "--dir=",
+  "--prefix=",
+  "--root=",
+];
+
 /** 单个路径逃逸缺口（对齐规则⑨ FlagGap 形态）：文案要素 = 命中片段 */
 interface EscapeGap {
   /** 命中片段：判据一 ".cw-worktrees"（子串），判据二 "<族token> <绝对路径token>" */
@@ -547,9 +562,11 @@ function stripPairedQuotes(token: string): string {
  * 引用开发工作区即绑定执行瞬间状态）；② 词法族——某 token 命中
  * DIRECTORY_FLAG_TOKENS 且下一 token 剥引号后以 `/` 或 `~` 开头，或 token
  * 自身为 `-C` 紧贴绝对路径形态（`-C/abs`、`-C~x`——git 短选项合法写法，
- * 严格相等匹配盖不住，剥 `-C` 前缀后即绝对路径）。一条 command 命中两判据
- * （如 cd /x/.cw-worktrees/y）出两条缺口——多缺口全列不短路，对齐模块头
- * 既有约定。
+ * 严格相等匹配盖不住，剥 `-C` 前缀后即绝对路径），或 token 命中
+ * DIRECTORY_FLAG_EQUALS_PREFIXES 等号紧贴形态（`--root=/abs`——长 flag 合法
+ * 赋值写法，token 整体不等于裸 flag，取等号后值部分剥引号判定）。一条
+ * command 命中两判据（如 cd /x/.cw-worktrees/y）出两条缺口——多缺口全列
+ * 不短路，对齐模块头既有约定。
  */
 function pathEscapeGaps(
   command: string,
@@ -567,6 +584,18 @@ function pathEscapeGaps(
       (token.startsWith("-C/") || token.startsWith("-C~"))
     ) {
       gaps.push({ hit: `"${token}"` });
+      continue;
+    }
+    // 长目录 flag 等号紧贴绝对路径（--root=/abs、--dir="~/x"：值部分剥引号后
+    // 以 / 或 ~ 开头才拦；空值 --root= 与相对/数值值不拦）
+    const equalsPrefix = DIRECTORY_FLAG_EQUALS_PREFIXES.find((prefix) =>
+      token.startsWith(prefix),
+    );
+    if (equalsPrefix !== undefined) {
+      const value = stripPairedQuotes(token.slice(equalsPrefix.length));
+      if (value.startsWith("/") || value.startsWith("~")) {
+        gaps.push({ hit: `"${token}"` });
+      }
       continue;
     }
     if (!DIRECTORY_FLAG_TOKENS.includes(token)) {
