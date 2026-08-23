@@ -246,9 +246,10 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
   // 一致。诚实漏报面（不静默，由 reviewer 任务书第五维「干净 checkout 可执行
   // 性」语义审兜底，lv-3 将在第五维文案点名路径逃逸）：cd ../.. 类相对上跳
   // （不以 / 或 ~ 开头）；bash -c 'cd /abs && …' 类引号包裹关键词（'cd 非裸
-  // token）；$(echo cd) /abs 类动态构造与 env 拼接；CW_WORKTREE_HOME 自定义
-  // 非默认工作区名（子串检查只盖默认 .cw-worktrees——自定义名依赖用户配置，
-  // 词法层不可枚举）
+  // token）；引号包裹的含空白绝对路径（cd "/abs path"——tokenize 按空白切分，
+  // "/abs 与 path" 两 token 引号均不成对，剥引号剥不掉）；$(echo cd) /abs 类
+  // 动态构造与 env 拼接；CW_WORKTREE_HOME 自定义非默认工作区名（子串检查只盖
+  // 默认 .cw-worktrees——自定义名依赖用户配置，词法层不可枚举）
   for (const ac of spec.acceptance) {
     if (ac.type === "manual") {
       continue;
@@ -519,6 +520,12 @@ interface EscapeGap {
 const MIN_QUOTED_TOKEN_LENGTH = 2;
 
 /**
+ * -C 紧贴绝对路径形态的最小 token 长度（"-C/" / "-C~" 本身；再短无路径部分，
+ * 裸 -C/ 的空值逃逸面为零）。lint 层 magic number 治理与语义命名兼得。
+ */
+const MIN_GLUED_ESCAPE_TOKEN_LENGTH = 3;
+
+/**
  * 剥引号：去除成对首尾单/双引号一层（`cd "/abs/path"` 的值 token 剥后以 /
  * 开头即拦）。非成对包裹原样返回。族成员本身须裸 token——`'cd'` 带引号前缀
  * 不匹配（诚实漏报面，见规则⑫注释）。
@@ -538,9 +545,11 @@ function stripPairedQuotes(token: string): string {
  * 规则⑫两判据（纯词法不执行命令，对齐规则③⑨⑪形态）：① 子串——command
  * 原文含 ".cw-worktrees"（cw 专属工作区目录名，verify 在干净 checkout 执行，
  * 引用开发工作区即绑定执行瞬间状态）；② 词法族——某 token 命中
- * DIRECTORY_FLAG_TOKENS 且下一 token 剥引号后以 `/` 或 `~` 开头。一条 command
- * 命中两判据（如 cd /x/.cw-worktrees/y）出两条缺口——多缺口全列不短路，对齐
- * 模块头既有约定。
+ * DIRECTORY_FLAG_TOKENS 且下一 token 剥引号后以 `/` 或 `~` 开头，或 token
+ * 自身为 `-C` 紧贴绝对路径形态（`-C/abs`、`-C~x`——git 短选项合法写法，
+ * 严格相等匹配盖不住，剥 `-C` 前缀后即绝对路径）。一条 command 命中两判据
+ * （如 cd /x/.cw-worktrees/y）出两条缺口——多缺口全列不短路，对齐模块头
+ * 既有约定。
  */
 function pathEscapeGaps(
   command: string,
@@ -552,6 +561,14 @@ function pathEscapeGaps(
   }
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i] ?? "";
+    // -C 紧贴绝对路径（长度 >3：裸 -C/ 或 -C~ 无路径部分罕见且空值逃逸面为零）
+    if (
+      token.length > MIN_GLUED_ESCAPE_TOKEN_LENGTH &&
+      (token.startsWith("-C/") || token.startsWith("-C~"))
+    ) {
+      gaps.push({ hit: `"${token}"` });
+      continue;
+    }
     if (!DIRECTORY_FLAG_TOKENS.includes(token)) {
       continue;
     }

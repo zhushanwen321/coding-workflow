@@ -1021,6 +1021,16 @@ function assertPositive(name: string, value: number): void {
 }
 
 /**
+ * 停派态判定的运行预算（F1 修复：与 runLoopMain 解析后的注入值同源）。结算行的
+ * stoppedDispatchState 判定必须用派发侧同一预算，否则注入非默认值时结算行与下一轮
+ * 派发实态分叉（结算行谎报停派/谎报可重派）。
+ */
+interface DispatchBudgets {
+  maxBuildAttempts: number;
+  maxSpecRejects: number;
+}
+
+/**
  * spawn 结算的公共出声（fx-6 X3a 从常规结算路径抽出）：移出 inFlight + reviewer
  * flight 封窗（mx-3 S7）+ 按四态打印结算行（TIMEOUT 的停派态描述 = mx5-2 D6
  * 诚实化，判定输入 events 由调用方给——常规路径传结算时刻重读的账本，收束路径
@@ -1034,6 +1044,7 @@ function settleFlightOutput(
   flight: InFlightSpawn,
   result: SpawnResult,
   events: readonly LedgerEvent[],
+  budgets: DispatchBudgets,
 ): void {
   const index = inFlight.indexOf(flight);
   if (index >= 0) {
@@ -1044,7 +1055,7 @@ function settleFlightOutput(
   }
   const stopState =
     result.exitCode === "TIMEOUT"
-      ? stoppedDispatchState(events, flight.unitId)
+      ? stoppedDispatchState(events, flight.unitId, budgets)
       : null;
   emit([
     `[runner] ${new Date().toISOString()} ${flight.role} unit "${flight.unitId}" 退出 ${describeExit(result.exitCode, stopState)}`,
@@ -1060,6 +1071,7 @@ function settleFlightOutput(
 async function reportSettledFlights(
   inFlight: InFlightSpawn[],
   events: readonly LedgerEvent[],
+  budgets: DispatchBudgets,
 ): Promise<void> {
   for (const flight of [...inFlight]) {
     const settled = await Promise.race<SpawnResult | null>([
@@ -1067,7 +1079,7 @@ async function reportSettledFlights(
       sleep(0).then(() => null),
     ]);
     if (settled !== null) {
-      settleFlightOutput(inFlight, flight, settled, events);
+      settleFlightOutput(inFlight, flight, settled, events, budgets);
     }
   }
 }
@@ -1256,7 +1268,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       // fx-6 X3a：killAll 前先补打印已退出 spawn 的结算行——race 的 sleep 分支
       // 先到点而 spawn 已退出时，末位（如 root exec-reviewer）的结算行会在此
       // 收束分支被跳过（四跑异常-2），此处兜底出声
-      await reportSettledFlights(inFlight, events);
+      await reportSettledFlights(inFlight, events, { maxBuildAttempts, maxSpecRejects });
       killAll(inFlight);
       // 退出清尾：run 已结束，本轮刚收集的 closed 子现场一并回收（延迟窗口语义
       // 已过点——产出已 merge 进 root 分支且证据链闭合，D5：现场无保留价值；
@@ -1489,6 +1501,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         finished.result.exitCode === "TIMEOUT"
           ? new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll()
           : events,
+        { maxBuildAttempts, maxSpecRejects },
       );
       if (finished.result.exitCode === "SPAWN_ERROR") {
         killAll(inFlight);

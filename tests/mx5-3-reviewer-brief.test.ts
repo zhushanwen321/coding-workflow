@@ -366,6 +366,10 @@ const B3_CASES: readonly B3Case[] = [
  * 防下放指引 + 「验收五规则」→「验收规则」drift 对齐（al-3 基线 §4.E/§4.F
  * 锁定形状），designer-spec-ready / designer-spec-fix 两快照随之同步——除该
  * 指引段与数字措辞外逐字节不变，生成方式同上（对 al-3 后 dist 真实渲染）。
+ * A1+A2 备案（对抗审查修复 worker 2026-08-22 授权的最小同步）：designer
+ * 首派指引追加标记行契约与规则⑤不豁免两句（设计《验收分层与成本治理》
+ * D1a 使用点 / D4 已知边界二），designer-spec-ready 快照随 brief.ts 同步——
+ * 除该两知识点外逐字节不变。
  */
 const B3_SNAPSHOTS: Record<B3CaseName, string> = {
   "designer-spec-ready": `# designer 任务书：unit "mx53-root"
@@ -389,6 +393,10 @@ const B3_SNAPSHOTS: Record<B3CaseName, string> = {
    root 级回归型验收（全仓 lint / 全量 vitest 等全量回归）归 root spec 声明并标
    layer: "topic"（由集成阶段统一执行，只在集成跑一次）；子 unit spec 只声明本
    unit 的功能验收，不得复制回归条目（叶子重复声明 = 每轮 fix 全价双付）。
+   e2e 型 topic 条目的 command 必须产出标记行 \`<验收id> PASS\` / \`<验收id> FAIL\`
+   且 exit code 与标记一致（wrapper 脚本尾部输出）——裸 \`pnpm vitest run\` 类
+   命令永不产出标记行，恒 fail；规则⑤不豁免 topic 条目——上收回归后 root
+   spec 仍须至少一条 type: "unit" 的用例。
 2. 提交 spec：cw evidence submit --kind spec --unit mx53-root --file spec.json
 完成标志：spec 已提交入账（spec-review 由独立 reviewer 在下一轮接手，无需自审）。
 

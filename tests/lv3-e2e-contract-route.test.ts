@@ -252,10 +252,11 @@ describe("E2 断链形态：脚本已提交但内部断链 → 解析失败（re
 });
 
 describe("E3 对照组：FAIL 标记 + exit 1 → 真测试红（分类不变）", () => {
-  it("脚本正常输出 A3 FAIL 标记 → 不进 parseFailedAcceptanceIds、case status=fail（走 developer fix 循环）", async () => {
+  it("脚本正常输出 A3 FAIL 标记 → 不进 parseFailedAcceptanceIds、case status=fail（走 developer fix 循环）；frontier 路由 buildReady", async () => {
+    // U1 unit 级条目（规则⑤）：组级断言需要 fold 判过 gate（缺它 unit 停 created 无组，E5 同款）
     makeVerifyFixture(
-      [e2eItem("A3", "bash scripts/check.sh")],
-      { "scripts/check.sh": '#!/bin/sh\necho "A3 FAIL"\nexit 1\n' },
+      [e2eItem("A3", "bash scripts/check.sh"), unitItem("U1", "node u1check.js")],
+      { "scripts/check.sh": '#!/bin/sh\necho "A3 FAIL"\nexit 1\n', "u1check.js": U1_CHECK },
     );
 
     const res = await run(["verify", "--unit", "u-1"]);
@@ -269,6 +270,39 @@ describe("E3 对照组：FAIL 标记 + exit 1 → 真测试红（分类不变）
     expect("parseFailedAcceptanceIds" in p).toBe(false);
     const report = itemReport("A3");
     expect(report.cases).toContainEqual({ id: "A3", name: "A3 FAIL", status: "fail" });
+    // 组级路由（S3① 组级消费）：真红 unit 回 buildReady（developer fix 循环的
+    // 派发组）——与解析失败连挂 2 次的 specContractBroken（E5）分道
+    const groups = await frontierGroups();
+    expect(groups.buildReady).toContain("u-1");
+  }, 60_000);
+});
+
+describe("E8 三条目组合入列：a（127）+ b（断链）同入 parseFailed，真红 c 不混入", () => {
+  it("单 spec 三条 e2e-sh 条目一次 verify → parseFailedAcceptanceIds 恰为 [A127, A9]（spec 序精确双元素），c 的 case status=fail 且不在 parseFailed 列表", async () => {
+    makeVerifyFixture(
+      [
+        e2eItem("A127", "bash scripts/missing.sh"), // a：脚本未提交 → exit 127 形态
+        e2eItem("A9", "bash scripts/broken.sh"), // b：已提交但内部断链 → exit 1 无标记
+        e2eItem("C3", "bash scripts/check.sh"), // c：正常输出 FAIL 标记 + exit 1 真红
+      ],
+      {
+        "scripts/broken.sh": BROKEN_SCRIPT,
+        "scripts/check.sh": '#!/bin/sh\necho "C3 FAIL"\nexit 1\n',
+      },
+    );
+
+    const res = await run(["verify", "--unit", "u-1"]);
+    expect(res.code).toBe(1);
+
+    const payloads = rawVerifyRanPayloads();
+    expect(payloads).toHaveLength(1);
+    const p = payloads[0] as Record<string, unknown>;
+    expect(p.result).toBe("fail");
+    // a+b 同时入列（精确双元素、序按 spec 序）——toEqual 精确即蕴含真红 c 不在列
+    expect(p.parseFailedAcceptanceIds).toEqual(["A127", "A9"]);
+    // c：产物合法可解析（有标记行）→ case 真红，走 developer fix 循环
+    const report = itemReport("C3");
+    expect(report.cases).toContainEqual({ id: "C3", name: "C3 FAIL", status: "fail" });
   }, 60_000);
 });
 

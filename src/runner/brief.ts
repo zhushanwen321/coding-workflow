@@ -369,7 +369,9 @@ function specContractBrokenTasks(
  * 叶子首派不重复教建子。mx-1：不再含 spec-review 自审步骤——审查由独立
  * reviewer spawn 接手，完成标志 = spec 已提交入账。al-3：第 1 步追加回归防
  * 下放指引（全量回归归 root spec 声明并标 layer: "topic"，子 unit spec 不得
- * 复制回归条目——写入链的源头防线，设计《验收分层与成本治理》D6）。
+ * 复制回归条目——写入链的源头防线，设计《验收分层与成本治理》D6；同设计
+ * D1a 标记行契约与 D4 已知边界二「规则⑤不豁免 topic 条目」随指引一并给出，
+ * 防 designer 照指引上收后写裸命令 / 踩规则⑤连环拒）。
  */
 function designerFirstTasks(unit: SequencedUnitProjection, projection: SequencedProjection): string {
   const isRootWithoutChildren =
@@ -391,6 +393,10 @@ function designerFirstTasks(unit: SequencedUnitProjection, projection: Sequenced
     "   root 级回归型验收（全仓 lint / 全量 vitest 等全量回归）归 root spec 声明并标",
     '   layer: "topic"（由集成阶段统一执行，只在集成跑一次）；子 unit spec 只声明本',
     "   unit 的功能验收，不得复制回归条目（叶子重复声明 = 每轮 fix 全价双付）。",
+    "   e2e 型 topic 条目的 command 必须产出标记行 `<验收id> PASS` / `<验收id> FAIL`",
+    "   且 exit code 与标记一致（wrapper 脚本尾部输出）——裸 `pnpm vitest run` 类",
+    "   命令永不产出标记行，恒 fail；规则⑤不豁免 topic 条目——上收回归后 root",
+    '   spec 仍须至少一条 type: "unit" 的用例。',
     `2. 提交 spec：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "完成标志：spec 已提交入账（spec-review 由独立 reviewer 在下一轮接手，无需自审）。",
   ].join("\n");

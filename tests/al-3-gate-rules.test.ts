@@ -233,6 +233,8 @@ describe("W1 叶子全量形态 warning + 入账继续", () => {
     expect(specBooked(cwd)).toBe(true);
     expect(res.stderr).toContain("规则⑪");
     expect(res.stderr).toContain("E7");
+    // 成本原因段（设计 D5 要素锁定：叶子全价重跑的成本事实，spec-rules 文案锁定）
+    expect(res.stderr).toContain("每轮 fix（含红阶段）都会全价重跑");
     expect(res.stderr).toContain("上收 root spec 并标 layer");
     expect(res.stderr).toContain("加文件参数收窄");
     // 已入账事实先行（警告非拒绝的语义锚）

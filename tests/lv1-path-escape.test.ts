@@ -121,6 +121,8 @@ describe("T1 cd 绝对路径 + .cw-worktrees 双判据拒入账（S2-a）", () =
     expect(res.stderr).toContain("规则⑫");
     expect(res.stderr).toContain("E1");
     expect(res.stderr).toContain(".cw-worktrees");
+    // 语义解释段（为什么逃逸使 verify 失效：干净 checkout 判据锚，spec-rules 文案锁定）
+    expect(res.stderr).toContain("verify 在干净 checkout 执行");
     // 恢复方向（§4.C 文案要素锁定）：相对路径改写 + 引用物须提交进仓
     expect(res.stderr).toContain("相对路径");
     expect(res.stderr).toContain("提交进仓库");
@@ -471,4 +473,88 @@ describe("T12 多类型作用域（全部非 manual 型）", () => {
       expect(specBooked(cwd)).toBe(false);
     });
   }
+});
+
+// ================================================================
+// T13：-C 紧贴绝对路径形态（git 短选项 -C<path> 合法写法——F2 修复前 token
+// 既不等于 -C 也不独立成绝对路径 token，严格相等匹配盖不住，设计 D3「git -C
+// 由 -C 成员覆盖」在紧贴形态下失效）+ 引号含空白绝对路径的记档漏报锁定
+// ================================================================
+
+describe("T13 -C 紧贴绝对路径拦截与零误杀", () => {
+  it("git -C/abs/wt status → 拒（命中片段为紧贴 token 原文），单条 failure", () => {
+    const cwd = soloCase("t13a", "solo-13a");
+    const res = submitSpec(cwd, "solo-13a", [
+      {
+        id: "E1",
+        core: false,
+        title: "git -C 紧贴绝对路径",
+        type: "unit",
+        command: "git -C/abs/wt status",
+      },
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑫");
+    expect(res.stderr).toContain("E1");
+    // 命中片段 = 紧贴 token 原文（非分离形态的 "-C /abs/wt"）
+    expect(res.stderr).toContain("-C/abs/wt");
+    expect(res.stderr.match(/规则⑫/g)).toHaveLength(1);
+    expect(specBooked(cwd)).toBe(false);
+  });
+
+  it("git -C~/wt status → 拒（~ 紧贴形态与 / 同判）", () => {
+    const cwd = soloCase("t13b", "solo-13b");
+    const res = submitSpec(cwd, "solo-13b", [
+      {
+        id: "E1",
+        core: false,
+        title: "git -C 紧贴 home 路径",
+        type: "unit",
+        command: "git -C~/wt status",
+      },
+    ]);
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("规则⑫");
+    expect(res.stderr).toContain("-C~/wt");
+    expect(specBooked(cwd)).toBe(false);
+  });
+
+  it("grep -C2 pattern file（紧贴数值上下文）→ 放行——紧贴判定只认 / 与 ~ 前缀值", () => {
+    const cwd = soloCase("t13c", "solo-13c");
+    const res = submitSpec(cwd, "solo-13c", [
+      {
+        id: "E1",
+        core: false,
+        title: "grep 紧贴数值上下文",
+        type: "unit",
+        command: "grep -C2 pattern file",
+      },
+    ]);
+
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stderr).not.toContain("规则⑫");
+    expect(specBooked(cwd)).toBe(true);
+  });
+
+  it('cd "/abs path"（引号包裹含空白绝对路径）→ 当前放行——记档漏报面的行为锁定', () => {
+    const cwd = soloCase("t13d", "solo-13d");
+    const res = submitSpec(cwd, "solo-13d", [
+      {
+        id: "E1",
+        core: false,
+        title: "含空白引号绝对路径",
+        type: "unit",
+        command: 'cd "/abs path" && pnpm test',
+      },
+    ]);
+
+    // tokenize 按空白切分："/abs 与 path" 两 token 引号均不成对、剥引号剥不掉
+    // → 漏报放行。这是规则⑫注释记档的诚实漏报面（reviewer 第五维语义审兜底）
+    // ——本用例锁定当前词法行为；若未来升级拦截，须连注释漏报面清单一起改
+    expect(res.code, `stderr: ${res.stderr}`).toBe(0);
+    expect(res.stderr).not.toContain("规则⑫");
+    expect(specBooked(cwd)).toBe(true);
+  });
 });

@@ -854,17 +854,30 @@ export function renderFrontier(groups: FrontierGroups): string {
  * 按 computeFrontier 单组归属下各停派维度互斥（同一 unit 只能进一组），
  * buildDrift 插入位次 = 第四，理由：与三个停派维度单组互斥，序不裁决语义
  * （防御性文档化——先匹配先返回）。
+ *
+ * 预算参数与派发侧同源（F1 修复）：loop 的结算路径必须传 runLoop 注入的
+ * maxBuildAttempts / maxSpecRejects——结算行描述的「是否停派」须与下一轮派发
+ * 判定用同一预算，否则注入非默认值时结算行谎报（默认 K=5 下 buildCount=6 的
+ * unit 注入 K=10 后照常重派，结算行却写 buildDrift 停派）。只读命令与其他
+ * 调用方不传 = 默认常量行为（与 frontierHandler 同口径）。
  */
 export function stoppedDispatchState(
   events: readonly LedgerEvent[],
   unitId: string,
+  opts?: {
+    /** buildDrift 停派预算 K（缺省回落 BUILD_DRIFT_MAX_ATTEMPTS——与派发侧注入同源） */
+    maxBuildAttempts?: number;
+    /** specReviewDeadlock 打回代数阈值（缺省回落 SPEC_REVIEW_DEADLOCK_FAILS） */
+    maxSpecRejects?: number;
+  },
 ): string | null {
   const groups = computeFrontier(fold(events), {
     consecutiveIntegrationFails: consecutiveIntegrationFails(events),
     flakeReviewFacts: flakeReviewFacts(events),
     specContractFacts: specContractFacts(events),
     specReviewFailCounts: specReviewFailCounts(events),
-    buildDriftFacts: buildDriftFacts(events),
+    buildDriftFacts: buildDriftFacts(events, opts?.maxBuildAttempts),
+    maxSpecRejects: opts?.maxSpecRejects,
   });
   if (groups.specContractDeadlock.includes(unitId)) {
     return "specContractDeadlock（验收命令解析失败已 2 代回炉，防活锁转人工）";

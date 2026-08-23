@@ -367,6 +367,8 @@ describe("R4 中间档逐代出声（真实 loop）", () => {
       runLoop({ rootId: "rprog", adapter, cwd: repoDir, pollMs: 30, maxIdleMs: 2_000 }),
     );
     // 第 3/4/5 代逐代出声（代数进文本必然逐代不同；fail 历史 ≥3 起）
+    // unit 名级全串（提示锚定具体 unit，escalations 文案锁定）
+    expect(result.err).toContain('unit "rprog" 的 spec-review 已打回 3 代（预算 10）');
     expect(result.err).toContain("已打回 3 代（预算 10）");
     expect(result.err).toContain("已打回 4 代（预算 10）");
     expect(result.err).toContain("已打回 5 代（预算 10）");
@@ -381,8 +383,77 @@ describe("R4 中间档逐代出声（真实 loop）", () => {
   }, 30_000);
 });
 
-describe("R5 达预算停派回归（10 代与既有 specReviewDeadlock 完全一致）", () => {
-  it("10 代打回 → 零派发 + 完整转人工文案；中间档不再出（区间上界互斥）", async () => {
+describe("R4b 阈值下界静默（真实 loop）", () => {
+  it("第 1/2 代打回时点零提示（D5「≥3 起逐代出声」的下界蕴含）；同 loop 推进至 3 代起出声（对照锚，排除捕获假阴性）", async () => {
+    const repoDir = makeRepo("r4b-silent");
+    const ledgerR4b = new EventLedger(ledgerPath(cwHome, repoDir));
+    ledgerR4b.append("UnitCreated", { unitId: "rsilent", parentId: null, briefRef: "brief.md" });
+    // 初始仅 1 代打回（loop 轮 1 的时点——低于阈值 3，应零提示）
+    ledgerR4b.append("SpecSubmitted", {
+      unitId: "rsilent",
+      specHash: "s1",
+      acceptance: contractAcceptance(),
+      contracts: [],
+      split: [],
+    });
+    ledgerR4b.append("VerdictSubmitted", {
+      unitId: "rsilent",
+      verdictKind: "spec-review",
+      verdict: "fail",
+      comment: "第 1 代打回意见",
+      role: "reviewer",
+    });
+    // stepped adapter：designer spawn 时同步推进代数 1→2→3（R4 同款形态），
+    // 第 3 次派发让 spec 过审 → unit 离开 created 态，后续无新事件由 idle 收束退出
+    let spawnCount = 0;
+    const adapter: AgentSpawnAdapter = {
+      name: "lv3-silent",
+      spawn: async (req) => {
+        spawnCount += 1;
+        if (spawnCount === 1 || spawnCount === 2) {
+          const g = spawnCount + 1;
+          ledgerR4b.append("SpecSubmitted", {
+            unitId: "rsilent",
+            specHash: `s${g}`,
+            acceptance: contractAcceptance(),
+            contracts: [],
+            split: [],
+          });
+          ledgerR4b.append("VerdictSubmitted", {
+            unitId: "rsilent",
+            verdictKind: "spec-review",
+            verdict: "fail",
+            comment: `第 ${g} 代打回意见`,
+            role: "reviewer",
+          });
+        } else if (spawnCount === 3) {
+          ledgerR4b.append("SpecSubmitted", {
+            unitId: "rsilent",
+            specHash: "s4",
+            acceptance: contractAcceptance(),
+            contracts: [],
+            split: [],
+          });
+          ledgerR4b.append("VerdictSubmitted", { unitId: "rsilent", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
+        }
+        return handleOf(req, 0);
+      },
+    };
+
+    const result = await captureStd(() =>
+      runLoop({ rootId: "rsilent", adapter, cwd: repoDir, pollMs: 30, maxIdleMs: 2_000 }),
+    );
+    // 1/2 代时点零提示（阈值下界：低于 3 代不进中间档、也不达停派预算）
+    expect(result.err).not.toContain("已打回 1 代（预算 10）");
+    expect(result.err).not.toContain("已打回 2 代（预算 10）");
+    // 对照锚：同一 loop 内推进到 3 代起出声——静默是阈值语义而非捕获假阴性
+    expect(result.err).toContain("已打回 3 代（预算 10）");
+    // 静默不改变派发行为：1/2 代时点 specFixPending 照常派 designer（≥3 次）
+    expect(spawnCount).toBeGreaterThanOrEqual(3);
+  }, 30_000);
+});
+
+describe("R5 达预算停派回归（10 代与既有 specReviewDeadlock 完全一致）", () => {  it("10 代打回 → 零派发 + 完整转人工文案；中间档不再出（区间上界互斥）", async () => {
     const repoDir = makeRepo("r5-deadlock");
     const ledgerR5 = new EventLedger(ledgerPath(cwHome, repoDir));
     ledgerR5.append("UnitCreated", { unitId: "rlock", parentId: null, briefRef: "brief.md" });

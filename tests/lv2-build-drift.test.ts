@@ -29,6 +29,14 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+// loop 系测试约定：runLoop 从 dist 导入（mx5-2 / u7b 同款；npm test 的 pretest
+// 已 build，直跑本文件需先 npm run build）
+import { runLoop } from "../dist/runner/loop.js";
+import type {
+  AgentSpawnAdapter,
+  AgentSpawnRequest,
+  SpawnResult,
+} from "../dist/runner/spawn/types.js";
 import { dispatch } from "../src/dispatch.js";
 import type { AcceptanceItem, LedgerEvent } from "../src/events/types.js";
 import {
@@ -603,6 +611,10 @@ describe("D6 预算注入与恢复派发", () => {
       expect(stderr).toContain("三选一");
       expect(stderr).toContain("cw run --root dd --max-build-attempts <更大值>");
       expect(stderr).toContain("本 spec 周期内无 pass verify");
+      // 三选一恢复指引第 1/2 选 + 尾句（§3.1 成功路径全文锁定，escalations 文案锁定）
+      expect(stderr).toContain("cw run --root dd --spawn human");
+      expect(stderr).toContain("dd.developer.stdout");
+      expect(stderr).toContain("本循环继续处理其余 unit");
 
       const code = await waitExit(runner, 30_000);
       expect(code).toBe(1); // 停派后无 machine 推进路径，空转由 idle 收束（审计-不喂-idle）
@@ -727,6 +739,181 @@ describe("D8 停派态描述", () => {
     expect(stoppedDispatchState(ledger.readAll(), "u-sd")).toBe(
       "specReviewDeadlock（spec 打回代数达预算转人工）",
     );
+  });
+});
+
+// ================================================================
+// D9：结算行停派判定与派发预算同源（F1 修复——stoppedDispatchState 预算参数
+// 贯通，注入值下 TIMEOUT 结算行不再谎报）。loop 级走 runLoop 进程内直调
+//（mx5-2 F10 同款 stepped adapter：spawn 时同步副作用 + wait() 按脚本返回四态）
+// ================================================================
+
+/** 捕获 runLoop 直调的 stdout/stderr（mx5-2 同款；透传 write 回调防 flush 屏障拖慢） */
+async function captureLoopStd(
+  fn: () => Promise<number>,
+): Promise<{ code: number; out: string; err: string }> {
+  const outChunks: string[] = [];
+  const errChunks: string[] = [];
+  const origOut = process.stdout.write;
+  const origErr = process.stderr.write;
+  const collector = (chunks: string[]): typeof process.stdout.write =>
+    ((chunk: unknown, cb?: (err?: Error | null) => void) => {
+      chunks.push(String(chunk));
+      if (typeof cb === "function") {
+        cb();
+      }
+      return true;
+    }) as typeof process.stdout.write;
+  process.stdout.write = collector(outChunks);
+  process.stderr.write = collector(errChunks);
+  try {
+    const code = await fn();
+    return { code, out: outChunks.join(""), err: errChunks.join("") };
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+  }
+}
+
+interface LoopAdapterStep {
+  exitCode: SpawnResult["exitCode"];
+  /** spawn 时同步执行（写账本等真实副作用） */
+  onSpawn?: () => void;
+}
+
+/** 脚本化 adapter（mx5-2 F10 同款形态）：记录全部 spawn 请求 */
+function makeLoopAdapter(steps: readonly LoopAdapterStep[]): {
+  adapter: AgentSpawnAdapter;
+  calls: AgentSpawnRequest[];
+} {
+  const calls: AgentSpawnRequest[] = [];
+  return {
+    adapter: {
+      name: "lv2-d9-stepped",
+      spawn: async (req) => {
+        calls.push(req);
+        const step = steps[Math.min(calls.length - 1, steps.length - 1)];
+        step.onSpawn?.();
+        return {
+          wait: async () => ({
+            exitCode: step.exitCode,
+            stdoutPath: join(req.artifactDir, `${req.unitId}.${req.role}.stdout`),
+            stderrPath: join(req.artifactDir, `${req.unitId}.${req.role}.stderr`),
+            pid: -1,
+          }),
+          kill: () => {},
+        };
+      },
+    },
+    calls,
+  };
+}
+
+describe("D9 结算行预算贯通", () => {
+  it("注入 K=10：buildCount=6 的 TIMEOUT 结算行不含 buildDrift 停派、照常重派；默认 K=5 同账本形态结算行含 buildDrift（不再谎报）", async () => {
+    const makeDriftRepo = (name: string): { repoDir: string; lg: EventLedger } => {
+      const repoDir = makeRepo(name, "d9 结算预算 fixture");
+      const lg = new EventLedger(ledgerPath(cwHome, repoDir));
+      lg.append("UnitCreated", { unitId: "root", parentId: null, briefRef: "brief.md" });
+      lg.append("SpecSubmitted", {
+        unitId: "root",
+        specHash: "d9-spec-1",
+        acceptance: contractAcceptance(),
+        contracts: [],
+        split: [],
+      });
+      lg.append("VerdictSubmitted", { unitId: "root", verdictKind: "spec-review", verdict: "pass", role: "reviewer" });
+      return { repoDir, lg };
+    };
+    // spawn 在飞期间写入 6 条证据（5 ≤ 6 < 10——恰好跨默认/注入预算分界点）：
+    // TIMEOUT 结算时刻的停派判定即分叉现场（修复前 stoppedDispatchState 恒用
+    // 默认 K=5 → 注入侧结算行谎报停派，而下一轮派发实际照常重派）
+    const spawnWritesSixEvidences = (lg: EventLedger) => () => {
+      for (let i = 1; i <= 6; i += 1) {
+        lg.append("EvidenceSubmitted", {
+          unitId: "root",
+          runId: `d9-b${i}`,
+          commit: `c-d9-${i}`,
+          paths: [],
+          sha256: [],
+          exitCode: 0,
+        });
+      }
+    };
+
+    // --- 注入侧（K=10）：结算行与下一轮派发一致——「可重派」且真的重派了 ---
+    const injected = makeDriftRepo("d9-injected");
+    const adapterA = makeLoopAdapter([
+      { exitCode: "TIMEOUT", onSpawn: spawnWritesSixEvidences(injected.lg) },
+      { exitCode: "TIMEOUT" }, // 后续重派持续 TIMEOUT → 连续 2 次转人工收束
+    ]);
+    const runA = await captureLoopStd(() =>
+      runLoop({
+        rootId: "root",
+        adapter: adapterA.adapter,
+        cwd: injected.repoDir,
+        pollMs: 30,
+        maxIdleMs: 1_500,
+        maxBuildAttempts: 10,
+      }),
+    );
+    expect(runA.code).toBe(1); // 连续 TIMEOUT 转人工收束（与 buildDrift 无关的既有出口）
+    expect(runA.out).toContain("TIMEOUT，可重派（连续 2 次后转人工）");
+    expect(runA.out).not.toContain("buildDrift");
+    // 重派实际发生（≥2 次 spawn）——结算行「可重派」与派发实态一致的正向证明
+    //（精确次数受 TIMEOUT 计数的进展清零语义影响，非本用例焦点）
+    expect(adapterA.calls.length).toBeGreaterThanOrEqual(2);
+
+    // --- 对照组（默认 K=5）：同账本形态 → buildDrift 停派，结算行诚实改述 ---
+    const plain = makeDriftRepo("d9-default");
+    const adapterB = makeLoopAdapter([
+      { exitCode: "TIMEOUT", onSpawn: spawnWritesSixEvidences(plain.lg) },
+    ]);
+    const runB = await captureLoopStd(() =>
+      runLoop({
+        rootId: "root",
+        adapter: adapterB.adapter,
+        cwd: plain.repoDir,
+        pollMs: 30,
+        maxIdleMs: 1_500,
+      }),
+    );
+    expect(runB.code).toBe(1); // 停派后无 machine 推进路径，空转由 idle 收束
+    expect(runB.out).toContain("处于 buildDrift");
+    expect(runB.out).toContain("停派态");
+    expect(runB.out).toContain("本次超时不触发重派");
+    expect(runB.out).not.toContain("可重派");
+    expect(adapterB.calls.length).toBe(1); // 停派后零重派
+  }, 30_000);
+
+  it("直调投影：maxBuildAttempts / maxSpecRejects 注入均改变停派判定（specReviewDeadlock 同型分叉一并实证）", () => {
+    // buildDrift 分叉：buildCount=6 —— 默认 K=5 停派、注入 10 判可续
+    appendDriftLedger("u-d9", 6);
+    const events = ledger.readAll();
+    expect(stoppedDispatchState(events, "u-d9")).toContain("buildDrift");
+    expect(stoppedDispatchState(events, "u-d9", { maxBuildAttempts: 10 })).toBeNull();
+
+    // specReviewDeadlock 分叉：10 代打回 —— 默认预算 10 停派、注入 12 判可续
+    ledger.append("UnitCreated", { unitId: "u-d9sd", parentId: null, briefRef: "brief.md" });
+    for (let gen = 1; gen <= 10; gen += 1) {
+      ledger.append("SpecSubmitted", {
+        unitId: "u-d9sd",
+        specHash: `d9sd-spec-${gen}`,
+        acceptance: contractAcceptance(),
+        contracts: [],
+        split: [],
+      });
+      ledger.append("VerdictSubmitted", {
+        unitId: "u-d9sd",
+        verdictKind: "spec-review",
+        verdict: "fail",
+        role: "reviewer",
+        comment: `第 ${gen} 代打回`,
+      });
+    }
+    const eventsSd = ledger.readAll();
+    expect(stoppedDispatchState(eventsSd, "u-d9sd")).toContain("specReviewDeadlock");
+    expect(stoppedDispatchState(eventsSd, "u-d9sd", { maxSpecRejects: 12 })).toBeNull();
   });
 });
 

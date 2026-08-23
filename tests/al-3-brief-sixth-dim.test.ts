@@ -161,6 +161,28 @@ describe("B3 designer 防下放指引", () => {
     // 第 0 步建子指令在场（root 无子首派形态，fx-3 R5.2 既有行为）
     expect(content).toContain("0. 本 unit 是根节点且尚无子 unit——若任务书/brief 含拆分建议：先为每个子执行");
   });
+
+  it("topic 条目指引附标记行契约与规则⑤不豁免（设计 D1a 使用点 / D4 已知边界二）", () => {
+    // designer 照「上收 root 标 topic」指引会写裸 `pnpm vitest run`——标记行契约
+    // 缺失时集成期才暴露（晚一层）；规则⑤不豁免缺失时 designer 踩连环拒。
+    // 两点均要素级断言，不锁全文
+    const content = renderBrief(
+      "b3b",
+      "demo",
+      { role: "designer", unitId: "demo", dimension: "specReady" },
+      false,
+    );
+
+    // 标记行契约（e2e-sh 适配器靠标记行判定，裸命令永不产出 → 恒 fail）
+    expect(content).toContain("标记行");
+    expect(content).toContain("PASS");
+    expect(content).toContain("FAIL");
+    expect(content).toContain("wrapper 脚本尾部输出");
+    expect(content).toContain("永不产出标记行");
+    // 规则⑤不豁免 topic 条目（上收后 root spec 仍须至少一条 unit 级用例）
+    expect(content).toContain("不豁免");
+    expect(content).toContain('type: "unit"');
+  });
 });
 
 // ================================================================
