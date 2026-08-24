@@ -27,6 +27,8 @@ Commands:
   gate query         查 gate 缓存 pass 条目（只读）
   gate stats         gate check 计时聚合（只读）
   ci-judge           CI 失败判定：flaky 自动 rerun / 真回归归属证据链
+  pipeline run       按 .cw-pipeline.json 执行验证步骤（断点续接）
+  pipeline status    pipeline 步骤三态清单（只读）
   status             查看单元状态（只读）
   frontier           查看就绪集合（只读）
   tree               查看分解树（只读）

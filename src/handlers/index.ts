@@ -3,6 +3,7 @@ import { handleCreate } from "./create.js";
 import { handleEvidenceSubmit } from "./evidence-submit.js";
 import { handleCiJudge } from "./cijudge.js";
 import { handleGateQuery, handleGateStats, handleGateWrap } from "./gate.js";
+import { handlePipelineRun, handlePipelineStatus } from "./pipeline.js";
 import { handleReviewSubmit } from "./review-submit.js";
 import { handleRun } from "./run.js";
 import { handleSetupAgentDir } from "./setup-agent-dir.js";
@@ -63,5 +64,16 @@ export const commands: CommandEntry[] = [
     handler: handleCiJudge,
     summary:
       "CI 失败判定（<run-id> --base <prBase> [--already-rerun]：import 闭包归属 → flaky rerun 恰一次 / 真回归证据链 / 两轮 flaky 转人工）",
+  },
+  {
+    name: "pipeline run",
+    handler: handlePipelineRun,
+    summary:
+      "按 .cw-pipeline.json 顺序执行验证步骤（[--manifest 路径] [--base ref]；断点续接，已 pass 不重做；cache 步骤走 gate 缓存）",
+  },
+  {
+    name: "pipeline status",
+    handler: handlePipelineStatus,
+    summary: "pipeline 步骤三态清单（✓/✗/pending，只读）",
   },
 ];
