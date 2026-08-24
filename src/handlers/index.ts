@@ -1,7 +1,8 @@
 import type { CommandEntry } from "../dispatch.js";
 import { handleCreate } from "./create.js";
 import { handleEvidenceSubmit } from "./evidence-submit.js";
-import { handleGateQuery, handleGateWrap } from "./gate.js";
+import { handleCiJudge } from "./cijudge.js";
+import { handleGateQuery, handleGateStats, handleGateWrap } from "./gate.js";
 import { handleReviewSubmit } from "./review-submit.js";
 import { handleRun } from "./run.js";
 import { handleSetupAgentDir } from "./setup-agent-dir.js";
@@ -51,5 +52,16 @@ export const commands: CommandEntry[] = [
     name: "gate query",
     handler: handleGateQuery,
     summary: "查 gate 缓存 pass 条目（[--check 名] [--base ref] [--json]，只读）",
+  },
+  {
+    name: "gate stats",
+    handler: handleGateStats,
+    summary: "gate check 计时聚合（真实执行耗时分组，只读；空账本输出空形态）",
+  },
+  {
+    name: "ci-judge",
+    handler: handleCiJudge,
+    summary:
+      "CI 失败判定（<run-id> --base <prBase> [--already-rerun]：import 闭包归属 → flaky rerun 恰一次 / 真回归证据链 / 两轮 flaky 转人工）",
   },
 ];

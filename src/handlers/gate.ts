@@ -19,8 +19,13 @@
  * 数字变形；dispatch 已剥掉 "gate wrap" 两级命令 token，`_` 即 `--` 后命令）。
  */
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 import type { CommandContext } from "../dispatch.js";
+import { gateLedgerDomain } from "../gate/domain.js";
+import { EMPTY_STATS_PLACEHOLDER, renderStats } from "../gate/stats.js";
+import { EventLedger } from "../store/events-log.js";
+import { gateLedgerPath } from "../store/project.js";
 import { queryGate, type GatePassEntry } from "../gate/query.js";
 import { wrapCheck, wrapExitCode } from "../gate/wrap.js";
 import { getCwHome } from "../store/project.js";
@@ -168,7 +173,24 @@ export async function handleGateWrap(ctx: CommandContext): Promise<number> {
   return wrapExitCode(outcome);
 }
 
-// ── gate query ─────────────────────────────────────────────
+// ── gate stats ───────────────────────────────────────────
+
+/**
+ * `cw gate stats`（design-release-pipeline.md D8，W3：计时聚合只读命令）。
+ * durationStats 投影（foldGate）直出；空账本 → 结构化空形态非报错（AC-6.2）。
+ */
+export async function handleGateStats(ctx: CommandContext): Promise<number> {
+  const path = gateLedgerPath(getCwHome(), ctx.cwd);
+  if (!existsSync(path)) {
+    process.stdout.write(`${EMPTY_STATS_PLACEHOLDER}\n`);
+    return 0;
+  }
+  const events = new EventLedger(path, gateLedgerDomain).readAll();
+  process.stdout.write(renderStats(events));
+  return 0;
+}
+
+// ── gate query ─────────────────────────────────────────────────
 
 /**
  * base ref → 40 位 sha（query 专用：queryGate 只收 sha）。对照 wrap.ts 内部

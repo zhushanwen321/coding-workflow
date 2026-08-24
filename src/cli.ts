@@ -25,6 +25,8 @@ Commands:
   setup-agent-dir    建受控 agentDir（装扩展清单 + manifest + 启动探针）
   gate wrap          gate check 包装执行（缓存命中跳过重跑，记账闭合，写）
   gate query         查 gate 缓存 pass 条目（只读）
+  gate stats         gate check 计时聚合（只读）
+  ci-judge           CI 失败判定：flaky 自动 rerun / 真回归归属证据链
   status             查看单元状态（只读）
   frontier           查看就绪集合（只读）
   tree               查看分解树（只读）
