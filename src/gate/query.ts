@@ -12,7 +12,7 @@ import { EventLedger } from "../store/events-log.js";
 import { gateLedgerPath } from "../store/project.js";
 import { gateLedgerDomain } from "./domain.js";
 import { foldGate } from "./fold.js";
-import type { GateEventMap } from "./types.js";
+import type { GateCheckRanPayload, GateEventMap } from "./types.js";
 
 export interface QueryGateOptions {
   cwHome: string;
@@ -75,7 +75,8 @@ export function queryGate(opts: QueryGateOptions): QueryGateResult {
   passEntries.sort((a, b) => a.seq - b.seq); // 稳定输出（Map 迭代序 = 入账序，按 seq 再排一次自证）
 
   const latestByCheck = [...projection.latestByCheck.values()]
-    .map((event) => ({ seq: event.seq, ts: event.ts, type: event.type, check: event.payload.check }))
+    // fold 保证 latestByCheck 只含 check 类事件（step 事件入 latestStepRun 投影），此处窄化取锚
+    .map((event) => ({ seq: event.seq, ts: event.ts, type: event.type, check: (event.payload as GateCheckRanPayload).check }))
     .sort((a, b) => a.seq - b.seq);
 
   return { passEntries, latestByCheck };

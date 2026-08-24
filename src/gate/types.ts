@@ -1,12 +1,14 @@
 /**
- * gate 域事件代数（design-release-pipeline.md §3.3 D1/D5，rp-0）。
+ * gate 域事件代数（design-release-pipeline.md §3.3 D1/D5，rp-0；PipelineStepRan 加法属 rp-2/W2 预落地）。
  *
- * 封闭两类事件（PipelineStepRan 属 rp-2，本波不预留空类型——加法纪律：未来
- * 增补只许 append-only 加法 + 缺省重放兼容）：
+ * 封闭三类事件（加法纪律：未来增补只许 append-only 加法 + 缺省重放兼容
+ * ——旧账本无新事件类型 = 无该类事实，重放语义不变）：
  *   - GateCheckRan：一次 check 的真实执行事实（miss 路径产生；fail 也入账仅
  *     审计，永不作命中候选）
  *   - GateCacheHit：一次缓存命中事实（hit 路径产生；无 runId 幂等键——命中
  *     复用不是新执行事实，可独立存在）
+ *   - PipelineStepRan：一次 pipeline 步骤执行事实（rp-2；锚 = payload.pipeline，
+ *     与 check 类事件不同锚）
  *
  * 与 unit 域（src/events/types.ts）的结构性差异：无 unitId 锚（本域锚 =
  * payload.check）、无生命周期状态机（缓存条目没有 created→closed，只有
@@ -61,13 +63,41 @@ export interface GateCacheHitPayload {
   reportSha256: string;
 }
 
+/**
+ * PipelineStepRan 载荷（D5 表格逐字段对照；rp-2/W2 预落地）。
+ * 幂等键 = pipeline + step + runId。锚 = pipeline（与 check 类事件不同锚）。
+ */
+export interface PipelineStepRanPayload {
+  /** 锚：pipeline 身份（manifest 文件路径或调用方声明名） */
+  pipeline: string;
+  /** manifest 内容 sha256（定义漂移检测：manifest 变更 → 新分组，旧记录不参与投影） */
+  manifestSha256: string;
+  /** 步骤名（manifest steps[].name；同 manifest 内唯一性由 manifest 校验保证） */
+  step: string;
+  /** 执行瞬间 HEAD 的 sha */
+  headSha: string;
+  /** 本次 run 的 runId */
+  runId: string;
+  /** pass / fail（fail 即停：后续步骤 pending） */
+  result: GateResult;
+  /** 命中 gate 缓存跳过执行时 true（验证事实由对应的 GateCheckRan/GateCacheHit 承载） */
+  viaCache?: boolean;
+  /** 真实执行耗时（ms；viaCache 时可缺省为 0） */
+  durationMs: number;
+  /** 步骤产物路径（相对项目 CW 目录；步骤无产物时可缺省） */
+  reportRef?: string;
+  /** 产物 sha256 */
+  reportSha256?: string;
+}
+
 /** gate 域事件 type 封闭集 */
-export type GateEventType = "GateCheckRan" | "GateCacheHit";
+export type GateEventType = "GateCheckRan" | "GateCacheHit" | "PipelineStepRan";
 
 /** gate 域 payload 映射表（EventLedger<GateEventMap> 的泛型参数） */
 export type GateEventMap = {
   GateCheckRan: GateCheckRanPayload;
   GateCacheHit: GateCacheHitPayload;
+  PipelineStepRan: PipelineStepRanPayload;
 };
 
 /** gate 域账本一行的运行时形状（DomainEvent 的域特化） */

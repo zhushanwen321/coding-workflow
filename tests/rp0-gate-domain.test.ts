@@ -143,7 +143,7 @@ describe("rp-0 gate 域描述符（gateLedgerDomain）", () => {
       `${JSON.stringify({ seq: 2, ts: "2026-01-01T00:00:00.000Z", type: "UnitCreated", payload: { unitId: "u-1" } })}\n`,
     );
     expect(() => ledger.readAll()).toThrow(/第 2 行不是合法事件信封/);
-    expect(() => ledger.readAll()).toThrow(/两类事件枚举（GateCheckRan\/GateCacheHit）/);
+    expect(() => ledger.readAll()).toThrow(/三类事件枚举（GateCheckRan\/GateCacheHit\/PipelineStepRan）/); // W2 代数加法：封闭集扩为三类
 
     const anchorPath = join(tmpRoot, "corrupt-anchor", "gate-events.log");
     const anchorLedger = new EventLedger(anchorPath, gateLedgerDomain);
@@ -152,7 +152,7 @@ describe("rp-0 gate 域描述符（gateLedgerDomain）", () => {
       anchorPath,
       `${JSON.stringify({ seq: 2, ts: "2026-01-01T00:00:00.000Z", type: "GateCacheHit", payload: { sourceRunId: "r-1" } })}\n`,
     );
-    expect(() => anchorLedger.readAll()).toThrow(/payload\.check=undefined 非字符串/);
+    expect(() => anchorLedger.readAll()).toThrow(/payload\.check\/pipeline=undefined 非字符串/); // W2 双锚后：两锚全缺报组合锚名
     expect(() => anchorLedger.readAll()).toThrow(/恢复动作/);
   });
 });
@@ -223,7 +223,7 @@ describe("rp-0 gate 域 fold（foldGate）", () => {
   it("未知事件 type 抛错（外部改账本的防线，不静默跳过）", () => {
     expect(() =>
       foldGate([
-        { seq: 1, ts: "t1", type: "PipelineStepRan", payload: { pipeline: "p" } } as never,
+        { seq: 1, ts: "t1", type: "GateUnknown", payload: { pipeline: "p" } } as never, // W2 后 PipelineStepRan 已是合法 type，未知占位改名
       ]),
     ).toThrow(/foldGate: 未知事件类型/);
   });

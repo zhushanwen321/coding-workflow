@@ -53,6 +53,26 @@ export interface GateDurationStats {
   runs: number;
 }
 
+/** latestStepRun 的值：最新一次步骤执行事实 + 顺序锚（pipeline status / run 续接投影输入） */
+export interface GateStepRun {
+  seq: number;
+  ts: string;
+  payload: import("./types.js").PipelineStepRanPayload;
+}
+
+/**
+ * 步骤分组键 = (pipeline, manifestSha256, step) 三元组字符串化——
+ * manifest 内容寻址（D6）：manifest 变更 → manifestSha256 变 → 新分组，
+ * 旧步骤记录自然不参与投影（与 gateCacheKey 同哲学，防假进度）。
+ */
+export function pipelineStepKey(
+  pipeline: string,
+  manifestSha256: string,
+  step: string,
+): string {
+  return [pipeline, manifestSha256, step].join("\u0000");
+}
+
 /** gate 域账本投影（foldGate 的输出） */
 export interface GateProjection {
   /** (check, baseSha, scope) → 最新 pass GateCheckRan（hit 判定输入） */
@@ -61,6 +81,8 @@ export interface GateProjection {
   readonly latestByCheck: ReadonlyMap<string, GateDiscriminatedEvent>;
   /** check → durationMs 聚合（stats 输入） */
   readonly durationStats: ReadonlyMap<string, GateDurationStats>;
+  /** (pipeline, manifestSha256, step) → 最新 PipelineStepRan（status 展示 + run 即 resume 的续接投影） */
+  readonly latestStepRun: ReadonlyMap<string, GateStepRun>;
   readonly totalEvents: number;
 }
 
@@ -69,12 +91,17 @@ export function foldGate(events: readonly GateEvent[]): GateProjection {
   const latestPassByKey = new Map<string, GatePassCandidate>();
   const latestByCheck = new Map<string, GateDiscriminatedEvent>();
   const durationStats = new Map<string, GateDurationStats>();
+  const latestStepRun = new Map<string, GateStepRun>();
   for (const record of events) {
     // 宽泛的泛型信封 type 与 payload 不联动，判别联合视图才能按 type 窄化
     const event = record as GateDiscriminatedEvent;
-    const known = latestByCheck.get(event.payload.check);
-    if (known === undefined || known.seq < event.seq) {
-      latestByCheck.set(event.payload.check, event);
+    // latestByCheck 只收 check 类事件（step 类事件无 check 字段，误收会写入
+    // undefined 键污染 query/status 展示）——in 守卫让 TS 按属性窄化 union
+    if ("check" in event.payload) {
+      const known = latestByCheck.get(event.payload.check);
+      if (known === undefined || known.seq < event.seq) {
+        latestByCheck.set(event.payload.check, event);
+      }
     }
     switch (event.type) {
       case "GateCheckRan": {
@@ -100,6 +127,20 @@ export function foldGate(events: readonly GateEvent[]): GateProjection {
         // 命中复用无新执行事实：不进 pass 投影（它复用的来源条目已在）、不进
         // duration 聚合（无 durationMs 字段）；只刷新 latestByCheck（上方已做）
         break;
+      case "PipelineStepRan": {
+        // 步骤事实：按 (pipeline, manifestSha256, step) 分组取最新（status 展示
+        // + run 即 resume 续接投影）；不入 check 类三投影（无 check 锚）
+        const key = pipelineStepKey(
+          event.payload.pipeline,
+          event.payload.manifestSha256,
+          event.payload.step,
+        );
+        const existing = latestStepRun.get(key);
+        if (existing === undefined || existing.seq < event.seq) {
+          latestStepRun.set(key, { seq: event.seq, ts: event.ts, payload: event.payload });
+        }
+        break;
+      }
       default: {
         const _exhaustive: never = event;
         throw new Error(
@@ -108,5 +149,5 @@ export function foldGate(events: readonly GateEvent[]): GateProjection {
       }
     }
   }
-  return { latestPassByKey, latestByCheck, durationStats, totalEvents: events.length };
+  return { latestPassByKey, latestByCheck, durationStats, latestStepRun, totalEvents: events.length };
 }
