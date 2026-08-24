@@ -40,6 +40,14 @@ name: quality-criteria
 
 审查者在报告每个问题时，必须同时标注本维度判定（fail/warn）和统一严重度（MUST_FIX/SUGGESTION）。pass 的维度不产出条目。
 
+## 阶段 1.5 度量产物消费约定（metrics.json）
+
+`.review/metrics.json` 存在时（pr-cr-fix 阶段 1.5 度量门禁产出）必须消费：
+
+- **warn 清单 + `targets.high_crap` 靶子**（CRAP 降序 top 20）是本维度的优先核查对象——高 CRAP 函数是回归高风险区，逐个读函数体核查：确有「多职责混杂 / 深嵌套 / 错误处理路径缺失 / 边界分支遗漏」等缺陷的，归入对应维度（错误处理 / 边界条件）产出 SUGGESTION 条目并引用 metrics 数据（`crap=X, cyclomatic=Y`）；判定为「复杂但单一职责、分支各自清晰」的（估算噪声），在报告末尾列「已核查不成立 + 理由」，不产出条目
+- fail 清单理论上已被 Gate-1.5 拦截清零；若报告时仍见 introduced 圈复杂度 > 15 的条目，直接 MUST_FIX（结构违规，机器判定优先于人工品味）
+- metrics 数据是机器估算（cw 无 coverage 基建，CRAP 为静态值），**不可单独作为 MUST_FIX 依据**——必须叠加人工读码确认缺陷后才升级严重度
+
 ---
 
 ## 维度 1：类型安全
