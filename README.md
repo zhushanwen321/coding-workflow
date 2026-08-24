@@ -1,6 +1,6 @@
 # coding-workflow (cw)
 
-**agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务，分解为可验证单元，用机器证据判定「完成」——系统说 done，就是真的 done，可复算、可重放。
+**agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务，分解为可验证单元，用机器证据判定「完成」——系统说 done，就是真的 done，可复算、可重放。发布期验证（typecheck / lint / coverage / CI flaky 判定）由同仓的 gate 域承接：内容寻址缓存消重复、断点续跑、flaky 与真回归机器可判（`cw gate wrap/query/stats`、`cw pipeline run/status`、`cw ci-judge`）。
 
 cw 2.0 是对 1.x 的完全重写。旧版（四层 WorkUnit + 状态机 + 声明推进）的实证问题——串行排队占全链近半、验证可伪造（sed 伪装测试输出）、验收强度无人兜底、先干活后补录——在新结构下被消灭而非收窄。
 

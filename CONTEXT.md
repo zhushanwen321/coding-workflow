@@ -5,7 +5,7 @@
 
 ## 一句话定位
 
-cw 是 **agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务分解为可验证单元，用机器证据（而非 agent 的声明）判定「完成」。job 是 agent 进程，pipeline 定义（分解树 + 验收）本身由 agent 在系统内产出、被机器 gate 看守。
+cw 是 **agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务分解为可验证单元，用机器证据（而非 agent 的声明）判定「完成」。job 是 agent 进程，pipeline 定义（分解树 + 验收）本身由 agent 在系统内产出、被机器 gate 看守。发布期验证（typecheck/coverage/CI 判定）由同仓同包硬隔离的 **gate 域**承接——独立账本 `gate-events.log` + 内容寻址缓存 `(check, baseSha, scope)`，与 unit 域共享账本心（锁/seq/fsync）但事件代数互不可见（双域边界由 tests/w4-grep-ac.test.ts 机器锁）。
 
 ## 核心概念
 
@@ -170,7 +170,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 
 实现角色：写代码 + 提交 build 证据（frontier `buildReady` 维度的派发对象）。旧角色名已于 2026-08-19 用户拍板废弃（mx5-4 改名，直接改不做兼容别名；重放兼容论证见 `src/events/types.ts` 的 role 注释，改名始末与旧值见 `docs/rewrite/design-spec-contract-replan.md` D4）。三角色分工：designer（分解 + 写 spec + 回炉修命令契约）/ developer（实现）/ reviewer（独立审查——spec-review verdict 只认 reviewer）。历史账本携带改名前旧角色值的事件重放语义不变：fold 对 exec-review verdict 不比对 role、对 spec-review 只认 reviewer，改名前后折叠行为一致（role 联合类型：`src/events/types.ts`）。
 
-## 命令面速查（10 个）
+## 命令面速查（16 个 = unit 域 10 + gate/pipeline 域 6）
 
 | 命令 | 类别 | 用途 |
 |------|------|------|
@@ -185,6 +185,12 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw frontier [--json]` | 只读 | 就绪集合（十四组，见上 frontier 小节） |
 | `cw tree` | 只读 | 分解树 |
 | `cw report [--unit <id>]` | 只读 | 证据链汇总（逐验收覆盖标记 ✓/✗ + hash 前 12 位） |
+| `cw gate wrap --check <名> --base <ref> [--scope <路径>...] [--run-id <id>] [--timeout-ms <n>] -- <命令...>` | 写（gate 域） | check 包装执行：缓存命中跳过重跑但仍产出完整 report（记账闭合）；exit 0 pass 含命中 / 1 check fail / 2 环境错误不入账；`--scope` 缺省 = 仓根（默认无增量） |
+| `cw gate query [--check <名>] [--base <ref>] [--json]` | 只读（gate 域） | 查缓存 pass 条目（缓存键 (check, baseSha, scope)；--json 供消费方机器读） |
+| `cw gate stats` | 只读（gate 域） | 计时聚合（真实执行 durationMs 分组；空账本输出结构化空形态） |
+| `cw ci-judge <run-id> --base <prBase> [--already-rerun]` | 判定（gate 域） | CI 失败 flaky/真回归判定（import 闭包含 dist→src 映射归属；flaky 自动 `gh run rerun --failed` 恰一次；两轮 flaky 出声转人工；exit 0 判定完成 / 2 环境错误） |
+| `cw pipeline run [--manifest <路径>] [--base <ref>]` | 跑（pipeline 域） | 按 `.cw-pipeline.json` 顺序执行验证步骤（断点续接：已 pass 步骤靠投影跳过不重做；cache 声明步骤内部走 gate 缓存 viaCache；fail 即停；exit 0 全 pass / 1 有 fail 或 manifest 缺失 / 2 环境错误） |
+| `cw pipeline status [--manifest <路径>]` | 只读（pipeline 域） | 步骤三态清单 ✓/✗/pending（含 viaCache/耗时/seq 标注） |
 
 runner 的角色派发规则（对投影每轮重算，维度 → 派发形态单一映射）：created 且无 spec → designer（首派，任务书第 0 步建 split 子 unit）；created 且有 spec 且最新 spec 未反思 → 反思先于审查（reflectionPending：loop 对在飞长驻句柄发 followUp 反思文案，完成后写 ReflectionRan 再派 reviewer，无在飞句柄则代写占位事件）；created 且有 spec 待审 → 独立 reviewer（specReviewPending，designer 不自审）；spec-review fail 后 → designer 修 spec 重提（specFixPending，任务书内嵌 fail comment 全文）；spec-frozen 单元解析失败连挂 ≥2 → designer 回炉修验收命令契约（specContractBroken，任务书内嵌逐轮解析失败原文，新 spec 照旧过独立 reviewer）；spec-frozen 叶子 → developer（verified 未 closed → reviewer exec-review）；子全 verified 的根 → 不派 agent，直接集成；集成连续 fail 达上限 → designer 处置契约漂移。同 unit 存在任意 role 的 in-flight spawn 时本轮缓派（防 worktree reset 清在飞现场）。等待 spawn 期间零锁（否则子进程的 evidence submit 饿死）。中断（Ctrl-C）后重跑 `cw run` 从事件投影续接，已 closed 的单元不重做。可见性防线：无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告（不阻断——role 自报可伪造，仅审计信号）。
 
@@ -204,7 +210,10 @@ runner 的角色派发规则（对投影每轮重算，维度 → 派发形态�
 ```
 ~/.cw/                                    # CW_HOME（环境变量可覆盖）
 └── __Users__you__proj-<hash8>/           # cwd 编码（/ \ . → __ + sha256 前 8 位防碰撞）
-    ├── events.log                        # 事件账本（append-only JSONL）
+    ├── events.log                        # unit 域事件账本（append-only JSONL，六类事件）
+    ├── gate-events.log                   # gate 域事件账本（硬隔离双域：三类事件 GateCheckRan/GateCacheHit/PipelineStepRan，独立 seq 空间，与 events.log 互不可见）
+    ├── gate-artifacts/
+    │   └── <check>/<runId>/report.json   # gate check 产物（sha256 入账锚定；hit 路径复制来源 report + source 标注）
     ├── evidence/
     │   ├── <unitId>/<runId>/             # verify 运行产物（账本只记元数据 + sha256）
     │   └── <unitId>/attachments/         # 提交原文副本（<sha256>.<name>，内容寻址幂等：spec / build --file / unit brief 三类）
