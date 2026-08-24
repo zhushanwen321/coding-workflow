@@ -124,11 +124,9 @@ import type {
 } from "../events/types.js";
 import {
   BUILD_DRIFT_MAX_ATTEMPTS,
-  type BuildDriftFact,
   buildDriftFacts,
   computeFrontier,
   consecutiveIntegrationFails,
-  type FlakeReviewFact,
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
   latestSpecReviewAfterLastSpec,
@@ -215,6 +213,14 @@ export interface RunLoopOptions {
   rootId: string;
   adapter: AgentSpawnAdapter;
   cwd: string;
+  /**
+   * u-i2-a（design-hi-cw-runner-extension §3.2 R2）：进度事件发射器——库形态
+   * 消费者（pi extension）的 widget/notify/对账数据源。加法可选项：CLI 壳
+   * （handlers/run.ts）不传 = 行为不变（硬约束）。回调抛错由循环吞掉不炸主循环
+   * （stderr 记录）——发射器是观测面不是信任边界。cw 核心不知道 pi 存在（G4），
+   * 事件表最小集：每条对应一个 UI 消费点，无消费点的不发。
+   */
+  onEvent?: (ev: LoopEvent) => void;
   pollMs?: number;
   maxIdleMs?: number;
   maxConcurrency?: number;
@@ -252,6 +258,51 @@ export interface RunLoopOptions {
    * （易失进程态非事实，总纲 D8 裁决）。
    */
   forceDispatch?: boolean;
+}
+
+/**
+ * u-i2-a（R2 最小集）：runLoop 的进度事件表——库形态消费者的结构化数据源。
+ * round = 每轮 frontier 重算摘要（widget）；dispatch/settled = spawn 生命周期
+ * （面板对账）；stopped = 停派转人工命中（notify/收件箱）；reflection = 反思
+ * followUp 已发（七问轮次可见）；error = 循环内非致命错误路径的出声镜像。
+ */
+export type LoopEvent =
+  /** 轮次开始（frontier 维度 → 该维度 unit 数；维度语义单一出处 = frontier.ts） */
+  | { kind: "round"; seq: number; frontierSummary: Record<string, number> }
+  /** 派发成功入 in-flight（subagentSlug = `${unitId}-${role}`，面板对账锚） */
+  | { kind: "dispatch"; unitId: string; role: AgentRole; subagentSlug: string }
+  /** spawn 结算（四态退出码原样透传） */
+  | { kind: "settled"; unitId: string; role: AgentRole; result: SpawnResult }
+  /** 停派转人工命中（五类停派维度之一；每 unit×维度只发一次） */
+  | { kind: "stopped"; unitId: string; dimension: string; reason: string }
+  /** 反思轮次已发（followUp 链挂接或占位 ReflectionRan 代写） */
+  | { kind: "reflection"; unitId: string; round: number }
+  /** 非致命错误路径（出声 + 跳过本轮，循环继续） */
+  | { kind: "error"; stage: string; message: string };
+
+/** stopped 事件的维度集（停派五类中的四类投影维度；TIMEOUT 封顶走 loop 内判定） */
+const STOPPED_DISPATCH_DIMENSIONS = [
+  "specReviewDeadlock",
+  "flakeReview",
+  "specContractDeadlock",
+  "buildDrift",
+] as const;
+
+/** stopped 事件的 reason 文案（短句；完整恢复指引在 stderr 转人工消息里） */
+const STOPPED_REASONS: Record<(typeof STOPPED_DISPATCH_DIMENSIONS)[number], string> = {
+  specReviewDeadlock: "spec-review 打回代数达预算（designer-reviewer 活锁），停派转人工",
+  flakeReview: "e2e 验收连挂 ≥2（flake 疑似），停派 developer 转人工判定",
+  specContractDeadlock: "验收命令解析失败 2 代回炉仍连挂，停派转人工",
+  buildDrift: "build 证据达预算无 pass verify（缓慢进展），停派转人工",
+};
+
+/** round 事件的 frontier 摘要（维度 → 该维度 unit 数；仅本 root 子树外的也不排除——全账本口径与 `cw frontier` 一致） */
+function summarizeFrontier(groups: FrontierGroups): Record<string, number> {
+  const summary: Record<string, number> = {};
+  for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
+    summary[key] = groups[key].length;
+  }
+  return summary;
 }
 
 /** in-flight 派发（mx-1 派发 gate 后同 unit 任意时刻至多一个在飞 spawn） */
@@ -387,6 +438,7 @@ function settleTimeoutEscalations(
   rootId: string,
   artifactDir: string,
   spawnTimeoutMs: number,
+  onStopped?: (unitId: string, role: AgentRole) => void,
 ): Map<string, number> {
   const unitSeqs = unitEventHighWaterSeqs(events);
   for (const [unitId, seq] of unitSeqs) {
@@ -399,6 +451,8 @@ function settleTimeoutEscalations(
       escalated.set(unitId, streak.role);
       // lv-2：文案第 3 条显示本循环实际的 spawn 超时值与调大入口
       emitErr(escalationMessage(rootId, unitId, streak.role, artifactDir, spawnTimeoutMs));
+      // u-i2-a：停派五类的 TIMEOUT 封顶档（单进程内存态，无投影维度）——onEvent 出声
+      onStopped?.(unitId, streak.role);
     }
   }
   return unitSeqs;
@@ -448,25 +502,12 @@ function writeBriefWithHistory(
  * 性半边（fx-1 R1 loop 级防御）。
  */
 function computeDispatchTargets(
+  groups: FrontierGroups,
   projection: SequencedProjection,
   rootId: string,
   inFlight: readonly InFlightSpawn[],
-  consecutiveFails: ReadonlyMap<string, number>,
-  flakeFacts: ReadonlyMap<string, readonly FlakeReviewFact[]>,
-  contractFacts: ReadonlyMap<string, SpecContractFacts>,
-  specFails: ReadonlyMap<string, number>,
-  maxSpecRejects: number,
-  buildDrifts: ReadonlyMap<string, BuildDriftFact>,
   excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
-  const groups = computeFrontier(projection, {
-    consecutiveIntegrationFails: consecutiveFails,
-    flakeReviewFacts: flakeFacts,
-    specContractFacts: contractFacts,
-    specReviewFailCounts: specFails,
-    maxSpecRejects,
-    buildDriftFacts: buildDrifts,
-  });
   const dimensionOf = new Map<string, keyof FrontierGroups>();
   for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
     for (const unitId of groups[key]) {
@@ -1137,6 +1178,7 @@ function settleFlightOutput(
   result: SpawnResult,
   events: readonly LedgerEvent[],
   budgets: DispatchBudgets,
+  onEvent?: (ev: LoopEvent) => void,
 ): void {
   const index = inFlight.indexOf(flight);
   if (index >= 0) {
@@ -1152,6 +1194,7 @@ function settleFlightOutput(
   emit([
     `[runner] ${new Date().toISOString()} ${flight.role} unit "${flight.unitId}" 退出 ${describeExit(result.exitCode, stopState)}`,
   ]);
+  onEvent?.({ kind: "settled", unitId: flight.unitId, role: flight.role, result });
 }
 
 /**
@@ -1164,6 +1207,7 @@ async function reportSettledFlights(
   inFlight: InFlightSpawn[],
   events: readonly LedgerEvent[],
   budgets: DispatchBudgets,
+  onEvent?: (ev: LoopEvent) => void,
 ): Promise<void> {
   for (const flight of [...inFlight]) {
     const settled = await Promise.race<SpawnResult | null>([
@@ -1171,7 +1215,7 @@ async function reportSettledFlights(
       sleep(0).then(() => null),
     ]);
     if (settled !== null) {
-      settleFlightOutput(inFlight, flight, settled, events, budgets);
+      settleFlightOutput(inFlight, flight, settled, events, budgets, onEvent);
     }
   }
 }
@@ -1337,6 +1381,22 @@ async function runLoopMain(
   // ph-i1 R4：反思 followUp 的已挂接登记（unitId → 已挂接的 specHash）——防同轮/
   // 跨轮对同一在飞句柄重复追问；新 spec（新 hash）自然重新挂接
   const attachedReflection = new Map<string, string>();
+  // u-i2-a：onEvent 发射器（回调抛错吞掉不炸主循环——观测面不是信任边界）+
+  // round 事件的轮次序号 + stopped 事件的 unit×维度去重（每命中只发一次）
+  const emitEvent = (ev: LoopEvent): void => {
+    if (opts.onEvent === undefined) {
+      return;
+    }
+    try {
+      opts.onEvent(ev);
+    } catch (err) {
+      emitErr(
+        `[runner] onEvent 回调抛错（已忽略，循环继续）：${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  };
+  let roundSeq = 0;
+  const announcedStopped = new Set<string>();
 
   while (true) {
     // u-i1-d R5：每轮 poll 重写心跳（活锁判定输入——他进程见 heartbeatTs 停滞
@@ -1390,7 +1450,7 @@ async function runLoopMain(
       // fx-6 X3a：killAll 前先补打印已退出 spawn 的结算行——race 的 sleep 分支
       // 先到点而 spawn 已退出时，末位（如 root exec-reviewer）的结算行会在此
       // 收束分支被跳过（四跑异常-2），此处兜底出声
-      await reportSettledFlights(inFlight, events, { maxBuildAttempts, maxSpecRejects });
+      await reportSettledFlights(inFlight, events, { maxBuildAttempts, maxSpecRejects }, emitEvent);
       killAll(inFlight);
       // 退出清尾：run 已结束，本轮刚收集的 closed 子现场一并回收（延迟窗口语义
       // 已过点——产出已 merge 进 root 分支且证据链闭合，D5：现场无保留价值；
@@ -1411,7 +1471,22 @@ async function runLoopMain(
 
     // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前——顺序语义见
     // settleTimeoutEscalations 注释）
-    lastUnitSeqs = settleTimeoutEscalations(events, timeoutStreaks, lastUnitSeqs, escalated, opts.rootId, artifactsDir, spawnTimeoutMs);
+    lastUnitSeqs = settleTimeoutEscalations(
+      events,
+      timeoutStreaks,
+      lastUnitSeqs,
+      escalated,
+      opts.rootId,
+      artifactsDir,
+      spawnTimeoutMs,
+      (unitId, role) =>
+        emitEvent({
+          kind: "stopped",
+          unitId,
+          dimension: "timeoutEscalation",
+          reason: `连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次 spawn TIMEOUT 封顶（最后派发 role：${role}），停止自动重派转人工`,
+        }),
+    );
 
     // 四类转人工维度的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
     // 打回活锁 / lv-2 buildDrift 缓慢进展——语义与去重见 announceManualEscalations
@@ -1432,6 +1507,36 @@ async function runLoopMain(
         buildDrift: announcedBuildDrift,
       },
     );
+    // u-i2-a：frontier 每轮只算一次——round 事件（widget 数据源）、stopped 事件
+    //（停派四维命中）与派发计算（computeDispatchTargets）消费同一份投影（同源）
+    const groups = computeFrontier(projection, {
+      consecutiveIntegrationFails: consecutiveIntegrationFails(events),
+      flakeReviewFacts: escalatedFacts.flakes,
+      specContractFacts: escalatedFacts.contractFacts,
+      specReviewFailCounts: escalatedFacts.specFails,
+      maxSpecRejects,
+      buildDriftFacts: driftFacts,
+    });
+    roundSeq += 1;
+    emitEvent({ kind: "round", seq: roundSeq, frontierSummary: summarizeFrontier(groups) });
+    for (const dimension of STOPPED_DISPATCH_DIMENSIONS) {
+      for (const unitId of groups[dimension]) {
+        if (!subtreeIds.has(unitId)) {
+          continue;
+        }
+        const dedupeKey = `${unitId}|${dimension}`;
+        if (announcedStopped.has(dedupeKey)) {
+          continue;
+        }
+        announcedStopped.add(dedupeKey);
+        emitEvent({
+          kind: "stopped",
+          unitId,
+          dimension,
+          reason: STOPPED_REASONS[dimension],
+        });
+      }
+    }
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
@@ -1506,6 +1611,11 @@ async function runLoopMain(
             unit.reflections.length + 1,
             spawnTimeoutMs,
           );
+          emitEvent({
+            kind: "reflection",
+            unitId: unit.unitId,
+            round: unit.reflections.length + 1,
+          });
         }
         // 非交互在飞：等本轮结算后走代写路径（不抢跑 agent 未完成的现场）
         continue;
@@ -1514,6 +1624,11 @@ async function runLoopMain(
         new EventLedger(ledgerPath(getCwHome(), opts.cwd)).append("ReflectionRan", {
           unitId: unit.unitId,
           specHash: spec.specHash,
+          round: unit.reflections.length + 1,
+        });
+        emitEvent({
+          kind: "reflection",
+          unitId: unit.unitId,
           round: unit.reflections.length + 1,
         });
         emitErr(
@@ -1532,15 +1647,10 @@ async function runLoopMain(
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
     // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
     const targets = computeDispatchTargets(
+      groups,
       projection,
       opts.rootId,
       inFlight,
-      consecutiveIntegrationFails(events),
-      escalatedFacts.flakes,
-      escalatedFacts.contractFacts,
-      escalatedFacts.specFails,
-      maxSpecRejects,
-      driftFacts,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {
@@ -1567,6 +1677,11 @@ async function runLoopMain(
             `[runner] unit "${target.unitId}" 的集成派发异常（本轮跳过，下轮重算自动重试）：` +
               `${err instanceof Error ? err.message : String(err)}\n`,
           );
+          emitEvent({
+            kind: "error",
+            stage: "integration",
+            message: `unit "${target.unitId}" 的集成派发异常：${err instanceof Error ? err.message : String(err)}`,
+          });
         }
         continue;
       }
@@ -1608,6 +1723,11 @@ async function runLoopMain(
         emitErr(
           `[runner] unit "${target.unitId}" worktree 就绪失败，跳过本轮派发：${ensured.error}\n`,
         );
+        emitEvent({
+          kind: "error",
+          stage: "worktree",
+          message: `unit "${target.unitId}" worktree 就绪失败：${ensured.error}`,
+        });
         continue;
       }
       const briefPath = writeBriefWithHistory(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir, events);
@@ -1651,12 +1771,23 @@ async function runLoopMain(
           `[runner] unit "${target.unitId}" 的 ${target.role} 派发 spawn 异常（本轮跳过，下轮重算自动重试）：` +
             `${err instanceof Error ? err.message : String(err)}\n`,
         );
+        emitEvent({
+          kind: "error",
+          stage: "spawn",
+          message: `unit "${target.unitId}" 的 ${target.role} 派发 spawn 异常：${err instanceof Error ? err.message : String(err)}`,
+        });
         continue;
       }
       inFlight.push({ role: target.role, unitId: target.unitId, handle, reviewerWindow });
       emit([
         `[runner] ${new Date().toISOString()} 派发 ${target.role} → unit "${target.unitId}"（worktree: ${wtDir}，brief: ${briefPath}）`,
       ]);
+      emitEvent({
+        kind: "dispatch",
+        unitId: target.unitId,
+        role: target.role,
+        subagentSlug: `${target.unitId}-${target.role}`,
+      });
     }
 
     // 等待（六步之 4）：任一 spawn 退出或 poll 到点，先到者唤醒重算
@@ -1679,6 +1810,7 @@ async function runLoopMain(
           ? new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll()
           : events,
         { maxBuildAttempts, maxSpecRejects },
+        emitEvent,
       );
       if (finished.result.exitCode === "SPAWN_ERROR") {
         killAll(inFlight);
