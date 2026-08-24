@@ -373,6 +373,22 @@ function specContractBrokenTasks(
  * D1a 标记行契约与 D4 已知边界二「规则⑤不豁免 topic 条目」随指引一并给出，
  * 防 designer 照指引上收后写裸命令 / 踩规则⑤连环拒）。
  */
+/**
+ * ph-i1 R4：reflectionPending 派发的 designer 任务书（占位形态）。反思问题集
+ * （四流程七问）属 ph-2 领地——本波次 loop 在 brief 之后经 followUp 追加反思
+ * 提示（loop.ts REFLECTION_PLACEHOLDER_PROMPT），brief 只说明情境与无需重复
+ * 提交 spec；TODO(ph-i2) 七问接入后本模板与 followUp 文案一并替换。
+ */
+function reflectionPendingTasks(unit: SequencedUnitProjection): string {
+  return [
+    "## 你的任务（designer：反思，占位形态）",
+    `unit "${unit.unitId}" 的 spec 已入账（round 反思阶段）。请基于 spec 撰写过程反思：`,
+    "假设是否都已验证、验收是否有真空、拆分是否合理。",
+    "反思结论无需重写账本——由 runner 在反思结束后写 ReflectionRan（你不需要调用任何 cw 写命令）。",
+    "（占位任务书：TODO(ph-i2) 接四流程七问。）",
+  ].join("\n");
+}
+
 function designerFirstTasks(unit: SequencedUnitProjection, projection: SequencedProjection): string {
   const isRootWithoutChildren =
     unit.parentId === null &&
@@ -534,7 +550,9 @@ function renderBrief(
                 ? designerFirstTasks(unit, projection)
                 : target.dimension === "buildReady"
                   ? ROLE_TASKS.developer(unit.unitId)
-                  : ROLE_TASKS.reviewer(unit.unitId);
+                  : target.dimension === "reflectionPending"
+                    ? reflectionPendingTasks(unit)
+                    : ROLE_TASKS.reviewer(unit.unitId);
   return [
     `# ${target.role} 任务书：unit "${unit.unitId}"`,
     "",

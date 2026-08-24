@@ -314,10 +314,16 @@ describe("mx-3 R2 fold 消费校验：role≠reviewer 的 spec-review verdict �
     expect(status.code).toBe(0);
     expect(status.stdout).toMatch(/demo\s+created/);
     expect(status.stdout).not.toMatch(/demo\s+spec-frozen/);
-    // 消费侧一致：designer 的 pass 被无视 → unit 仍在独立审查待办组
+    // 消费侧一致：designer 的 pass 被无视 → unit 仍停 created。ph-i1 R4 起无
+    // reviewer verdict 的 spec 先入反思组（reflectionPending）——同样不驱动状态
     const frontier = runCli(repoDir, ["frontier", "--json"]);
-    const groups = JSON.parse(frontier.stdout) as { specReviewPending: string[]; specFixPending: string[] };
-    expect(groups.specReviewPending).toContain("demo");
+    const groups = JSON.parse(frontier.stdout) as {
+      reflectionPending: string[];
+      specReviewPending: string[];
+      specFixPending: string[];
+    };
+    expect(groups.reflectionPending).toContain("demo");
+    expect(groups.specReviewPending).not.toContain("demo");
     expect(groups.specFixPending).not.toContain("demo");
   });
 

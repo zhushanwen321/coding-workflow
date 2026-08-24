@@ -60,7 +60,7 @@ spec gate 规则⑨入账前静态检查（`src/gates/spec-rules.ts` 的 `ADAPTE
 
 ### 事件账本（event ledger）
 
-唯一的真相源：append-only JSONL（`events.log`），五类事件：
+唯一的真相源：append-only JSONL（`events.log`），六类事件：
 
 | 事件 | 载荷要点 |
 |---|---|
@@ -69,6 +69,7 @@ spec gate 规则⑨入账前静态检查（`src/gates/spec-rules.ts` 的 `ADAPTE
 | `VerdictSubmitted` | verdictKind（spec-review / exec-review）、verdict（pass / fail）、evidenceRefs、role（自报：审计载体非信任边界；spec-review verdict 经命令面必填且必须 reviewer——mx-3，exec-review 可选缺省不入账） |
 | `EvidenceSubmitted` | runId（幂等键）、commit、paths[]、sha256[]、exitCode |
 | `VerifyRan` | runId、reportHash、result（pass / fail）、acceptanceIds[]、parseFailedAcceptanceIds[]（可选，mx5-1：本次 verify 产物解析失败的验收 id；旧账本缺字段 = 无解析失败，重放兼容） |
+| `ReflectionRan` | unitId、specHash（反思锚：重提新 spec = 新 hash = 需重新反思）、round（unit 级轮次，1 起）、sessionFile?（审计锚）、revisedSpec?（是否引发 spec 修订）——反思先于审查的锚记录，纯 append、不参与四态派生 |
 
 事件一次写入不可改；写账本一律走 cw 命令、由短事务（文件锁）串行化。
 
@@ -140,9 +141,10 @@ runner 对某 unit 停止自动派发的状态类 = 四个投影转人工维度�
 
 ### frontier（就绪集合）
 
-对投影算「哪些单元的哪个阶段现在可以派发」（`src/readonly/frontier.ts`，十三组——十二个推进/转人工维度 + lv-2 的 buildDrift 缓慢进展停派组）：
+对投影算「哪些单元的哪个阶段现在可以派发」（`src/readonly/frontier.ts`，十四组——十三个推进/转人工维度 + lv-2 的 buildDrift 缓慢进展停派组）：
 
 - `specReady`：created 且无 spec——待 designer 撰写 spec（首派）
+- `reflectionPending`：created 且有 spec，最新 SpecSubmitted 的 specHash 无对应 ReflectionRan——待反思（反思先于审查：loop 对长驻 spawn 发 followUp，完成后写 ReflectionRan 再派 reviewer；重提新 spec 即重新 pending）
 - `specReviewPending`：created 且有 spec、最后 spec 后无任何 spec-review verdict——待独立 reviewer 审查（designer 不自审）
 - `specFixPending`：created 且最后 spec 后最近的 spec-review verdict 是 fail——待 designer 修 spec 重提
 - `specReviewDeadlock`：spec-review 打回代数 ≥ 预算（默认 10，`--max-spec-rejects` 可注入更紧值；重提不清零）——转人工，机器派发无出口
@@ -168,7 +170,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 
 实现角色：写代码 + 提交 build 证据（frontier `buildReady` 维度的派发对象）。旧角色名已于 2026-08-19 用户拍板废弃（mx5-4 改名，直接改不做兼容别名；重放兼容论证见 `src/events/types.ts` 的 role 注释，改名始末与旧值见 `docs/rewrite/design-spec-contract-replan.md` D4）。三角色分工：designer（分解 + 写 spec + 回炉修命令契约）/ developer（实现）/ reviewer（独立审查——spec-review verdict 只认 reviewer）。历史账本携带改名前旧角色值的事件重放语义不变：fold 对 exec-review verdict 不比对 role、对 spec-review 只认 reviewer，改名前后折叠行为一致（role 联合类型：`src/events/types.ts`）。
 
-## 命令面速查（9 个）
+## 命令面速查（10 个）
 
 | 命令 | 类别 | 用途 |
 |------|------|------|
@@ -178,12 +180,13 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；spec-review verdict 必填 `--role reviewer`——缺/错 exit 1 拒收，mx-3 入账层强校验；exec-review 的 `--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
 | `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
+| `cw setup-agent-dir [--agent-dir <路径>] [--ask-user-source <src>] [--ask-user-path <路径>] [--pi-bin <路径>] [--timeout-ms <n>] [--skip-probe]` | 写 | 受控 agentDir 安装准备（spawnSync 透传插件包 `@zhushanwen/pi-coding-workflow-extension` 的 installer：装 ask-user 扩展清单 + manifest.json + 启动探针；installer 未找到 = exit 2 环境错误） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |
-| `cw frontier [--json]` | 只读 | 就绪集合（十三组，见上 frontier 小节） |
+| `cw frontier [--json]` | 只读 | 就绪集合（十四组，见上 frontier 小节） |
 | `cw tree` | 只读 | 分解树 |
 | `cw report [--unit <id>]` | 只读 | 证据链汇总（逐验收覆盖标记 ✓/✗ + hash 前 12 位） |
 
-runner 的角色派发规则（对投影每轮重算，维度 → 派发形态单一映射）：created 且无 spec → designer（首派，任务书第 0 步建 split 子 unit）；created 且有 spec 待审 → 独立 reviewer（specReviewPending，designer 不自审）；spec-review fail 后 → designer 修 spec 重提（specFixPending，任务书内嵌 fail comment 全文）；spec-frozen 单元解析失败连挂 ≥2 → designer 回炉修验收命令契约（specContractBroken，任务书内嵌逐轮解析失败原文，新 spec 照旧过独立 reviewer）；spec-frozen 叶子 → developer（verified 未 closed → reviewer exec-review）；子全 verified 的根 → 不派 agent，直接集成；集成连续 fail 达上限 → designer 处置契约漂移。同 unit 存在任意 role 的 in-flight spawn 时本轮缓派（防 worktree reset 清在飞现场）。等待 spawn 期间零锁（否则子进程的 evidence submit 饿死）。中断（Ctrl-C）后重跑 `cw run` 从事件投影续接，已 closed 的单元不重做。可见性防线：无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告（不阻断——role 自报可伪造，仅审计信号）。
+runner 的角色派发规则（对投影每轮重算，维度 → 派发形态单一映射）：created 且无 spec → designer（首派，任务书第 0 步建 split 子 unit）；created 且有 spec 且最新 spec 未反思 → 反思先于审查（reflectionPending：loop 对在飞长驻句柄发 followUp 反思文案，完成后写 ReflectionRan 再派 reviewer，无在飞句柄则代写占位事件）；created 且有 spec 待审 → 独立 reviewer（specReviewPending，designer 不自审）；spec-review fail 后 → designer 修 spec 重提（specFixPending，任务书内嵌 fail comment 全文）；spec-frozen 单元解析失败连挂 ≥2 → designer 回炉修验收命令契约（specContractBroken，任务书内嵌逐轮解析失败原文，新 spec 照旧过独立 reviewer）；spec-frozen 叶子 → developer（verified 未 closed → reviewer exec-review）；子全 verified 的根 → 不派 agent，直接集成；集成连续 fail 达上限 → designer 处置契约漂移。同 unit 存在任意 role 的 in-flight spawn 时本轮缓派（防 worktree reset 清在飞现场）。等待 spawn 期间零锁（否则子进程的 evidence submit 饿死）。中断（Ctrl-C）后重跑 `cw run` 从事件投影续接，已 closed 的单元不重做。可见性防线：无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告（不阻断——role 自报可伪造，仅审计信号）。
 
 ## 环境变量
 

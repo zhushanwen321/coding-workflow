@@ -196,9 +196,10 @@ describe("E2E real：flag 端到端（--unit / --json）", () => {
     // （rv-5 起含 flakeReview 维度；mx-1 起 created+spec 维度重排为
     // specReviewPending / specFixPending / specReviewDeadlock 三组；mx5-2 起含
     // specContractBroken / specContractDeadlock 契约回炉两组；lv-2 起含
-    // buildDrift 缓慢进展停派组）
+    // buildDrift 缓慢进展停派组；ph-i1 R4 起含 reflectionPending 反思组）
     expect(JSON.parse(f.stdout)).toEqual({
       specReady: ["root"],
+      reflectionPending: [],
       specReviewPending: [],
       specFixPending: [],
       specReviewDeadlock: [],
@@ -250,6 +251,7 @@ describe("E2E real：空账本目录", () => {
     expect(f.code).toBe(0);
     expect(JSON.parse(f.stdout)).toEqual({
       specReady: [],
+      reflectionPending: [],
       specReviewPending: [],
       specFixPending: [],
       specReviewDeadlock: [],

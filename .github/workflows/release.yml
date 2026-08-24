@@ -3,9 +3,17 @@ name: Release
 on:
   push:
     tags:
-      - 'v*' # push v0.0.1 形式的 tag 触发发布
+      - 'v*' # push v0.0.1 形式的 tag 触发核心包发布
+      - 'ext-v*' # push ext-v0.5.0 形式的 tag 触发插件包发布
   workflow_dispatch: # Actions 页面手动触发
     inputs:
+      package:
+        description: '发布哪个包'
+        type: choice
+        options:
+          - core
+          - extension
+        required: false
       dry-run:
         description: '空跑（只构建+测试，不发布）'
         type: boolean
@@ -17,7 +25,8 @@ permissions:
   id-token: write # npm publish --provenance 需要此权限
 
 jobs:
-  publish:
+  publish-core:
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.package == 'core'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +52,37 @@ jobs:
 
       - run: npm test
 
-      # 验证打包内容（CI 日志可见，便于排查多打包/漏打包问题）
+      # 验证打包内容（CI 日志可见，便于排查多打包/漏打包问题）。
+      # PP1 锚：输出不得含 pi-coding-workflow-extension/（files 白名单天然排除）。
+      - run: npm pack --dry-run | tee /tmp/pack.txt && ! grep -q 'pi-coding-workflow-extension/' /tmp/pack.txt
+
+      - name: Publish to npm
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-extension:
+    if: startsWith(github.ref, 'refs/tags/ext-v') || inputs.package == 'extension'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pi-coding-workflow-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      # 插件包直发 TS 源码（design-hi-monorepo-split 决策二），无构建步骤
+      - run: npm install
+
+      - run: npm test
+
+      # 验证打包内容（CI 日志可见）；--ignore-scripts 跳过根包 postinstall 钩子
       - run: npm pack --dry-run
 
       - name: Publish to npm

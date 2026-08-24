@@ -54,3 +54,33 @@ export interface SpawnHandle {
   wait(): Promise<SpawnResult>;
   kill(): void;
 }
+
+/**
+ * 可选交互能力扩展（ph-i1 R1，design-hi-spawn-pi-rpc.md §3.2）：一次性适配器
+ * （human/pi）零改动——AgentSpawnAdapter.spawn 返回类型仍是 SpawnHandle，消费方
+ * （loop / ph-i2 的 subagent-workflow 后端）用 isInteractiveSpawnHandle 守卫探测；
+ * 不支持的适配器被追问 followUp 时给明确错误而非静默。
+ */
+export interface InteractiveSpawnHandle extends SpawnHandle {
+  /** 对同一长驻进程追加输入（反思追问等，上下文全保留） */
+  followUp(text: string): Promise<void>;
+  /** 等待 agent 流式结束（agent_settled 锚）；超时返回 false */
+  waitForIdle(ms: number): Promise<boolean>;
+  /** 订阅子进程的 extension_ui_request（穿透转发钩子） */
+  onUiRequest(cb: (req: { id: string; method: string }) => void): void;
+  /** 优雅收尾（stdin EOF 优雅退出）后返回与 wait() 同构的结算结果 */
+  done(): Promise<SpawnResult>;
+  /** 握手（get_state）回填的确定性 session 锚 */
+  sessionAnchor?: { sessionId: string; sessionFile: string };
+}
+
+/** 类型守卫：handle 是否具备交互能力（R1 能力探测显式化的唯一入口） */
+export function isInteractiveSpawnHandle(handle: SpawnHandle): handle is InteractiveSpawnHandle {
+  const h = handle as Partial<InteractiveSpawnHandle>;
+  return (
+    typeof h.followUp === "function" &&
+    typeof h.waitForIdle === "function" &&
+    typeof h.onUiRequest === "function" &&
+    typeof h.done === "function"
+  );
+}

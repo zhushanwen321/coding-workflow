@@ -424,7 +424,21 @@ describe("frontier（验收#2）", () => {
     const ready = computeFrontier(proj, {
       specReviewFailCounts: specReviewFailCounts(events),
     });
-    expect(ready.specReviewPending).toContain("rr");
+    // ph-i1 R4：spec 提交后首审前插入反思步——rr 无 verdict 且无 ReflectionRan
+    // → reflectionPending（不再直接 specReviewPending）
+    expect(ready.reflectionPending).toContain("rr");
+    expect(ready.specReviewPending).not.toContain("rr");
+    // 补反思（锚 = specHash）后进入独立 reviewer 待审出口（mx-1：specReviewPending）
+    ledger.append("ReflectionRan", {
+      unitId: "rr",
+      specHash: strongSpec("rr").specHash,
+      round: 1,
+    });
+    const reflected = computeFrontier(fold(ledger.readAll()), {
+      specReviewFailCounts: specReviewFailCounts(ledger.readAll()),
+    });
+    expect(reflected.reflectionPending).not.toContain("rr");
+    expect(reflected.specReviewPending).toContain("rr");
     expect(ready.specFixPending).toContain("sf");
     expect(ready.specReviewDeadlock).toEqual([]); // 各 1 次 fail < 阈值（mx4 后默认 10）
     expect(ready.specReady).not.toContain("rr");
