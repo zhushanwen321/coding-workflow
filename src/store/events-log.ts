@@ -3,7 +3,7 @@
  *
  * 职责：
  *   - append：文件锁短事务内「读末 seq → seq+1 → 追加 JSONL 行 + fsync」
- *   - readAll / readUnit：全量 / 单 unit 读取（逐行解析，JSON 语法 + 信封形状
+ *   - readAll / readUnit：全量 / 单锚实体读取（逐行解析，JSON 语法 + 信封形状
  *     校验，损坏行抛带行号与恢复动作的错误——fx-7 S-1 收口读层，fold/handler
  *     的裸读崩溃面即闭合）
  *   - 跨进程文件锁：lockfile + O_EXCL 原子创建 + stale 检测（30s 阈值 + pid 指纹
@@ -15,11 +15,15 @@
  * 锁语义沿用旧实现 archive/src/store/cw-store.ts（附录 B.3 已核实的机制），
  * 按验收文档 u1 调整重试上界：从「50 次 × 100ms」改为「总时长 10s」。
  *
- * 写入校验（锁内、追加前；拒绝 = 抛错，账本保持不变）：
- *   - 孤儿事件拒绝：unit 必须已有 UnitCreated（UnitCreated 自身除外）
- *   - EvidenceSubmitted 幂等：同 unitId+runId 已入账则拒绝重复记账，抛
- *     DuplicateEvidenceError（可区分拒绝——上层据此把「重试同一提交」转幂等成功）
- *   - UnitCreated 幂等：同 unitId 只能创建一次
+ * 域泛化（rp-0，design-release-pipeline.md §3.3 D2）：本模块只保留领域无关的
+ * 账本心机制（锁 / seq / fsync / 信封骨架）。域特化知识——事件封闭集、锚字段、
+ * 写入不变式——由构造注入的 LedgerDomain 描述符提供，缺省 = unit 域描述符
+ * （ledger-domain.ts 的 unitLedgerDomain），故存量调用点零改动；后续 gate 域
+ * 复用同一机制层，仅新增自己的描述符。
+ *
+ * 写入校验（锁内、追加前；拒绝 = 抛错，账本保持不变）——域级不变式见注入
+ * 描述符（unit 域 = 孤儿拒绝 / UnitCreated 唯一 / EvidenceSubmitted 幂等，
+ * 规则本体在 ledger-domain.ts）。
  */
 import {
   closeSync,
@@ -33,14 +37,20 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
+import type { EventPayloadMap } from "../events/types.js";
 import type {
-  DiscriminatedEvent,
-  EventEnvelope,
-  EventPayloadMap,
-  EventType,
-  EvidenceSubmittedPayload,
-  LedgerEvent,
-} from "../events/types.js";
+  DomainEnvelope,
+  DomainEvent,
+  LedgerDomain,
+  LedgerDomainShape,
+} from "./ledger-domain.js";
+import { unitLedgerDomain } from "./ledger-domain.js";
+
+// 既有导出迁移记档（rp-0 D2）：DuplicateEvidenceError 的定义随 unit 域不变式
+// 迁至 ledger-domain.ts（由 unitLedgerDomain.validateAppend 抛出）；此处
+// re-export 保住既有 import 路径——消费方（src/handlers/evidence-submit.ts
+// 依赖 instanceof 区分幂等拒绝）零改动。
+export { DuplicateEvidenceError } from "./ledger-domain.js";
 
 /** lockfile 被视为 stale 的时间阈值（ms） */
 const LOCK_STALE_TIMEOUT_MS = 30_000;
@@ -54,16 +64,6 @@ const MS_PER_SECOND = 1_000;
 const INT32_BYTES = 4;
 /** 首条事件 seq（账本内单调递增起点） */
 const FIRST_SEQ = 1;
-
-/** 六类事件 type 的运行时枚举集（types.ts EventType 的投影，信封校验单一出处；ph-i1 R4 起 +ReflectionRan） */
-const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set<string>([
-  "UnitCreated",
-  "SpecSubmitted",
-  "VerdictSubmitted",
-  "EvidenceSubmitted",
-  "VerifyRan",
-  "ReflectionRan",
-]);
 
 /** 报错里的字段值预览上限（防损坏行携带巨型值撑爆错误信息） */
 const PREVIEW_MAX_CHARS = 100;
@@ -80,18 +80,19 @@ function preview(value: unknown): string {
  * e.payload.unitId / append 的末行 seq+1 / frontier 的 Date.parse(event.ts)），
  * 违背本模块「损坏行抛带恢复动作错误」的承诺。
  *
- * 边界（对齐 types.ts，刻意最小）：信封层 type ∈ 五类枚举 / seq 正整数 / ts
- * 字符串 + 五类 payload 共有的 unitId 字符串。分事件类型的字段级 schema 属
- * 过重校验，语义层继续由既有防线（孤儿 / 重复 UnitCreated / 幂等键）覆盖。
+ * 边界（刻意最小）：信封层 type ∈ 域封闭集 / seq 正整数 / ts 字符串 + 域锚
+ * 字段字符串——封闭集与锚由注入的域描述符提供（rp-0 D2），其余骨架留在本层。
+ * 分事件类型的字段级 schema 属过重校验，语义层继续由既有防线（域级
+ * validateAppend：孤儿 / 重复 UnitCreated / 幂等键）覆盖。
  * 返回 undefined = 通过；否则返回缺口描述（调用方拼进行号报错）。
  */
-function envelopeShapeError(parsed: unknown): string | undefined {
+function envelopeShapeError(parsed: unknown, domain: LedgerDomainShape): string | undefined {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return `行是 ${preview(parsed)}（应为事件对象）`;
   }
   const env = parsed as Record<string, unknown>;
-  if (typeof env.type !== "string" || !KNOWN_EVENT_TYPES.has(env.type)) {
-    return `type=${preview(env.type)} 不在六类事件枚举（UnitCreated/SpecSubmitted/VerdictSubmitted/EvidenceSubmitted/VerifyRan/ReflectionRan）内`;
+  if (typeof env.type !== "string" || !domain.knownEventTypes.has(env.type)) {
+    return `type=${preview(env.type)} 不在${domain.typeSetLabel}内`;
   }
   if (typeof env.seq !== "number" || !Number.isInteger(env.seq) || env.seq < 1) {
     return `seq=${preview(env.seq)} 非正整数（信封承诺：账本内从 1 起单调递增）`;
@@ -103,32 +104,11 @@ function envelopeShapeError(parsed: unknown): string | undefined {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return `payload=${preview(payload)} 非对象`;
   }
-  const unitId = (payload as Record<string, unknown>).unitId;
-  if (typeof unitId !== "string") {
-    return `payload.unitId=${preview(unitId)} 非字符串（五类事件 payload 的共有锚字段）`;
+  const anchor = domain.anchorOf(payload as Record<string, unknown>);
+  if (typeof anchor.value !== "string") {
+    return `payload.${anchor.name}=${preview(anchor.value)} 非字符串（${domain.anchorLabel}）`;
   }
   return undefined;
-}
-
-/**
- * EvidenceSubmitted 幂等命中（同 unitId+runId 已入账）的可区分拒绝。
- *
- * 消费方区分处置：handler 层据此把「重试同一提交」转为幂等成功（exit 0 + 提示，
- * 不 append——账本本就无重复记账）；其他消费方仍可当普通 Error 透传（消息自带
- * 恢复动作）。
- */
-export class DuplicateEvidenceError extends Error {
-  readonly unitId: string;
-  readonly runId: string;
-
-  constructor(unitId: string, runId: string) {
-    super(
-      `EventLedger: 拒绝重复提交 EvidenceSubmitted：unit "${unitId}" + runId "${runId}" 已入账（幂等键防重复记账）。恢复动作：确认已入账可 readUnit("${unitId}")；重跑请使用新 runId 提交。`,
-    );
-    this.name = "DuplicateEvidenceError";
-    this.unitId = unitId;
-    this.runId = runId;
-  }
 }
 
 /** lockfile 指纹读取结果的三态 */
@@ -139,18 +119,32 @@ type LockFingerprint =
   /** 文件不存在（已被释放 / 并发清理） */
   | { kind: "missing" };
 
-export class EventLedger {
+export class EventLedger<M extends Record<string, unknown> = EventPayloadMap> {
   private readonly ledgerPath: string;
   private readonly lockPath: string;
   private readonly lockTotalTimeoutMs: number;
+  private readonly domain: LedgerDomain<M>;
   private lockHeld = false;
   /** 本次 acquireLock 是否见过「空指纹」lockfile（超时报错按此分流恢复动作） */
   private sawEmptyFingerprint = false;
 
-  constructor(ledgerPath: string, options?: { lockTotalTimeoutMs?: number }) {
+  /**
+   * @param ledgerPath 账本 JSONL 文件路径
+   * @param domain 域描述符（缺省 = unit 域；rp-0 D2 泛化注入点——事件封闭集 /
+   *   锚字段 / 写入不变式都来自它）
+   * @param options lockTotalTimeoutMs 可注入缩短（测试专用）
+   */
+  constructor(
+    ledgerPath: string,
+    domain?: LedgerDomain<M>,
+    options?: { lockTotalTimeoutMs?: number },
+  ) {
     this.ledgerPath = ledgerPath;
     this.lockPath = `${ledgerPath}.lock`;
     this.lockTotalTimeoutMs = options?.lockTotalTimeoutMs ?? LOCK_TOTAL_TIMEOUT_MS;
+    // 缺省注入 unit 域描述符：泛型缺省参数 = EventPayloadMap 时该 cast 恒为真；
+    // 调用方显式传自定义域时不会走到此分支——cast 表达的是「缺省 = unit 域」语义。
+    this.domain = domain ?? (unitLedgerDomain as unknown as LedgerDomain<M>);
     // 父目录自动创建（CW_HOME 下项目目录首次使用时不存在）
     mkdirSync(dirname(ledgerPath), { recursive: true });
   }
@@ -161,16 +155,17 @@ export class EventLedger {
    * 追加一条事件（文件锁短事务：读末 seq → 校验 → seq+1 追加 JSONL + fsync）。
    *
    * 拒绝时抛带恢复动作的 Error，账本不变：
-   *   - 孤儿事件 / 重复 UnitCreated / 重复 EvidenceSubmitted（见类头校验清单）
+   *   - 域级不变式拒绝（unit 域：孤儿事件 / 重复 UnitCreated / 重复
+   *     EvidenceSubmitted——见类头校验清单）
    *   - 账本存在损坏行（读取阶段即抛）
    */
-  append<K extends EventType>(type: K, payload: EventPayloadMap[K]): EventEnvelope<K> {
+  append<K extends keyof M & string>(type: K, payload: M[K]): DomainEnvelope<M, K> {
     this.acquireLock();
     try {
       const events = this.readAll();
-      this.validateAppend(type, payload, events);
+      this.domain.validateAppend(type, payload, events);
       const seq = events.length === 0 ? FIRST_SEQ : events[events.length - 1].seq + 1;
-      const envelope: EventEnvelope<K> = { seq, ts: new Date().toISOString(), type, payload };
+      const envelope: DomainEnvelope<M, K> = { seq, ts: new Date().toISOString(), type, payload };
       this.appendLine(envelope);
       return envelope;
     } finally {
@@ -178,48 +173,8 @@ export class EventLedger {
     }
   }
 
-  /** 锁内追加前校验；违反不变式抛错（不写任何字节）。 */
-  private validateAppend(
-    type: EventType,
-    payload: EventPayloadMap[EventType],
-    events: readonly LedgerEvent[],
-  ): void {
-    // 宽泛的泛型信封无法按 type 窄化 payload，判别联合视图处理（见 types.ts）
-    const prior = events as DiscriminatedEvent[];
-    const unitCreated = prior.some(
-      (e) => e.type === "UnitCreated" && e.payload.unitId === payload.unitId,
-    );
-
-    if (type === "UnitCreated") {
-      if (unitCreated) {
-        throw new Error(
-          `EventLedger: 拒绝追加 UnitCreated：unit "${payload.unitId}" 已创建。恢复动作：账本 append-only 不支持重复创建；如需重新开始请使用新 unitId，查现有 unit 用 readUnit("${payload.unitId}")。`,
-        );
-      }
-      return;
-    }
-    if (!unitCreated) {
-      throw new Error(
-        `EventLedger: 拒绝追加 ${type}：unit "${payload.unitId}" 不存在（账本中无其 UnitCreated 事件）。恢复动作：先对该 unit 追加 UnitCreated（cw create），再提交本事件。`,
-      );
-    }
-    if (type === "EvidenceSubmitted") {
-      // 参数是宽 union，此分支按类型收窄到 EvidenceSubmittedPayload
-      const runId = (payload as EvidenceSubmittedPayload).runId;
-      const duplicated = prior.some(
-        (e) =>
-          e.type === "EvidenceSubmitted" &&
-          e.payload.unitId === payload.unitId &&
-          e.payload.runId === runId,
-      );
-      if (duplicated) {
-        throw new DuplicateEvidenceError(payload.unitId, runId);
-      }
-    }
-  }
-
   /** 以追加模式写入一行 JSON + fsync；文件首次创建时补 fsync 父目录（POSIX 持久性）。 */
-  private appendLine(envelope: LedgerEvent): void {
+  private appendLine(envelope: DomainEvent<M>): void {
     const existed = existsSync(this.ledgerPath);
     const fd = openSync(this.ledgerPath, "a");
     try {
@@ -249,7 +204,7 @@ export class EventLedger {
    * 账本文件不存在 → 空数组（全新项目，正常）；存在损坏行（JSON 语法非法或
    * 信封形状损坏，见 envelopeShapeError）→ 抛带行号与恢复动作的错误。
    */
-  readAll(): LedgerEvent[] {
+  readAll(): DomainEvent<M>[] {
     let raw: string;
     try {
       raw = readFileSync(this.ledgerPath, "utf-8");
@@ -262,7 +217,7 @@ export class EventLedger {
     if (lines.length > 0 && lines[lines.length - 1] === "") {
       lines.pop(); // 末行换行收尾产生的空元素
     }
-    const events: LedgerEvent[] = [];
+    const events: DomainEvent<M>[] = [];
     for (let i = 0; i < lines.length; i++) {
       let parsed: unknown;
       try {
@@ -272,20 +227,22 @@ export class EventLedger {
           `EventLedger: 账本第 ${i + 1} 行不是合法 JSON（${this.ledgerPath}）：${(err as Error).message}。恢复动作：并发写已被文件锁串行化，损坏通常来自外部编辑；备份后检查该行，从损坏行起截断恢复（截断前确认无并发写入者）。`,
         );
       }
-      const shapeError = envelopeShapeError(parsed);
+      const shapeError = envelopeShapeError(parsed, this.domain);
       if (shapeError !== undefined) {
         throw new Error(
           `EventLedger: 账本第 ${i + 1} 行不是合法事件信封（${this.ledgerPath}）：${shapeError}。恢复动作：并发写已被文件锁串行化，损坏通常来自外部编辑；备份后检查该行，从损坏行起截断恢复（截断前确认无并发写入者）。`,
         );
       }
-      events.push(parsed as LedgerEvent);
+      events.push(parsed as DomainEvent<M>);
     }
     return events;
   }
 
-  /** 读取单个 unit 的全部事件（按账本顺序）。 */
-  readUnit(unitId: string): LedgerEvent[] {
-    return this.readAll().filter((e) => e.payload.unitId === unitId);
+  /** 读取单个锚实体的全部事件（按账本顺序；unit 域锚 = unitId，rp-0 D2 泛化）。 */
+  readUnit(anchorValue: string): DomainEvent<M>[] {
+    return this.readAll().filter(
+      (e) => this.domain.anchorOf(e.payload as Record<string, unknown>).value === anchorValue,
+    );
   }
 
   // ── 跨进程文件锁 ────────────────────────────────────────────
