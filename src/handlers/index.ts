@@ -1,6 +1,7 @@
 import type { CommandEntry } from "../dispatch.js";
 import { handleCreate } from "./create.js";
 import { handleEvidenceSubmit } from "./evidence-submit.js";
+import { handleGateQuery, handleGateWrap } from "./gate.js";
 import { handleReviewSubmit } from "./review-submit.js";
 import { handleRun } from "./run.js";
 import { handleSetupAgentDir } from "./setup-agent-dir.js";
@@ -39,5 +40,16 @@ export const commands: CommandEntry[] = [
     handler: handleSetupAgentDir,
     summary:
       "建受控 agentDir（默认 ~/.cw/agent-dir，--agent-dir 覆盖；装 ask-user 扩展 + manifest + 启动探针）",
+  },
+  {
+    name: "gate wrap",
+    handler: handleGateWrap,
+    summary:
+      "gate check 包装执行（--check 名 --base ref [--scope 路径...] [--run-id id] [--timeout-ms n] -- 命令；命中跳过重跑，exit 0/1/2 三态）",
+  },
+  {
+    name: "gate query",
+    handler: handleGateQuery,
+    summary: "查 gate 缓存 pass 条目（[--check 名] [--base ref] [--json]，只读）",
   },
 ];
