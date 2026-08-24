@@ -1,0 +1,47 @@
+{
+  "name": "@zhushanwen/pi-coding-workflow-extension",
+  "version": "0.5.0",
+  "description": "pi extension that runs the coding-workflow (cw) dispatch loop inside a pi session",
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "coding-workflow"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": []
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "bin/",
+    "README.md"
+  ],
+  "bin": {
+    "pi-cw-install": "./bin/install.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zhushanwen/coding-workflow": "^2.1.0",
+    "@zhushanwen/pi-subagent-workflow": "^0.3.1"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

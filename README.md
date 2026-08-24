@@ -23,6 +23,17 @@ npm install -g @zhushanwen/coding-workflow
 
 要求 Node ≥ 20。安装后 `cw` 命令全局可用。
 
+### pi 扩展（可选）
+
+在 [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 主会话内跑 cw 派发循环：
+
+```bash
+npx @zhushanwen/pi-coding-workflow-extension install   # 装 pi 会话扩展（loader 自动发现，重启 pi 生效）
+cw setup-agent-dir                                    # 建受控 agentDir（~/.cw/agent-dir，供 cw spawn 显式注入）
+```
+
+发版 tag 协议：`v*` → 核心包；`ext-v*` → 插件包（`@zhushanwen/pi-coding-workflow-extension`）。
+
 最小流程——人给意图（唯一一次人工输入），之后全自动：
 
 ```bash

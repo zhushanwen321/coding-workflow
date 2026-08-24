@@ -3,6 +3,7 @@ import { handleCreate } from "./create.js";
 import { handleEvidenceSubmit } from "./evidence-submit.js";
 import { handleReviewSubmit } from "./review-submit.js";
 import { handleRun } from "./run.js";
+import { handleSetupAgentDir } from "./setup-agent-dir.js";
 import { handleVerify } from "./verify.js";
 
 /** 写命令域注册表（u2 交付：create / evidence submit / review submit；verify 属 u4a；run 属 u5b） */
@@ -32,5 +33,11 @@ export const commands: CommandEntry[] = [
     name: "verify",
     handler: handleVerify,
     summary: "干净重跑验证（--unit <id> [--timeout-ms <n>]，checkout 冻结 commit 重跑验收）",
+  },
+  {
+    name: "setup-agent-dir",
+    handler: handleSetupAgentDir,
+    summary:
+      "建受控 agentDir（默认 ~/.cw/agent-dir，--agent-dir 覆盖；装 ask-user 扩展 + manifest + 启动探针）",
   },
 ];
