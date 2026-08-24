@@ -24,6 +24,10 @@ import { isAbsolute, join } from "node:path";
 const LEDGER_FILE_NAME = "events.log";
 /** 证据产物根目录名（账本只记元数据，产物本体落这里） */
 const EVIDENCE_DIR_NAME = "evidence";
+/** gate 域账本文件名（design-release-pipeline.md §3.3 D1，rp-0：与 unit 域 events.log 同目录不同文件，硬隔离双域） */
+const GATE_LEDGER_FILE_NAME = "gate-events.log";
+/** gate 域产物根目录名（report.json 落这里，布局 gate-artifacts/<check>/<runId>/） */
+const GATE_ARTIFACTS_DIR_NAME = "gate-artifacts";
 /** spawn 过程产物（brief/stdout/stderr）的项目层根目录名（fx-4，run 级 topic 目录在其下） */
 const TOPIC_DIR_NAME = "topic";
 /** 原文副本目录名（evidence/<unitId>/attachments/，fx-4 纯增量审计资产） */
@@ -63,6 +67,29 @@ export function encodeCwd(cwd: string): string {
 /** 账本路径：<cwHome>/<encoded-cwd>/events.log */
 export function ledgerPath(cwHome: string, cwd: string): string {
   return join(cwHome, encodeCwd(cwd), LEDGER_FILE_NAME);
+}
+
+/**
+ * gate 域账本路径（design-release-pipeline.md §3.3 D1，rp-0）：
+ * <cwHome>/<encoded-cwd>/gate-events.log——与 unit 域 events.log 同目录不同文件，
+ * 各自锁、各自 seq 空间、各自 fold（硬隔离双域，无跨域顺序需求）。
+ */
+export function gateLedgerPath(cwHome: string, cwd: string): string {
+  return join(cwHome, encodeCwd(cwd), GATE_LEDGER_FILE_NAME);
+}
+
+/**
+ * gate 域产物目录（D1/D4，rp-0）：<cwHome>/<encoded-cwd>/gate-artifacts/<check>/<runId>/。
+ * 一次 wrap（miss 执行或 hit 复用）一个目录，report.json 是记账闭合的产物载体
+ * （锁外先落，失败 = 整体环境错误不入账）。
+ */
+export function gateArtifactsDir(
+  cwHome: string,
+  cwd: string,
+  check: string,
+  runId: string,
+): string {
+  return join(cwHome, encodeCwd(cwd), GATE_ARTIFACTS_DIR_NAME, check, runId);
 }
 
 /** 证据产物目录：<cwHome>/<encoded-cwd>/evidence/<unitId>/<runId> */
