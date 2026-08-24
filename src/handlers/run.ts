@@ -1,11 +1,13 @@
 /**
- * `cw run --root <unitId> [--spawn human|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>]
+ * `cw run --root <unitId> [--spawn human|pi|pi-rpc] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>]
  * [--reviewer-model <m>] [--max-spec-rejects <n>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]`
  * （u7 验收文档锁定：--spawn 路由到后端无关调度循环
  * src/runner/loop.ts + AgentSpawn 适配器；mx-1 增补 --reviewer-model；mx-4 增补
  * --max-spec-rejects——runner 侧 spec 打回代数转人工预算，只影响本循环判定，
  * 只读命令恒用默认值；lv-2 增补 --max-build-attempts（buildDrift 停派预算）
- * 与 --spawn-timeout-ms（单次 spawn 超时，env CW_SPAWN_TIMEOUT_MS 同链））。
+ * 与 --spawn-timeout-ms（单次 spawn 超时，env CW_SPAWN_TIMEOUT_MS 同链）；
+ * ph-i1 增补 --spawn pi-rpc（长驻 RPC 适配器）与 --force-dispatch（跨进程派发锁
+ * runner.lock 的显式接管通道，u-i1-d））。
  *
  * M1 起 --spawn 缺省 human 的语义 = 循环 + humanAdapter（u6b）；M0 的 human-loop.ts
  * 直连路径退役（文件与导出保留兼容既有单测，本文件不再调用）。
@@ -35,12 +37,14 @@ export const DEFAULT_MAX_CONCURRENCY = 3;
 const DEFAULT_SPAWN_BACKEND = "human";
 
 /**
- * 后端名 → 适配器模块说明符（相对本文件，编译后相对 dist/handlers/run.js）。
- * 非字面量说明符：tsc 不解析（模块缺席不阻断编译），见模块头。
+ * 后端名 → 适配器模块显式注册表（ph-i1 R2：命名探测的 capitalize 拼接对带连字符
+ * 名（pi-rpc）产出非法标识符，改显式声明导出名）。说明符相对本文件（编译后相对
+ * dist/handlers/run.js），非字面量说明符：tsc 不解析（模块缺席不阻断编译），见模块头。
  */
-const BACKEND_SPECIFIERS: Record<string, string> = {
-  human: "../runner/spawn/human.js",
-  pi: "../runner/spawn/pi.js",
+const BACKEND_SPECIFIERS: Record<string, { specifier: string; factory: string }> = {
+  human: { specifier: "../runner/spawn/human.js", factory: "humanAdapter" },
+  pi: { specifier: "../runner/spawn/pi.js", factory: "createPiAdapter" },
+  "pi-rpc": { specifier: "../runner/spawn/pi-rpc.js", factory: "createPiRpcAdapter" },
 };
 
 type AdapterOutcome =
@@ -56,60 +60,78 @@ function isAgentSpawnAdapter(value: unknown): value is AgentSpawnAdapter {
   return typeof record.name === "string" && typeof record.spawn === "function";
 }
 
-/** 首字母大写（工厂导出名探测用：pi → createPiAdapter） */
-function capitalize(value: string): string {
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
-}
-
 /**
- * 解析 --spawn 后端为适配器实例。已知两族导出形态都探测：
- *   - 常量 `<name>Adapter`（u6b 验收文档对 human 的用词 humanAdapter）
- *   - 工厂 `create<Name>Adapter()`（u6c pi.ts 实际形态）
- * 三类失败（未知名 / 模块缺席 / 导出不满足契约）各给可操作错误。
+ * 解析 --spawn 后端为适配器实例。ph-i1 R2 起导出名来自显式注册表（factory 字段，
+ * 常量形态 humanAdapter 与工厂形态 createPiAdapter/createPiRpcAdapter 都支持：
+ * 值是适配器直接用，是函数则调用后校验）。三类失败（未知名 / 模块缺席 / 导出
+ * 不满足契约）各给可操作错误。
  */
 async function resolveSpawnAdapter(name: string): Promise<AdapterOutcome> {
   const known = Object.keys(BACKEND_SPECIFIERS).join("、");
-  const specifier = BACKEND_SPECIFIERS[name];
-  if (specifier === undefined) {
+  const entry = BACKEND_SPECIFIERS[name];
+  if (entry === undefined) {
     return {
       ok: false,
       message:
         `cw run: 未知 --spawn 后端 "${name}"（可选：${known}）。` +
-        "恢复动作：用 --spawn human（人肉调度）或 --spawn pi（无头 agent），或省略该参数默认 human。",
+        "恢复动作：用 --spawn human（人肉调度）、--spawn pi（无头一次性）或 --spawn pi-rpc（无头长驻 RPC），或省略该参数默认 human。",
     };
   }
 
   let moduleNamespace: unknown;
   try {
-    moduleNamespace = await import(specifier);
+    moduleNamespace = await import(entry.specifier);
   } catch {
     return {
       ok: false,
       message:
-        `cw run: --spawn ${name} 后端模块尚未就绪（${specifier} 不在 dist——u6b/u6c 并行开发期可能未合入）。` +
+        `cw run: --spawn ${name} 后端模块尚未就绪（${entry.specifier} 不在 dist——并行开发期可能未合入）。` +
         `恢复动作：确认 src/runner/spawn/${name}.ts 已合入后 npm run build 再试；期间可用已就绪后端（${known}）或按 cw status 手工推进。`,
     };
   }
 
   const record = moduleNamespace as Record<string, unknown>;
-  const direct = record[`${name}Adapter`];
-  const factory = record[`create${capitalize(name)}Adapter`];
+  const direct = record[entry.factory];
   const fromFactory =
-    typeof factory === "function" ? (factory as () => unknown)() : undefined;
+    typeof direct === "function" && !isAgentSpawnAdapter(direct)
+      ? (direct as () => unknown)()
+      : undefined;
   const candidate = isAgentSpawnAdapter(direct) ? direct : fromFactory;
   if (!isAgentSpawnAdapter(candidate)) {
     return {
       ok: false,
       message:
-        `cw run: --spawn ${name} 后端模块已加载，但其导出不满足 AgentSpawnAdapter 契约` +
-        `（期望导出 ${name}Adapter 常量或 create${capitalize(name)}Adapter() 工厂，返回值含 name: string 与 spawn()）。` +
+        `cw run: --spawn ${name} 后端模块已加载，但其导出 ${entry.factory} 不满足 AgentSpawnAdapter 契约` +
+        `（期望适配器常量或工厂，返回值含 name: string 与 spawn()）。` +
         `恢复动作：核对 src/runner/spawn/${name}.ts 的导出与 src/runner/spawn/types.ts 契约。`,
     };
   }
   return { ok: true, adapter: candidate };
 }
 
+/** `cw run --help` 的 flag 总览（单一事实源为本 handler 的解析分支；ph-i1 增补 pi-rpc/force-dispatch） */
+const RUN_USAGE = [
+  "cw run — runner 调度循环",
+  "",
+  "用法：cw run --root <unitId> [flags]",
+  "",
+  "Flags:",
+  "  --spawn <backend>            spawn 后端：human（缺省）| pi（无头一次性）| pi-rpc（无头长驻 RPC，反思 followUp）",
+  "  --force-dispatch             接管在派的跨进程 runner（覆盖 runner.lock；确认另一 runner 已死/该停时用）",
+  "  --poll-ms <毫秒>             账本轮询间隔（缺省 5000）",
+  "  --max-idle-ms <毫秒>         无账本进展上限（缺省 1800000）",
+  "  --max-concurrency <n>        同批 in-flight spawn 上限（缺省 3）",
+  "  --reviewer-model <model>     reviewer 异源模型（优先于 CW_REVIEWER_MODEL）",
+  "  --max-spec-rejects <n>       spec 打回代数转人工预算（缺省 10）",
+  "  --max-build-attempts <n>     buildDrift 停派预算（缺省 5）",
+  "  --spawn-timeout-ms <毫秒>    单次 spawn 超时（缺省 1800000；env CW_SPAWN_TIMEOUT_MS 同链）",
+].join("\n");
+
 export async function handleRun(ctx: CommandContext): Promise<number> {
+  if (ctx.argv.help === true) {
+    process.stdout.write(`${RUN_USAGE}\n`);
+    return 0;
+  }
   const rootId = stringArg(ctx.argv, "root");
   if (rootId === undefined) {
     return fail(
@@ -207,6 +229,9 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
     return fail(backend.message);
   }
 
+  // u-i1-d：--force-dispatch（跨进程派发锁的显式接管通道；R5）
+  const forceDispatch = ctx.argv["force-dispatch"] === true;
+
   return runLoop({
     rootId,
     adapter: backend.adapter,
@@ -217,6 +242,7 @@ export async function handleRun(ctx: CommandContext): Promise<number> {
     maxSpecRejects: maxSpecRejects.value,
     maxBuildAttempts: maxBuildAttempts.value,
     spawnTimeoutMs: spawnTimeoutMs.value,
+    forceDispatch,
     ...(reviewerModel !== undefined ? { reviewerModel } : {}),
   });
 }

@@ -6,6 +6,9 @@
  * loop 派 designer 补建子，A4「零上下文接手」场景输出与真实派发行为不一致。现
  * 派发就绪计算收口于此，loop 的 computeDispatchTargets 与本命令消费同一结果）：
  *   - specReady：created 且无 spec——待 designer 撰写 spec（首派）
+ *   - reflectionPending：created 且有 spec，最新 SpecSubmitted 的 specHash 无对应
+ *     ReflectionRan——待反思（ph-i1 R4：loop 对长驻 spawn 发 followUp，完成后写
+ *     ReflectionRan 再派 reviewer；事件锚 = specHash，重提新 spec 即重新 pending）
  *   - specReviewPending：created 且有 spec，最后一条 SpecSubmitted 之后无任何
  *     spec-review verdict——待独立 reviewer 审查（mx-1：spec-review 的
  *     VerdictSubmitted 一律由 reviewer spawn 提交，designer 不自审）
@@ -81,6 +84,13 @@ import { EMPTY_LEDGER_HINT, unitStatus } from "./load.js";
 /** frontier 全维度分组（维度语义见模块头；组内序 = 投影插入序 = 账本创建序） */
 export interface FrontierGroups {
   specReady: string[];
+  /**
+   * ph-i1 R4：created 且有 spec，最新 SpecSubmitted 的 specHash 无对应
+   * ReflectionRan——待反思（loop 检测到后对长驻 spawn 发 followUp，完成后
+   * 写 ReflectionRan 事件再派 reviewer）。事件锚 = specHash：重提新 spec
+   * （新 hash）即重新 pending。旧账本无 ReflectionRan 事件照常判定。
+   */
+  reflectionPending: string[];
   specReviewPending: string[];
   specFixPending: string[];
   /** mx-1/mx-3：spec-review 打回代数 ≥ 阈值（默认 10，mx-4）的 created unit（转人工，机器派发无出口） */
@@ -110,6 +120,7 @@ export interface FrontierGroups {
  */
 const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
   "specReady",
+  "reflectionPending",
   "specReviewPending",
   "specFixPending",
   "specReviewDeadlock",
@@ -139,10 +150,10 @@ const GROUP_ORDER: ReadonlyArray<keyof FrontierGroups> = [
 export const INTEGRATION_MAX_CONSECUTIVE_FAILS = 1;
 
 /**
- * 各 unit 的最新事件 seq 高水位（loop 连续 TIMEOUT 计数的进展清零输入）：五类
+ * 各 unit 的最新事件 seq 高水位（loop 连续 TIMEOUT 计数的进展清零输入）：各类
  * 事件 payload 均含 unitId，任何类型的新事件（SpecSubmitted / EvidenceSubmitted /
- * VerdictSubmitted / VerifyRan / UnitCreated）都视为该 unit 有进展。（mx5-2 起
- * hosted 于 frontier——纯事件重放投影，loop 只消费）
+ * VerdictSubmitted / VerifyRan / UnitCreated / ReflectionRan）都视为该 unit 有
+ * 进展。（mx5-2 起 hosted 于 frontier——纯事件重放投影，loop 只消费）
  */
 export function unitEventHighWaterSeqs(events: readonly LedgerEvent[]): Map<string, number> {
   const seqs = new Map<string, number>();
@@ -263,6 +274,23 @@ export function latestSpecReviewAfterLastSpec(
     }
   }
   return null;
+}
+
+/**
+ * 最新 spec 是否已有对应反思（ph-i1 R4，reflectionPending 的判定输入）：
+ * 最新 SpecSubmitted 的 specHash 在 reflections 记录中有对应条目即完成。
+ * 事件锚语义：重提新 spec = 新 hash = 无对应记录 = 需重新反思（spec 级语义）。
+ * 旧账本无 ReflectionRan 事件 = reflections 恒空 → 恒 pending（新版 cw 的
+ * 四流程前反思步，与旧版 cw 读旧账本的兼容边界由 fold 的默认分支守卫）。
+ */
+export function reflectionDone(unit: SequencedUnitProjection): boolean {
+  const lastSpec = unit.specs[unit.specs.length - 1];
+  if (lastSpec === undefined) {
+    return false;
+  }
+  return unit.reflections.some(
+    (reflection) => reflection.specHash === lastSpec.specHash,
+  );
 }
 
 /**
@@ -756,6 +784,7 @@ export function computeFrontier(
 ): FrontierGroups {
   const groups: FrontierGroups = {
     specReady: [],
+    reflectionPending: [],
     specReviewPending: [],
     specFixPending: [],
     specReviewDeadlock: [],
@@ -782,6 +811,16 @@ export function computeFrontier(
         groups.specReady.push(unit.unitId);
       } else if ((specFails?.get(unit.unitId) ?? 0) >= maxSpecRejects) {
         groups.specReviewDeadlock.push(unit.unitId);
+      } else if (
+        !reflectionDone(unit) &&
+        latestSpecReviewAfterLastSpec(unit) === null
+      ) {
+        // ph-i1 R4：反思先于审查（R3 流：SpecSubmitted → followUp 反思 →
+        // ReflectionRan 入账 → 派 reviewer）。锚 = specHash：最新 spec 的 hash
+        // 在 reflections 中无对应记录即 pending。兼容语义（R4 兼容栏）：仅对
+        // 「最新 spec 尚无任何 spec-review verdict」的 unit 生效——旧账本
+        // （无 ReflectionRan 但 verdict 已流转）恒走四流程原判定，不被反思劫持
+        groups.reflectionPending.push(unit.unitId);
       } else if (latestSpecReviewAfterLastSpec(unit) === null) {
         groups.specReviewPending.push(unit.unitId);
       } else if (latestSpecReviewAfterLastSpec(unit) === "fail") {

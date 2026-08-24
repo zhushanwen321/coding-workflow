@@ -1,0 +1,18 @@
+{
+  "health": {
+    "maxCyclomatic": 15,
+    "maxCognitive": 15,
+    "maxCrap": 30,
+    "ignore": [
+      "**/*.test.ts",
+      "**/*.test.mts",
+      "**/__tests__/**",
+      "**/dist/**",
+      "**/*.d.ts",
+      "**/*.d.mts",
+      "archive/**",
+      ".cw-worktrees/**",
+      "pi-coding-workflow-extension/src/installer/core.mjs"
+    ]
+  }
+}

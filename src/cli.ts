@@ -22,6 +22,7 @@ Commands:
   review submit      提交审查结论（写）
   verify             干净重跑验证（写）
   run                runner 调度循环入口
+  setup-agent-dir    建受控 agentDir（装扩展清单 + manifest + 启动探针）
   status             查看单元状态（只读）
   frontier           查看就绪集合（只读）
   tree               查看分解树（只读）

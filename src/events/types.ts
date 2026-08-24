@@ -101,7 +101,7 @@ export interface SplitEntry {
   files?: string[];
 }
 
-// ---- 五类事件 payload（canon D2 事件模型） ----
+// ---- 六类事件 payload（canon D2 事件模型，第六类 ReflectionRan） ----
 
 export interface UnitCreatedPayload {
   unitId: string;
@@ -186,6 +186,24 @@ export interface VerifyRanPayload {
   parseFailedAcceptanceIds?: string[];
 }
 
+/**
+ * 反思执行记录（ph-i1 R4，design-hi-spawn-pi-rpc.md §3.2）：第六类事件，纯记录、
+ * 不驱动四态转换。append-only 哲学下唯一可行形态——反思发生在 spec 入账之后，
+ * 历史事件不可回填，「SpecSubmitted 加可选字段」物理不成立。锚 = specHash
+ * （spec 级语义：重提新 spec = 新 hash = 需重新反思）。
+ */
+export interface ReflectionRanPayload {
+  unitId: string;
+  /** 被反思那版 spec 的入账锚 hash（重提新 spec = 新 hash = 需重新反思） */
+  specHash: string;
+  /** unit 级轮次，1 起（预算 ≤2 轮，四流程 D3③ 语义） */
+  round: number;
+  /** 反思发生时的 session 锚（审计用，非定位用——定位已由事件本身承担） */
+  sessionFile?: string;
+  /** followUp 全文是否引发 spec 修订（修订会有新 SpecSubmitted，此字段仅审计摘要） */
+  revisedSpec?: boolean;
+}
+
 // ---- 事件信封与账本 ----
 
 export type EventType =
@@ -193,7 +211,8 @@ export type EventType =
   | "SpecSubmitted"
   | "VerdictSubmitted"
   | "EvidenceSubmitted"
-  | "VerifyRan";
+  | "VerifyRan"
+  | "ReflectionRan";
 
 export type EventPayloadMap = {
   UnitCreated: UnitCreatedPayload;
@@ -201,6 +220,7 @@ export type EventPayloadMap = {
   VerdictSubmitted: VerdictSubmittedPayload;
   EvidenceSubmitted: EvidenceSubmittedPayload;
   VerifyRan: VerifyRanPayload;
+  ReflectionRan: ReflectionRanPayload;
 };
 
 export interface EventEnvelope<K extends EventType = EventType> {
@@ -245,6 +265,11 @@ export interface UnitProjection {
   verdicts: VerdictSubmittedPayload[];
   evidences: EvidenceSubmittedPayload[];
   verifyRuns: VerifyRanPayload[];
+  /**
+   * 按入账顺序的反思记录（ph-i1 R4）：纯记录事件流，不参与四态派生——
+   * frontier 的 reflectionPending 维度以最新 spec 的 specHash 对应关系消费。
+   */
+  reflections: ReflectionRanPayload[];
 }
 
 /** 账本整体投影（全部 unit + 事件总数） */

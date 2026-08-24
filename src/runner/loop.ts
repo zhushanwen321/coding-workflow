@@ -124,14 +124,13 @@ import type {
 } from "../events/types.js";
 import {
   BUILD_DRIFT_MAX_ATTEMPTS,
-  type BuildDriftFact,
   buildDriftFacts,
   computeFrontier,
   consecutiveIntegrationFails,
-  type FlakeReviewFact,
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
   latestSpecReviewAfterLastSpec,
+  reflectionDone,
   SPEC_CONTRACT_MAX_GENERATIONS,
   SPEC_REVIEW_DEADLOCK_FAILS,
   type SpecContractFacts,
@@ -161,12 +160,15 @@ import {
   escalationMessage,
 } from "./escalations.js";
 import { runIntegrationVerify } from "./integrate.js";
+import { acquireRunnerLock, type RunnerLock } from "./lock.js";
 import type {
   AgentRole,
   AgentSpawnAdapter,
+  InteractiveSpawnHandle,
   SpawnHandle,
   SpawnResult,
 } from "./spawn/types.js";
+import { isInteractiveSpawnHandle } from "./spawn/types.js";
 import {
   ensureUnitWorktree,
   listUnitBranchRefs,
@@ -211,6 +213,14 @@ export interface RunLoopOptions {
   rootId: string;
   adapter: AgentSpawnAdapter;
   cwd: string;
+  /**
+   * u-i2-a（design-hi-cw-runner-extension §3.2 R2）：进度事件发射器——库形态
+   * 消费者（pi extension）的 widget/notify/对账数据源。加法可选项：CLI 壳
+   * （handlers/run.ts）不传 = 行为不变（硬约束）。回调抛错由循环吞掉不炸主循环
+   * （stderr 记录）——发射器是观测面不是信任边界。cw 核心不知道 pi 存在（G4），
+   * 事件表最小集：每条对应一个 UI 消费点，无消费点的不发。
+   */
+  onEvent?: (ev: LoopEvent) => void;
   pollMs?: number;
   maxIdleMs?: number;
   maxConcurrency?: number;
@@ -242,6 +252,66 @@ export interface RunLoopOptions {
    * 层合流后传入）。
    */
   spawnTimeoutMs?: number;
+  /**
+   * u-i1-d（R5）：跨进程派发锁的显式接管通道（cw run --force-dispatch）。true 时
+   * 跳过锁持有进程的存活检查强制覆盖；缺省 false（活锁拒启）。锁不入账本
+   * （易失进程态非事实，总纲 D8 裁决）。
+   */
+  forceDispatch?: boolean;
+  /**
+   * P0-1（extension 编程停止通道）：库形态消费者（pi extension 跑在宿主进程内，
+   * 不允许被 runner 杀死）的编程停止入口。runLoop 初始化（锁获取之前）调用它，
+   * 把循环自身的停止函数交付出去；消费者调用该函数 = 与 SIGINT/SIGTERM handler
+   * 同一套收尾（提示行 + killAll + 锁释放），但主 promise 以约定码（130）resolve
+   * 而非 process.exit。传入本选项时真实 SIGINT/SIGTERM 也走同一收尾并以约定码
+   * resolve（不 exit）。CLI 壳不传 = 行为完全不变（信号路径照旧 process.exit）。
+   */
+  onStopRequest?: (stop: () => void) => void;
+}
+
+/**
+ * u-i2-a（R2 最小集）：runLoop 的进度事件表——库形态消费者的结构化数据源。
+ * round = 每轮 frontier 重算摘要（widget）；dispatch/settled = spawn 生命周期
+ * （面板对账）；stopped = 停派转人工命中（notify/收件箱）；reflection = 反思
+ * followUp 已发（七问轮次可见）；error = 循环内非致命错误路径的出声镜像。
+ */
+export type LoopEvent =
+  /** 轮次开始（frontier 维度 → 该维度 unit 数；维度语义单一出处 = frontier.ts） */
+  | { kind: "round"; seq: number; frontierSummary: Record<string, number> }
+  /** 派发成功入 in-flight（subagentSlug = `${unitId}-${role}`，面板对账锚） */
+  | { kind: "dispatch"; unitId: string; role: AgentRole; subagentSlug: string }
+  /** spawn 结算（四态退出码原样透传） */
+  | { kind: "settled"; unitId: string; role: AgentRole; result: SpawnResult }
+  /** 停派转人工命中（五类停派维度之一；每 unit×维度只发一次） */
+  | { kind: "stopped"; unitId: string; dimension: string; reason: string }
+  /** 反思轮次已发（followUp 链挂接或占位 ReflectionRan 代写） */
+  | { kind: "reflection"; unitId: string; round: number }
+  /** 非致命错误路径（出声 + 跳过本轮，循环继续） */
+  | { kind: "error"; stage: string; message: string };
+
+/** stopped 事件的维度集（停派五类中的四类投影维度；TIMEOUT 封顶走 loop 内判定） */
+const STOPPED_DISPATCH_DIMENSIONS = [
+  "specReviewDeadlock",
+  "flakeReview",
+  "specContractDeadlock",
+  "buildDrift",
+] as const;
+
+/** stopped 事件的 reason 文案（短句；完整恢复指引在 stderr 转人工消息里） */
+const STOPPED_REASONS: Record<(typeof STOPPED_DISPATCH_DIMENSIONS)[number], string> = {
+  specReviewDeadlock: "spec-review 打回代数达预算（designer-reviewer 活锁），停派转人工",
+  flakeReview: "e2e 验收连挂 ≥2（flake 疑似），停派 developer 转人工判定",
+  specContractDeadlock: "验收命令解析失败 2 代回炉仍连挂，停派转人工",
+  buildDrift: "build 证据达预算无 pass verify（缓慢进展），停派转人工",
+};
+
+/** round 事件的 frontier 摘要（维度 → 该维度 unit 数；仅本 root 子树外的也不排除——全账本口径与 `cw frontier` 一致） */
+function summarizeFrontier(groups: FrontierGroups): Record<string, number> {
+  const summary: Record<string, number> = {};
+  for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
+    summary[key] = groups[key].length;
+  }
+  return summary;
 }
 
 /** in-flight 派发（mx-1 派发 gate 后同 unit 任意时刻至多一个在飞 spawn） */
@@ -344,12 +414,15 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
  * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
  * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
- * 模板（内嵌解析失败原文，非 reviewer comment）。 */
+ * 模板（内嵌解析失败原文，非 reviewer comment）。ph-i1 R4：reflectionPending
+ * 派 designer——派发后 loop 对句柄探测 followUp 能力并走反思链（见
+ * startReflectionFollowUp），完成后 loop 自己写 ReflectionRan 再派 reviewer。 */
 const DISPATCH_SHAPE: Record<
   DispatchDimension,
   { role: AgentRole; integration: boolean }
 > = {
   specReady: { role: "designer", integration: false },
+  reflectionPending: { role: "designer", integration: false },
   specReviewPending: { role: "reviewer", integration: false },
   specFixPending: { role: "designer", integration: false },
   specContractBroken: { role: "designer", integration: false },
@@ -374,6 +447,7 @@ function settleTimeoutEscalations(
   rootId: string,
   artifactDir: string,
   spawnTimeoutMs: number,
+  onStopped?: (unitId: string, role: AgentRole) => void,
 ): Map<string, number> {
   const unitSeqs = unitEventHighWaterSeqs(events);
   for (const [unitId, seq] of unitSeqs) {
@@ -386,6 +460,8 @@ function settleTimeoutEscalations(
       escalated.set(unitId, streak.role);
       // lv-2：文案第 3 条显示本循环实际的 spawn 超时值与调大入口
       emitErr(escalationMessage(rootId, unitId, streak.role, artifactDir, spawnTimeoutMs));
+      // u-i2-a：停派五类的 TIMEOUT 封顶档（单进程内存态，无投影维度）——onEvent 出声
+      onStopped?.(unitId, streak.role);
     }
   }
   return unitSeqs;
@@ -435,25 +511,12 @@ function writeBriefWithHistory(
  * 性半边（fx-1 R1 loop 级防御）。
  */
 function computeDispatchTargets(
+  groups: FrontierGroups,
   projection: SequencedProjection,
   rootId: string,
   inFlight: readonly InFlightSpawn[],
-  consecutiveFails: ReadonlyMap<string, number>,
-  flakeFacts: ReadonlyMap<string, readonly FlakeReviewFact[]>,
-  contractFacts: ReadonlyMap<string, SpecContractFacts>,
-  specFails: ReadonlyMap<string, number>,
-  maxSpecRejects: number,
-  buildDrifts: ReadonlyMap<string, BuildDriftFact>,
   excluded: ReadonlySet<string>,
 ): DispatchTarget[] {
-  const groups = computeFrontier(projection, {
-    consecutiveIntegrationFails: consecutiveFails,
-    flakeReviewFacts: flakeFacts,
-    specContractFacts: contractFacts,
-    specReviewFailCounts: specFails,
-    maxSpecRejects,
-    buildDriftFacts: buildDrifts,
-  });
   const dimensionOf = new Map<string, keyof FrontierGroups>();
   for (const key of Object.keys(groups) as Array<keyof FrontierGroups>) {
     for (const unitId of groups[key]) {
@@ -475,13 +538,16 @@ function computeDispatchTargets(
     const dimension = dimensionOf.get(unit.unitId);
     if (
       dimension === undefined ||
+      dimension === "reflectionPending" ||
       dimension === "flakeReview" ||
       dimension === "specReviewDeadlock" ||
       dimension === "specContractDeadlock" ||
       dimension === "buildDrift"
     ) {
       // 转人工维度（rv-5 flake / mx-1 spec 打回活锁 / mx5-2 回炉活锁 / lv-2
-      // 缓慢进展）——不派任何 agent，停摆等人工处置后投影自然消失
+      // 缓慢进展）——不派任何 agent，停摆等人工处置后投影自然消失。
+      // ph-i1 R4：reflectionPending 也不进派发表——反思由 runLoopMain 的反思接缝
+      // 处理（对在飞长驻句柄 followUp，无在飞则代写占位 ReflectionRan），不派新 spawn
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
@@ -697,38 +763,70 @@ function emitSpecFrozenDesignerRationale(
 }
 
 /**
+ * P0-1（extension 编程停止通道）：库形态停止状态。onStopRequest 在场时，
+ * SIGINT/SIGTERM 与编程停止都不 process.exit（宿主进程不允许被 runner 杀死），
+ * 而是置位 state（主循环每轮 poll 顶部检查后以约定码返回）+ settle 兑现
+ * （runLoop 以 Promise.race 先到先得，停止先到即返回约定码）。
+ */
+interface LoopStopChannel {
+  state: { requested: boolean; code: number };
+  settle: (code: number) => void;
+}
+
+/**
+ * 信号/编程停止的共用收尾三步（顺序与 rv-1 验收锁定一致）：提示行 writeSync →
+ * best-effort killAll → 锁释放。退出方式（process.exit vs resolve）由调用点分支。
+ */
+function loopStopCleanup(
+  rootId: string,
+  inFlight: readonly InFlightSpawn[],
+  releaseLock: (() => void) | undefined,
+  label: string,
+  exitCode: number,
+): void {
+  try {
+    writeSync(
+      process.stderr.fd,
+      `[runner] 收到 ${label}：回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。` +
+        `账本即状态——重跑 cw run --root ${rootId} 即续。\n`,
+    );
+  } catch (err) {
+    // writeSync 失败（fd 异常等）不能阻断回收——回收与退出码是承诺；降级为常规
+    // 异步 write 再试一次（尽力而为，即使 exit 时被队列丢弃也不影响回收路径）
+    process.stderr.write(
+      `[runner] 收到 ${label}（提示行 writeSync 失败：${err instanceof Error ? err.message : String(err)}）：` +
+        `回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。\n`,
+    );
+  }
+  killAll(inFlight);
+  releaseLock?.(); // u-i1-d R5：信号退出同样释放派发锁（unlink）
+}
+
+/**
  * runLoop 的信号 handler（SIGINT/SIGTERM 共用，rv-1）：Ctrl-C/SIGTERM 后 agent
  * 子进程会成孤儿继续写账本，用户重跑 `cw run` 对同一 worktree reset + 二次 spawn
  * 就是双 agent 混卷——所以 runner 必须主动回收全部在飞 spawn 再退出，「重跑即续」
  * 对进程维度也成立。只做回收：不写任何账本事件、不动 worktree/分支（回收 worktree
  * 是既有延迟回收逻辑的事，信号路径不额外触发 reclaim）。
  *
- * 退出路径三步与顺序（验收锁定）：提示行先于 killAll 打印（writeSync 同步落 stderr，
- * 用户立即看到响应——常规异步 write 在 process.exit 时可能被丢弃）→ best-effort
- * killAll（沿用既有语义：单个 kill 失败记录继续，不因清理失败改变退出码）→
- * process.exit(130|143)。
+ * P0-1 起带 stop 通道（onStopRequest 在场）：收尾后不 process.exit，改置位 +
+ * settle（宿主进程存活，主 promise 以约定码 resolve）。stop 缺席 = 行为零变更。
  */
 function makeLoopSignalHandler(
   rootId: string,
   inFlight: readonly InFlightSpawn[],
+  releaseLock?: () => void,
+  stop?: LoopStopChannel,
 ): (signal: NodeJS.Signals) => void {
   return (signal) => {
     const exitCode = signal === "SIGINT" ? LOOP_SIGNAL_EXIT_CODES.SIGINT : LOOP_SIGNAL_EXIT_CODES.SIGTERM;
-    try {
-      writeSync(
-        process.stderr.fd,
-        `[runner] 收到 ${signal}：回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。` +
-          `账本即状态——重跑 cw run --root ${rootId} 即续。\n`,
-      );
-    } catch (err) {
-      // writeSync 失败（fd 异常等）不能阻断回收——回收与退出码是承诺；降级为常规
-      // 异步 write 再试一次（尽力而为，即使 exit 时被队列丢弃也不影响回收路径）
-      process.stderr.write(
-        `[runner] 收到 ${signal}（提示行 writeSync 失败：${err instanceof Error ? err.message : String(err)}）：` +
-          `回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。\n`,
-      );
+    loopStopCleanup(rootId, inFlight, releaseLock, signal, exitCode);
+    if (stop !== undefined) {
+      stop.state.requested = true;
+      stop.state.code = exitCode;
+      stop.settle(exitCode);
+      return;
     }
-    killAll(inFlight);
     process.exit(exitCode);
   };
 }
@@ -906,6 +1004,80 @@ function sweepOrphanWorktrees(cwd: string, rootId: string): string[] {
   return reclaimed;
 }
 
+// ---- ph-i1 R4：反思 followUp 派发（占位形态，TODO(ph-i2) 接四流程七问） ----
+
+/**
+ * 反思 followUp 的注入文案（占位）。反思问题集（四流程七问）属 ph-2 领地，本波次
+ * 只打通「长驻句柄 followUp → ReflectionRan 入账」链路。
+ */
+const REFLECTION_PLACEHOLDER_PROMPT = [
+  "## 反思（reflection，占位提示）",
+  "请基于你刚完成的 spec 撰写过程做简短反思：哪些假设未验证、验收是否有真空、拆分是否合理。",
+  "如有修订需要，按原流程重提 spec；无需修订则简述结论即可。",
+  "（TODO(ph-i2)：本提示为占位文案，四流程七问接入后替换。）",
+].join("\n");
+
+/** 反思完成日志里 specHash 的展示前缀长度（非语义，仅日志可读性） */
+const SPEC_HASH_PREVIEW_LEN = 8;
+
+/**
+ * 反思链（R4/R3 §3.1 正常时序的后半段）：对 reflectionPending unit 的在飞长驻句柄
+ * （调用方已 isInteractiveSpawnHandle 探测）——等 brief 阶段流式结束 → followUp 反思
+ * 文案 → 等 agent_settled → 经 events-log 文件锁短事务写 ReflectionRan（round =
+ * 派发时刻投影的 reflections 长度 + 1，sessionFile 取握手锚）→ done() 优雅收尾
+ * （进程退出，flight 正常结算）。后台异步执行不阻塞主循环；链上任一步失败 →
+ * kill + stderr 出声（结算视适配器实现为 TIMEOUT/CRASH，均属可重派态，不静默）。
+ */
+function startReflectionFollowUp(
+  cwd: string,
+  rootId: string,
+  unitId: string,
+  handle: SpawnHandle,
+  specHash: string,
+  round: number,
+  timeoutMs: number,
+): void {
+  void rootId;
+  if (!isInteractiveSpawnHandle(handle)) {
+    // 防御：调用方已探测，走到这里说明句柄能力中途消失（不可达分支）——出声不静默
+    emitErr(`[runner] unit "${unitId}" 的反思句柄失去交互能力（不可达分支，出声不静默）。\n`);
+    handle.kill();
+    return;
+  }
+  const interactive: InteractiveSpawnHandle = handle;
+  void (async () => {
+    try {
+      if (!(await interactive.waitForIdle(timeoutMs))) {
+        throw new Error(`brief 阶段 waitForIdle(${timeoutMs}ms) 超时`);
+      }
+      await interactive.followUp(REFLECTION_PLACEHOLDER_PROMPT);
+      if (!(await interactive.waitForIdle(timeoutMs))) {
+        throw new Error(`反思 followUp 后 waitForIdle(${timeoutMs}ms) 超时`);
+      }
+      const anchor = interactive.sessionAnchor;
+      new EventLedger(ledgerPath(getCwHome(), cwd)).append("ReflectionRan", {
+        unitId,
+        specHash,
+        round,
+        ...(anchor !== undefined && anchor.sessionFile !== ""
+          ? { sessionFile: anchor.sessionFile }
+          : {}),
+      });
+      emit([
+        `[runner] unit "${unitId}" 反思完成（round ${round}，specHash ${specHash.slice(0, SPEC_HASH_PREVIEW_LEN)}…）` +
+          "——ReflectionRan 已入账，下轮派独立 reviewer spec-review",
+      ]);
+      await interactive.done();
+    } catch (err) {
+      emitErr(
+        `[runner] unit "${unitId}" 的反思 followUp 链失败（已 kill，可重派）：` +
+          `${err instanceof Error ? err.message : String(err)}\\n`,
+      );
+      interactive.kill();
+    }
+  })();
+}
+
 function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number, artifactDir: string): string {
   // 产物根随 fx-4 迁 run 级 topic 目录（stdout/stderr 按 <unitId>.<role>.* 落盘其下）
   return (
@@ -1045,6 +1217,7 @@ function settleFlightOutput(
   result: SpawnResult,
   events: readonly LedgerEvent[],
   budgets: DispatchBudgets,
+  onEvent?: (ev: LoopEvent) => void,
 ): void {
   const index = inFlight.indexOf(flight);
   if (index >= 0) {
@@ -1060,6 +1233,7 @@ function settleFlightOutput(
   emit([
     `[runner] ${new Date().toISOString()} ${flight.role} unit "${flight.unitId}" 退出 ${describeExit(result.exitCode, stopState)}`,
   ]);
+  onEvent?.({ kind: "settled", unitId: flight.unitId, role: flight.role, result });
 }
 
 /**
@@ -1072,6 +1246,7 @@ async function reportSettledFlights(
   inFlight: InFlightSpawn[],
   events: readonly LedgerEvent[],
   budgets: DispatchBudgets,
+  onEvent?: (ev: LoopEvent) => void,
 ): Promise<void> {
   for (const flight of [...inFlight]) {
     const settled = await Promise.race<SpawnResult | null>([
@@ -1079,7 +1254,7 @@ async function reportSettledFlights(
       sleep(0).then(() => null),
     ]);
     if (settled !== null) {
-      settleFlightOutput(inFlight, flight, settled, events, budgets);
+      settleFlightOutput(inFlight, flight, settled, events, budgets, onEvent);
     }
   }
 }
@@ -1096,12 +1271,58 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   // inFlight 提升到外壳：信号 handler 需要在主循环体启动前就持有同一引用
   //（循环未起来时的信号 → killAll 空集 no-op，同样打印提示行并按约定码退出）
   const inFlight: InFlightSpawn[] = [];
-  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight);
+  let runnerLock: RunnerLock | null = null;
+  // P0-1：库形态停止通道（onStopRequest 缺席时 stop 为 undefined，行为零变更）
+  const stopState: { requested: boolean; code: number } = { requested: false, code: LOOP_SIGNAL_EXIT_CODES.SIGINT };
+  let stop: LoopStopChannel | undefined;
+  let stopPromise: Promise<number> | undefined;
+  if (opts.onStopRequest !== undefined) {
+    let settleFn: ((code: number) => void) | undefined;
+    stopPromise = new Promise<number>((resolve) => {
+      settleFn = resolve;
+    });
+    stop = { state: stopState, settle: (code) => settleFn?.(code) };
+    // 把循环自身的停止函数交付出去（在锁获取之前——覆盖启动竞态窗口内的 stop）
+    opts.onStopRequest(() => {
+      loopStopCleanup(opts.rootId, inFlight, () => runnerLock?.release(), "STOP", LOOP_SIGNAL_EXIT_CODES.SIGINT);
+      stopState.requested = true;
+      stopState.code = LOOP_SIGNAL_EXIT_CODES.SIGINT;
+      stop?.settle(LOOP_SIGNAL_EXIT_CODES.SIGINT);
+    });
+  }
+  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight, () => runnerLock?.release(), stop);
   process.on("SIGINT", signalHandler);
   process.on("SIGTERM", signalHandler);
   try {
-    return await runLoopMain(opts, inFlight);
+    // u-i1-d R5：跨进程派发锁——启动 O_EXCL 获取；活锁拒启（exit 1 + 指引
+    // --force-dispatch）、陈锁/force 覆盖 + 告警；锁不入账本（D8）。获取先于
+    // 首个派发，root 缺失等抛错路径经 finally 释放，不留陈锁以外的副作用
+    const acquired = acquireRunnerLock({
+      cwHome: getCwHome(),
+      cwd: opts.cwd,
+      rootId: opts.rootId,
+      form: "cli",
+      force: opts.forceDispatch === true,
+    });
+    if (!acquired.ok) {
+      await emitExitOutput(`${acquired.message}\n`, process.stderr);
+      return 1;
+    }
+    runnerLock = acquired.lock;
+    if (acquired.takeoverWarning !== undefined) {
+      emitErr(acquired.takeoverWarning);
+    }
+    // P0-1：停止在锁获取/清扫阶段到达（主循环未启动）→ 直接以约定码返回
+    if (stopState.requested) return stopState.code;
+    const main = runLoopMain(opts, inFlight, runnerLock, stopState);
+    if (stopPromise === undefined) return await main;
+    // 库形态：停止兑现与主循环自然结束先到先得。停止先到时主循环仍在收尾
+    //（killAll 解锁 await 后按 stopState 返回），其后续 reject 对调用方不再有
+    // 意义——标记已处理防 unhandledRejection
+    main.catch(() => undefined);
+    return await Promise.race([main, stopPromise]);
   } finally {
+    runnerLock?.release();
     process.off("SIGINT", signalHandler);
     process.off("SIGTERM", signalHandler);
   }
@@ -1114,7 +1335,12 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
  * 返回 1。
  * root 不在账本 → 抛可操作错误（调用方负责转 exit 1）。
  */
-async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Promise<number> {
+async function runLoopMain(
+  opts: RunLoopOptions,
+  inFlight: InFlightSpawn[],
+  lock: { heartbeat(): void },
+  stopState?: { requested: boolean; code: number },
+): Promise<number> {
   const pollMs = opts.pollMs ?? DEFAULT_LOOP_POLL_MS;
   const maxIdleMs = opts.maxIdleMs ?? DEFAULT_LOOP_MAX_IDLE_MS;
   const maxConcurrency = opts.maxConcurrency ?? DEFAULT_LOOP_MAX_CONCURRENCY;
@@ -1218,8 +1444,32 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // run 的启动清扫按「可达性已满足」再收）
   const pendingReclaim = new Set<string>();
   const reclaimTried = new Set<string>(reclaimedIds);
+  // ph-i1 R4：反思 followUp 的已挂接登记（unitId → 已挂接的 specHash）——防同轮/
+  // 跨轮对同一在飞句柄重复追问；新 spec（新 hash）自然重新挂接
+  const attachedReflection = new Map<string, string>();
+  // u-i2-a：onEvent 发射器（回调抛错吞掉不炸主循环——观测面不是信任边界）+
+  // round 事件的轮次序号 + stopped 事件的 unit×维度去重（每命中只发一次）
+  const emitEvent = (ev: LoopEvent): void => {
+    if (opts.onEvent === undefined) {
+      return;
+    }
+    try {
+      opts.onEvent(ev);
+    } catch (err) {
+      emitErr(
+        `[runner] onEvent 回调抛错（已忽略，循环继续）：${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  };
+  let roundSeq = 0;
+  const announcedStopped = new Set<string>();
 
   while (true) {
+    // P0-1：编程停止/信号（库形态）已请求 → 在飞已 killAll，以约定码收束
+    if (stopState?.requested === true) return stopState.code;
+    // u-i1-d R5：每轮 poll 重写心跳（活锁判定输入——他进程见 heartbeatTs 停滞
+    // 属陈锁抢占路径的人工判断辅助，机器侧判定仍以 pid 存活为准）
+    lock.heartbeat();
     // 每轮重读投影（子进程 agent 与本循环并发写账本，投影必须重新装载）。保留
     // 原始事件流：fx-2 R4a 的连续集成 fail 计数需要 SpecSubmitted 与 VerifyRan
     // 的跨类型账本顺序（fold 投影是平行数组，相对顺序已丢失），从事件重放
@@ -1268,7 +1518,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       // fx-6 X3a：killAll 前先补打印已退出 spawn 的结算行——race 的 sleep 分支
       // 先到点而 spawn 已退出时，末位（如 root exec-reviewer）的结算行会在此
       // 收束分支被跳过（四跑异常-2），此处兜底出声
-      await reportSettledFlights(inFlight, events, { maxBuildAttempts, maxSpecRejects });
+      await reportSettledFlights(inFlight, events, { maxBuildAttempts, maxSpecRejects }, emitEvent);
       killAll(inFlight);
       // 退出清尾：run 已结束，本轮刚收集的 closed 子现场一并回收（延迟窗口语义
       // 已过点——产出已 merge 进 root 分支且证据链闭合，D5：现场无保留价值；
@@ -1289,7 +1539,22 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
 
     // 连续 TIMEOUT 计数的进展清零 + 转人工判定（在派发计算之前——顺序语义见
     // settleTimeoutEscalations 注释）
-    lastUnitSeqs = settleTimeoutEscalations(events, timeoutStreaks, lastUnitSeqs, escalated, opts.rootId, artifactsDir, spawnTimeoutMs);
+    lastUnitSeqs = settleTimeoutEscalations(
+      events,
+      timeoutStreaks,
+      lastUnitSeqs,
+      escalated,
+      opts.rootId,
+      artifactsDir,
+      spawnTimeoutMs,
+      (unitId, role) =>
+        emitEvent({
+          kind: "stopped",
+          unitId,
+          dimension: "timeoutEscalation",
+          reason: `连续 ${AGENT_TIMEOUT_ESCALATION_AFTER} 次 spawn TIMEOUT 封顶（最后派发 role：${role}），停止自动重派转人工`,
+        }),
+    );
 
     // 四类转人工维度的出声与事实计算（rv-5 flake / mx5-2 回炉活锁 / mx-1 spec
     // 打回活锁 / lv-2 buildDrift 缓慢进展——语义与去重见 announceManualEscalations
@@ -1310,6 +1575,36 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         buildDrift: announcedBuildDrift,
       },
     );
+    // u-i2-a：frontier 每轮只算一次——round 事件（widget 数据源）、stopped 事件
+    //（停派四维命中）与派发计算（computeDispatchTargets）消费同一份投影（同源）
+    const groups = computeFrontier(projection, {
+      consecutiveIntegrationFails: consecutiveIntegrationFails(events),
+      flakeReviewFacts: escalatedFacts.flakes,
+      specContractFacts: escalatedFacts.contractFacts,
+      specReviewFailCounts: escalatedFacts.specFails,
+      maxSpecRejects,
+      buildDriftFacts: driftFacts,
+    });
+    roundSeq += 1;
+    emitEvent({ kind: "round", seq: roundSeq, frontierSummary: summarizeFrontier(groups) });
+    for (const dimension of STOPPED_DISPATCH_DIMENSIONS) {
+      for (const unitId of groups[dimension]) {
+        if (!subtreeIds.has(unitId)) {
+          continue;
+        }
+        const dedupeKey = `${unitId}|${dimension}`;
+        if (announcedStopped.has(dedupeKey)) {
+          continue;
+        }
+        announcedStopped.add(dedupeKey);
+        emitEvent({
+          kind: "stopped",
+          unitId,
+          dimension,
+          reason: STOPPED_REASONS[dimension],
+        });
+      }
+    }
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
@@ -1352,18 +1647,87 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
       }
     }
 
+    // ph-i1 R4：反思接缝——reflectionPending 不进派发表（computeDispatchTargets
+    // 已 skip），在此处理：有在飞长驻句柄 → followUp 链（同进程追问，上下文全保留）；
+    // 无在飞（一次性后端已结算）→ loop 代写占位 ReflectionRan 放行（降级出声，
+    // 诚实边界：无 sessionFile 审计锚；反思实质属 ph-i2 四流程）。代写失败只出声，
+    // 下轮重试（reflectionPending 持续可见）
+    for (const unit of subtreeUnits(projection, opts.rootId)) {
+      // 无 verdict 条件与 frontier.reflectionPending 判定同步（adversarial R5）：
+      // 最新 spec 已有 spec-review verdict 的 unit（specFixPending 等）不属
+      // reflectionPending——对其发 followUp 会劫持修 spec 的在飞会话、或对旧账本
+      // fail-v 存量 unit 代写占位 ReflectionRan
+      if (
+        unitStatus(unit) !== "created" ||
+        unit.specs.length === 0 ||
+        reflectionDone(unit) ||
+        latestSpecReviewAfterLastSpec(unit) !== null
+      ) {
+        continue;
+      }
+      const spec = unit.specs[unit.specs.length - 1];
+      if (spec === undefined) {
+        continue;
+      }
+      const flight = inFlight.find((f) => f.unitId === unit.unitId);
+      if (flight !== undefined) {
+        if (
+          isInteractiveSpawnHandle(flight.handle) &&
+          attachedReflection.get(unit.unitId) !== spec.specHash
+        ) {
+          attachedReflection.set(unit.unitId, spec.specHash);
+          emit([
+            `[runner] unit "${unit.unitId}" 处于 reflectionPending 且有在飞长驻句柄——发反思 followUp（完成后写 ReflectionRan 再派 reviewer）`,
+          ]);
+          startReflectionFollowUp(
+            opts.cwd,
+            opts.rootId,
+            unit.unitId,
+            flight.handle,
+            spec.specHash,
+            unit.reflections.length + 1,
+            spawnTimeoutMs,
+          );
+          emitEvent({
+            kind: "reflection",
+            unitId: unit.unitId,
+            round: unit.reflections.length + 1,
+          });
+        }
+        // 非交互在飞：等本轮结算后走代写路径（不抢跑 agent 未完成的现场）
+        continue;
+      }
+      try {
+        new EventLedger(ledgerPath(getCwHome(), opts.cwd)).append("ReflectionRan", {
+          unitId: unit.unitId,
+          specHash: spec.specHash,
+          round: unit.reflections.length + 1,
+        });
+        emitEvent({
+          kind: "reflection",
+          unitId: unit.unitId,
+          round: unit.reflections.length + 1,
+        });
+        emitErr(
+          `[runner] unit "${unit.unitId}" reflectionPending 但无在飞长驻句柄（一次性后端）` +
+            "——loop 代写占位 ReflectionRan 放行（无反思实质，TODO(ph-i2) 四流程接入）。" +
+            `恢复动作：需真实反思链时用 cw run --root ${opts.rootId} --spawn pi-rpc。\n`,
+        );
+      } catch (err) {
+        emitErr(
+          `[runner] unit "${unit.unitId}" 的占位 ReflectionRan 入账失败（下轮重试）：` +
+            `${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }
+
     // 派发（六步之 1-3）：frontier 重算 → 内部节点直跑集成（确定性代码，不派
     // agent、不占并发额度）→ brief 落盘 → spawn，同批 ≤ maxConcurrency
     const targets = computeDispatchTargets(
+      groups,
       projection,
       opts.rootId,
       inFlight,
-      consecutiveIntegrationFails(events),
-      escalatedFacts.flakes,
-      escalatedFacts.contractFacts,
-      escalatedFacts.specFails,
-      maxSpecRejects,
-      driftFacts,
       new Set(escalated.keys()),
     );
     if (targets.length === 0 && inFlight.length === 0 && escalated.size > 0) {
@@ -1390,6 +1754,11 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
             `[runner] unit "${target.unitId}" 的集成派发异常（本轮跳过，下轮重算自动重试）：` +
               `${err instanceof Error ? err.message : String(err)}\n`,
           );
+          emitEvent({
+            kind: "error",
+            stage: "integration",
+            message: `unit "${target.unitId}" 的集成派发异常：${err instanceof Error ? err.message : String(err)}`,
+          });
         }
         continue;
       }
@@ -1431,6 +1800,11 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         emitErr(
           `[runner] unit "${target.unitId}" worktree 就绪失败，跳过本轮派发：${ensured.error}\n`,
         );
+        emitEvent({
+          kind: "error",
+          stage: "worktree",
+          message: `unit "${target.unitId}" worktree 就绪失败：${ensured.error}`,
+        });
         continue;
       }
       const briefPath = writeBriefWithHistory(artifactsDir, target, unit, projection, opts.rootId, opts.cwd, wtDir, events);
@@ -1474,12 +1848,23 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
           `[runner] unit "${target.unitId}" 的 ${target.role} 派发 spawn 异常（本轮跳过，下轮重算自动重试）：` +
             `${err instanceof Error ? err.message : String(err)}\n`,
         );
+        emitEvent({
+          kind: "error",
+          stage: "spawn",
+          message: `unit "${target.unitId}" 的 ${target.role} 派发 spawn 异常：${err instanceof Error ? err.message : String(err)}`,
+        });
         continue;
       }
       inFlight.push({ role: target.role, unitId: target.unitId, handle, reviewerWindow });
       emit([
         `[runner] ${new Date().toISOString()} 派发 ${target.role} → unit "${target.unitId}"（worktree: ${wtDir}，brief: ${briefPath}）`,
       ]);
+      emitEvent({
+        kind: "dispatch",
+        unitId: target.unitId,
+        role: target.role,
+        subagentSlug: `${target.unitId}-${target.role}`,
+      });
     }
 
     // 等待（六步之 4）：任一 spawn 退出或 poll 到点，先到者唤醒重算
@@ -1502,6 +1887,7 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
           ? new EventLedger(ledgerPath(getCwHome(), opts.cwd)).readAll()
           : events,
         { maxBuildAttempts, maxSpecRejects },
+        emitEvent,
       );
       if (finished.result.exitCode === "SPAWN_ERROR") {
         killAll(inFlight);
