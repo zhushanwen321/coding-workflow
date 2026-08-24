@@ -9,7 +9,6 @@
  *   - 组4（SPAWN_ERROR）：PATH 隔离触发 lifecycle ENOENT 同步预检 → 适配器转译，
  *     wait() 秒回不挂死（挂死会撞默认 testTimeout）。
  */
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -25,6 +24,7 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { buildPiCommand, createPiAdapter, resolvePiModel } from "../src/runner/spawn/pi.js";
 import type { AgentSpawnRequest } from "../src/runner/spawn/types.js";
+import { hasRealPi } from "./fixtures/pi-env.js";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-u6c-pi-"));
 
@@ -152,12 +152,12 @@ describe("u6c pi 适配器：env 合并透传（真实子进程观测）", () =>
 });
 
 describe("u6c pi 适配器：真实 pi 微调用 E2E", () => {
-  // 跳过条件（验收文档）：环境无 pi 时 skip 并 warn，保证 CI 可重复；本地 pi 可用则真实跑
-  const piResolvable = spawnSync("which", ["pi"], { encoding: "utf8" }).status === 0;
-  const itRealPi = piResolvable ? it : it.skip;
+  // real-pi 守卫（tests/fixtures/pi-env.ts）：CI 一律 skip；本地要求 node_modules
+  // 外的真实 pi——vendored 副本（node_modules/.bin/pi）不算
+  const itRealPi = hasRealPi ? it : it.skip;
 
-  if (!piResolvable) {
-    console.warn("u6c: PATH 上无 pi，真实 E2E 条跳过（本地 pi 可用环境不 skip）");
+  if (!hasRealPi) {
+    console.warn("u6c: 无可用真实 pi（CI 环境或 PATH 仅有 vendored 副本），真实 E2E 条跳过");
   }
 
   itRealPi(
