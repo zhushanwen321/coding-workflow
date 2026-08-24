@@ -52,7 +52,7 @@ export function resolveAgentDir(): string {
 }
 
 export const SUBAGENT_INSTALL_GUIDE =
-  "subagent-workflow ≥2.0.0 未安装：npx @zhushanwen/pi-coding-workflow-extension install（会连依赖装入）；" +
+  "subagent-workflow 编程 API（createSpawnManager）不在场：npx @zhushanwen/pi-coding-workflow-extension install（会连依赖装入）；" +
   "若为本地开发态：npm install /Users/zhushanwen/Code/tai-ji-workspace/main/extensions/subagent-workflow --no-save 装入插件包";
 
 /** ①ask-user 磁盘在场性：manifest.json 登记 + extensions/ask-user 入口存在 */
@@ -107,7 +107,7 @@ export async function checkSubagentApi(spec: string = "@zhushanwen/pi-subagent-w
   if (root === undefined && sub === undefined) {
     return { ok: false, detail: `${SUBAGENT_INSTALL_GUIDE}（导入失败：${spec} 不可解析）` };
   }
-  return { ok: false, detail: `${SUBAGENT_INSTALL_GUIDE}（已装版本无 createSpawnManager 导出——版本 <2.0.0）` };
+  return { ok: false, detail: `${SUBAGENT_INSTALL_GUIDE}（已装版本无 createSpawnManager 导出——npm 上的 8.x 为无编程 API 的旧谱系，需含 API 的 2.0.0+ 构建且其未发 npm，按指引走本地开发态装入）` };
 }
 
 /** ③cw 引擎库探测式导入 */

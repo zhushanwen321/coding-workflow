@@ -205,6 +205,10 @@ export function createSubagentBackend(mgr: SmSpawnManager): SubagentBackend {
               if (pendingRound === p) pendingRound = null;
             });
           pendingRound = p;
+          // 消费方超时放弃后（race 被 sleep 赢）若底层 wait() reject，p 成为无
+          // handler 的被弃 promise → unhandled rejection。挂 no-op rejection
+          // handler 消掉该状态；仍在 race 中的消费者照样收到同一 rejection
+          p.catch(() => undefined);
         }
         return pendingRound;
       }
