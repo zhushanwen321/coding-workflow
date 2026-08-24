@@ -10,7 +10,7 @@
  * ph-i0 哨兵 /cw-ping 保留。
  */
 import { execFile } from "node:child_process";
-import { unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { promisify } from "node:util";
 
 import { loadRunnerConfig, type RunnerConfig } from "./config.js";
@@ -32,12 +32,20 @@ export interface LaunchOptions {
   config: RunnerConfig;
   force: boolean;
   onEvent?: (ev: unknown) => void;
+  /**
+   * P0-1：runLoop 库形态的编程停止通道交付（runLoop 初始化时调用本回调，把循环
+   * 自身的停止函数交出来）。注入式 launchRunLoop（测试）可不消费——回落 signalStop。
+   */
+  onStopRequest?: (stop: () => void) => void;
 }
 
 export interface CwRunnerDeps {
   /** 缺省：动态 import runLoop + createSpawnManager → createSubagentBackend → runLoop */
   launchRunLoop?: (opts: LaunchOptions) => Promise<number>;
-  /** 缺省：向自身发 SIGINT，触发 runLoop 已注册的信号 handler（killAll + 释放锁） */
+  /**
+   * 注入式 launch（无编程停止通道）时的停止回落（测试注入位）。默认后端不走本
+   * 通道——SIGINT 会触发 loop 信号 handler 的 process.exit 杀死 pi 宿主（P0-1）。
+   */
   signalStop?: () => void;
   /** 时钟/等待注入位（缺省真实 setTimeout） */
   sleep?: (ms: number) => Promise<void>;
@@ -99,20 +107,29 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
         pollMs: opts.config.pollMs,
         forceDispatch: opts.force,
         ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+        ...(opts.onStopRequest !== undefined ? { onStopRequest: opts.onStopRequest } : {}),
       });
     });
   const signalStop = deps.signalStop ?? ((): void => {
+    // 仅注入式 launch 的回落位（见 CwRunnerDeps.signalStop 注释）；默认后端恒走
+    // onStopRequest 编程停止，不会执行到这里
     process.kill(process.pid, "SIGINT");
   });
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let running = false;
   let rootId: string | undefined;
+  let launchCwd: string | undefined;
   let launchPromise: Promise<number> | undefined;
   let backendRef: SubagentBackend | undefined;
   let stoppedNotified = false;
+  /** runLoop 交付的编程停止函数（P0-1；注入式 launch 不交付 → undefined） */
+  let stopFnRef: (() => void) | undefined;
 
   const configFull = loadRunnerConfig();
+
+  /** widget 固定 key（P0-2：pi 实签名 setWidget(key, content: string[] | undefined)） */
+  const WIDGET_KEY = "cw-runner";
 
   /** onEvent 接线（R2 最小集）：round→widget；stopped→notify 一次；其余状态行刷新 */
   function wireOnEvent(ctx: ExtensionCommandContext): (ev: unknown) => void {
@@ -124,15 +141,15 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
             .filter(([, n]) => n > 0)
             .map(([k, n]) => `${k}:${n}`)
             .join(" ");
-          ctx.ui.setWidget?.(`cw[#${e.seq ?? 0}] ${line || "（frontier 全空）"}`);
+          ctx.ui.setWidget?.(WIDGET_KEY, [`cw[#${e.seq ?? 0}] ${line || "（frontier 全空）"}`]);
         } else if (e.kind === "stopped" && !stoppedNotified) {
           stoppedNotified = true;
-          ctx.ui.notify?.(`cw: ${e.unitId} 转人工（${e.dimension}）`, "warn");
-          ctx.ui.setWidget?.(`cw ⚠ ${e.unitId} 转人工（${e.dimension}）：${e.reason ?? ""} —— /cw report 查证据链`);
+          ctx.ui.notify?.(`cw: ${e.unitId} 转人工（${e.dimension}）`, "warning");
+          ctx.ui.setWidget?.(WIDGET_KEY, [`cw ⚠ ${e.unitId} 转人工（${e.dimension}）：${e.reason ?? ""} —— /cw report 查证据链`]);
         } else if (e.kind === "dispatch" && e.subagentSlug !== undefined) {
-          ctx.ui.setWidget?.(`cw → ${e.subagentSlug}`);
+          ctx.ui.setWidget?.(WIDGET_KEY, [`cw → ${e.subagentSlug}`]);
         } else if (e.kind === "settled") {
-          ctx.ui.setWidget?.(`cw ✓ ${e.unitId}/${String(e.role ?? "")} exit=${String(e.result?.exitCode ?? "?")}`);
+          ctx.ui.setWidget?.(WIDGET_KEY, [`cw ✓ ${e.unitId}/${String(e.role ?? "")} exit=${String(e.result?.exitCode ?? "?")}`]);
         }
         // reflection/error：最小集为忽略（reflection 轮次在 subagent 面板天然可见）
       } catch {
@@ -143,7 +160,7 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
 
   async function cmdStart(tokens: string[], ctx: ExtensionCommandContext): Promise<void> {
     if (running) {
-      ctx.ui.notify?.(`cw: 已有 runner 在跑（root=${rootId}）；先 /cw stop`, "warn");
+      ctx.ui.notify?.(`cw: 已有 runner 在跑（root=${rootId}）；先 /cw stop`, "warning");
       return;
     }
     const force = tokens.includes("--force");
@@ -161,8 +178,8 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
     if (!probe.clarify) {
       ctx.ui.notify?.("cw: 本次无提问通道（designer 自声明形态）：" + probe.reasons.join("；"), "info");
     }
-    // 锁预检（runLoop 内部 acquireRunnerLock 仍是权威；此处给 /cw 语境拒启文案）
-    const cwd = process.cwd();
+    // P2-10：cwd 锚优先用宿主会话工作目录（ExtensionCommandContext.cwd，types.d.ts:217）
+    const cwd = ctx.cwd ?? process.cwd();
     const lock = precheckRunnerLock({ cwHome: mirrorGetCwHome(), cwd, force });
     if (!lock.ok) {
       ctx.ui.notify?.(`cw: 拒启——${lock.message ?? ""}（${lock.detail}）`, "error");
@@ -170,10 +187,23 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
     }
     running = true;
     rootId = id;
+    launchCwd = cwd;
     stoppedNotified = false;
+    // P1-4：上一轮 shutdown 备忘在本次 start 复位——stop→start→stop 序列每次真收尾
+    shutdownPromise = undefined;
+    stopFnRef = undefined;
     const onEvent = wireOnEvent(ctx);
     ctx.ui.notify?.(`cw: runner 启动 root=${id}（并发 ${configFull.maxConcurrency}，poll ${configFull.pollMs}ms${probe.clarify ? "" : "，无提问通道"}）`, "info");
-    launchPromise = launch({ rootId: id, cwd, config: configFull, force, onEvent })
+    launchPromise = launch({
+      rootId: id,
+      cwd,
+      config: configFull,
+      force,
+      onEvent,
+      onStopRequest: (stop: () => void): void => {
+        stopFnRef = stop;
+      },
+    })
       .catch(async (e: unknown): Promise<number> => {
         // runLoop 抛错（root 缺失等）——对齐 CLI 壳语义转 exit 1 出声
         ctx.ui.notify?.(`cw: runner 异常退出：${e instanceof Error ? e.message : String(e)}`, "error");
@@ -183,7 +213,7 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
         running = false;
       });
     void launchPromise.then((code: number) => {
-      ctx.ui.notify?.(`cw: runner 结束（exit ${code}）${code === 0 ? "——root 已 closed" : "；续接：/cw start 或 cw run"}`, code === 0 ? "info" : "warn");
+      ctx.ui.notify?.(`cw: runner 结束（exit ${code}）${code === 0 ? "——root 已 closed" : "；续接：/cw start 或 cw run"}`, code === 0 ? "info" : "warning");
     });
   }
 
@@ -237,24 +267,56 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
   }
 
   let shutdownPromise: Promise<void> | undefined;
-  /** 幂等（session_shutdown 与 /cw stop 可并发触发）：共享同一次收尾 Promise */
+  /**
+   * 幂等（session_shutdown 与 /cw stop 可并发触发）：共享同一次收尾 Promise。
+   * 备忘在下次 /cw start 复位（P1-4）——stop → start → stop 序列每次真收尾，
+   * 完成后不自动重置（重复 shutdown 恒 no-op，与既有幂等语义一致）。
+   */
   function shutdown(): Promise<void> {
     if (shutdownPromise === undefined) shutdownPromise = doShutdown();
     return shutdownPromise;
   }
   async function doShutdown(): Promise<void> {
     if (backendRef !== undefined) backendRef.cancelAll();
-    // 触发 runLoop 自身 SIGINT handler（killAll + release lock + 返回 1）
-    signalStop();
+    if (stopFnRef !== undefined) {
+      // P0-1：优先编程停止通道——SIGINT 会触发 loop 信号 handler 的
+      // process.exit，杀死 pi 宿主进程（在飞会话已由上方 cancelAll 收口）
+      stopFnRef();
+    } else if (deps.launchRunLoop !== undefined) {
+      // 注入式 launch（测试/替代后端）未交付编程通道——回落注入的 signalStop
+      signalStop();
+    } else {
+      // 默认后端的注册竞态窗口：动态 import 期间 stopFnRef 尚未交付，短暂等待
+      //（超时放弃——循环多半已自行退出，绝不在宿主进程内发 SIGINT 兜底）
+      const deadline = Date.now() + 3_000;
+      // 赋值发生在 onStopRequest 回调闭包内——经读取函数取值，绕过窄化误判
+      const readStop = (): (() => void) | undefined => stopFnRef;
+      while (readStop() === undefined && Date.now() < deadline) {
+        await sleep(50);
+      }
+      readStop()?.();
+    }
     if (launchPromise !== undefined) {
       await Promise.race([launchPromise.catch(() => undefined), sleep(5_000)]);
     }
-    // 兜底 unlink（heartbeat 重写竞态窗口的陈锁清理；幂等）
-    if (rootId !== undefined) {
+    // 兜底 unlink（heartbeat 重写竞态窗口的陈锁清理；幂等）。P2-7：锁内 pid 是
+    // 他进程且仍存活时不删——那是别人的锁，不是陈锁
+    if (launchCwd !== undefined) {
+      const lockPath = mirrorRunnerLockPath(mirrorGetCwHome(), launchCwd);
       try {
-        unlinkSync(mirrorRunnerLockPath(mirrorGetCwHome(), process.cwd()));
+        const pid = (JSON.parse(readFileSync(lockPath, "utf-8")) as { pid?: unknown }).pid;
+        if (typeof pid !== "number" || pid === process.pid) {
+          unlinkSync(lockPath);
+        } else {
+          try {
+            process.kill(pid, 0);
+            // 持有进程仍活——非陈锁，保留
+          } catch {
+            unlinkSync(lockPath); // 持有进程已死 → 陈锁
+          }
+        }
       } catch {
-        /* ENOENT 静默 */
+        /* ENOENT/损坏静默 */
       }
     }
     running = false;

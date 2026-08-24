@@ -258,6 +258,15 @@ export interface RunLoopOptions {
    * （易失进程态非事实，总纲 D8 裁决）。
    */
   forceDispatch?: boolean;
+  /**
+   * P0-1（extension 编程停止通道）：库形态消费者（pi extension 跑在宿主进程内，
+   * 不允许被 runner 杀死）的编程停止入口。runLoop 初始化（锁获取之前）调用它，
+   * 把循环自身的停止函数交付出去；消费者调用该函数 = 与 SIGINT/SIGTERM handler
+   * 同一套收尾（提示行 + killAll + 锁释放），但主 promise 以约定码（130）resolve
+   * 而非 process.exit。传入本选项时真实 SIGINT/SIGTERM 也走同一收尾并以约定码
+   * resolve（不 exit）。CLI 壳不传 = 行为完全不变（信号路径照旧 process.exit）。
+   */
+  onStopRequest?: (stop: () => void) => void;
 }
 
 /**
@@ -754,40 +763,70 @@ function emitSpecFrozenDesignerRationale(
 }
 
 /**
+ * P0-1（extension 编程停止通道）：库形态停止状态。onStopRequest 在场时，
+ * SIGINT/SIGTERM 与编程停止都不 process.exit（宿主进程不允许被 runner 杀死），
+ * 而是置位 state（主循环每轮 poll 顶部检查后以约定码返回）+ settle 兑现
+ * （runLoop 以 Promise.race 先到先得，停止先到即返回约定码）。
+ */
+interface LoopStopChannel {
+  state: { requested: boolean; code: number };
+  settle: (code: number) => void;
+}
+
+/**
+ * 信号/编程停止的共用收尾三步（顺序与 rv-1 验收锁定一致）：提示行 writeSync →
+ * best-effort killAll → 锁释放。退出方式（process.exit vs resolve）由调用点分支。
+ */
+function loopStopCleanup(
+  rootId: string,
+  inFlight: readonly InFlightSpawn[],
+  releaseLock: (() => void) | undefined,
+  label: string,
+  exitCode: number,
+): void {
+  try {
+    writeSync(
+      process.stderr.fd,
+      `[runner] 收到 ${label}：回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。` +
+        `账本即状态——重跑 cw run --root ${rootId} 即续。\n`,
+    );
+  } catch (err) {
+    // writeSync 失败（fd 异常等）不能阻断回收——回收与退出码是承诺；降级为常规
+    // 异步 write 再试一次（尽力而为，即使 exit 时被队列丢弃也不影响回收路径）
+    process.stderr.write(
+      `[runner] 收到 ${label}（提示行 writeSync 失败：${err instanceof Error ? err.message : String(err)}）：` +
+        `回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。\n`,
+    );
+  }
+  killAll(inFlight);
+  releaseLock?.(); // u-i1-d R5：信号退出同样释放派发锁（unlink）
+}
+
+/**
  * runLoop 的信号 handler（SIGINT/SIGTERM 共用，rv-1）：Ctrl-C/SIGTERM 后 agent
  * 子进程会成孤儿继续写账本，用户重跑 `cw run` 对同一 worktree reset + 二次 spawn
  * 就是双 agent 混卷——所以 runner 必须主动回收全部在飞 spawn 再退出，「重跑即续」
  * 对进程维度也成立。只做回收：不写任何账本事件、不动 worktree/分支（回收 worktree
  * 是既有延迟回收逻辑的事，信号路径不额外触发 reclaim）。
  *
- * 退出路径三步与顺序（验收锁定）：提示行先于 killAll 打印（writeSync 同步落 stderr，
- * 用户立即看到响应——常规异步 write 在 process.exit 时可能被丢弃）→ best-effort
- * killAll（沿用既有语义：单个 kill 失败记录继续，不因清理失败改变退出码）→
- * process.exit(130|143)。
+ * P0-1 起带 stop 通道（onStopRequest 在场）：收尾后不 process.exit，改置位 +
+ * settle（宿主进程存活，主 promise 以约定码 resolve）。stop 缺席 = 行为零变更。
  */
 function makeLoopSignalHandler(
   rootId: string,
   inFlight: readonly InFlightSpawn[],
   releaseLock?: () => void,
+  stop?: LoopStopChannel,
 ): (signal: NodeJS.Signals) => void {
   return (signal) => {
     const exitCode = signal === "SIGINT" ? LOOP_SIGNAL_EXIT_CODES.SIGINT : LOOP_SIGNAL_EXIT_CODES.SIGTERM;
-    try {
-      writeSync(
-        process.stderr.fd,
-        `[runner] 收到 ${signal}：回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。` +
-          `账本即状态——重跑 cw run --root ${rootId} 即续。\n`,
-      );
-    } catch (err) {
-      // writeSync 失败（fd 异常等）不能阻断回收——回收与退出码是承诺；降级为常规
-      // 异步 write 再试一次（尽力而为，即使 exit 时被队列丢弃也不影响回收路径）
-      process.stderr.write(
-        `[runner] 收到 ${signal}（提示行 writeSync 失败：${err instanceof Error ? err.message : String(err)}）：` +
-          `回收 ${inFlight.length} 个在飞派发后以 exit ${exitCode} 退出。\n`,
-      );
+    loopStopCleanup(rootId, inFlight, releaseLock, signal, exitCode);
+    if (stop !== undefined) {
+      stop.state.requested = true;
+      stop.state.code = exitCode;
+      stop.settle(exitCode);
+      return;
     }
-    killAll(inFlight);
-    releaseLock?.(); // u-i1-d R5：信号退出同样释放派发锁（unlink）
     process.exit(exitCode);
   };
 }
@@ -1233,7 +1272,25 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   //（循环未起来时的信号 → killAll 空集 no-op，同样打印提示行并按约定码退出）
   const inFlight: InFlightSpawn[] = [];
   let runnerLock: RunnerLock | null = null;
-  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight, () => runnerLock?.release());
+  // P0-1：库形态停止通道（onStopRequest 缺席时 stop 为 undefined，行为零变更）
+  const stopState: { requested: boolean; code: number } = { requested: false, code: LOOP_SIGNAL_EXIT_CODES.SIGINT };
+  let stop: LoopStopChannel | undefined;
+  let stopPromise: Promise<number> | undefined;
+  if (opts.onStopRequest !== undefined) {
+    let settleFn: ((code: number) => void) | undefined;
+    stopPromise = new Promise<number>((resolve) => {
+      settleFn = resolve;
+    });
+    stop = { state: stopState, settle: (code) => settleFn?.(code) };
+    // 把循环自身的停止函数交付出去（在锁获取之前——覆盖启动竞态窗口内的 stop）
+    opts.onStopRequest(() => {
+      loopStopCleanup(opts.rootId, inFlight, () => runnerLock?.release(), "STOP", LOOP_SIGNAL_EXIT_CODES.SIGINT);
+      stopState.requested = true;
+      stopState.code = LOOP_SIGNAL_EXIT_CODES.SIGINT;
+      stop?.settle(LOOP_SIGNAL_EXIT_CODES.SIGINT);
+    });
+  }
+  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight, () => runnerLock?.release(), stop);
   process.on("SIGINT", signalHandler);
   process.on("SIGTERM", signalHandler);
   try {
@@ -1255,7 +1312,15 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
     if (acquired.takeoverWarning !== undefined) {
       emitErr(acquired.takeoverWarning);
     }
-    return await runLoopMain(opts, inFlight, runnerLock);
+    // P0-1：停止在锁获取/清扫阶段到达（主循环未启动）→ 直接以约定码返回
+    if (stopState.requested) return stopState.code;
+    const main = runLoopMain(opts, inFlight, runnerLock, stopState);
+    if (stopPromise === undefined) return await main;
+    // 库形态：停止兑现与主循环自然结束先到先得。停止先到时主循环仍在收尾
+    //（killAll 解锁 await 后按 stopState 返回），其后续 reject 对调用方不再有
+    // 意义——标记已处理防 unhandledRejection
+    main.catch(() => undefined);
+    return await Promise.race([main, stopPromise]);
   } finally {
     runnerLock?.release();
     process.off("SIGINT", signalHandler);
@@ -1274,6 +1339,7 @@ async function runLoopMain(
   opts: RunLoopOptions,
   inFlight: InFlightSpawn[],
   lock: { heartbeat(): void },
+  stopState?: { requested: boolean; code: number },
 ): Promise<number> {
   const pollMs = opts.pollMs ?? DEFAULT_LOOP_POLL_MS;
   const maxIdleMs = opts.maxIdleMs ?? DEFAULT_LOOP_MAX_IDLE_MS;
@@ -1399,6 +1465,8 @@ async function runLoopMain(
   const announcedStopped = new Set<string>();
 
   while (true) {
+    // P0-1：编程停止/信号（库形态）已请求 → 在飞已 killAll，以约定码收束
+    if (stopState?.requested === true) return stopState.code;
     // u-i1-d R5：每轮 poll 重写心跳（活锁判定输入——他进程见 heartbeatTs 停滞
     // 属陈锁抢占路径的人工判断辅助，机器侧判定仍以 pid 存活为准）
     lock.heartbeat();

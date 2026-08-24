@@ -40,8 +40,9 @@ function makePi() {
           notify(msg: string) {
             notifies.push(msg);
           },
-          setWidget(content: string) {
-            widgets.push(content);
+          // P0-2 后对齐 pi 实签名 setWidget(key, content)——recorder 记录内容行（断言语义不变）
+          setWidget(_key: string, content: string[] | undefined) {
+            widgets.push(...(content ?? []));
           },
         },
       };

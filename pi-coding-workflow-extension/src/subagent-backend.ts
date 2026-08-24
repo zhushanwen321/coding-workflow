@@ -105,6 +105,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * P1-5：followUp 预结算窗口。pi-1 实测 wait() 在 idle 态阻塞（等下一个 round
+ * 结算），无条件 await 会永久挂起——窗口仅用于兼容「round 真在飞」时先消费再
+ * message 的旧语义；典型反思序列（waitForIdle 已消费 idle 锚）窗口耗尽直接发。
+ */
+const FOLLOW_UP_ROUND_WINDOW_MS = 250;
+
+/**
  * 造后端适配器。mgr 来自探测式 import 的 createSpawnManager(pi)（index.ts 启动时
  * 注入）；测试注入「真实协议桩」形态的最小 SpawnManager 实现（非 mock 框架）。
  * 返回 adapter + cancelAll（session_shutdown / /cw stop 的在飞会话收口）。
@@ -248,23 +255,36 @@ export function createSubagentBackend(mgr: SmSpawnManager): SubagentBackend {
           if (handle.settled) {
             throw new Error("subagent-backend: 会话已终态，followUp 不可用（偏离⑥/⑦）");
           }
-          // 偏离⑥：message 在 round 进行中抛错——先结算当前 round 再发
-          const round = await handle.wait();
-          if (round.text !== "") appendFileSync(stdoutPath, round.text, "utf-8");
-          if (round.settled) {
-            throw new Error("subagent-backend: followUp 前会话已终态，无法追问");
+          // 偏离⑥改（P1-5）：pi-1 实测 wait() 是「等下一个 round 结算」语义——idle
+          // 态（无在飞 round、未终态）调用会阻塞到 idle-timeout/永久挂起，不能
+          // 无条件 await。带短窗 race：窗口内结算的 round 消费落盘（round 真在飞
+          // 的旧语义兼容）；窗口耗尽（典型 = waitForIdle 已消费 idle 锚后的反思
+          // 序列）直接 message（pi-1 idle 态 sendFollowUp 即开始新 round）
+          const round = await Promise.race([
+            handle.wait(),
+            sleep(FOLLOW_UP_ROUND_WINDOW_MS).then(() => null),
+          ]);
+          if (round !== null) {
+            if (round.text !== "") appendFileSync(stdoutPath, round.text, "utf-8");
+            if (round.settled) {
+              throw new Error("subagent-backend: followUp 前会话已终态，无法追问");
+            }
           }
           await handle.message(text);
         },
         async waitForIdle(ms: number): Promise<boolean> {
           const deadline = Date.now() + ms;
+          // P1-6：pi-1 wait() 是广播队列语义——每个 pending waiter 都会拿到同一轮
+          // 结果。每 tick 新建 wait() 会让同一轮 text 被 N 个 waiter 各 append 一遍
+          //（证据链污染）。改为整个等待期复用单一 waiter，tick 只做超时检查
+          let roundWaiter: Promise<SmWaitResult> | undefined;
           for (;;) {
             if (handle.settled) return true;
             const remain = deadline - Date.now();
             if (remain <= 0) return false;
-            // 等 round 结算（idle 锚）而非进程退出；不消费则本轮 false
+            if (roundWaiter === undefined) roundWaiter = handle.wait();
             const winner = await Promise.race([
-              handle.wait().then((r) => {
+              roundWaiter.then((r) => {
                 if (r.text !== "") appendFileSync(stdoutPath, r.text, "utf-8");
                 return "round" as const;
               }),
