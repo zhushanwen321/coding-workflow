@@ -101,7 +101,7 @@ export interface SplitEntry {
   files?: string[];
 }
 
-// ---- 五类事件 payload（canon D2 事件模型） ----
+// ---- 六类事件 payload（canon D2 事件模型，第六类 ReflectionRan） ----
 
 export interface UnitCreatedPayload {
   unitId: string;

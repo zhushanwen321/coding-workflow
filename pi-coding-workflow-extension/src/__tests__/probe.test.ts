@@ -17,7 +17,7 @@ import {
   checkSubagentApi,
   resolveAgentDir,
   runProbe,
-  SUBAGENT_INSTALL_GUIDE,
+  subagentInstallGuide,
 } from "../probe.js";
 
 const execFileP = promisify(execFile);
@@ -83,7 +83,23 @@ describe("② subagent-workflow 编程 API 探测", () => {
   it("导入失败 → 拒启指引（§3.1 失败路径原文 + 本地开发态提示）", async () => {
     const r = await checkSubagentApi("no-such-package-cw-test");
     expect(r.ok).toBe(false);
-    expect(r.detail).toContain(SUBAGENT_INSTALL_GUIDE);
+    expect(r.detail).toContain(subagentInstallGuide());
+  });
+
+  it("指引 env 注入：CW_LOCAL_SUBAGENT_DIR 设定走本地路径形态，缺省不含个人路径", () => {
+    const prev = process.env.CW_LOCAL_SUBAGENT_DIR;
+    try {
+      process.env.CW_LOCAL_SUBAGENT_DIR = "/tmp/fake-subagent-wf";
+      const injected = subagentInstallGuide();
+      expect(injected).toContain("npm install /tmp/fake-subagent-wf --no-save");
+      delete process.env.CW_LOCAL_SUBAGENT_DIR;
+      const generic = subagentInstallGuide();
+      expect(generic).toContain("CW_LOCAL_SUBAGENT_DIR");
+      expect(generic).not.toContain("/Users/");
+    } finally {
+      if (prev === undefined) delete process.env.CW_LOCAL_SUBAGENT_DIR;
+      else process.env.CW_LOCAL_SUBAGENT_DIR = prev;
+    }
   });
 
   it("无编程 API 的版本形态： specifier 命中但缺导出 → fail", async () => {

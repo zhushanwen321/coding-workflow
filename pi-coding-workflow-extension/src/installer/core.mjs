@@ -262,6 +262,8 @@ export async function probeLoadRpc({ piBin = "pi", agentDir, extensions, timeout
     child.on("close", (code) => {
       if (!settled) finish(false, `pi exited before handshake (code=${code})`);
     });
+    // pi 启动即退出的竞态下 write 触发 stdin EPIPE——错误统一由 close/error 路径结算，这里 no-op 吞掉防 uncaught
+    child.stdin.on("error", () => {});
     child.stdin.write(JSON.stringify({ type: "get_state", id: 1 }) + "\n");
   });
 }

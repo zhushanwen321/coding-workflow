@@ -93,10 +93,13 @@ describe("i1d：runner.lock 三路径（真实锁文件）", () => {
       expect(res.takeoverWarning).toContain("陈锁");
       expect(res.takeoverWarning).toContain("最后心跳 2026-08-24T01:02:03.000Z");
       expect(res.takeoverWarning).toContain("pid 已死");
+      // 陈锁接管 TOCTOU 提示（pr-cr-fix S3）
+      expect(res.takeoverWarning).toContain("接管完成后再启动他进程");
       expect(res.lock.info.pid).toBe(process.pid);
-      // 接管后锁内容已是本进程（release 前读取——release 会 unlink）
+      // 接管后锁内容已是本进程，且写入了属主 token（release 前读取——release 会 unlink）
       const raw = JSON.parse(readFileSync(path, "utf-8")) as RunnerLockInfo;
       expect(raw.pid).toBe(process.pid);
+      expect(raw.token).toBe(res.lock.info.token);
       res.lock.release();
     }
   });
@@ -163,5 +166,63 @@ describe("i1d：锁生命周期（心跳 / 释放）", () => {
     // 心跳在已释放后 no-op（不复活锁文件）
     lock.heartbeat();
     expect(() => readFileSync(path, "utf-8")).toThrow();
+  });
+});
+
+describe("i1d：release 属主校验（pr-cr-fix A1）", () => {
+  it("接管者持锁后，原持有者 release 不删除新锁（token 不匹配 → 跳过删除）", () => {
+    const cwd = lockDir("takeover-release");
+    const cwHome = join(tmpRoot, "cw-home-takeover-release");
+    const original = acquireRunnerLock({ cwHome, cwd, rootId: "r1" });
+    expect(original.ok).toBe(true);
+    if (!original.ok) return;
+
+    const taker = acquireRunnerLock({ cwHome, cwd, rootId: "r1", force: true });
+    expect(taker.ok).toBe(true);
+    if (!taker.ok) return;
+    const path = runnerLockPath(cwHome, cwd);
+
+    // 被接管的持有者退出时 release：不删新持有者的锁
+    original.lock.release();
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as RunnerLockInfo;
+    expect(raw.pid).toBe(process.pid);
+    expect(raw.token).toBe(taker.lock.info.token);
+
+    // 现任持有者仍可正常释放（属主一致 → unlink）
+    taker.lock.release();
+    expect(() => readFileSync(path, "utf-8")).toThrow();
+  });
+
+  it("属主一致（含心跳重写后 token 不变）→ 正常 unlink（回归）", () => {
+    const cwd = lockDir("owner-match");
+    const cwHome = join(tmpRoot, "cw-home-owner-match");
+    const res = acquireRunnerLock({ cwHome, cwd, rootId: "r1" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    res.lock.heartbeat();
+    const path = runnerLockPath(cwHome, cwd);
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as RunnerLockInfo;
+    expect(raw.token).toBe(res.lock.info.token); // 心跳不换 token
+    res.lock.release();
+    expect(() => readFileSync(path, "utf-8")).toThrow();
+  });
+
+  it("旧格式锁（无 token 字段）被本进程 release → 保守跳过删除 + 不抛错", () => {
+    const cwd = lockDir("legacy-lock");
+    const cwHome = join(tmpRoot, "cw-home-legacy-lock");
+    const path = seedLock(cwHome, cwd, { pid: process.pid });
+
+    // force 接管会重写为新格式，故直接手工构造一个「持有者视角」的锁：
+    // 模拟旧代码持有者读到的锁无 token —— 用未写 token 的锁文件 + 本进程 release
+    const res = acquireRunnerLock({ cwHome, cwd, rootId: "r1", force: true });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // 覆盖回旧格式（无 token），再 release：token undefined ≠ 本进程 token → 跳过删除
+    writeFileSync(
+      path,
+      `${JSON.stringify({ ...res.lock.info, token: undefined })}\n`,
+    );
+    expect(() => res.lock.release()).not.toThrow();
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toBeTruthy(); // 锁仍在，由下任持有者/人工清理
   });
 });

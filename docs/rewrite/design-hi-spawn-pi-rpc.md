@@ -172,10 +172,18 @@ export interface ReflectionRanPayload {
 路径：<CW_HOME>/<encoded-cwd>/runner.lock    （与 events.log 同目录，CW_HOME 语义见 CONTEXT.md）
 格式（JSON，单行原子写）：
 { "pid": 12345, "form": "cli" | "extension", "rootId": "<root-unit-id>",
-  "startedTs": "ISO-8601", "heartbeatTs": "ISO-8601" }
+  "startedTs": "ISO-8601", "heartbeatTs": "ISO-8601", "token": "<uuid>" }
 （实施态备注，adversarial R3 回写：当前实现 form 恒写 "cli"——extension 形态经 runLoop 库
 调用同样写 "cli"，"extension" 注入口待补；影响面仅限已存在 runner 的拒启提示文案可能把
 extension runner 误称 cli 形态，互斥判定不依赖 form 字段（只看 pid 存活），功能无影响）
+（实施态备注，pr-cr-fix A1/S3 回写：token = 获取时生成的随机 UUID（crypto.randomUUID），
+心跳重写复用同一 token；release 改为读锁比对 token——一致才 unlink，不一致（锁已被
+--force-dispatch 接管）跳过删除 + stderr 出声一行「锁已被他进程接管」，防止被接管者退出时
+误删新持有者的锁。旧格式锁（无 token）被新代码 release 时读到 undefined → 保守跳过删除，
+陈锁清理主通道仍是接管路径（EEXIST → 死 pid → 覆盖写）不受影响。token 对互斥判定无参与，
+镜像读取方（pi-coding-workflow-extension）只读 pid 等已知字段，天然兼容。陈锁接管告警文案
+追加「接管完成后再启动他进程」提示——接管路径（readLock → 存活判定 → 覆盖写）非原子，双
+进程同时遇同一陈锁存在双双接管的 TOCTOU 窗口，提示用户接管完成后再起他进程）
 心跳：派发循环每轮（poll 间隔，缺省 5s）重写 heartbeatTs
 获取：启动时 exclusive create（O_EXCL）；已存在 → 读锁：
   - pid 活着（process.kill(pid,0) 探测）→ 拒启，stderr 指引：

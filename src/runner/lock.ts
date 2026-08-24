@@ -6,10 +6,12 @@
  * 原子写（temp + rename）。获取 = exclusive create（O_EXCL）；已存在读锁：
  *   - pid 活着（process.kill(pid,0)）→ 拒启 + stderr 指引 --force-dispatch；
  *   - pid 死（陈锁）/内容损坏 → 覆盖 + stderr 告警已接管。
- * --force-dispatch 强制覆盖。心跳每轮 poll 重写 heartbeatTs；释放 = unlink
- * （正常退出/SIGINT/SIGTERM）。崩溃残留走陈锁抢占路径。
+ * --force-dispatch 强制覆盖。心跳每轮 poll 重写 heartbeatTs（token 不变）；
+ * 释放 = 读锁比对属主 token 后 unlink（不匹配 = 已被接管，跳过删除；正常退出/
+ * SIGINT/SIGTERM）。崩溃残留走陈锁抢占路径。
  */
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { accessSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { encodeCwd } from "../store/project.js";
@@ -22,6 +24,11 @@ export interface RunnerLockInfo {
   rootId: string;
   startedTs: string;
   heartbeatTs: string;
+  /**
+   * 属主 token（pr-cr-fix A1）：获取时生成一次，心跳重写复用，release 比对——
+   * 不匹配（锁已被 --force-dispatch 接管）则跳过删除。旧格式锁无此字段（undefined）。
+   */
+  token?: string;
 }
 
 export interface RunnerLock {
@@ -29,7 +36,7 @@ export interface RunnerLock {
   readonly path: string;
   /** 每轮 poll 重写 heartbeatTs（单行原子写） */
   heartbeat(): void;
-  /** unlink（幂等；ENOENT 静默） */
+  /** 属主校验通过才 unlink（token 不匹配 = 已被接管，跳过删除并 stderr 出声；幂等） */
   release(): void;
 }
 
@@ -84,6 +91,7 @@ function readLock(path: string): RunnerLockInfo | null {
       rootId: rec.rootId,
       startedTs: typeof rec.startedTs === "string" ? rec.startedTs : "",
       heartbeatTs: typeof rec.heartbeatTs === "string" ? rec.heartbeatTs : "",
+      token: typeof rec.token === "string" ? rec.token : undefined,
     };
   } catch {
     return null;
@@ -110,6 +118,7 @@ export function acquireRunnerLock(opts: {
     rootId: opts.rootId,
     startedTs: new Date().toISOString(),
     heartbeatTs: new Date().toISOString(),
+    token: randomUUID(),
   };
 
   let existing: RunnerLockInfo | null = null;
@@ -140,7 +149,9 @@ export function acquireRunnerLock(opts: {
     return {
       ok: true,
       lock,
-      takeoverWarning: `[runner] 检测到陈锁（${detail}）已接管（${opts.force === true ? "--force-dispatch" : "pid 已死"}）`,
+      takeoverWarning:
+        `[runner] 检测到陈锁（${detail}）已接管（${opts.force === true ? "--force-dispatch" : "pid 已死"}）；` +
+        `接管完成后再启动他进程`,
     };
   }
   return { ok: true, lock: makeLock(path, info) };
@@ -158,6 +169,22 @@ function makeLock(path: string, info: RunnerLockInfo): RunnerLock {
     release() {
       if (released) return;
       released = true;
+      // 属主校验（pr-cr-fix A1）：token 不匹配 = 锁已被他进程接管，跳过删除。
+      // 锁文件已不存在（他人已正常释放）则静默；不可解析（含旧格式无 token）保守跳过。
+      let exists = true;
+      try {
+        accessSync(path);
+      } catch {
+        exists = false;
+      }
+      if (!exists) return;
+      const current = readLock(path);
+      if (current === null || current.token !== info.token) {
+        process.stderr.write(
+          `[runner] 锁已被他进程接管或不可解析，跳过删除（由现任持有者释放）：${path}\n`,
+        );
+        return;
+      }
       try {
         unlinkSync(path);
       } catch (e) {

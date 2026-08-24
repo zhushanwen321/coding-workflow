@@ -25,6 +25,7 @@ const MAX_UPWARD_LEVELS = 8;
 const ENV_ERROR_EXIT = 2;
 /** installer 子进程超时（安装 npm 依赖 + pi 探针合计上限） */
 const INSTALLER_TIMEOUT_MS = 600_000;
+const MS_PER_MINUTE = 60_000;
 
 /** 定位插件包 bin（见文件头注释的两级定位链）；找不到返回 undefined */
 export function locateInstallerBin(cwd: string): string | undefined {
@@ -82,8 +83,24 @@ export const handleSetupAgentDir: CommandHandler = async (ctx: CommandContext) =
 
   const child = spawnSync(process.execPath, args, { stdio: "inherit", timeout: INSTALLER_TIMEOUT_MS });
   if (child.error !== undefined) {
-    process.stderr.write(`cw setup-agent-dir: installer 启动失败：${child.error.message}\n`);
+    // spawnSync 超时实测形态 = error.code ETIMEDOUT + status null（非启动失败，单独出声）
+    if ((child.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      process.stderr.write(
+        `cw setup-agent-dir: installer 子进程超时（上限 ${INSTALLER_TIMEOUT_MS / MS_PER_MINUTE}min），可能已部分安装。\n` +
+          "恢复动作：重跑 cw setup-agent-dir（幂等重装）。注意：--timeout-ms 只作用于 installer 内部 npm 超时，调大不能放宽本上限。\n",
+      );
+    } else {
+      process.stderr.write(`cw setup-agent-dir: installer 启动失败：${child.error.message}\n`);
+    }
     return ENV_ERROR_EXIT;
   }
-  return child.status ?? ENV_ERROR_EXIT;
+  if (child.status === null) {
+    // 无 error 但 status 无效（被外部信号终止等）——同样出声，不留静默 exit 2
+    process.stderr.write(
+      `cw setup-agent-dir: installer 未正常结束（signal=${child.signal ?? "unknown"}），可能已部分安装。\n` +
+        "恢复动作：重跑 cw setup-agent-dir（幂等重装）。\n",
+    );
+    return ENV_ERROR_EXIT;
+  }
+  return child.status;
 };

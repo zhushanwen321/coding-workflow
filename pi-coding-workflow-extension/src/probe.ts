@@ -51,9 +51,16 @@ export function resolveAgentDir(): string {
   return override !== undefined && override !== "" ? override : join(process.env.HOME ?? "", ".cw", "agent-dir");
 }
 
-export const SUBAGENT_INSTALL_GUIDE =
-  "subagent-workflow 编程 API（createSpawnManager）不在场：npx @zhushanwen/pi-coding-workflow-extension install（会连依赖装入）；" +
-  "若为本地开发态：npm install /Users/zhushanwen/Code/tai-ji-workspace/main/extensions/subagent-workflow --no-save 装入插件包";
+/** ②失败时的安装指引。本地开发态路径经 CW_LOCAL_SUBAGENT_DIR 注入——个人绝对路径不得随 npm 发布进他人错误信息 */
+export function subagentInstallGuide(): string {
+  const base =
+    "subagent-workflow 编程 API（createSpawnManager）不在场：npx @zhushanwen/pi-coding-workflow-extension install（会连依赖装入）；";
+  const localDir = process.env.CW_LOCAL_SUBAGENT_DIR;
+  if (localDir !== undefined && localDir !== "") {
+    return `${base}本地开发态：npm install ${localDir} --no-save 装入插件包`;
+  }
+  return `${base}本地开发态：设 CW_LOCAL_SUBAGENT_DIR=<本地 subagent-workflow 仓路径> 后重试，或 npm install <该仓路径> --no-save`;
+}
 
 /** ①ask-user 磁盘在场性：manifest.json 登记 + extensions/ask-user 入口存在 */
 export function checkAskUserOnDisk(agentDir: string): ProbeCheck {
@@ -105,9 +112,9 @@ export async function checkSubagentApi(spec: string = "@zhushanwen/pi-subagent-w
     return { ok: true, detail: "subagent-workflow 编程 API 在场（经 ./src/index.ts 子路径——包根缺命名导出，已回报 pi-1）" };
   }
   if (root === undefined && sub === undefined) {
-    return { ok: false, detail: `${SUBAGENT_INSTALL_GUIDE}（导入失败：${spec} 不可解析）` };
+    return { ok: false, detail: `${subagentInstallGuide()}（导入失败：${spec} 不可解析）` };
   }
-  return { ok: false, detail: `${SUBAGENT_INSTALL_GUIDE}（已装版本无 createSpawnManager 导出——npm 上的 8.x 为无编程 API 的旧谱系，需含 API 的 2.0.0+ 构建且其未发 npm，按指引走本地开发态装入）` };
+  return { ok: false, detail: `${subagentInstallGuide()}（已装版本无 createSpawnManager 导出——npm 上的 8.x 为无编程 API 的旧谱系，需含 API 的 2.0.0+ 构建且其未发 npm，按指引走本地开发态装入）` };
 }
 
 /** ③cw 引擎库探测式导入 */
