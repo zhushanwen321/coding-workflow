@@ -1,5 +1,26 @@
 # Changelog
 
+## [v2.2.0] - 2026-08-24
+
+### Features
+- Merge pull request #21 from zhushanwen321/feat-optimize-design-dev-test-flow (905c8c7)
+- feat(skill): pr-cr-fix stage 1.5 metrics gate (CRAP-oriented, fallow-backed) (f8879ea)
+- feat(ph-i2): subagent-workflow spawn backend + /cw command group + lifecycle (u-i2-b/c) (fea77b0)
+- feat(ph-i2): runLoop library-ification - onEvent progress emitter + ./runner facade (u-i2-a) (6c73324)
+- feat(ph-i1): pi-rpc spawn adapter + InteractiveSpawnHandle + explicit adapter registry + runner.lock (u-i1-b/d) (1dafbd7)
+- feat(ph-i1): thin rpc client + ReflectionRan sixth event type + reflectionPending frontier dimension (u-i1-a/c) (58fe282)
+- feat(ph-i0): npm workspaces monorepo + pi-coding-workflow-extension package + installer + setup-agent-dir (647c236)
+
+### Bug Fixes
+- fix(review): address 3 minor findings from review-fix-loop round 1 (f60ec94)
+- fix(review): address all 6 non-blocking review findings + lockfile sync (3012908)
+- fix(ext): close out two minor review observations - orphan promise guard, probe version-accuracy (aae8338)
+- fix(review-loop): resolve 7 adversarial must-fix findings (loop guard, broadcast-wait single append, pi param, B2 test, doc write-backs) (56c231b)
+- fix(ph-i2): adversarial-review P0/P1 fixes - host-safe stop channel, real pi API signatures, broadcast-wait semantics (f081214)
+
+### Refactoring
+- refactor(ext): split high-complexity functions in index.ts (Gate-1.5) (0f7412f)
+
 ## [v2.0.0] - 2026-08-20
 
 Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold projection state machine + runner dispatch loop + acceptance-grade machine verification. The 1.x codebase is archived under `archive/`. Wave-level development history lives in `docs/rewrite/ledger.md`.
@@ -327,4 +348,3 @@ Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold pro
 
 ### Refactoring
 - refactor(simplify): dedupe tokenize/dedup-emit patterns, drop dead param and passthrough, narrow exports across M5+M6 surface (70cd061)
-
