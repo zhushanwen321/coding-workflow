@@ -69,6 +69,74 @@ function splitArgs(raw: string): string[] {
   return raw.trim().split(/\s+/).filter((t) => t !== "");
 }
 
+/** /cw start 前置检查产物：失败时 message 已出声，调用方直接 return */
+type StartPrecheck =
+  | { ok: true; id: string; cwd: string; force: boolean; probe: ProbeResult }
+  | { ok: false };
+
+/** /cw start 参数解析 + 探针 + 锁预检（拆自 cmdStart，Gate-1.5 降复杂度） */
+async function precheckStart(tokens: string[], ctx: ExtensionCommandContext, config: RunnerConfig): Promise<StartPrecheck> {
+  const force = tokens.includes("--force");
+  const id = tokens.find((t) => !t.startsWith("--"));
+  if (id === undefined) {
+    ctx.ui.notify?.("用法：/cw start <rootId> [--force]", "error");
+    return { ok: false };
+  }
+  // 启动探针（三查；②③ 失败拒启，① 失败降级自声明）
+  const probe = await runProbe({ noClarify: config.noClarify });
+  if (!probe.subagentApi.ok || !probe.cwLib.ok) {
+    ctx.ui.notify?.(`cw: /cw start 拒启——前置检查失败：\n${[probe.subagentApi, probe.cwLib].filter((c) => !c.ok).map((c) => `✗ ${c.detail}`).join("\n")}`, "error");
+    return { ok: false };
+  }
+  if (!probe.clarify) {
+    ctx.ui.notify?.("cw: 本次无提问通道（designer 自声明形态）：" + probe.reasons.join("；"), "info");
+  }
+  // P2-10：cwd 锚优先用宿主会话工作目录（ExtensionCommandContext.cwd，types.d.ts:217）
+  const cwd = ctx.cwd ?? process.cwd();
+  const lock = precheckRunnerLock({ cwHome: mirrorGetCwHome(), cwd, force });
+  if (!lock.ok) {
+    ctx.ui.notify?.(`cw: 拒启——${lock.message ?? ""}（${lock.detail}）`, "error");
+    return { ok: false };
+  }
+  return { ok: true, id, cwd, force, probe };
+}
+
+type RunnerEvent = { kind?: string; seq?: number; frontierSummary?: Record<string, number>; unitId?: string; dimension?: string; reason?: string; subagentSlug?: string; role?: string; result?: { exitCode?: unknown } };
+
+/** round 事件 → frontier 概要 widget 行 */
+function renderRoundWidget(ctx: ExtensionCommandContext, widgetKey: string, e: RunnerEvent): void {
+  const line = Object.entries(e.frontierSummary ?? {})
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${k}:${n}`)
+    .join(" ");
+  ctx.ui.setWidget?.(widgetKey, [`cw[#${e.seq ?? 0}] ${line || "（frontier 全空）"}`]);
+}
+
+/** stopped 事件 → notify + 转人工 widget（调用方保证只触发一次） */
+function renderStoppedWidget(ctx: ExtensionCommandContext, widgetKey: string, e: RunnerEvent): void {
+  ctx.ui.notify?.(`cw: ${e.unitId} 转人工（${e.dimension}）`, "warning");
+  ctx.ui.setWidget?.(widgetKey, [`cw ⚠ ${e.unitId} 转人工（${e.dimension}）：${e.reason ?? ""} —— /cw report 查证据链`]);
+}
+
+/**
+ * 单事件 widget/notify 渲染（拆自 wireOnEvent，Gate-1.5 降复杂度）。
+ * 返回值 = 更新后的 stoppedNotified（stopped 只通知一次）。
+ */
+function renderRunnerEvent(ctx: ExtensionCommandContext, widgetKey: string, ev: unknown, stoppedNotified: boolean): boolean {
+  const e = ev as RunnerEvent;
+  if (e.kind === "round" && e.frontierSummary !== undefined) {
+    renderRoundWidget(ctx, widgetKey, e);
+  } else if (e.kind === "stopped" && !stoppedNotified) {
+    renderStoppedWidget(ctx, widgetKey, e);
+    return true;
+  } else if (e.kind === "dispatch" && e.subagentSlug !== undefined) {
+    ctx.ui.setWidget?.(widgetKey, [`cw → ${e.subagentSlug}`]);
+  } else if (e.kind === "settled") {
+    ctx.ui.setWidget?.(widgetKey, [`cw ✓ ${e.unitId}/${String(e.role ?? "")} exit=${String(e.result?.exitCode ?? "?")}`]);
+  }
+  return stoppedNotified;
+}
+
 /** 默认依赖装配：探测式动态 import 两库（失败抛可读错误，含安装指引） */
 async function makeDefaultBackend(pi: ExtensionAPI): Promise<{ backend: SubagentBackend; runLoop: (opts: unknown) => Promise<number> }> {
   // 动态 import 用宽型 string 变量（防 TS 静态解析 subagent-workflow 的 .ts 入口）
@@ -124,7 +192,6 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
   let launchCwd: string | undefined;
   let launchPromise: Promise<number> | undefined;
   let backendRef: SubagentBackend | undefined;
-  let stoppedNotified = false;
   /** runLoop 交付的编程停止函数（P0-1；注入式 launch 不交付 → undefined） */
   let stopFnRef: (() => void) | undefined;
 
@@ -135,24 +202,10 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
 
   /** onEvent 接线（R2 最小集）：round→widget；stopped→notify 一次；其余状态行刷新 */
   function wireOnEvent(ctx: ExtensionCommandContext): (ev: unknown) => void {
+    let stoppedNotified = false;
     return (ev: unknown): void => {
-      const e = ev as { kind?: string; seq?: number; frontierSummary?: Record<string, number>; unitId?: string; dimension?: string; reason?: string; subagentSlug?: string; role?: string; result?: { exitCode?: unknown } };
       try {
-        if (e.kind === "round" && e.frontierSummary !== undefined) {
-          const line = Object.entries(e.frontierSummary)
-            .filter(([, n]) => n > 0)
-            .map(([k, n]) => `${k}:${n}`)
-            .join(" ");
-          ctx.ui.setWidget?.(WIDGET_KEY, [`cw[#${e.seq ?? 0}] ${line || "（frontier 全空）"}`]);
-        } else if (e.kind === "stopped" && !stoppedNotified) {
-          stoppedNotified = true;
-          ctx.ui.notify?.(`cw: ${e.unitId} 转人工（${e.dimension}）`, "warning");
-          ctx.ui.setWidget?.(WIDGET_KEY, [`cw ⚠ ${e.unitId} 转人工（${e.dimension}）：${e.reason ?? ""} —— /cw report 查证据链`]);
-        } else if (e.kind === "dispatch" && e.subagentSlug !== undefined) {
-          ctx.ui.setWidget?.(WIDGET_KEY, [`cw → ${e.subagentSlug}`]);
-        } else if (e.kind === "settled") {
-          ctx.ui.setWidget?.(WIDGET_KEY, [`cw ✓ ${e.unitId}/${String(e.role ?? "")} exit=${String(e.result?.exitCode ?? "?")}`]);
-        }
+        stoppedNotified = renderRunnerEvent(ctx, WIDGET_KEY, ev, stoppedNotified);
         // reflection/error：最小集为忽略（reflection 轮次在 subagent 面板天然可见）
       } catch {
         /* 观测面不是信任边界 */
@@ -165,32 +218,14 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
       ctx.ui.notify?.(`cw: 已有 runner 在跑（root=${rootId}）；先 /cw stop`, "warning");
       return;
     }
-    const force = tokens.includes("--force");
-    const id = tokens.find((t) => !t.startsWith("--"));
-    if (id === undefined) {
-      ctx.ui.notify?.("用法：/cw start <rootId> [--force]", "error");
+    const pc = await precheckStart(tokens, ctx, configFull);
+    if (!pc.ok) {
       return;
     }
-    // 启动探针（三查；②③ 失败拒启，① 失败降级自声明）
-    const probe = await runProbe({ noClarify: configFull.noClarify });
-    if (!probe.subagentApi.ok || !probe.cwLib.ok) {
-      ctx.ui.notify?.(`cw: /cw start 拒启——前置检查失败：\n${[probe.subagentApi, probe.cwLib].filter((c) => !c.ok).map((c) => `✗ ${c.detail}`).join("\n")}`, "error");
-      return;
-    }
-    if (!probe.clarify) {
-      ctx.ui.notify?.("cw: 本次无提问通道（designer 自声明形态）：" + probe.reasons.join("；"), "info");
-    }
-    // P2-10：cwd 锚优先用宿主会话工作目录（ExtensionCommandContext.cwd，types.d.ts:217）
-    const cwd = ctx.cwd ?? process.cwd();
-    const lock = precheckRunnerLock({ cwHome: mirrorGetCwHome(), cwd, force });
-    if (!lock.ok) {
-      ctx.ui.notify?.(`cw: 拒启——${lock.message ?? ""}（${lock.detail}）`, "error");
-      return;
-    }
+    const { id, cwd, force, probe } = pc;
     running = true;
     rootId = id;
     launchCwd = cwd;
-    stoppedNotified = false;
     // P1-4：上一轮 shutdown 备忘在本次 start 复位——stop→start→stop 序列每次真收尾
     shutdownPromise = undefined;
     stopFnRef = undefined;
