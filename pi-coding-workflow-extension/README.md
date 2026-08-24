@@ -32,3 +32,14 @@ cd pi-coding-workflow-extension
 npm install
 npm test        # installer 纯逻辑回归（真实 tmp/tar/npm 子进程，零 mock）
 ```
+
+### 本地开发注意：subagent-workflow 本地副本会污染根 node_modules/.bin/pi
+
+以 `npm install ~/Code/tai-ji-workspace/main/extensions/subagent-workflow --no-save`
+装入本地 2.0.0 副本做联调时，npm 会连带提升其依赖 `@mariozechner/pi-coding-agent`
+到 workspaces 根，并在根 `node_modules/.bin/` 生成同名 `pi` 链接（0.73.x）。vitest
+会把 `node_modules/.bin` 前置到 PATH，导致仓内测试 spawn 到错误版本的 pi（现象：
+真实 pi 后端用例秒退 exit 1，stderr 含 `No models match pattern`）。
+
+修复：`rm node_modules/.bin/pi`（下次在根目录跑 npm install 会重建，需重删）。
+发布依赖走 npm 正装（`^2.0.0`）后 CI 的 core job 不装该依赖，无此问题。
