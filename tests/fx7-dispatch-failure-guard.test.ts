@@ -302,7 +302,11 @@ describe("fx7-4 S-9：ref 扫描命令级失败与「无分支」分离", () => 
         message = e instanceof Error ? e.message : String(e);
       }
       expect(message).toContain("for-each-ref");
-      expect(message).toContain("not a git repository"); // git 原始输出经 describeFailure 透传
+      // git 原始输出经 describeFailure 透传——文案随 git locale 变化（en: "not a git repository" / zh: "不是 git 仓库"），断言两者其一
+      expect(
+        message.includes("not a git repository") || message.includes("不是 git 仓库"),
+        `git 原始输出未透传（实际: ${message}）`,
+      ).toBe(true);
       expect(message).toContain("恢复动作");
     } finally {
       rmSync(notARepo, { recursive: true, force: true });
