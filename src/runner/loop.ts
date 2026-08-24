@@ -132,6 +132,7 @@ import {
   type FrontierGroups,
   INTEGRATION_MAX_CONSECUTIVE_FAILS,
   latestSpecReviewAfterLastSpec,
+  reflectionDone,
   SPEC_CONTRACT_MAX_GENERATIONS,
   SPEC_REVIEW_DEADLOCK_FAILS,
   type SpecContractFacts,
@@ -161,12 +162,15 @@ import {
   escalationMessage,
 } from "./escalations.js";
 import { runIntegrationVerify } from "./integrate.js";
+import { acquireRunnerLock, type RunnerLock } from "./lock.js";
 import type {
   AgentRole,
   AgentSpawnAdapter,
+  InteractiveSpawnHandle,
   SpawnHandle,
   SpawnResult,
 } from "./spawn/types.js";
+import { isInteractiveSpawnHandle } from "./spawn/types.js";
 import {
   ensureUnitWorktree,
   listUnitBranchRefs,
@@ -242,6 +246,12 @@ export interface RunLoopOptions {
    * 层合流后传入）。
    */
   spawnTimeoutMs?: number;
+  /**
+   * u-i1-d（R5）：跨进程派发锁的显式接管通道（cw run --force-dispatch）。true 时
+   * 跳过锁持有进程的存活检查强制覆盖；缺省 false（活锁拒启）。锁不入账本
+   * （易失进程态非事实，总纲 D8 裁决）。
+   */
+  forceDispatch?: boolean;
 }
 
 /** in-flight 派发（mx-1 派发 gate 后同 unit 任意时刻至多一个在飞 spawn） */
@@ -344,12 +354,15 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
  * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
  * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
- * 模板（内嵌解析失败原文，非 reviewer comment）。 */
+ * 模板（内嵌解析失败原文，非 reviewer comment）。ph-i1 R4：reflectionPending
+ * 派 designer——派发后 loop 对句柄探测 followUp 能力并走反思链（见
+ * startReflectionFollowUp），完成后 loop 自己写 ReflectionRan 再派 reviewer。 */
 const DISPATCH_SHAPE: Record<
   DispatchDimension,
   { role: AgentRole; integration: boolean }
 > = {
   specReady: { role: "designer", integration: false },
+  reflectionPending: { role: "designer", integration: false },
   specReviewPending: { role: "reviewer", integration: false },
   specFixPending: { role: "designer", integration: false },
   specContractBroken: { role: "designer", integration: false },
@@ -475,13 +488,16 @@ function computeDispatchTargets(
     const dimension = dimensionOf.get(unit.unitId);
     if (
       dimension === undefined ||
+      dimension === "reflectionPending" ||
       dimension === "flakeReview" ||
       dimension === "specReviewDeadlock" ||
       dimension === "specContractDeadlock" ||
       dimension === "buildDrift"
     ) {
       // 转人工维度（rv-5 flake / mx-1 spec 打回活锁 / mx5-2 回炉活锁 / lv-2
-      // 缓慢进展）——不派任何 agent，停摆等人工处置后投影自然消失
+      // 缓慢进展）——不派任何 agent，停摆等人工处置后投影自然消失。
+      // ph-i1 R4：reflectionPending 也不进派发表——反思由 runLoopMain 的反思接缝
+      // 处理（对在飞长驻句柄 followUp，无在飞则代写占位 ReflectionRan），不派新 spawn
       continue;
     }
     const shape = DISPATCH_SHAPE[dimension];
@@ -711,6 +727,7 @@ function emitSpecFrozenDesignerRationale(
 function makeLoopSignalHandler(
   rootId: string,
   inFlight: readonly InFlightSpawn[],
+  releaseLock?: () => void,
 ): (signal: NodeJS.Signals) => void {
   return (signal) => {
     const exitCode = signal === "SIGINT" ? LOOP_SIGNAL_EXIT_CODES.SIGINT : LOOP_SIGNAL_EXIT_CODES.SIGTERM;
@@ -729,6 +746,7 @@ function makeLoopSignalHandler(
       );
     }
     killAll(inFlight);
+    releaseLock?.(); // u-i1-d R5：信号退出同样释放派发锁（unlink）
     process.exit(exitCode);
   };
 }
@@ -904,6 +922,80 @@ function sweepOrphanWorktrees(cwd: string, rootId: string): string[] {
     ]);
   }
   return reclaimed;
+}
+
+// ---- ph-i1 R4：反思 followUp 派发（占位形态，TODO(ph-i2) 接四流程七问） ----
+
+/**
+ * 反思 followUp 的注入文案（占位）。反思问题集（四流程七问）属 ph-2 领地，本波次
+ * 只打通「长驻句柄 followUp → ReflectionRan 入账」链路。
+ */
+const REFLECTION_PLACEHOLDER_PROMPT = [
+  "## 反思（reflection，占位提示）",
+  "请基于你刚完成的 spec 撰写过程做简短反思：哪些假设未验证、验收是否有真空、拆分是否合理。",
+  "如有修订需要，按原流程重提 spec；无需修订则简述结论即可。",
+  "（TODO(ph-i2)：本提示为占位文案，四流程七问接入后替换。）",
+].join("\n");
+
+/** 反思完成日志里 specHash 的展示前缀长度（非语义，仅日志可读性） */
+const SPEC_HASH_PREVIEW_LEN = 8;
+
+/**
+ * 反思链（R4/R3 §3.1 正常时序的后半段）：对 reflectionPending unit 的在飞长驻句柄
+ * （调用方已 isInteractiveSpawnHandle 探测）——等 brief 阶段流式结束 → followUp 反思
+ * 文案 → 等 agent_settled → 经 events-log 文件锁短事务写 ReflectionRan（round =
+ * 派发时刻投影的 reflections 长度 + 1，sessionFile 取握手锚）→ done() 优雅收尾
+ * （进程退出，flight 正常结算）。后台异步执行不阻塞主循环；链上任一步失败 →
+ * kill + stderr 出声（结算视适配器实现为 TIMEOUT/CRASH，均属可重派态，不静默）。
+ */
+function startReflectionFollowUp(
+  cwd: string,
+  rootId: string,
+  unitId: string,
+  handle: SpawnHandle,
+  specHash: string,
+  round: number,
+  timeoutMs: number,
+): void {
+  void rootId;
+  if (!isInteractiveSpawnHandle(handle)) {
+    // 防御：调用方已探测，走到这里说明句柄能力中途消失（不可达分支）——出声不静默
+    emitErr(`[runner] unit "${unitId}" 的反思句柄失去交互能力（不可达分支，出声不静默）。\n`);
+    handle.kill();
+    return;
+  }
+  const interactive: InteractiveSpawnHandle = handle;
+  void (async () => {
+    try {
+      if (!(await interactive.waitForIdle(timeoutMs))) {
+        throw new Error(`brief 阶段 waitForIdle(${timeoutMs}ms) 超时`);
+      }
+      await interactive.followUp(REFLECTION_PLACEHOLDER_PROMPT);
+      if (!(await interactive.waitForIdle(timeoutMs))) {
+        throw new Error(`反思 followUp 后 waitForIdle(${timeoutMs}ms) 超时`);
+      }
+      const anchor = interactive.sessionAnchor;
+      new EventLedger(ledgerPath(getCwHome(), cwd)).append("ReflectionRan", {
+        unitId,
+        specHash,
+        round,
+        ...(anchor !== undefined && anchor.sessionFile !== ""
+          ? { sessionFile: anchor.sessionFile }
+          : {}),
+      });
+      emit([
+        `[runner] unit "${unitId}" 反思完成（round ${round}，specHash ${specHash.slice(0, SPEC_HASH_PREVIEW_LEN)}…）` +
+          "——ReflectionRan 已入账，下轮派独立 reviewer spec-review",
+      ]);
+      await interactive.done();
+    } catch (err) {
+      emitErr(
+        `[runner] unit "${unitId}" 的反思 followUp 链失败（已 kill，可重派）：` +
+          `${err instanceof Error ? err.message : String(err)}\\n`,
+      );
+      interactive.kill();
+    }
+  })();
 }
 
 function idleFailureMessage(rootId: string, maxIdleMs: number, totalEvents: number, artifactDir: string): string {
@@ -1096,12 +1188,32 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
   // inFlight 提升到外壳：信号 handler 需要在主循环体启动前就持有同一引用
   //（循环未起来时的信号 → killAll 空集 no-op，同样打印提示行并按约定码退出）
   const inFlight: InFlightSpawn[] = [];
-  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight);
+  let runnerLock: RunnerLock | null = null;
+  const signalHandler = makeLoopSignalHandler(opts.rootId, inFlight, () => runnerLock?.release());
   process.on("SIGINT", signalHandler);
   process.on("SIGTERM", signalHandler);
   try {
-    return await runLoopMain(opts, inFlight);
+    // u-i1-d R5：跨进程派发锁——启动 O_EXCL 获取；活锁拒启（exit 1 + 指引
+    // --force-dispatch）、陈锁/force 覆盖 + 告警；锁不入账本（D8）。获取先于
+    // 首个派发，root 缺失等抛错路径经 finally 释放，不留陈锁以外的副作用
+    const acquired = acquireRunnerLock({
+      cwHome: getCwHome(),
+      cwd: opts.cwd,
+      rootId: opts.rootId,
+      form: "cli",
+      force: opts.forceDispatch === true,
+    });
+    if (!acquired.ok) {
+      await emitExitOutput(`${acquired.message}\n`, process.stderr);
+      return 1;
+    }
+    runnerLock = acquired.lock;
+    if (acquired.takeoverWarning !== undefined) {
+      emitErr(acquired.takeoverWarning);
+    }
+    return await runLoopMain(opts, inFlight, runnerLock);
   } finally {
+    runnerLock?.release();
     process.off("SIGINT", signalHandler);
     process.off("SIGTERM", signalHandler);
   }
@@ -1114,7 +1226,11 @@ export async function runLoop(opts: RunLoopOptions): Promise<number> {
  * 返回 1。
  * root 不在账本 → 抛可操作错误（调用方负责转 exit 1）。
  */
-async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Promise<number> {
+async function runLoopMain(
+  opts: RunLoopOptions,
+  inFlight: InFlightSpawn[],
+  lock: { heartbeat(): void },
+): Promise<number> {
   const pollMs = opts.pollMs ?? DEFAULT_LOOP_POLL_MS;
   const maxIdleMs = opts.maxIdleMs ?? DEFAULT_LOOP_MAX_IDLE_MS;
   const maxConcurrency = opts.maxConcurrency ?? DEFAULT_LOOP_MAX_CONCURRENCY;
@@ -1218,8 +1334,14 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
   // run 的启动清扫按「可达性已满足」再收）
   const pendingReclaim = new Set<string>();
   const reclaimTried = new Set<string>(reclaimedIds);
+  // ph-i1 R4：反思 followUp 的已挂接登记（unitId → 已挂接的 specHash）——防同轮/
+  // 跨轮对同一在飞句柄重复追问；新 spec（新 hash）自然重新挂接
+  const attachedReflection = new Map<string, string>();
 
   while (true) {
+    // u-i1-d R5：每轮 poll 重写心跳（活锁判定输入——他进程见 heartbeatTs 停滞
+    // 属陈锁抢占路径的人工判断辅助，机器侧判定仍以 pid 存活为准）
+    lock.heartbeat();
     // 每轮重读投影（子进程 agent 与本循环并发写账本，投影必须重新装载）。保留
     // 原始事件流：fx-2 R4a 的连续集成 fail 计数需要 SpecSubmitted 与 VerifyRan
     // 的跨类型账本顺序（fold 投影是平行数组，相对顺序已丢失），从事件重放
@@ -1349,6 +1471,61 @@ async function runLoopMain(opts: RunLoopOptions, inFlight: InFlightSpawn[]): Pro
         latestSpecReviewAfterLastSpec(unit) === "fail";
       if (!newSpecVerdictSeqs.every(inReviewerWindow) && !failRecoveryFlow) {
         emitErr(prematureVerdictWarningLine(unit.unitId));
+      }
+    }
+
+    // ph-i1 R4：反思接缝——reflectionPending 不进派发表（computeDispatchTargets
+    // 已 skip），在此处理：有在飞长驻句柄 → followUp 链（同进程追问，上下文全保留）；
+    // 无在飞（一次性后端已结算）→ loop 代写占位 ReflectionRan 放行（降级出声，
+    // 诚实边界：无 sessionFile 审计锚；反思实质属 ph-i2 四流程）。代写失败只出声，
+    // 下轮重试（reflectionPending 持续可见）
+    for (const unit of subtreeUnits(projection, opts.rootId)) {
+      if (unitStatus(unit) !== "created" || unit.specs.length === 0 || reflectionDone(unit)) {
+        continue;
+      }
+      const spec = unit.specs[unit.specs.length - 1];
+      if (spec === undefined) {
+        continue;
+      }
+      const flight = inFlight.find((f) => f.unitId === unit.unitId);
+      if (flight !== undefined) {
+        if (
+          isInteractiveSpawnHandle(flight.handle) &&
+          attachedReflection.get(unit.unitId) !== spec.specHash
+        ) {
+          attachedReflection.set(unit.unitId, spec.specHash);
+          emit([
+            `[runner] unit "${unit.unitId}" 处于 reflectionPending 且有在飞长驻句柄——发反思 followUp（完成后写 ReflectionRan 再派 reviewer）`,
+          ]);
+          startReflectionFollowUp(
+            opts.cwd,
+            opts.rootId,
+            unit.unitId,
+            flight.handle,
+            spec.specHash,
+            unit.reflections.length + 1,
+            spawnTimeoutMs,
+          );
+        }
+        // 非交互在飞：等本轮结算后走代写路径（不抢跑 agent 未完成的现场）
+        continue;
+      }
+      try {
+        new EventLedger(ledgerPath(getCwHome(), opts.cwd)).append("ReflectionRan", {
+          unitId: unit.unitId,
+          specHash: spec.specHash,
+          round: unit.reflections.length + 1,
+        });
+        emitErr(
+          `[runner] unit "${unit.unitId}" reflectionPending 但无在飞长驻句柄（一次性后端）` +
+            "——loop 代写占位 ReflectionRan 放行（无反思实质，TODO(ph-i2) 四流程接入）。" +
+            `恢复动作：需真实反思链时用 cw run --root ${opts.rootId} --spawn pi-rpc。\n`,
+        );
+      } catch (err) {
+        emitErr(
+          `[runner] unit "${unit.unitId}" 的占位 ReflectionRan 入账失败（下轮重试）：` +
+            `${err instanceof Error ? err.message : String(err)}\n`,
+        );
       }
     }
 
