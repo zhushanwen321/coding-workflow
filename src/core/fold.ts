@@ -79,6 +79,7 @@ export function fold(events: readonly LedgerEvent[]): VerifySequencedProjection 
         verdicts: [],
         evidences: [],
         verifyRuns: [],
+        reflections: [],
         lastSpecSeq: null,
         verdictSeqs: [],
         verifyRunSeqs: [],
@@ -108,9 +109,15 @@ export function fold(events: readonly LedgerEvent[]): VerifySequencedProjection 
         unit.verifyRuns.push(event.payload);
         unit.verifyRunSeqs.push(event.seq);
         break;
+      // ph-i1 R4：纯记录，不驱动状态转换（旧账本无此事件 = 无反思，重放兼容）
+      case "ReflectionRan":
+        unit.reflections.push(event.payload);
+        break;
       default: {
         const _exhaustive: never = event;
-        throw new Error(`fold: 未知事件类型：${String(_exhaustive)}`);
+        throw new Error(
+          `fold: 未知事件类型：${String(_exhaustive)}。若账本包含新版事件（ReflectionRan），请升级：npm i -g @zhushanwen/coding-workflow@latest`,
+        );
       }
     }
   }

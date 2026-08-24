@@ -1100,12 +1100,16 @@ describe("S5 旧账本兼容（无 buildDrift 命中的账本）", () => {
 
     const frontier = runCli(projDir, ["frontier"]);
     expect(frontier.code).toBe(0);
-    // 唯一预期差异：flakeReview 与 buildReady 之间新增 buildDrift 空组两行
+    // 预期差异两组（均恒显空组两行）：lv-2 新增 buildDrift（flakeReview 与
+    // buildReady 之间）；ph-i1 R4 新增 reflectionPending（specReady 与
+    // specReviewPending 之间）。去掉两组行后与改造前逐字节一致（差异存在且仅此）
     expect(frontier.stdout).toContain("buildDrift:\n  (无)\n");
     expect(frontier.stdout.indexOf("buildDrift:")).toBeGreaterThan(frontier.stdout.indexOf("flakeReview:"));
     expect(frontier.stdout.indexOf("buildDrift:")).toBeLessThan(frontier.stdout.indexOf("buildReady:"));
-    // 去掉新组行后与改造前逐字节一致（差异存在且仅此）
-    expect(frontier.stdout.replace("buildDrift:\n  (无)\n", "")).toBe(GOLDEN.frontier);
+    expect(frontier.stdout).toContain("reflectionPending:\n  (无)\n");
+    expect(frontier.stdout.indexOf("reflectionPending:")).toBeGreaterThan(frontier.stdout.indexOf("specReady:"));
+    expect(frontier.stdout.indexOf("reflectionPending:")).toBeLessThan(frontier.stdout.indexOf("specReviewPending:"));
+    expect(frontier.stdout.replace("buildDrift:\n  (无)\n", "").replace("reflectionPending:\n  (无)\n", "")).toBe(GOLDEN.frontier);
   });
 });
 

@@ -55,13 +55,14 @@ const INT32_BYTES = 4;
 /** 首条事件 seq（账本内单调递增起点） */
 const FIRST_SEQ = 1;
 
-/** 五类事件 type 的运行时枚举集（types.ts EventType 的投影，信封校验单一出处） */
+/** 六类事件 type 的运行时枚举集（types.ts EventType 的投影，信封校验单一出处；ph-i1 R4 起 +ReflectionRan） */
 const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set<string>([
   "UnitCreated",
   "SpecSubmitted",
   "VerdictSubmitted",
   "EvidenceSubmitted",
   "VerifyRan",
+  "ReflectionRan",
 ]);
 
 /** 报错里的字段值预览上限（防损坏行携带巨型值撑爆错误信息） */
@@ -90,7 +91,7 @@ function envelopeShapeError(parsed: unknown): string | undefined {
   }
   const env = parsed as Record<string, unknown>;
   if (typeof env.type !== "string" || !KNOWN_EVENT_TYPES.has(env.type)) {
-    return `type=${preview(env.type)} 不在五类事件枚举（UnitCreated/SpecSubmitted/VerdictSubmitted/EvidenceSubmitted/VerifyRan）内`;
+    return `type=${preview(env.type)} 不在六类事件枚举（UnitCreated/SpecSubmitted/VerdictSubmitted/EvidenceSubmitted/VerifyRan/ReflectionRan）内`;
   }
   if (typeof env.seq !== "number" || !Number.isInteger(env.seq) || env.seq < 1) {
     return `seq=${preview(env.seq)} 非正整数（信封承诺：账本内从 1 起单调递增）`;
