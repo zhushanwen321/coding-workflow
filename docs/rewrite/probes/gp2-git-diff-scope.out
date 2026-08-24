@@ -1,0 +1,18 @@
+$ bash docs/rewrite/probes/gp2-git-diff-scope.sh   # 2026-08-24 实测，git 2.52 / macOS
+--- 探针 1: 无改动时 diff 为空（缓存命中的判定基础）
+       0
+--- 探针 2: 改动 scope 外文件，scope 内 diff 仍为空
+scope 内 diff 行数: 0
+scope 外 diff 行数: 1
+--- 探针 3: 改动 scope 内文件 → 非空（缓存 miss）
+src/foo/a.ts
+--- 探针 4: scope 内 rename（新路径入 diff，向 miss 倒）
+src/foo/b.ts
+--- 探针 5: 多 scope 参数（空格分隔多个前缀）
+docs/d.md
+src/foo/b.ts
+--- 探针 6: scope 单文件精确前缀
+src/foo/b.ts
+--- 探针 7: scope 不带斜杠仍按目录前缀匹配
+src/foo/b.ts
+BASE=56649526418176fe46604d186fd5f6636560e3ba HEAD=f48d554
