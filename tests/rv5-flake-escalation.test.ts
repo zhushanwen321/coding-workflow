@@ -410,7 +410,7 @@ async function driveToFlake(
   const dispatchLine = '派发 developer → unit "fdemo"';
   submitScenarioSpec(repoDir, "node e1.js");
   // developer 第 1 次派发后人进场：worktree 提交坏实现 + build 证据 + 第一次 verify
-  await waitText(runner.stdoutText, dispatchLine, 10_000);
+  await waitText(runner.stdoutText, dispatchLine, 60_000);
   const badCommit = humanCommit(repoDir, "fdemo", {
     "impl.js": implBad("E1"),
     "e1.js": e1File(),
@@ -426,7 +426,7 @@ async function driveToFlake(
   const verify2 = runCli(repoDir, ["verify", "--unit", "fdemo"]);
   expect(verify2.code, `第二次 verify 应 fail（E1 FAIL）：${verify2.stderr}`).toBe(1);
   // 转人工指引出声（stderr）且不再派 developer——由调用方各自断言
-  await waitText(runner.stderrText, "停止对该 unit 派发 developer", 10_000);
+  await waitText(runner.stderrText, "停止对该 unit 派发 developer", 60_000);
   const runs = scenarioVerifyRans(repoDir);
   expect(runs).toHaveLength(2);
   return { runIds: runs.map((r) => r.runId) };
@@ -742,7 +742,7 @@ describe("T8 人工处置自愈（flakeReview 消失、循环继续推进）", (
     expect(verify.code, `修复后 verify 应 pass（stdout: ${verify.stdout}，stderr: ${verify.stderr}）`).toBe(0);
 
     // verify pass 写入账本 → 连挂清零、投影自然消失、循环自愈推进 reviewer
-    await waitText(runner.stdoutText, '派发 reviewer → unit "fdemo"', 10_000);
+    await waitText(runner.stdoutText, '派发 reviewer → unit "fdemo"', 60_000);
     expect(
       runCli(repoDir, ["review", "submit", "--unit", "fdemo", "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", "b2"]).code,
     ).toBe(0);

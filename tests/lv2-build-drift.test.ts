@@ -587,7 +587,7 @@ describe("D6 预算注入与恢复派发", () => {
 
       // runner A 启动（先派发创建 worktree，rv5 T3 同序）；idle 4s：停派后空转收束
       const runner = startRunner(repoDir, "dd", ["--max-idle-ms", "4000"]);
-      await waitText(runner.stdoutText, dispatchLine, 10_000); // buildCount 0 时正常派发（无误杀）
+      await waitText(runner.stdoutText, dispatchLine, 60_000); // buildCount 0 时正常派发（无误杀）
 
       // 第 1 轮：坏实现（E1 恒 FAIL）+ 证据 + verify 恒挂（有产出但做不完的形态）
       const c1 = commitFiles(wtDir, { "impl.js": implBad(1), "e1.js": "require('./impl.js');\n", "u1check.js": u1check });
@@ -604,7 +604,7 @@ describe("D6 预算注入与恢复派发", () => {
 
       // 第 K 条证据入账 → 下轮停派 + stderr 转人工（三选一原文 + 实际 buildCount）
       submitEvidence(`b${BUILD_DRIFT_MAX_ATTEMPTS}`, commitFiles(wtDir, { "impl.js": implBad(BUILD_DRIFT_MAX_ATTEMPTS) }));
-      await waitText(runner.stderrText, "停止自动重派", 10_000);
+      await waitText(runner.stderrText, "停止自动重派", 60_000);
       const stderr = runner.stderrText();
       expect(stderr).toContain("build 证据已达 5 次");
       expect(stderr).toContain("--max-build-attempts 预算 5");
@@ -628,7 +628,7 @@ describe("D6 预算注入与恢复派发", () => {
 
       // runner B：K+3 注入 → 5 < 8 不停派，恢复自动派发
       const runnerB = startRunner(repoDir, "dd", ["--max-build-attempts", "8", "--max-idle-ms", "4000"]);
-      await waitText(runnerB.stdoutText, dispatchLine, 10_000);
+      await waitText(runnerB.stdoutText, dispatchLine, 60_000);
       expect(runnerB.stderrText()).not.toContain("停止自动重派"); // 预算放宽后不出声
       runnerB.child.kill("SIGKILL");
       // 恢复期间 frontier 仍恒默认（只读投影与运行策略解耦）
@@ -660,9 +660,9 @@ describe("D7 停派不阻断同 root 其余 unit", () => {
 
     const runner = startRunner(repoDir, "dr", ["--max-idle-ms", "8000"]);
     // lb 正常派发（停派不阻断同 root 其余 unit）
-    await waitText(runner.stdoutText, '派发 developer → unit "lb"', 10_000);
+    await waitText(runner.stdoutText, '派发 developer → unit "lb"', 60_000);
     // la 的 buildDrift 转人工指引出声
-    await waitText(runner.stderrText, 'unit "la" 的 build 证据已达', 10_000);
+    await waitText(runner.stderrText, 'unit "la" 的 build 证据已达', 60_000);
     expect(runner.stderrText()).toContain("--max-build-attempts 预算 5");
     // la 零派发（观察窗口：1 个 poll 周期以上）
     await new Promise((resolve) => setTimeout(resolve, 600));

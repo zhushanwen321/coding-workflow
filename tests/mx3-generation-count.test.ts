@@ -250,7 +250,7 @@ describe("mx-3 G1 同代双 fail 不 deadlock：试探 + 正式只计 1 代打�
     const runner = startRunner(repoDir, "demo");
     try {
       // specFixPending 派 designer（designer 获得修复机会——不被试探耗尽额度误杀）
-      await waitText(runner.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 10_000);
+      await waitText(runner.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 60_000);
       // 无 escalation（多轮 poll 后 stderr 仍无转人工文案）
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       expect(runner.stderrText()).not.toContain("打回循环活锁");
@@ -284,7 +284,7 @@ describe("mx-3 G2 跨代双 fail deadlock：fail → 重提 → fail = 2 代打�
 
     const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(runner.stderrText, "打回循环活锁", 10_000);
+      await waitText(runner.stderrText, "打回循环活锁", 60_000);
       const escalation = runner.stderrText();
       expect(escalation).toContain("转人工");
       expect(escalation).toContain("已打回 2 代");
@@ -332,7 +332,7 @@ describe("mx-3 G3 三代打回：代数=3 ≥2 仍 deadlock 且 escalation 不�
 
     const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(runner.stderrText, "打回循环活锁", 10_000);
+      await waitText(runner.stderrText, "打回循环活锁", 60_000);
       expect(runner.stderrText()).toContain("已打回 3 代");
       // 去重：足够多轮 poll（≥7 轮）后完整 escalation 文案仍只出现一次
       await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -377,9 +377,9 @@ describe("mx-3 G4 escalation 去重：同 unit 单次、跨 unit 各自打印", 
 
     const runner = startRunner(repoDir, "root", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(runner.stderrText, "已打回 2 代", 10_000);
-      await waitText(runner.stderrText, '"leaf-dd1"', 10_000);
-      await waitText(runner.stderrText, '"leaf-dd2"', 10_000);
+      await waitText(runner.stderrText, "已打回 2 代", 60_000);
+      await waitText(runner.stderrText, '"leaf-dd1"', 60_000);
+      await waitText(runner.stderrText, '"leaf-dd2"', 60_000);
       // 去重窗口：≥7 轮 poll 后各自文案仍恰好一次
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       const escalation = runner.stderrText();

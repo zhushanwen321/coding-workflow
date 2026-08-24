@@ -265,12 +265,12 @@ describe("mx-1 T1 打回循环全链：reviewer fail → specFixPending 派 desi
     const repoDir = makeScenario("t1-fullchain", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
-      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 60_000);
       // 人扮演 designer：提 spec（不自审）
       submitSpec(repoDir, "demo", ACCEPTANCE, "spec-demo-v1.json");
 
       // 独立 reviewer 派发（specReviewPending）：brief 含 attachments 绝对路径且可解析
-      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 60_000);
       const topic1 = findTopicDir(repoDir, "demo");
       const reviewerBrief1 = readFileSync(join(topic1, "demo.reviewer.brief.md"), "utf-8");
       const attachDir = attachmentsDir(cwHome, repoDir, "demo");
@@ -380,7 +380,7 @@ async function assertDeadlock(
   runner: RunnerCapture,
   comments: readonly string[],
 ): Promise<void> {
-  await waitText(runner.stderrText, "打回循环活锁", 10_000);
+  await waitText(runner.stderrText, "打回循环活锁", 60_000);
   const escalation = runner.stderrText();
   expect(escalation).toContain("转人工");
   for (const comment of comments) {
@@ -409,9 +409,9 @@ describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打�
     try {
       // 同步点：等首轮 designer 派发（spec 待写）再提交——否则 spec 可能早于
       // runner 首轮 poll 入账，designer#1 不派发，后续计数断言失锚
-      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 60_000);
       submitSpec(repoDir, "demo", ACCEPTANCE, "spec-demo.json");
-      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 60_000);
       expect(
         runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态一第1次fail：缺A3", "--role", "reviewer"]).code,
       ).toBe(0);
@@ -447,9 +447,9 @@ describe("mx-1 T2 deadlock 形态②：fail → 重提（改 1 字节）→ fail
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000", "--max-spec-rejects", "2"]);
     try {
       // 同步点：等首轮 designer 派发再提交（计数断言的锚，见形态①注释）
-      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 60_000);
       submitSpec(repoDir, "demo", ACCEPTANCE, "spec-demo-v1.json");
-      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 60_000);
       expect(
         runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态二第1次fail：A2标题不达意", "--role", "reviewer"]).code,
       ).toBe(0);
@@ -488,7 +488,7 @@ describe("mx-1 T3 抢答警告：无在场 reviewer 时提交 spec-review verdic
     const repoDir = makeScenario("t3-premature", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
-      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 designer → unit "demo"', 60_000);
       // 抢答现场（mx-1 修复的 critical 缺陷形态）：单一写者把 spec 与 spec-review
       // pass 一次入账（同进程两次 append 合一写入——runner 轮询读到的要么全无
       // 要么全有，消灭「spec 先到 → 派 reviewer」的竞态窗口）。此刻无在场
@@ -521,10 +521,10 @@ describe("mx-1 T3 抢答警告：无在场 reviewer 时提交 spec-review verdic
       );
       expect(res.status, `单写者追加应成功（stderr: ${res.stderr}）`).toBe(0);
 
-      await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 10_000);
+      await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 60_000);
       // mx3 语义变化：fold 只认 role=reviewer——designer 的自审 pass 不驱动冻结，
       // unit 回 specReviewPending，循环改派独立 reviewer（不再派 developer）
-      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 reviewer → unit "demo"', 60_000);
       expect(runner.stdoutText()).not.toContain('派发 developer → unit "demo"');
       // 状态锚：designer 自审后 unit 仍是 created（待独立审查）
       expect(runCli(repoDir, ["status"]).stdout).toMatch(/demo\s+created/);

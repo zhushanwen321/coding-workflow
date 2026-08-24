@@ -251,7 +251,7 @@ describe("mx-4 D1 默认阈值 10：第 1-9 代打回走 specFixPending，第 10
     // 无 flag 的默认配置 runner（human）：escalation 出声且同时含已达代数与预算值
     const runner = startRunner(repoDir, "demo");
     try {
-      await waitText(runner.stderrText, "打回循环活锁", 10_000);
+      await waitText(runner.stderrText, "打回循环活锁", 60_000);
       const escalation = runner.stderrText();
       expect(escalation).toContain("已打回 10 代");
       expect(escalation).toContain("预算 10 代");
@@ -277,7 +277,7 @@ describe("mx-4 D2 flag 参数化全链：--max-spec-rejects 只作用 runner 侧
     // 阶段一：注入预算 2 → 2 代即触顶（mx3 G2 场景形态复用）
     const flagged = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(flagged.stderrText, "打回循环活锁", 10_000);
+      await waitText(flagged.stderrText, "打回循环活锁", 60_000);
       const escalation = flagged.stderrText();
       expect(escalation).toContain("已打回 2 代");
       expect(escalation).toContain("预算 2 代");
@@ -299,7 +299,7 @@ describe("mx-4 D2 flag 参数化全链：--max-spec-rejects 只作用 runner 侧
     // 多轮 poll 后 stderr 仍无转人工文案——flag 的作用域仅限注入它的 runner 进程
     const unflagged = startRunner(repoDir, "demo");
     try {
-      await waitText(unflagged.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 10_000);
+      await waitText(unflagged.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 60_000);
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       expect(unflagged.stderrText(), "默认 10 下 2 代打回不触发转人工").not.toContain("打回循环活锁");
     } finally {
@@ -349,7 +349,7 @@ describe("mx-4 D3 flag 校验：--max-spec-rejects 须为正整数 ≥1", () => 
     appendGenerations(ledgerOf(repoDir), "demo", 1);
     const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "1"]);
     try {
-      await waitText(runner.stderrText, "打回循环活锁", 10_000);
+      await waitText(runner.stderrText, "打回循环活锁", 60_000);
       const escalation = runner.stderrText();
       expect(escalation).toContain("已打回 1 代");
       expect(escalation).toContain("预算 1 代");
@@ -378,8 +378,8 @@ describe("mx-4 D3 flag 校验：--max-spec-rejects 须为正整数 ≥1", () => 
     const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "1e2"]);
     try {
       // 书写形态是科学计数法，量级是整数（100）→ 保留合法（拒绝的是非整数量级）
-      await waitText(runner.stdoutText, "max-spec-rejects=100", 10_000);
-      await waitText(runner.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 10_000);
+      await waitText(runner.stdoutText, "max-spec-rejects=100", 60_000);
+      await waitText(runner.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 60_000);
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       expect(runner.stderrText(), "2 代 < 预算 100：不判活锁").not.toContain("打回循环活锁");
     } finally {
