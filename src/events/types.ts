@@ -202,6 +202,11 @@ export interface ReflectionRanPayload {
   sessionFile?: string;
   /** followUp 全文是否引发 spec 修订（修订会有新 SpecSubmitted，此字段仅审计摘要） */
   revisedSpec?: boolean;
+  /**
+   * true = loop 代写占位（无反思实质、无在飞长驻句柄，ph-i2 四流程接入前的
+   * 降级放行）；undefined/absent = 真实反思。旧账本事件无此字段按真实语义兼容。
+   */
+  placeholder?: boolean;
 }
 
 // ---- 事件信封与账本 ----
