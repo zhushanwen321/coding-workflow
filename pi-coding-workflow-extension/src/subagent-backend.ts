@@ -184,6 +184,31 @@ export function createSubagentBackend(mgr: SmSpawnManager): SubagentBackend {
       let finished: SpawnResult | undefined;
       let waitChain: Promise<SpawnResult> | undefined;
 
+      /**
+       * 单一轮次等待者（P1-6 收口）：pi-1 实测 wait() 是广播队列——每个 pending
+       * waiter 都拿到同一轮结果。本层所有消费点（settleLoop / waitForIdle /
+       * followUp 预结算窗口）都必须经 nextRound() 取轮，同一轮同一时刻只存在一个
+       * 在飞 wait() 调用；轮 text 的 append 落盘也只在结算副作用处发生一次——
+       * 多个消费者观察同一轮，证据链只写一份（adversarial R6）。
+       */
+      let pendingRound: Promise<SmWaitResult> | null = null;
+      function nextRound(): Promise<SmWaitResult> {
+        if (pendingRound === null) {
+          const p = handle
+            .wait()
+            .then((r) => {
+              if (r.text !== "") appendFileSync(stdoutPath, r.text, "utf-8");
+              if (r.error !== undefined) logDiag(stderrPath, `round ${r.round} error: ${r.error}`);
+              return r;
+            })
+            .finally(() => {
+              if (pendingRound === p) pendingRound = null;
+            });
+          pendingRound = p;
+        }
+        return pendingRound;
+      }
+
       /** 聚合循环（偏离①）：round 粒度 wait() 连续聚合到会话终态，每轮 text append 落 .stdout */
       async function settleLoop(timeoutMs: number): Promise<SpawnResult> {
         const deadline = Date.now() + timeoutMs;
@@ -196,7 +221,7 @@ export function createSubagentBackend(mgr: SmSpawnManager): SubagentBackend {
           let round: SmWaitResult;
           try {
             round = await Promise.race([
-              handle.wait(),
+              nextRound(),
               sleep(remain).then(() => {
                 throw new Error("__timeout__");
               }),
@@ -209,8 +234,7 @@ export function createSubagentBackend(mgr: SmSpawnManager): SubagentBackend {
             }
             throw e;
           }
-          if (round.text !== "") appendFileSync(stdoutPath, round.text, "utf-8");
-          if (round.error !== undefined) logDiag(stderrPath, `round ${round.round} error: ${round.error}`);
+          // text append 与 error 诊断在 nextRound() 结算副作用单点完成（R6）
           if (!round.settled) continue;
           // 终态映射：done→0；failed→1（可重派）；cancelled→done() 发起=0 / kill 或外部=CRASH
           let exitCode: SpawnResult["exitCode"];
@@ -261,33 +285,23 @@ export function createSubagentBackend(mgr: SmSpawnManager): SubagentBackend {
           // 的旧语义兼容）；窗口耗尽（典型 = waitForIdle 已消费 idle 锚后的反思
           // 序列）直接 message（pi-1 idle 态 sendFollowUp 即开始新 round）
           const round = await Promise.race([
-            handle.wait(),
+            nextRound(),
             sleep(FOLLOW_UP_ROUND_WINDOW_MS).then(() => null),
           ]);
-          if (round !== null) {
-            if (round.text !== "") appendFileSync(stdoutPath, round.text, "utf-8");
-            if (round.settled) {
-              throw new Error("subagent-backend: followUp 前会话已终态，无法追问");
-            }
+          if (round !== null && round.settled) {
+            throw new Error("subagent-backend: followUp 前会话已终态，无法追问");
           }
           await handle.message(text);
         },
         async waitForIdle(ms: number): Promise<boolean> {
           const deadline = Date.now() + ms;
-          // P1-6：pi-1 wait() 是广播队列语义——每个 pending waiter 都会拿到同一轮
-          // 结果。每 tick 新建 wait() 会让同一轮 text 被 N 个 waiter 各 append 一遍
-          //（证据链污染）。改为整个等待期复用单一 waiter，tick 只做超时检查
-          let roundWaiter: Promise<SmWaitResult> | undefined;
           for (;;) {
             if (handle.settled) return true;
             const remain = deadline - Date.now();
             if (remain <= 0) return false;
-            if (roundWaiter === undefined) roundWaiter = handle.wait();
+            // 复用单一轮次等待者（R6）：round 结算（含 text append 副作用）只发生一次
             const winner = await Promise.race([
-              roundWaiter.then((r) => {
-                if (r.text !== "") appendFileSync(stdoutPath, r.text, "utf-8");
-                return "round" as const;
-              }),
+              nextRound().then(() => "round" as const),
               sleep(Math.min(remain, 200)).then(() => "tick" as const),
             ]);
             if (winner === "round") return true;

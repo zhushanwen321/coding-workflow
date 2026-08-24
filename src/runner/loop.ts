@@ -1653,7 +1653,16 @@ async function runLoopMain(
     // 诚实边界：无 sessionFile 审计锚；反思实质属 ph-i2 四流程）。代写失败只出声，
     // 下轮重试（reflectionPending 持续可见）
     for (const unit of subtreeUnits(projection, opts.rootId)) {
-      if (unitStatus(unit) !== "created" || unit.specs.length === 0 || reflectionDone(unit)) {
+      // 无 verdict 条件与 frontier.reflectionPending 判定同步（adversarial R5）：
+      // 最新 spec 已有 spec-review verdict 的 unit（specFixPending 等）不属
+      // reflectionPending——对其发 followUp 会劫持修 spec 的在飞会话、或对旧账本
+      // fail-v 存量 unit 代写占位 ReflectionRan
+      if (
+        unitStatus(unit) !== "created" ||
+        unit.specs.length === 0 ||
+        reflectionDone(unit) ||
+        latestSpecReviewAfterLastSpec(unit) !== null
+      ) {
         continue;
       }
       const spec = unit.specs[unit.specs.length - 1];

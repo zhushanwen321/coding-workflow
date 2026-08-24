@@ -62,6 +62,8 @@ SubagentHandle: {
 
 （契约细节以 pi-1 实施对齐为准，此为消费侧最小面——start 的参数集对齐 8.1.0 工具参数减去 LLM 专用项。）
 
+**已裁定偏差（实施期裁定，adversarial R4 回写）**：因 `@zhushanwen/pi-subagent-workflow@2.0.0` 未发 npm（依赖声明无法静态解析安装），消费侧不采用上图静态 import 形态，改为**探测式动态 import**（宽型 string specifier，防 TS 静态解析 .ts 入口）：`@zhushanwen/coding-workflow/runner`（runLoop 存在性校验）与 `@zhushanwen/pi-subagent-workflow`（包根缺 `createSpawnManager` 命名导出时**回落子路径 `./src/index.ts`**——pi-1 打包实态：包根只 re-export extension default，已回报 pi-1）；两者任一失败 → `/cw start` 拒启 + 安装指引（probe.ts ② ③ 同款探测）。落点：`pi-coding-workflow-extension/src/index.ts` makeDefaultBackend 与 `src/probe.ts`。消费契约本身不变——探测成功后仍以 `createSpawnManager(pi)` 造 SpawnManager。
+
 ### 2.3 穿透链现状（总纲已证 + 本层落点）
 
 穿透链七环（ask-user → extension protocol marker → rpc extension_ui_request → 父进程队列 → channel 分流 → stdin 回写）总纲已代码级亲验。**本层落点**：subagent-workflow 的 session-runner spawn 子进程时，ui_request 从子进程 stdout 上浮到 subagent-workflow（8.1.0 已做）→ **但编程 API 消费者（extension）需要拿到这个事件并转发到 ctx.ui**——pi-1 的 SpawnManager 需暴露 `onUiRequest(handleId, req)` 订阅（消费契约补一条，写入 pi-1 任务书）。
@@ -173,8 +175,8 @@ CW_RUNNER_POLL_MS：number，默认沿用 loop 5000
 ```
 用户主 pi 会话（pi TUI / xyz-agent，装 pi-coding-workflow-extension）
   └─ extension（jiti 加载 index.ts）
-      ├─ import { runLoop } from "@zhushanwen/coding-workflow/runner"   ← npm 依赖（包内 node_modules，ph-i0 安装）
-      ├─ import { createSpawnManager } from "@zhushanwen/pi-subagent-workflow" ← pi-1
+      ├─ import { runLoop } from "@zhushanwen/coding-workflow/runner"   ← npm 依赖（包内 node_modules，ph-i0 安装；实施态为探测式动态 import，见 §2.2 偏差备注）
+      ├─ import { createSpawnManager } from "@zhushanwen/pi-subagent-workflow" ← pi-1（实施态为探测式动态 import + ./src/index.ts 子路径回落，见 §2.2 偏差备注）
       ├─ /cw start → runner.lock（O_EXCL）→ runLoop({...})
       │    ├─ onEvent(round) → ctx.ui setWidget（frontier 摘要）
       │    ├─ 派发 → SpawnManager.start(...) → 子进程（--mode rpc，受控 agentDir env + ask-user）

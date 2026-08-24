@@ -4,7 +4,7 @@
 > **上游决策链**：D2 自研薄 RPC client（exports 阻断实测）、D5 反思 followUp + ReflectionRan 事件锚、D8 跨进程派发锁、D1 受控 agentDir 注入形态（安装基建见 design-hi-monorepo-split.md）。
 > **证据基础**：cw 仓实读（spawn/types.ts、pi.ts、handlers/run.ts、loop.ts、fold.ts、events/types.ts、frontier.ts）+ pi 0.84.2 dist 实读（rpc-types.d.ts、rpc-client.d.ts、loader.js）+ 消费者侧 import 阻断实测（ERR_PACKAGE_PATH_NOT_EXPORTED）。推断与证实分离标注。
 
-**一句话结论**：新增 `src/runner/spawn/pi-rpc.ts`——薄 RPC client 自研（五命令子集 + 事件流 + id 关联，约 200 行，xyz-agent rpc-client.ts 同款先例）；`AgentSpawnAdapter` 缝契约演进为 `InteractiveSpawnHandle`（+followUp/waitForIdle/uiRequest 转发钩子，一次性适配器不受影响——接口扩展不破坏既有实现）；`ReflectionRan` 定为**第六类事件类型**（append-only 哲学下唯一可行形态——历史事件不可回填，可选字段方案物理不成立）；runner.lock 为 `<CW_HOME>/runner.lock` 心跳文件 + 陈锁抢占协议；适配器路由表因 `pi-rpc` 的工厂名拼接约定失效改显式注册表。
+**一句话结论**：新增 `src/runner/spawn/pi-rpc.ts`——薄 RPC client 自研（五命令子集 + 事件流 + id 关联，约 200 行，xyz-agent rpc-client.ts 同款先例）；`AgentSpawnAdapter` 缝契约演进为 `InteractiveSpawnHandle`（+followUp/waitForIdle/uiRequest 转发钩子，一次性适配器不受影响——接口扩展不破坏既有实现）；`ReflectionRan` 定为**第六类事件类型**（append-only 哲学下唯一可行形态——历史事件不可回填，可选字段方案物理不成立）；runner.lock 为 `<CW_HOME>/<encoded-cwd>/runner.lock` 心跳文件 + 陈锁抢占协议；适配器路由表因 `pi-rpc` 的工厂名拼接约定失效改显式注册表。
 
 ## 1. 背景目标
 
@@ -173,6 +173,9 @@ export interface ReflectionRanPayload {
 格式（JSON，单行原子写）：
 { "pid": 12345, "form": "cli" | "extension", "rootId": "<root-unit-id>",
   "startedTs": "ISO-8601", "heartbeatTs": "ISO-8601" }
+（实施态备注，adversarial R3 回写：当前实现 form 恒写 "cli"——extension 形态经 runLoop 库
+调用同样写 "cli"，"extension" 注入口待补；影响面仅限已存在 runner 的拒启提示文案可能把
+extension runner 误称 cli 形态，互斥判定不依赖 form 字段（只看 pid 存活），功能无影响）
 心跳：派发循环每轮（poll 间隔，缺省 5s）重写 heartbeatTs
 获取：启动时 exclusive create（O_EXCL）；已存在 → 读锁：
   - pid 活着（process.kill(pid,0) 探测）→ 拒启，stderr 指引：

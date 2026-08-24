@@ -195,3 +195,21 @@ describe("P1-6：waitForIdle 的 wait() 调用数（广播语义下不重复 app
     await h.wait();
   }, 8_000);
 });
+
+describe("R6：跨调用点并发等待者（settleLoop × waitForIdle）单点 append", () => {
+  it("wait() 聚合循环挂起中 waitForIdle 并发等待——同一轮 text 只 append 一次", async () => {
+    const mgr = new BroadcastManager();
+    const backend = createSubagentBackend(mgr);
+    const h = await backend.adapter.spawn(makeReq());
+    const waitP = h.wait();
+    setTimeout(() => mgr.handle?.advance("r6-并发轮文本\n"), 300);
+    expect(await h.waitForIdle(3_000)).toBe(true);
+    mgr.handle?.advance("r6-反思回复\n", "done");
+    expect((await waitP).exitCode).toBe(0);
+    const stdout = await readFile(join(dir, "topic", "feat-w.designer.stdout"), "utf-8");
+    // R6 不变量：同一轮 text 只落盘一份（修复前 settleLoop 与 waitForIdle 各 append 一遍；
+    // 标记串带 r6- 前缀防与本文件其他用例的共用 stdout 内容串扰）
+    expect(stdout.match(/r6-并发轮文本/g)).toHaveLength(1);
+    expect(stdout.match(/r6-反思回复/g)).toHaveLength(1);
+  }, 8_000);
+});

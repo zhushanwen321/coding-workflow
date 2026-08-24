@@ -178,6 +178,93 @@ describe.skipIf(!hasPi)("i1b B：pi-rpc 适配器 × 真实 pi 进程", () => {
   );
 });
 
+// ---- B2. 无头穿透：ui_request 自动 cancelled + stderr 告警（真实协议桩，不依赖真 pi） ----
+
+describe("i1b B2：无头穿透 ui_request 自动 cancelled + stderr 告警", () => {
+  it(
+    "extension_ui_request 到达 → 适配器自动回 cancelled 应答 + stderr 告警行",
+    async () => {
+      const dir = join(tmpRoot, "b2-" + Math.random().toString(36).slice(2, 8));
+      mkdirSync(dir, { recursive: true });
+      // 真实 node 协议桩（零 mock 框架，与 i1a 坏行桩同款形态）：应答 get_state，
+      // 延迟上抛 extension_ui_request（等适配器握手后注册 onUiRequest 监听），
+      // 收到 extension_ui_response 落日志（断言 cancelled 形态）
+      const stubLog = join(dir, "stub.log");
+      writeFileSync(
+        join(dir, "stub.js"),
+        [
+          "const fs = require('node:fs');",
+          "const log = process.env.CW_TEST_STUB_LOG;",
+          "const rl = require('node:readline').createInterface({ input: process.stdin });",
+          "const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');",
+          "let uiSent = false;",
+          "rl.on('line', (line) => {",
+          "  let m; try { m = JSON.parse(line); } catch { return; }",
+          "  if (m.type === 'get_state') {",
+          "    send({ type: 'response', id: m.id, command: 'get_state', success: true,",
+          "      data: { sessionId: 'stub-i1b', sessionFile: log + '.session', isStreaming: false,",
+          "        isCompacting: false, messageCount: 0, pendingMessageCount: 0 } });",
+          "    if (!uiSent) {",
+          "      uiSent = true;",
+          "      setTimeout(() => send({ type: 'extension_ui_request', id: 'ui-1', method: 'ask_user', prompt: 'b2 测试问句' }), 300);",
+          "    }",
+          "  } else if (m.type === 'extension_ui_response') {",
+          "    fs.appendFileSync(log, JSON.stringify(m) + '\\n');",
+          "  } else if (m.type === 'prompt' || m.type === 'follow_up' || m.type === 'steer' || m.type === 'abort') {",
+          "    send({ type: 'response', id: m.id, command: m.type, success: true });",
+          "    send({ type: 'agent_settled' });",
+          "  }",
+          "});",
+          "rl.on('close', () => process.exit(0));",
+        ].join("\n"),
+      );
+      // PATH 前置目录放 `pi` shim（适配器 spawn "pi" 经 PATH 解析命中桩）
+      writeFileSync(join(dir, "pi"), `#!/bin/sh\nexec "${process.execPath}" "${join(dir, "stub.js")}" "$@"\n`);
+      spawnSync("chmod", ["+x", join(dir, "pi")]);
+
+      const origPath = process.env.PATH;
+      process.env.PATH = `${dir}:${origPath ?? ""}`;
+      process.env.CW_TEST_STUB_LOG = stubLog;
+      // 捕获测试进程 stderr（适配器告警经 process.stderr.write 发出）
+      const errChunks: string[] = [];
+      const origErr = process.stderr.write;
+      process.stderr.write = ((chunk: unknown, cb?: (err?: Error | null) => void) => {
+        errChunks.push(String(chunk));
+        if (typeof cb === "function") cb();
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        const req = mkAgentRequest({ unitId: "u-b2", role: "developer", artifactDir: dir, workdir: dir, projectCwd: dir });
+        const handle = await createPiRpcAdapter().spawn(req);
+        const interactive = handle as InteractiveSpawnHandle;
+        // 等 ui_request 已被桩发出且适配器应答落桩日志（轮询 ≤5s）
+        const deadline = Date.now() + 5_000;
+        while (!existsSync(stubLog) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        const result = await interactive.done();
+        expect(result.exitCode).toBe(0);
+
+        // 断言①：自动应答为 cancelled 形态（无人工通道不悬置）
+        expect(existsSync(stubLog)).toBe(true);
+        const respLine = readFileSync(stubLog, "utf-8").trim().split("\n")[0] ?? "";
+        const resp = JSON.parse(respLine) as { type?: string; id?: string; cancelled?: boolean };
+        expect(resp.type).toBe("extension_ui_response");
+        expect(resp.id).toBe("ui-1");
+        expect(resp.cancelled).toBe(true);
+
+        // 断言②：stderr 有无头穿透告警行
+        expect(errChunks.join("")).toContain("无 UI 通道，已取消");
+      } finally {
+        process.stderr.write = origErr;
+        process.env.PATH = origPath;
+        delete process.env.CW_TEST_STUB_LOG;
+      }
+    },
+    60_000,
+  );
+});
+
 // ---- C. 反思链（loop 接缝：真实 runLoop + 真实 InteractiveSpawnHandle 实现） ----
 
 describe("i1b C：reflectionPending → followUp → ReflectionRan 入账最小链", () => {

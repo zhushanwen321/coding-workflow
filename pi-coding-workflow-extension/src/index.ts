@@ -70,7 +70,7 @@ function splitArgs(raw: string): string[] {
 }
 
 /** 默认依赖装配：探测式动态 import 两库（失败抛可读错误，含安装指引） */
-async function makeDefaultBackend(): Promise<{ backend: SubagentBackend; runLoop: (opts: unknown) => Promise<number> }> {
+async function makeDefaultBackend(pi: ExtensionAPI): Promise<{ backend: SubagentBackend; runLoop: (opts: unknown) => Promise<number> }> {
   // 动态 import 用宽型 string 变量（防 TS 静态解析 subagent-workflow 的 .ts 入口）
   const cwSpec = "@zhushanwen/coding-workflow/runner";
   const swSpec = "@zhushanwen/pi-subagent-workflow";
@@ -89,7 +89,9 @@ async function makeDefaultBackend(): Promise<{ backend: SubagentBackend; runLoop
   if (typeof createSpawnManager !== "function") {
     throw new Error("subagent-workflow 编程 API 不在场（probe 应已拦截——启动竞态窗口）");
   }
-  const mgr = (createSpawnManager as (pi?: unknown) => SmSpawnManager)();
+  // pi-1 消费契约：createSpawnManager(pi: ExtensionAPI)（SpawnManager 需要 pi 的
+  // exec/面板/事件面派 subagent）——宿主 pi 实例经参数传入（adversarial R7）
+  const mgr = (createSpawnManager as (pi: ExtensionAPI) => SmSpawnManager)(pi);
   const backend: SubagentBackend = createSubagentBackend(mgr);
   return { backend, runLoop: runLoop as (opts: unknown) => Promise<number> };
 }
@@ -97,7 +99,7 @@ export function registerCwRunner(pi: ExtensionAPI, deps: CwRunnerDeps = {}): CwR
   const launch =
     deps.launchRunLoop ??
     (async (opts: LaunchOptions): Promise<number> => {
-      const { backend, runLoop } = await makeDefaultBackend();
+      const { backend, runLoop } = await makeDefaultBackend(pi);
       backendRef = backend;
       return runLoop({
         rootId: opts.rootId,

@@ -191,6 +191,8 @@ $ git tag ext-v0.5.0 && git push origin ext-v0.5.0
 | PP2 | 装入临时 agentDir 后真实 pi 进程发现并加载 extension | `PI_CODING_AGENT_DIR=<tmp> pi -p "list your tools"` 输出含 cw 注入物（ph-i0 骨架期注入一个哨兵命令 `/cw-ping` 验证加载链，业务工具 ph-i2 再上） | ⛔ ph-i0 |
 | PP3 | release.yml 两 job 在 dry-run 输入下各自通过 | workflow_dispatch dry-run ×2 | ⛔ ph-i0 |
 
+**已裁定偏差（实施期实测裁定，adversarial R2 回写）**：PP2 主探针形态变更——`pi -p` 锚串探针失败（含超时/非零退出）时**无条件降级 RPC 握手探针**（`probeLoadRpc`：`--mode rpc` 握手 get_state success 且 stderr 无 "Failed to load extension" 即通过；输出标注 `[probe fallback: -p anchor miss -> rpc handshake]`，见 `pi-coding-workflow-extension/src/installer/core.mjs` probeLoad）。理由：无凭据环境 execFile 下 pi 被 SIGTERM、锚串与 "No API key" 均不可见，锚串主探针静态判定必然误报；RPC 握手对加载链的验证是确定性的。同因，tests/i1a 的 LLM 链用例改为 **`CW_TEST_PI_LLM=1` 显式 opt-in**（缺省确定性跳过）——凭据按选中 model 匹配而非按存在性，env/auth.json 存在性静态检测必误判。
+
 ### 3.4 物理数据流（安装→发现→加载）
 
 ```
