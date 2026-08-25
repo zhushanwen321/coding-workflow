@@ -19,13 +19,14 @@ import {
   runProbe,
   subagentInstallGuide,
 } from "../probe.js";
+import { staticSubagentApiReady } from "./env-guard.js";
 
 const execFileP = promisify(execFile);
 
-// 环境守卫（文件顶层，describe 回调内不可顶层 await）：本用例验证「本地开发态预装含
-// createSpawnManager 的副本后默认包可导入」；该 API 未发布 npm，纯 registry 环境（CI）
-// 下断言恒 false——跳过而非误报（同 entry.test.ts 守卫裁定）。
-const defaultPkgReady = (await checkSubagentApi()).ok;
+// 环境守卫（文件顶层）：本用例验证「本地开发态预装含 createSpawnManager 的副本后默认包
+// 可导入」；该 API 未发布 npm，纯 registry 环境（CI）下断言恒 false——跳过而非误报。
+// 静态探测避免真实 import 的 Node<22 副作用（见 env-guard.ts 头注）。
+const defaultPkgReady = staticSubagentApiReady();
 
 let dir: string;
 let agentDirOk: string;

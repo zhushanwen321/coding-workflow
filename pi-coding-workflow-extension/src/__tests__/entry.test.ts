@@ -8,15 +8,16 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { checkSubagentApi } from "../probe.js";
+import { staticSubagentApiReady } from "./env-guard.js";
 import cwRunnerExtension, { registerCwRunner, type CwRunnerController, type LaunchOptions } from "../index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-api.js";
 import { mirrorRunnerLockPath } from "../runner-lock.js";
 
-// 环境守卫（i1a opt-in 先例同款裁定）：/cw start 链路用例依赖 subagent-workflow 编程 API
-// （createSpawnManager）在场，而该 API 尚未发布 npm——纯 registry 环境（含 CI publish-extension
-// job）probe 必拒启。本地开发态装 tai-ji-workspace 本地副本后自动恢复执行。
-const subagentApiReady = (await checkSubagentApi()).ok;
+// 环境守卫：/cw start 链路用例依赖 subagent-workflow 编程 API（createSpawnManager）在场，
+// 而该 API 尚未发布 npm——纯 registry 环境（含 CI publish-extension job）probe 必拒启。
+// 静态探测避免真实 import 的 Node<22 副作用（见 env-guard.ts 头注）。本地开发态装
+// tai-ji-workspace 本地副本后自动恢复执行。
+const subagentApiReady = staticSubagentApiReady();
 
 /** 真实 recorder 宿主：登记命令/事件，notify/setWidget 全量落数组 */
 function makePi() {
