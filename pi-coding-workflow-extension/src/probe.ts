@@ -96,10 +96,22 @@ export async function checkAskUserDeep(opts: { agentDir: string; piBin?: string;
  * createSpawnManager 在 ./src/index.ts——根命名导出缺失时回落子路径。 */
 export async function checkSubagentApi(spec: string = "@zhushanwen/pi-subagent-workflow"): Promise<ProbeCheck> {
   const tryImport = async (s: string): Promise<Record<string, unknown> | undefined> => {
+    // 模块初始化副作用可能产生后台 unhandled rejection（实测：registry 副本依赖链在
+    // Node < 22 上抛 webidl.util.markAsUncloneable；Node ≥ 15 默认 fatal 会击穿宿主进程）。
+    // 探测窗口内注册空 listener 受控吸收（listener 在场即接管默认 throw），finally 移除。
+    // 取舍：窗口为单次 import 的毫秒级，期间无关 rejection 一并吞掉的概率可忽略。
+    const swallowed: unknown[] = [];
+    const onRejection = (reason: unknown) => {
+      swallowed.push(reason);
+    };
+    process.on("unhandledRejection", onRejection);
     try {
       return (await import(s)) as Record<string, unknown>;
     } catch {
       return undefined;
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      void swallowed;
     }
   };
   const root = await tryImport(spec);
