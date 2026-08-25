@@ -15,14 +15,14 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { checkSubagentApi } from "../probe.js";
+import { staticSubagentApiReady } from "./env-guard.js";
 import { registerCwRunner, type CwRunnerController, type LaunchOptions } from "../index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-api.js";
 import { mirrorRunnerLockPath } from "../runner-lock.js";
 
 // 环境守卫（同 entry.test.ts）：四用例均走 /cw start 链路，依赖 subagent-workflow 编程 API
 // （createSpawnManager，未发布 npm）——纯 registry 环境跳过，本地开发态自动恢复。
-const subagentApiReady = (await checkSubagentApi()).ok;
+const subagentApiReady = staticSubagentApiReady();
 
 interface UiCall {
   kind: "notify" | "setWidget";
