@@ -36,6 +36,9 @@
     "url": "https://github.com/zhushanwen321/coding-workflow.git",
     "directory": "pi-coding-workflow-extension"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
