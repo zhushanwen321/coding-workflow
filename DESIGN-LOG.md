@@ -78,7 +78,7 @@
 
 ### 发布管线 gate/pipeline 域决策（D-001~D-016，不可逆六条）
 
-出处：`docs/rewrite/design-release-pipeline.md`（canon）+ `.xyz-harness/rp-release-pipeline/decisions.md`（全量决策账本，含 D-可逆 十条）。已实现交付：store 泛化 GP1 golden 重放零行为变化；gate 域独立账本 + wrap/query/stats；pipeline 域 run 即 resume；ci-judge flaky 决策树。
+出处：`docs/rewrite/design-release-pipeline.md`（canon）+ `.xyz-harness/rp-release-pipeline/decisions.md`（全量决策账本，含 D-可逆 十条；已归档 .xyz-harness/rp-release-pipeline/ARCHIVED.md，2026-08-25）。已实现交付：store 泛化 GP1 golden 重放零行为变化；gate 域独立账本 + wrap/query/stats；pipeline 域 run 即 resume；ci-judge flaky 决策树。
 
 | 决策 | 结论 |
 |------|------|

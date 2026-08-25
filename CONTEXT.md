@@ -172,6 +172,8 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 
 ## 命令面速查（16 个 = unit 域 10 + gate/pipeline 域 6）
 
+> gate/pipeline 域六命令与双域数据布局 [from: rp-release-pipeline §system-architecture]（设计 canon：docs/rewrite/design-release-pipeline.md；已归档 .xyz-harness/rp-release-pipeline/）。
+
 | 命令 | 类别 | 用途 |
 |------|------|------|
 | `cw create --id <slug> --brief <路径> [--parent <id>]` | 写 | 创建 unit（深度上限 2） |
