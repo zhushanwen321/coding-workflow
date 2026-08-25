@@ -8,7 +8,9 @@ description: >-
 
 # Merge
 
-> **范围**：coding-workflow 的手动合并 + 发布流程。单包项目，版本管理用单一 `package.json` + `npm version`，发布由 push tag 触发的 GitHub Actions `release.yml` 自动完成（`npm publish --provenance`）。
+> **范围**：coding-workflow 的手动合并 + 发布流程。双包 monorepo（核心包 `@zhushanwen/coding-workflow` + 插件包 `@zhushanwen/pi-coding-workflow`），版本独立管理，发布由 push tag 触发的 GitHub Actions `release.yml` 自动完成（`npm publish --provenance`）。
+>
+> **tag 协议**：`v*` → 核心包；`ext-v*` → 插件包。双包都 bump 时两段式推送（先核心后插件）。
 >
 > **自包含**：本 skill 自带两个脚本（`merge-helpers.sh` / `cleanup-worktree.sh`），不依赖 remove-worktree 或任何其他 skill。所有路径动态解析，不写死。
 
@@ -69,6 +71,14 @@ npm run build       # tsc + 生成 schemas（确认产物可生成）
 
 本项目无 `.githooks/pre-commit`，也无 PR 上的 CI（无 `ci.yml`），本地验证是合并前唯一的质量门。
 
+**插件包质量门**：根 check:all / lint / test / build **不含**插件包（vitest include=`tests/**/*.test.ts`、tsconfig include=`src/**`+`tests/**`、lint=`eslint src/ tests/`）。变更涉及插件包时，额外跑插件包的检查（前置：worktree 已在根跑过 npm install，确保 hoist 的 typescript/vitest 可用）：
+
+```bash
+cd "$WS_ROOT/$FEATURE_DIR/pi-coding-workflow-extension"
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run（installer 纯逻辑回归）
+```
+
 ### 阶段 2: PR 合并
 
 本项目无 `ci.yml`，PR 上不跑 CI，可直接合并。用 merge commit 合并（保护 main 历史，全局规范要求 main 必须 `--no-ff`）：
@@ -92,9 +102,24 @@ bash .agents/skills/merge/merge-helpers.sh sync-main
 
 **[HISTORICAL] 禁止用 `git fetch origin main`**：带显式分支参数的 fetch 只写 `FETCH_HEAD`，不更新 `refs/remotes/origin/main`，后续 `merge --ff-only origin/main` 会读到陈旧 ref 导致静默同步失败。2026-07-27 事故：`git fetch origin main` 后 origin/main 仍停在旧 commit，本地 main 碰巧等于旧 commit 被 ff-only 判为 "already up to date" 跳过，远程新 commit 完全没同步进来。根因是 bare repo 初始化时 `remote.origin.fetch` refspec 为空，已修复补 `+refs/heads/*:refs/remotes/origin/*`；此处 fetch 命令也必须走 refspec（不带分支名）。
 
-#### 3.2 确定版本类型
+#### 3.2 确定发布范围 + 版本类型
 
-根据本次变更判断版本类型（与用户确认）。判断标准：
+**先判断哪些包需要 bump**（与用户确认）。四分支互斥决策树：
+
+```
+if 变更涉及 pi-coding-workflow-extension/ 且不涉及核心包资产:
+    → 只 bump 插件包，打 ext-v* tag
+elif 变更涉及核心包资产且不涉及 pi-coding-workflow-extension/:
+    → 只 bump 核心包，打 v* tag
+elif 变更同时涉及两者:
+    → 两个包都 bump，两段式推送（先核心后插件，见 §3.4）
+else（变更既不触及插件目录也不触及核心包资产——如纯 docs/、README、根 .md 文件）:
+    → 按变更主次判断，或询问用户
+```
+
+**核心包资产**（不限于 `src/`）：`src/`、`tests/`、根 `package.json`、`tsconfig.json`、`tsconfig.test.json`、`.github/workflows/release.yml`、`vitest.config.ts`、`eslint.config.mjs`。
+
+**然后判断版本类型**。判断标准：
 
 **patch**（默认）：
 - bug fix（handler 逻辑修复、guard 误判修正）
@@ -118,14 +143,29 @@ bash .agents/skills/merge/merge-helpers.sh sync-main
 
 #### 3.3 bump 版本（在 main worktree 内）
 
+**核心包**：
 ```bash
 cd "$(bash .agents/skills/merge/merge-helpers.sh resolve-main)"
 
 CURRENT_VER=$(node -p "require('./package.json').version")
 npm version <patch|minor|major> --no-git-tag-version
 NEW_VER=$(node -p "require('./package.json').version")
-echo "版本: $CURRENT_VER → $NEW_VER"
+echo "核心包版本: $CURRENT_VER → $NEW_VER"
 ```
+
+**插件包**（变更涉及插件包时）：
+```bash
+cd "$(bash .agents/skills/merge/merge-helpers.sh resolve-main)/pi-coding-workflow-extension"
+
+CURRENT_EXT_VER=$(node -p "require('./package.json').version")
+npm version <patch|minor|major> --no-git-tag-version
+NEW_EXT_VER=$(node -p "require('./package.json').version")
+echo "插件包版本: $CURRENT_EXT_VER → $NEW_EXT_VER"
+```
+
+两个包的版本独立管理，不联动。**例外**：核心包 major bump 时，需前置检查插件包 `dependencies` 中的 `@zhushanwen/coding-workflow` range 是否断裂，必要时同步更新。
+
+`npm version` 在 workspace 子包内会**自动同步**根 `package-lock.json`（npm 11.6.2 探针实证），无需额外 `npm install`。
 
 #### 3.3.5 CHANGELOG 生成
 
@@ -133,8 +173,13 @@ echo "版本: $CURRENT_VER → $NEW_VER"
 
 ```bash
 # 仍在 main worktree 内
-PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+# 核心包 CHANGELOG：只匹配 v* tag（排除 ext-v*）
+PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo "")
 TAG="v$NEW_VER"
+
+# 插件包 CHANGELOG（变更涉及插件包时）：只匹配 ext-v* tag
+# PREV_TAG=$(git describe --tags --abbrev=0 --match 'ext-v*' HEAD^ 2>/dev/null || echo "")
+# TAG="ext-v$NEW_EXT_VER"
 
 if [ -n "$PREV_TAG" ]; then
   RANGE="${PREV_TAG}..HEAD"
@@ -194,27 +239,58 @@ git diff --quiet CHANGELOG.md && echo "无 conventional commit，跳过 CHANGELO
 
 #### 3.4 commit + tag + push
 
+**单包 bump 时**（只 bump 核心包或只 bump 插件包）：
+
 ```bash
 # 仍在 main worktree 内
 git add -A
 git commit -m "chore: bump version $CURRENT_VER → $NEW_VER" 2>/dev/null || echo "无变更需提交"
-TAG="v$NEW_VER"
+# 核心包：TAG="v$NEW_VER"  插件包：TAG="ext-v$NEW_EXT_VER"
 git tag "$TAG" 2>/dev/null || echo "Tag $TAG 已存在"
-git push origin HEAD:refs/heads/main --tags
+git push origin HEAD:refs/heads/main "$TAG"  # 只推本次新建的 tag，不用 --tags
 ```
+
+**双包 bump 时**（两段式推送，确保核心包先发布成功后再推插件包）：
+
+```bash
+# 仍在 main worktree 内
+# 1. commit（单 commit，包含两个 package.json 的版本变更）
+git add -A
+git commit -m "chore: bump core $CURRENT_VER → $NEW_VER, ext $CURRENT_EXT_VER → $NEW_EXT_VER"
+
+# 2. 第一段：推核心包 tag
+git push origin HEAD:refs/heads/main "v$NEW_VER"
+
+# 3. 等待核心包 CI 发布成功
+gh run watch --workflow=release.yml  # 或按 run-id watch
+
+# 4. 验证核心包已发布到 registry
+npm view @zhushanwen/coding-workflow@$NEW_CORE_VER version
+
+# 5. 第二段：推插件包 tag
+git push origin "ext-v$NEW_EXT_VER"
+
+# 6. 等待插件包 CI 发布成功
+gh run watch --workflow=release.yml  # 多 run 并存时用 run-id 更精确
+```
+
+**禁止 `git push origin --tags`**：会重推陈旧本地 tag 误触发流水线。改为只推本次新建的显式 tag。
 
 ### 阶段 4: 等待 CI 发布完成
 
 **[MANDATORY] npm 发布由 GitHub Actions 自动完成，禁止在本地执行 `npm publish`。**
 
 发布流程：
-1. 阶段 3.4 推送 `v*` tag → 触发 `.github/workflows/release.yml`
-2. CI 执行：`npm ci` → `npm run build` → `npm test` → `npm pack --dry-run` → `npm publish --provenance`
+1. 阶段 3.4 推送 tag → 触发 `.github/workflows/release.yml`
+2. CI 核心包 job：`npm ci` → `npm run build` → `npm test` → `npm pack --dry-run` → `npm publish --provenance`
+3. CI 插件包 job：`npm install` → `npm test` → `npm pack --dry-run` → `npm publish --provenance`
 
 等待 CI 完成：
 ```bash
 gh run watch --workflow=release.yml
 ```
+
+⚠️ 双包 bump 时有两段推送，每段触发独立 CI run。用 `gh run list --workflow=release.yml --limit=2` 查看两个 run 的 run-id，分别 watch。
 
 ⚠️ release.yml 在发布前会跑 `npm run build` + `npm test`。如果阶段 1 的本地验证已通过，这里通常也会过。但 CI 环境与本地可能有 Node 版本差异（CI 用 node 20），出问题时优先排查 Node 版本兼容性。
 
@@ -222,41 +298,47 @@ gh run watch --workflow=release.yml
 
 **[MANDATORY] 只在 CI 失败或 npm publish 产物有问题时执行。正常发布流程跳过此阶段。**
 
-#### 场景 A: CI 失败但 tag 已推
+**回滚原则：只删 tag，不 reset commit**。双包同 commit 双 tag 时，`git reset --hard HEAD~1` 会 reset 掉含另一包版本变更的共享 commit。接受版本跳号（下次 bump 时 package.json 版本号已就位）。
 
-tag 推送后 CI 构建/测试失败，版本未发布到 npm。需要清理 tag、修复后重新走 bump 流程。
+#### 场景 A: CI 失败但 tag 已推
 
 ```bash
 cd "$(bash .agents/skills/merge/merge-helpers.sh resolve-main)"
 
-# 1. 删除远程 tag
-TAG="v$NEW_VER"
-git push origin --delete "$TAG"
+# 核心包失败（第一段）
+git push origin --delete v$NEW_VER
+git tag -d v$NEW_VER
+# 不 reset commit；插件包 tag 尚未推（两段式），本地 ext tag 保留待第二段
 
-# 2. 删除本地 tag
-git tag -d "$TAG"
+# 插件包失败（第二段，核心包已发布成功）
+git push origin --delete ext-v$NEW_EXT_VER
+git tag -d ext-v$NEW_EXT_VER
+# 不 reset commit，核心包版本变更保留
 
-# 3. 回退 bump commit（如果是纯 bump，reset 回上一个 commit）
-git reset --hard HEAD~1
-
-# 4. 修复问题（在 feature 分支修 → PR → merge，或直接在 main 修）
-
-# 5. 重新走阶段 3.3 ~ 3.4（bump → tag → push）
+# 两者都失败（第一段就失败，第二段未推）
+git push origin --delete v$NEW_VER
+git tag -d v$NEW_VER
+# commit 保留，下次 bump 时版本号已就位
 ```
+
+注：回滚后 CHANGELOG 中会留下记录从未发布版本的“幽灵条目”。这是接受的代价——下次正常发布时新条目会自然覆盖，或手动清理。
+
+修复问题后重新走阶段 3.3 ~ 3.4。
 
 #### 场景 B: npm publish 成功但包有问题
 
-CI 发布成功，但包内容有误（构建产物损坏、关键文件缺失）。需在发布后 72 小时内 unpublish。
-
 ```bash
-# 1. unpublish 版本（npm 限制：发布 72 小时内可 unpublish，超时不可逆）
+# 核心包
 npm unpublish @zhushanwen/coding-workflow@$NEW_VER
+git push origin --delete v$NEW_VER
+git tag -d v$NEW_VER
 
-# 2. 删除对应 tag（防止下次 CI 再次发布同一版本）
-git push origin --delete "$TAG"
-git tag -d "$TAG"
+# 插件包
+npm unpublish @zhushanwen/pi-coding-workflow@$NEW_EXT_VER
+git push origin --delete ext-v$NEW_EXT_VER
+git tag -d ext-v$NEW_EXT_VER
 
-# 3. 修复后重新走阶段 3.3 ~ 3.4
+# 修复后重新走阶段 3.3 ~ 3.4
 ```
 
 ⚠️ `npm unpublish` 有时间窗口限制（72 小时），且会导致该版本号永久不可复用。发现越早操作越安全。超过窗口后只能发布修复版（新 patch），无法撤回已发布版本。
@@ -266,15 +348,22 @@ git tag -d "$TAG"
 确认 CI 发布成功后验证 npm registry：
 
 ```bash
-NEW_VER=$(node -p "require('./package.json').version")
-npm view @zhushanwen/coding-workflow@$NEW_VER version && \
-  echo "  ✅ @zhushanwen/coding-workflow@$NEW_VER" || \
-  echo "  ❌ MISSING: @zhushanwen/coding-workflow@$NEW_VER"
+# 核心包
+CORE_VER=$(node -p "require('./package.json').version")
+npm view @zhushanwen/coding-workflow@$CORE_VER version && \
+  echo "  ✅ @zhushanwen/coding-workflow@$CORE_VER" || \
+  echo "  ❌ MISSING: @zhushanwen/coding-workflow@$CORE_VER"
+
+# 插件包（变更涉及插件包时）
+EXT_VER=$(node -p "require('./pi-coding-workflow-extension/package.json').version")
+npm view @zhushanwen/pi-coding-workflow@$EXT_VER version && \
+  echo "  ✅ @zhushanwen/pi-coding-workflow@$EXT_VER" || \
+  echo "  ❌ MISSING: @zhushanwen/pi-coding-workflow@$EXT_VER"
 ```
 
 也可通过 GitHub Actions 页面确认：
 ```bash
-gh run list --workflow=release.yml --limit=1
+gh run list --workflow=release.yml --limit=2
 ```
 
 ### 阶段 6: 清理（自包含）
@@ -315,11 +404,13 @@ bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 
 ## 项目特点
 
-- **单包项目**：单一 `package.json`，`npm version` 直接 bump（无 changeset 独立版本）
-- **发布方式**：push tag `v*` → `release.yml` 自动 `npm publish --provenance`
+- **双包 monorepo**：根包 `@zhushanwen/coding-workflow` + 插件包 `@zhushanwen/pi-coding-workflow`（仓内目录 `pi-coding-workflow-extension/`），版本独立管理（无 changeset）
+- **tag 协议**：`v*` → 核心包；`ext-v*` → 插件包。双包 bump 时两段式推送（先核心后插件）
+- **发布方式**：push tag → `release.yml` 自动 `npm publish --provenance`（核心包 job + 插件包 job）
 - **禁止本地发布**：`npm publish` 由 CI 执行（需要 `NPM_TOKEN` secret + provenance 签名），本地只做 bump + tag + push
 - **无 PR CI**：本项目无 `ci.yml`，PR 不触发 CI。质量门完全依赖阶段 1 的本地验证
-- **交付物**：npm registry 包（`@zhushanwen/coding-workflow`）
+- **交付物**：npm registry 包（`@zhushanwen/coding-workflow` + `@zhushanwen/pi-coding-workflow`）
+- **插件包发布注意**：scoped 包需 `publishConfig.access = "public"`（已在 package.json 声明）+ NPM_TOKEN 需对该包有写权限
 
 ---
 
