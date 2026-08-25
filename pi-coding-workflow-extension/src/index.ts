@@ -392,7 +392,7 @@ export default function cwRunnerExtension(pi: ExtensionAPI): void {
   pi.registerCommand("cw-ping", {
     description: "Sentinel: verify the coding-workflow extension is loaded (ph-i0).",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      ctx.ui.notify?.(`cw-extension-alive: pi-coding-workflow-extension loaded (${EXT_VERSION})`, "info");
+      ctx.ui.notify?.(`cw-extension-alive: @zhushanwen/pi-coding-workflow loaded (${EXT_VERSION})`, "info");
     },
   });
   registerCwRunner(pi);

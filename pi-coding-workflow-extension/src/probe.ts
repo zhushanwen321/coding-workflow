@@ -54,7 +54,7 @@ export function resolveAgentDir(): string {
 /** ②失败时的安装指引。本地开发态路径经 CW_LOCAL_SUBAGENT_DIR 注入——个人绝对路径不得随 npm 发布进他人错误信息 */
 export function subagentInstallGuide(): string {
   const base =
-    "subagent-workflow 编程 API（createSpawnManager）不在场：npx @zhushanwen/pi-coding-workflow-extension install（会连依赖装入）；";
+    "subagent-workflow 编程 API（createSpawnManager）不在场：npx @zhushanwen/pi-coding-workflow install（会连依赖装入）；";
   const localDir = process.env.CW_LOCAL_SUBAGENT_DIR;
   if (localDir !== undefined && localDir !== "") {
     return `${base}本地开发态：npm install ${localDir} --no-save 装入插件包`;

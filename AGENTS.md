@@ -2,7 +2,7 @@
 
 > 2.0 重写后的实态描述（2026-08-18 doc-1 重写；进行中波次以 docs/rewrite/ledger.md 为准）
 
-**agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务分解为可验证单元（unit），用机器证据（而非 agent 的声明）判定「完成」。实现形态 = 事件账本 + fold 投影状态机 + runner 循环派发 + 验收级机器验证。npm 包 `@zhushanwen/coding-workflow` 2.1.0（npm workspaces monorepo：根仓 + 插件包 `@zhushanwen/pi-coding-workflow-extension`），agent-agnostic：engine 不依赖任何 agent harness 能力（无 skill 加载、无 workflow 引擎），agent 只需通过 bash 调 `cw` 命令。统一语言（概念词典 / 数据布局 / 环境变量）见 [CONTEXT.md](./CONTEXT.md)。
+**agent 工作的 CI**：把超出单个 LLM agent 上下文半径的编码任务分解为可验证单元（unit），用机器证据（而非 agent 的声明）判定「完成」。实现形态 = 事件账本 + fold 投影状态机 + runner 循环派发 + 验收级机器验证。npm 包 `@zhushanwen/coding-workflow` 2.2.0（npm workspaces monorepo：根仓 + 插件包 `@zhushanwen/pi-coding-workflow`，包名复用一代 0.4.x、仓内目录 pi-coding-workflow-extension/），agent-agnostic：engine 不依赖任何 agent harness 能力（无 skill 加载、无 workflow 引擎），agent 只需通过 bash 调 `cw` 命令。统一语言（概念词典 / 数据布局 / 环境变量）见 [CONTEXT.md](./CONTEXT.md)。
 
 ## 常用命令
 

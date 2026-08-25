@@ -1,4 +1,7 @@
-# @zhushanwen/pi-coding-workflow-extension
+# @zhushanwen/pi-coding-workflow
+
+> npm 包名复用一代 0.4.x（cw 状态机 tool 时代，已退役）；0.5.0 起本包为 cw 2.x 的 pi extension
+> （pi-cw-runner）。源码目录仍为仓内 `pi-coding-workflow-extension/`，安装目标目录同名。
 
 pi（[@earendil-works/pi-coding-agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)）扩展：把
 coding-workflow（cw）的派发循环以库形态跑在 pi 主会话进程内（ph-i0 骨架期只含哨兵命令
@@ -7,7 +10,7 @@ coding-workflow（cw）的派发循环以库形态跑在 pi 主会话进程内�
 ## 安装（用户主会话通道）
 
 ```bash
-npx @zhushanwen/pi-coding-workflow-extension install
+npx @zhushanwen/pi-coding-workflow install
 # → 装到 ~/.pi/agent/extensions/pi-coding-workflow-extension/（loader 自动发现）
 # 重启 pi 会话生效；doctor / uninstall 子命令校验/卸载
 ```
@@ -28,7 +31,7 @@ ask-user 扩展默认从 npm 安装 `@zhushanwen/pi-ask-user`；npm 源不可达
 直发 TS 源码（pi 经 jiti 加载，无构建步骤）。本包是根仓 npm workspaces 成员：
 
 ```bash
-cd pi-coding-workflow-extension
+cd pi-coding-workflow-extension   # 仓内目录名与 npm 包名解耦（包名见 package.json）
 npm install
 npm test        # installer 纯逻辑回归（真实 tmp/tar/npm 子进程，零 mock）
 ```
