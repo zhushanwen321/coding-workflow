@@ -16,8 +16,11 @@
 | 2026-08-17 | fx-4 spawn 产物收口 | 产物迁 topic 目录 + worktree 纯化（删 clean -e）+ 三类原文副本入 attachments；设计 v1.1 | 0642d15、f301420 | 331 全绿；gate PASS——`add -A` 卷产物缺口 by construction 关闭（报告 acceptance/fx4-gate-report.md） |
 | 2026-08-17~18 | flaky 修复 + fx-5 成对回收 | u5b-e2e flaky（弱屏障撞 clean 窗口，测试侧非产品缺陷）；fx-5 = unit 资源成对回收 + merge 点去副作用 | 8b1c1bf、187f7df | 336 全绿；fx-5 验收链缺口（无基线先行）事后补录闭环（acceptance/fx5-report.md） |
 | 2026-08-18~ | M4 设计-实现一致性修复轮（实现 unit 全部定型，收尾中） | 五角度对抗审查驱动，实现 unit 全部 committed：rv-1 spawn 健壮性（3256bcf）/ rv-2 engine 小修包（1af974a）/ rv-3 契约比对强化（1bbbf4d）/ rv-4 红阶段默认接线 + 集成 MAX=1 + 契约配对两道（145ee96）/ rv-5 flake 转人工 + nondeterministic 豁免（ef4ee67）/ mx-2 pytest+playwright（edae57f）/ mx-1 异源 reviewer 派发收官（59cca38）；doc-1 committed（86d7714）、doc-3 部分提前项已交付（539371c / 59c8c01 / 6705a71）、doc-2 canon 回写进行中 | 9023076、3256bcf、1af974a、1bbbf4d、145ee96、ef4ee67、edae57f、59cca38、86d7714 | 全量 61 文件 450 测试绿；收尾三步（doc-2 / 回收审计二跑 / M4 gate）进行中，波次状态以 ledger.md M4 段为唯一权威 |
+| 2026-08-25 | rp 发布验证管线（gate/pipeline 域） | 同仓同包硬隔离双域：store 泛化（LedgerDomain 注入，GP1 golden 重放零行为变化）+ gate 域（独立账本 gate-events.log 三类事件 + 内容寻址缓存 + 记账闭合 wrap + query/stats）+ pipeline 域（.cw-pipeline.json + PipelineStepRan + run 即 resume）+ ci-judge（tsc import 闭包含 dist→src 映射 + flaky 决策树）；机制波 rp-0/rp-2/rp-3 全部交付（rp-1 xyz-agent 仓接入待确认） | 70d16f8、3f77ebe、e12694d、4f17252、8bfeffc、1c00262、73ca5e9 | 全量 98 文件 793+1 skipped 绿；双域边界由 tests/w4-grep-ac.test.ts 三机器锁；CW mid 流程全走完（dev/test/retrospect gate 全过） |
 
 ## ADR 索引
+
+> rp 发布验证管线（gate/pipeline 域，2026-08-25 交付，机制波 rp-0/rp-2/rp-3 全 committed）：关键 commit 70d16f8 / 3f77ebe / e12694d / 4f17252 / 8bfeffc / 1c00262 / 73ca5e9；全量 98 文件 793+1 skipped 绿；双域边界由 tests/w4-grep-ac.test.ts 三机器锁；rp-1（xyz-agent 仓接入）待用户确认范围。主题行已并入上文台账。决策见下方「发布管线 gate/pipeline 域决策」段。
 
 ### canon 主设计八决策（D1-D8）
 
@@ -72,6 +75,19 @@
 | D6 role 字段 | 可选自报（审计载体非信任边界），任务书模板内嵌 |
 | D7 派发 gate | 同 unit 存在任意 in-flight spawn 时本轮缓派（同时修复既有 designer→builder 竞态） |
 | D8 实现排序 | mx-1 排 rv-5 之后串行进 loop.ts（rv-1 → rv-4 → rv-5 → mx-1 领地串行链） |
+
+### 发布管线 gate/pipeline 域决策（D-001~D-016，不可逆六条）
+
+出处：`docs/rewrite/design-release-pipeline.md`（canon）+ `.xyz-harness/rp-release-pipeline/decisions.md`（全量决策账本，含 D-可逆 十条）。已实现交付：store 泛化 GP1 golden 重放零行为变化；gate 域独立账本 + wrap/query/stats；pipeline 域 run 即 resume；ci-judge flaky 决策树。
+
+| 决策 | 结论 |
+|------|------|
+| D-001 产品边界 | 同仓同包、硬隔离双域（vs 混账本/独立仓）；两域共享泛化后账本心（锁/seq/fsync）但事件代数互不可见 |
+| D-003 独立账本 | gate 域独立账本文件 gate-events.log（混账本 = 不可逆打开 unit 域封闭代数） |
+| D-004 store 泛化 | LedgerDomain 域描述符注入（缺省 = unit 域，存量 9 调用点零改动，GP1 golden 重放背书） |
+| D-005 缓存键 | (check, baseSha, scope) + 最新 pass 的 scope diff 判定；异常一律向 miss 倒（宁重跑不假 pass） |
+| D-006 记账闭合 | wrap 单入口结构不变式：锁外先落产物→锁内追加事件，「跑了没记账」结构性不存在（对堵 F3 假 pass 事故） |
+| D-009 ci-judge | import 闭包归属（含 dist→src 映射）+ flaky 决策树；两轮 flaky 出声转人工，不自动豁免（防 Goodhart） |
 
 ### exec-review 证据集扩展（rv-2 方案 C）
 
