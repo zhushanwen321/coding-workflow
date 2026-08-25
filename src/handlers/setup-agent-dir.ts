@@ -5,9 +5,11 @@
  * profile=controlled），建受控 agentDir（extensions/ask-user + manifest.json +
  * 启动探针）。安装核心只有一份，本 handler 不复制实现——通过 node 子进程调用
  * 插件包 bin，包定位顺序：
- *   1. node 模块解析 `@zhushanwen/pi-coding-workflow-extension/package.json`
- *      （workspaces/npm install 后命中根 node_modules 符号链接）
- *   2. 从 cwd 向上找 `pi-coding-workflow-extension/bin/install.mjs`（仓内开发态）
+ *   1. node 模块解析 `@zhushanwen/pi-coding-workflow/package.json`
+ *      （workspaces/npm install 后命中根 node_modules 符号链接；2026-08 起插件包
+ *      复用一代包名，npm 包名 ≠ 仓内目录名）
+ *   2. 从 cwd 向上找 `pi-coding-workflow-extension/bin/install.mjs`（仓内开发态，
+ *      按目录名定位，目录名保持 pi-coding-workflow-extension 不变）
  */
 
 import { spawnSync } from "node:child_process";
@@ -17,7 +19,7 @@ import path from "node:path";
 
 import type { CommandContext, CommandHandler } from "../dispatch.js";
 
-const EXT_PACKAGE = "@zhushanwen/pi-coding-workflow-extension";
+const EXT_PACKAGE = "@zhushanwen/pi-coding-workflow";
 const INSTALL_BIN = ["pi-coding-workflow-extension", "bin", "install.mjs"];
 /** 仓内向上定位的目录层数上限（worktree/嵌套目录场景余量） */
 const MAX_UPWARD_LEVELS = 8;

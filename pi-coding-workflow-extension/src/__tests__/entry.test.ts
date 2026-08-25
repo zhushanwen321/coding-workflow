@@ -8,9 +8,15 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { checkSubagentApi } from "../probe.js";
 import cwRunnerExtension, { registerCwRunner, type CwRunnerController, type LaunchOptions } from "../index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-api.js";
 import { mirrorRunnerLockPath } from "../runner-lock.js";
+
+// 环境守卫（i1a opt-in 先例同款裁定）：/cw start 链路用例依赖 subagent-workflow 编程 API
+// （createSpawnManager）在场，而该 API 尚未发布 npm——纯 registry 环境（含 CI publish-extension
+// job）probe 必拒启。本地开发态装 tai-ji-workspace 本地副本后自动恢复执行。
+const subagentApiReady = (await checkSubagentApi()).ok;
 
 /** 真实 recorder 宿主：登记命令/事件，notify/setWidget 全量落数组 */
 function makePi() {
@@ -92,7 +98,7 @@ describe("入口装配（default export）", () => {
   });
 });
 
-describe("/cw start", () => {
+describe.skipIf(!subagentApiReady)("/cw start", () => {
   it("cli 形态活锁在场 → 拒启（真实锁文件 + 本进程 pid=活）", async () => {
     const lockPath = mirrorRunnerLockPath(home, cwdTmp);
     await mkdir(join(lockPath, ".."), { recursive: true });
@@ -190,7 +196,7 @@ describe("/cw status 与生命周期", () => {
     expect(msg).toContain("cw 库");
   });
 
-  it("session_shutdown → signalStop 发信号 + 等待 launch 短超时 + 兜底 unlink 锁", async () => {
+  it.skipIf(!subagentApiReady)("session_shutdown → signalStop 发信号 + 等待 launch 短超时 + 兜底 unlink 锁", async () => {
     let signaled = 0;
     let release: (code: number) => void = () => {};
     const host = makePi();
