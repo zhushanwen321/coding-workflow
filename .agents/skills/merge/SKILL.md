@@ -45,7 +45,15 @@ Main worktree:  /path/to/coding-workflow-workspace/main
 ✓ 自检通过
 ```
 
-2. 确认其余前置条件：
+2. D9 gate 接入守卫：验证步骤依赖仓外 cw CLI，缺失/过旧时出声转人工（禁止静默回退裸跑——账本时有时无比无账本更糟）：
+
+```bash
+# D9 gate 接入守卫
+command -v cw >/dev/null 2>&1 || { echo "ERROR: 未找到 cw CLI（gate wrap 接入依赖）。恢复动作：npm i -g @zhushanwen/coding-workflow 后重试"; exit 1; }
+cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域（gate wrap 命令缺失——版本号不可信：npm 2.2.0 实无 gate、dev-link 2.1.0 实有）。恢复动作：bash .agents/skills/dev-link/use-link.sh 切本地构建，或等含 gate 域的 npm 版本发布后安装"; exit 1; }
+```
+
+3. 确认其余前置条件：
    - 当前位于 **workspace root 或某 worktree 内**（selfcheck 能定位即可，无需特定起点）
    - feature 分支的 PR 已创建且为 open 状态（`gh pr view <num> --json state`）
    - 已确定版本类型（patch / minor / major）
@@ -59,13 +67,16 @@ WS_ROOT=$(bash .agents/skills/merge/merge-helpers.sh root)
 FEATURE_DIR="${BRANCH_NAME//\//-}"   # 例 feat/foo → feat-foo
 cd "$WS_ROOT/$FEATURE_DIR"
 
-npm run check:all   # tsc 类型检查（src + tests，比单独 check 更全）
-npm run lint        # eslint src/ tests/
-npm test            # vitest run（单测 + e2e）
-npm run build       # tsc + 生成 schemas（确认产物可生成）
+cw gate wrap --check typecheck --base origin/main --scope src/ --scope tests/ --scope tsconfig.json --scope tsconfig.test.json --scope package.json --scope package-lock.json -- npm run check:all
+cw gate wrap --check lint --base origin/main --scope src/ --scope tests/ --scope eslint.config.mjs --scope package.json --scope package-lock.json -- npm run lint
+cw gate wrap --check test --base origin/main --scope src/ --scope tests/ --scope vitest.config.ts --scope package.json --scope package-lock.json -- npm test
+cw gate wrap --check build --base origin/main --scope src/ --scope tsconfig.json --scope package.json --scope package-lock.json -- npm run build
+
+# D8-canary：lint 无下游 CI 兜底，dogfood 期保留裸跑对照（连续 3 次一致 + 一次发布绿后按设计撤除）
+npm run lint
 ```
 
-**[MANDATORY] 零容忍**：任何失败必须正面修复，不允许跳过。四项均 exit 0 方可继续。
+**[MANDATORY] 零容忍**：任何 wrap exit 0 = pass（含 hit），非 0 必须正面修复，不允许跳过。四条 wrap 均 exit 0 方可继续。
 
 本项目无 `.githooks/pre-commit`，也无 PR 上的 CI（无 `ci.yml`），本地验证是合并前唯一的质量门。
 
