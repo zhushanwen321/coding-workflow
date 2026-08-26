@@ -162,6 +162,47 @@ export async function handleReviewSubmit(ctx: CommandContext): Promise<number> {
         "（若你确非该 unit 的独立 reviewer，请勿提交，交由 runner 派发的 reviewer spawn 处理）。",
     );
   }
+  // fb-1：spec-review verdict 幂等守卫（设计 D8——观察文档 C3「同 specHash 双 verdict
+  // 时序赌博」）。谓词是**位置语义**而非字面 specHash 比对：① VerdictSubmittedPayload
+  // 无 specHash 字段（schema 变更才能携带，见下残余面记档），只能以「该 unit 最后
+  // 一条 SpecSubmitted 之后是否已存在 role=reviewer 的 spec-review verdict」锚定
+  // 同代；② 与 fold 的冻结语义同构（fold.ts「最后一条 spec 之后存在 reviewer 的
+  // pass 即冻结」），对齐只认 role=reviewer——非 reviewer 的 spec-review verdict
+  // （历史账本/直写残留）不驱动冻结也不挡后继真实审查。守卫只挡**同代重复**；
+  // 跨代迟到 verdict 残余面（在飞 reviewer 对旧 spec 迟交 pass，落在最后 spec
+  // 之后、可冻结未经审的新 spec）位置谓词拦不住——彻底关闭需 verdict 携带
+  // specHash 比对（schema 变更 + reviewer 任务书传递，本波不做，真实案例出现时
+  // 再评估）。
+  // 行为变更记档：reviewer 同代改判（fail 后不打回重提、直接补一条 pass——或
+  // 反之）的旧路径被本守卫关闭；正路 = fail → designer 重提新 spec 走新代。
+  // exec-review 不设此守卫：多轮 fail → 修复 → 再审是合法流程，其 verdict 锚
+  // evidenceRefs（每次指向新的执行证据），语义上本就允许连续多条。
+  // 插入位在 mx-3 role 强校验之后：能走到这里的 spec-review 提交必有 role=reviewer，
+  // 谓词无需再判本次提交身份
+  if (verdictKind === "spec-review") {
+    const unitEvents = ledger.readUnit(unitId) as DiscriminatedEvent[];
+    let lastSpecSeq = 0; // seq 从 1 起；0 = 该 unit 无 spec（此时任何 reviewer 结论都算「已审」，保守拒收）
+    for (const ev of unitEvents) {
+      if (ev.type === "SpecSubmitted" && ev.seq > lastSpecSeq) {
+        lastSpecSeq = ev.seq; // append-only + 单调 seq：最后出现的即最大
+      }
+    }
+    const alreadyReviewed = unitEvents.some(
+      (ev) =>
+        ev.type === "VerdictSubmitted" &&
+        ev.seq > lastSpecSeq &&
+        ev.payload.verdictKind === "spec-review" &&
+        ev.payload.role === "reviewer",
+    );
+    if (alreadyReviewed) {
+      return fail(
+        `cw review submit: 该 spec 已有生效审查结论（unit "${unitId}" 当前 spec 代已有 reviewer 结论入账）——` +
+        `同代重复/改判的 spec-review verdict 不再入账，审计链保持单一生效结论。` +
+        `如需重审，由 designer 重提 spec 产生新 specHash 走新代：` +
+        `cw evidence submit --kind spec --unit ${unitId} --file spec.json。`,
+      );
+    }
+  }
   const payload: VerdictSubmittedPayload = {
     unitId,
     verdictKind,
