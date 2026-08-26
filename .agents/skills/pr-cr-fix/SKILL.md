@@ -88,13 +88,13 @@ schema:  return JSON { pr_url?: string, force_push?: bool, must_fix?: number }
 
 按「参数 → 意图自动调档」表判定 `no-pr` / `no-loop` 取值；显式传参覆盖自动调档。后续所有阶段的守卫均读此处的取值。
 
-#### D9 运行时守卫（cw CLI 版本）
+#### D9 运行时守卫（cw CLI 能力）
 
-阶段 1 执行前，主 agent 校验 cw CLI 可达且版本满足 gate 域要求：
+阶段 1 执行前，主 agent 校验 cw CLI 可达且能力满足 gate 域要求：
 
 ```bash
 command -v cw >/dev/null 2>&1 || { echo "ERROR: 未找到 cw CLI（gate wrap 接入依赖）。恢复动作：npm i -g @zhushanwen/coding-workflow 后重试"; exit 1; }
-cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域（gate wrap 命令缺失——版本号不可信：npm 2.2.0 实无 gate、dev-link 2.1.0 实有）。恢复动作：bash .agents/skills/dev-link/use-link.sh 切本地构建，或等含 gate 域的 npm 版本发布后安装"; exit 1; }
+cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域（gate wrap 命令缺失——注意 cw 版本号与 gate 域能力不对齐，能力探测是唯一可判真形态）。恢复动作：在仓工作区内 bash .agents/skills/dev-link/use-link.sh 切本地构建，或安装含 gate 域的 npm 版本"; exit 1; }
 ```
 
 ### 阶段 1：打开 PR（`no-pr=true` 跳过）
@@ -111,7 +111,7 @@ cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域（gat
 
 ```bash
 cw gate wrap --check typecheck --base origin/main --scope src/ --scope tests/ --scope tsconfig.json --scope tsconfig.test.json --scope package.json --scope package-lock.json -- npm run check:all
-cw gate wrap --check lint --base origin/main --scope src/ --scope tests/ --scope eslint.config.mjs --scope package.json --scope package-lock.json -- npm run lint
+cw gate wrap --check lint --base origin/main --scope src/ --scope tests/ --scope eslint.config.mjs --scope taste-lint/ --scope package.json --scope package-lock.json -- npm run lint
 cw gate wrap --check build --base origin/main --scope src/ --scope tsconfig.json --scope package.json --scope package-lock.json -- npm run build
 ```
 
@@ -146,7 +146,7 @@ gh pr list --head $(git branch --show-current) --state open --json number,title,
 主 agent 直接跑（确定性 gate 脚本，见关键约束 2 例外 d）：
 
 ```bash
-cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/skills/pr-cr-fix/scripts/metrics-gate.py -- python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base origin/main
+cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/skills/pr-cr-fix/scripts/metrics-gate.py --scope .fallowrc.json -- python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base origin/main
 ```
 
 - 双轨判定（脚本内显式判定，不直接用 fallow verdict——fallow 超阈值即 fail 无 warn 档）：**fail** = introduced 函数圈复杂度 > 15；**warn** = introduced 认知复杂度 > 15 或 CRAP ≥ 30。CRAP 恒为 fallow 静态估算（cw 无 coverage 基建，无测试路径的文件 cov≈0、CC≥5 即 CRAP≥30，噪声大），故只进 warn 轨作 review 靶子、不阻塞
@@ -424,16 +424,16 @@ appendSystemPrompt: |
 
 ```bash
 cw gate wrap --check typecheck --base origin/main --scope src/ --scope tests/ --scope tsconfig.json --scope tsconfig.test.json --scope package.json --scope package-lock.json -- npm run check:all
-cw gate wrap --check lint --base origin/main --scope src/ --scope tests/ --scope eslint.config.mjs --scope package.json --scope package-lock.json -- npm run lint
-cw gate wrap --check test --base origin/main --scope src/ --scope tests/ --scope vitest.config.ts --scope package.json --scope package-lock.json -- npm test
+cw gate wrap --check lint --base origin/main --scope src/ --scope tests/ --scope eslint.config.mjs --scope taste-lint/ --scope package.json --scope package-lock.json -- npm run lint
+cw gate wrap --check test --base origin/main --scope src/ --scope tests/ --scope vitest.config.ts --scope tsconfig.json --scope package.json --scope package-lock.json -- npm test
 cw gate wrap --check build --base origin/main --scope src/ --scope tsconfig.json --scope package.json --scope package-lock.json -- npm run build
 ```
 
-四个命令：`check:all` = `tsc --noEmit`（src）+ `tsc --noEmit -p tsconfig.test.json`（tests）；`lint` = `eslint src/ tests/`；`test` = `vitest run`（含单测 + e2e）；`build` = `tsc && node scripts/generate-schemas.js`（产物在 `dist/`）。
+四个命令：`check:all` = `tsc --noEmit`（src）+ `tsc --noEmit -p tsconfig.test.json`（tests）；`lint` = `eslint src/ tests/`；`test` = `vitest run`（含单测 + e2e）；`build` = `tsc`（产物在 `dist/`）。
 
 > 本 skill 的 3b 与「PR 提交协议」的 Step 1 pre-merge 都用 `check:all`（含 tests 类型检查）。修复可能触及测试文件，故统一用含 tests 的 `check:all` 而非仅 src 的 `check`。
 
-**Gate-3a（硬 gate）**：四件套全绿 + **度量终值复跑**（主 agent 直接跑 `cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/skills/pr-cr-fix/scripts/metrics-gate.py -- python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base origin/main`，阶段 2 修复会改代码，1.5 初跑读数已过期；修复 commit 推进 HEAD 后自然 miss 重跑，语义正确）fail 轨归零，才继续。任一失败 → 停手：四件套按失败步骤对应工种重派 worker（`check:all` → 类型问题；`lint` → 代码风格；`test` → 测试断言 / e2e；`build` → 编译 / schema 生成），度量 fail 轨非零按阶段 1.5 处置（拆函数降复杂度，上限 3 轮）；修复后从四件套头部重跑。
+**Gate-3a（硬 gate）**：四件套全绿 + **度量终值复跑**（主 agent 直接跑 `cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/skills/pr-cr-fix/scripts/metrics-gate.py --scope .fallowrc.json -- python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base origin/main`，阶段 2 修复会改代码，1.5 初跑读数已过期；修复 commit 推进 HEAD 后自然 miss 重跑，语义正确）fail 轨归零，才继续。任一失败 → 停手：四件套按失败步骤对应工种重派 worker（`check:all` → 类型问题；`lint` → 代码风格；`test` → 测试断言 / e2e；`build` → 编译 / schema 生成），度量 fail 轨非零按阶段 1.5 处置（拆函数降复杂度，上限 3 轮）；修复后从四件套头部重跑。
 
 **Gate-3a.5（changeset 软提醒）— 本项目不适用**：cw 是单包项目，无 changeset 机制，此 gate 跳过。
 

@@ -1,7 +1,7 @@
 # gate/pipeline 域消费方接入设计（rp-1：跨项目 release 验证统一账本）
 
 > **当前层 → 下一层**：技术方案层（接入契约 + manifest 形态 + 各项目改造模式）→ 实施波次拆分层（§5 的 w1-w4）。不设计到各 skill 的逐行改写。
-> **口径前提**：gate/pipeline 域六命令已随 cw 2.2.0 发布 npm（`cw gate wrap/query/stats`、`cw pipeline run/status`、`cw ci-judge`），引擎侧设计 canon 见 [design-release-pipeline.md](./design-release-pipeline.md)（其 rp-1 即本文）。本文自包含复述消费方现状，无需回读该文。
+> **口径前提**：gate/pipeline 域六命令（`cw gate wrap/query/stats`、`cw pipeline run/status`、`cw ci-judge`）已随 feat-release-pipeline 分支交付，**npm 发布待分支合并后下一版本**（一致性审查 C1 修正：npm 2.2.0 发布早于本分支合入，不含 gate 域——早期「已随 2.2.0 发布」表述系推断错误）。当前消费依赖 dev-link 本地构建（`.agents/skills/dev-link/use-link.sh`）。引擎侧设计 canon 见 [design-release-pipeline.md](./design-release-pipeline.md)（其 rp-1 即本文）。本文自包含复述消费方现状，无需回读该文。
 
 **一句话结论**：用「三层分离」承接异构 release 流程——**wrap 命令无关层**吸收工具链差异（Node/Python 一视同仁）、**manifest 项目自持层**吸收流程差异（`.cw-pipeline.json` 随项目仓版本化）、**skill 副作用编排层**保留发布动作（merge/publish/deploy 不进账本）——分四波落地（cw dogfood → xyz-agent → pi-ext/zcode → Python 三项目修复后接入），全程不回到已腐过的「全局共享 skill」模式。
 
@@ -40,7 +40,7 @@
 
 ### 2.1 引擎实态（已交付，本文的消费基础）
 
-六命令可用（全局 `cw --version` = 2.2.0）：
+六命令可用（**经 dev-link 本地构建**：npm 最新 2.2.0 不含 gate 域，发布待本分支合并后下一版本）：
 
 | 命令 | 语义 |
 |------|------|
@@ -229,7 +229,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 
 **D5：scope 声明纪律 = 逐 check 六条审查清单 + 缓存键四处一致性（选定）**
 - **采用**：每项目接入时对每个 check 跑一遍声明审查（生态等价物自行映射：Rust 的 Cargo.lock、Go 的 go.sum 等）：① 构建配置（tsconfig.json / vitest.config / eslint.config / pyproject.toml）必须在 scope；② 依赖锁（package-lock / pnpm-lock / uv.lock 等）必须在 scope；③ 被测源码目录必须在 scope；④ **命令定义文件必列**——`npm run X` 形态的 wrap 必列根与相关 workspace 包的 package.json（改 scripts 定义不在任何 scope = 同 HEAD 假命中）；Python 直调命令列其 tool 配置所在文件；⑤ **命令本体必列**——被 wrap 的仓内脚本文件自身（coverage-gate.py / metrics-gate.py / quality-gate.js 等）必须在 scope（反例：单独 commit 修脚本的误判 bug，src/ 无改动 → hit 复用修复前的错误 pass）；⑥ **缓存键四处一致性**——项目内全部 wrap 调用的 check 名、base ref、**scope 声明序列（逐元素逐序）**三处逐字一致（统一 `origin/main`），接入时 grep 本项目全部 wrap 行核对。**scope 顺序敏感**：`gateCacheKey` 对 scope 做 `JSON.stringify`，元素集合相同但顺序不同 = 不同键 = 静默全 miss（MF-2）；check 名或 base 写法不一致同样静默全 miss（G1/G2 无声落空，不报错）。
-- **base 窗口语义与内外正交（S-1/S-2）**：base ref 字符串一致不保证 sha 一致——`origin/main` 前移（fetch 后）即全体 miss（canon D3 by construction，安全方向但收益落空）。miss 排查第一步 = 对照 `git rev-parse origin/main` 与 `cw gate query` 输出的 baseSha。外层 wrap base（缓存键）与内层脚本 base（增量归因口径，如 metrics-gate 的 `--base main`）是正交概念，推荐同源（统一 origin/main）避免误读。
+- **base 窗口语义与内外正交（S-1/S-2）**：base ref 字符串一致不保证 sha 一致——`origin/main` 前移（fetch 后）即全体 miss（canon D3 by construction，安全方向但收益落空）。miss 排查第一步 = 对照 `git rev-parse origin/main` 与 `cw gate query` 输出的 baseSha。外层 wrap base（缓存键）与内层脚本 base（增量归因口径）是正交概念，推荐同源——**w1 实现已统一 origin/main**（metrics-gate 内层随 wrap 化同步改写，一致性审查 C7 记档）。
 - **check 命名约束（S-3）**：check 名直接作产物目录段（`gate-artifacts/<check>/<runId>/`），含 `/` 会嵌套目录、含 `..` 路径逃逸——接入契约统一小写连字符风格 `[a-z0-9-]`（typecheck / lint / test / build / metrics / typecheck-extensions 均合规）。
 - **爆炸半径声明（诚实边界）**：机器无法静态证明 scope 完备性。假命中 = 该跑没跑（漏检），暴露条件 = 「scope 外改动恰好引入缺陷」与「下游门不覆盖该 check」共现。下游门盘点：cw 侧 release.yml 只兜底 build/test，**lint 与 metrics 无任何下游兜底**（直进 main 无捕获）——故 D8-canary 安全带选 lint 作对照；xyz-agent 侧 PR CI 兜底面更宽但同理。防线 = 清单纪律 + canary 观测，不承诺零假命中。
 - **被否**：scope 全部缺省仓根（零增量收益，G1/G2 落空）；引擎侧加 scope 完备性静态分析（引擎改动，out-of-scope）；「漏网可被后续发现」的乐观表述（无机制支撑，已删——发现机制就是 canary 与下游门，写明到哪道门为止）。
@@ -256,7 +256,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 - **效果**：G1 先行兑现；w1 的经验（scope 声明、check 命名）成为 w2 的模板。
 
 **D9：接入含仓外 CLI 依赖守卫——每项目阶段 0 加 cw 存在性/版本前置检查，失败出声转人工，禁止静默回退（选定）**
-- **采用**：接入后各项目验证步骤依赖仓外共享物 `cw`（结构上与 F2 同类——仓外路径，仓外物变动即坏）。每项目接入时在 merge skill 阶段 0（selfcheck 位置）加 `command -v cw && cw --version` ≥ 2.2.0 守卫，失败时 stderr 出声转人工并给安装命令（`npm i -g @zhushanwen/coding-workflow`）。先例对齐：pr-cr-fix 对 fallow 已有存在性检查 + 安装指引的守卫模式。
+- **采用**：接入后各项目验证步骤依赖仓外共享物 `cw`（结构上与 F2 同类——仓外路径，仓外物变动即坏）。每项目接入时在 merge skill **阶段 0** 与 pr-cr-fix **阶段 0（第一棒，同样依赖）**两处加守卫（一致性审查 C3 补记第一棒）：`command -v cw` 存在性 + **能力检查 `cw --help 2>&1 | grep -q "gate wrap"`**（一致性审查 C2 修正：版本阈值 ≥2.2.0 在两个真实状态下都判反——npm 2.2.0 实无 gate 域、dev-link 2.1.0 实有，**版本号与能力不对齐，能力探测是唯一可判真形态**），失败时 stderr 出声转人工并给恢复动作（npm 安装含 gate 域版本 / 仓工作区内 use-link.sh 切本地构建）。先例对齐：pr-cr-fix 对 fallow 已有存在性检查 + 安装指引的守卫模式。
 - **被否**：静默回退裸跑——「验证是否入账」变得不可判定，破坏记账闭合的可信前提（比缺账本更糟的是账本时有时无）；不设守卫——cw 未安装/dev-link 切旧版时 merge 阶段直接 ENOENT 崩在中途。
 - **证据**：F2 结构同类性（§3.2 方案 C 被否论证的诚实对账：A 引入的仓外依赖靠 npm semver + 本守卫缓解）；pr-cr-fix skill 的 fallow 守卫先例。
 - **效果**：仓外依赖的风险面有显式防线；§3.2 对 C 的否决论证与 A 自身的依赖结构对账成立。
@@ -283,7 +283,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 |---|----------------|------|---------|
 | A1（G1，w1，**档 1 形态**） | cw 仓真实 dogfood：pr-cr-fix → merge 全流程 | 在 cw 仓开真实 feature：① pr-cr-fix 走到 Gate-3a（wrap 化后）；② 连续走 merge skill 到阶段 1（散装 wrap）；③ 对照 D8-canary | ① Gate-3a 各 check miss 真实执行且入账；② merge 阶段 1 四件套对同内容**全 hit**（输出 [hit] + 0 执行耗时），`cw gate query --json` 可查全部条目；③ canary 裸跑 lint 与 wrap lint 判定一致 |
 | A2（G2，w2） | xyz-agent 跨阶段零重跑 | xyz-agent 仓开真实 feature：① pr-cr-fix 阶段 1.1 static gate（wrap 化）；② merge 阶段 pre-merge-check | ② 对同内容全 hit；故意改 scope 内一个文件后重验 → 该 check miss 真实重跑（失效方向正确） |
-| A3（G5，w1/w2） | 产物格式统一（双轨迁移） | 改造后 skill 的消费点 | ① 新增消费点全部读 `cw gate query --json`（grep 验证无新增 marker 解析）；② w2 交出存量消费方清单（pr-status.sh / `--test-result` 前置校验 / review 维度 B）并完成切换或给出切换波次；③ marker 停写列入收尾步（双轨判据对齐 D1） |
+| A3（G5，w2——迁移对象全在 xyz-agent 系，w1 的 cw 无 marker 系统无对象） | 产物格式统一（双轨迁移） | 改造后 skill 的消费点 | ① 新增消费点全部读 `cw gate query --json`（grep 验证无新增 marker 解析）；② w2 交出存量消费方清单（pr-status.sh / `--test-result` 前置校验 / review 维度 B）并完成切换或给出切换波次；③ marker 停写列入收尾步（双轨判据对齐 D1） |
 | A4（G4，档 2 项目，**单次验证会话内**） | 断点续跑（含多流程独立进度） | llm-simple-router（或 cw）声明 manifest（验证步骤清单），`cw pipeline run` 跑到中途中断（Ctrl-C），**同一次验证会话内**重跑同命令续接；zcode 双 manifest 变体：`.cw-pipeline.merge.json` 与 `.cw-pipeline.release.json` 各自中断后续接 | 已 pass 步骤不重做（viaCache/投影跳过）；`cw pipeline status` 三态正确；双 manifest 变体两 pipeline 身份进度互不串。**负面断言（MF-1）**：第二次全新验证会话（新 HEAD）直接跑 `pipeline run` 必须先确认投影状态——同 manifestSha256 下旧 pass 步骤会被跳过，正确用法是新会话换 manifest 文件名或接受跳过语义（D2 档位隔离语义） |
 | A5（G3，w4） | Python 工具链同构接入 | dag-executor（悬空修复后）merge 验证序列 wrap 化：ruff / pytest 两条 wrap | miss→hit 行为与 Node 项目完全一致（同一套命令契约，无工具链特判分支） |
 | A6（G6，负面） | 副作用不入账 | 任一接入项目走完整发布流程（含 gh pr merge / npm version / deploy） | gate-events.log 中**只有** GateCheckRan/GateCacheHit/PipelineStepRan 三类事件，无任何发布动作条目；发布失败回滚（如 cw 阶段 4.5）不受账本状态影响 |
@@ -297,7 +297,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 
 | 波次 | 内容 | justification | 验收锚 |
 |------|------|---------------|--------|
-| w1 | cw 仓自身接入（**纯档 1**，档 2 不进 w1——D2 档位隔离语义下绑定 merge 常驻入口 = 第二次发布假 pass）：merge skill 阶段 1 四件套 + pr-cr-fix **PR 提交协议静态三件套**（仅阶段 1 首次开 PR 执行；3c 明确跳过 Step 1 不重复验证；Gate-1 本体是 PR URL 校验不可 wrap）/Gate-1.5（metrics）/Gate-3a（四件套+metrics 终值）换 wrap；探针 GP-r1/GP-r2；D8-canary（不 wrap 的 lint 对照）；阶段 0 加 D9 守卫；可选：D10 ci-judge 接阶段 4 失败分支 | 最低成本的设计自证（cw 既是实现者又是消费者）；cw 无 PR CI，重复验证是现成 F1 实例；w1 产出的 scope 声明清单与 check 命名成为后续波的模板 | A1、A3、GP-r1/2、A4（若档 2） |
+| w1 | cw 仓自身接入（**纯档 1**，档 2 不进 w1——D2 档位隔离语义下绑定 merge 常驻入口 = 第二次发布假 pass）：merge skill 阶段 1 四件套 + pr-cr-fix **PR 提交协议静态三件套**（仅阶段 1 首次开 PR 执行；3c 明确跳过 Step 1 不重复验证；Gate-1 本体是 PR URL 校验不可 wrap）/Gate-1.5（metrics）/Gate-3a（四件套+metrics 终值）换 wrap；**worker 静态自检豁免 wrap**（一致性审查 C8 记档：隔离 worktree = 不同 cwd 不同账本，跨账本无缓存收益，且是快速预检非主 gate——w2 模板化时同样豁免）；探针 GP-r1/GP-r2；D8-canary（不 wrap 的 lint 对照）；阶段 0 加 D9 守卫（merge 与 pr-cr-fix 两处）；可选：D10 ci-judge 接阶段 4 失败分支 | 最低成本的设计自证（cw 既是实现者又是消费者）；cw 无 PR CI，重复验证是现成 F1 实例；w1 产出的 scope 声明清单与 check 命名成为后续波的模板 | A1、A3、GP-r1/2、A4（若档 2） |
 | w2 | xyz-agent 接入（原 rp-1 主体）：`scripts/pr-pre-merge.sh` 的 run_step 结构逐条 wrap 化（typecheck×3 / lint / test×3）；merge skill 的 pre-merge-check.sh 同步；coverage-gate.py 外层单 check 包装（D3）；metrics-gate.py wrap 化；**legacy 产物消费方适配**（D1 清单：`--test-result` 前置校验改查 `cw gate query`、review 维度 B 的 metrics.json 读取路径、hit 路径 legacy 产物不重产的消费点核对） | 设计文档 A1b 预定现场；静态 gate（typecheck/lint）是缓存收益最高的 check（跑得慢、改动少）；coverage 是最难一块，放第二波有 w1 经验垫底 | A2、A3 |
 | w3 | xyz-pi-extensions（Gate-3a 一道，改造面最小）+ zcode-plugin（quality-gate.js 单 check 包装，D4；**档 2 多 manifest 试点**——调用契约：双 manifest 文件随仓常驻作流程声明，`pipeline run` 仅在单次验证会话内手跑续接，**不绑定每次 merge 的常驻入口**，D2 档位隔离语义） | 两项目接入面中等且形态互补（一个纯终验、一个合一脚本+解耦流程），验证「接入成本与项目差异成正比」的承诺与多流程区分机制 | A2 变体（跨阶段 hit，档 1）、A4 双 manifest 变体（会话内）、A6 |
 | w4 | Python 三项目：先修复悬空（重写为自包含，D7）→ ruff/pytest wrap 接入（GP-r3） | 修复先行解耦（D7）；Python 工具链接入验证 G3（工具链无关承诺） | A7、A5、A6 |
