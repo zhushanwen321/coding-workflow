@@ -504,7 +504,8 @@ runner 已停止自动重派集成——契约漂移/merge 冲突的处置需要
 (原始任务书文件不可读：/cw-mx53-b3/project/brief.md)
 
 ## 你的任务（developer）
-1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。
+1. 在 workdir 实现该 unit 冻结验收要求的目标，实现与测试打在同一个 git commit（红阶段以该 commit 第一父为『实现前基线』——拆成多个 commit 会让父树误含部分实现，区分力检查失真、白烧 build 预算），取 hash：git rev-parse HEAD。
+   验收测试的 describe/it fullName 必须包含对应验收 id（cw verify 按词边界比对验收产物用例名——名不符则判该验收未出现，verify 恒挂）。
 2. 提交 build 证据：cw evidence submit --kind build --unit mx53-leaf --commit <hash> --run-id <自拟唯一 runId> [--file <产物路径>...]
 3. 触发干净重跑验证：cw verify --unit mx53-leaf（默认含红阶段检查——新测试在旧代码树必须 fail，恒真测试会被拒）。
 完成标志：unit 进入 verified。

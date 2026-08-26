@@ -58,9 +58,14 @@ export interface BriefTarget {
 }
 
 const ROLE_TASKS: Record<Exclude<AgentRole, "designer">, (unitId: string) => string> = {
+  // fa-2（设计 D4）：第 1 条携带 commit 结构约束与测试名契约——红阶段
+  // firstParentOf（src/verify/red-phase.ts:42）的第一父语义隐含「单 commit
+  // 打包实现+测试」前提，此前提此前从未讲给 developer（多 commit 会让父树
+  // 误含部分实现，区分力检查失真）；测试名契约对应 cw verify 的词边界名匹配。
   developer: (unitId) => [
     "## 你的任务（developer）",
-    "1. 在 workdir 实现该 unit 冻结验收要求的目标并 git commit（取 hash：git rev-parse HEAD）。",
+    "1. 在 workdir 实现该 unit 冻结验收要求的目标，实现与测试打在同一个 git commit（红阶段以该 commit 第一父为『实现前基线』——拆成多个 commit 会让父树误含部分实现，区分力检查失真、白烧 build 预算），取 hash：git rev-parse HEAD。",
+    "   验收测试的 describe/it fullName 必须包含对应验收 id（cw verify 按词边界比对验收产物用例名——名不符则判该验收未出现，verify 恒挂）。",
     `2. 提交 build 证据：cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <自拟唯一 runId> [--file <产物路径>...]`,
     `3. 触发干净重跑验证：cw verify --unit ${unitId}（默认含红阶段检查——新测试在旧代码树必须 fail，恒真测试会被拒）。`,
     "完成标志：unit 进入 verified。",
