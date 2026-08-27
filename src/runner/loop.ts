@@ -718,6 +718,61 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
   }
 }
 
+/**
+ * fb-2（M7 设计 D9，观察 C10）：停派维度命中的 unit 在飞 spawn 回收——killAll
+ * 的 per-unit 过滤版（按 InFlightSpawn.unitId 匹配，全 role），尽力回收语义
+ * 逐行照抄 killAll：try/catch 单失败记录后继续，不炸循环（kill 目标常为「已
+ * 自然退出但 race 未结算」的 flight，macOS 对已退出进程组返回 EPERM 而非 ESRCH
+ * 的既有事实见 killAll 注释）。为什么必须回收在飞本体：停派维度在
+ * computeDispatchTargets 只挡新派发（continue），在飞 designer 迟交的
+ * SpecSubmitted 会顶掉人工重提的 spec（C10 主案例）——入账层守卫（fb-1）管
+ * verdict 管不到 SpecSubmitted，竞态口只能在循环层堵。
+ *
+ * 出声时序（设计检查点③的定夺，两处一致）：调用点固定在转人工指引出声
+ * （announceManualEscalations / settleTimeoutEscalations 的 escalationMessage）
+ * 与 stopped 事件发射之后——stderr 上人工先看到指引、随后看到回收记录；回收
+ * 行自身只带维度短名 + C10 原因短句，完整恢复指引不在本行重复（指引已出）。
+ *
+ * 去重键 = unitId（设计 D9 钉死「本 run 内同一 unit 只执行一次主动回收」，
+ * 主循环局部 Set 承载）：单飞门下停派期间该 unit 不会再有新在飞（停派维度
+ * continue + escalated 排除），跨轮重复执行只会对同一已 kill / 已结算的 flight
+ * 空转与刷屏；残余面记档——人工处置入账后投影自愈、同 run 内二次停派命中时
+ * 不再回收（人工在场，maxIdleMs / SPAWN_ERROR 出口兜底）。
+ *
+ * reflectionPending 不在回收范围（反思接缝对在飞句柄 followUp 是合法等待态，
+ * 非转人工）——由调用侧的维度枚举（STOPPED_DISPATCH_DIMENSIONS + escalated）
+ * 结构性保证。
+ */
+function recallStoppedUnitSpawns(
+  inFlight: readonly InFlightSpawn[],
+  stoppedUnitDimension: ReadonlyMap<string, string>,
+  recalled: Set<string>,
+): void {
+  for (const [unitId, dimension] of stoppedUnitDimension) {
+    if (recalled.has(unitId)) {
+      continue; // 本 run 已主动回收过——跨轮去重（见函数头注释）
+    }
+    recalled.add(unitId);
+    for (const flight of inFlight) {
+      if (flight.unitId !== unitId) {
+        continue;
+      }
+      try {
+        flight.handle.kill();
+        emitErr(
+          `[runner] 停派转人工（${dimension}）：回收 unit "${unitId}" 的在飞 ${flight.role} spawn` +
+            "——停派只挡新派发，在飞产出迟交会顶掉人工处置（C10）；人工处置见上方指引，处置入账后下轮自愈。\n",
+        );
+      } catch (err) {
+        process.stderr.write(
+          `[runner] 停派回收 kill 失败（${flight.role} unit "${unitId}"，维度 ${dimension}）：` +
+            `${err instanceof Error ? err.message : String(err)}——目标进程多半已退出，忽略。\n`,
+        );
+      }
+    }
+  }
+}
+
 // ---- rv-1：信号中断回收（Ctrl-C/SIGTERM 孤儿清理） ----
 
 /** 信号中断的约定退出码（shell 惯例 128+signum：SIGINT=2 → 130、SIGTERM=15 → 143） */
@@ -1463,6 +1518,10 @@ async function runLoopMain(
   };
   let roundSeq = 0;
   const announcedStopped = new Set<string>();
+  // fb-2（D9）：停派回收的本 run 去重登记（键 = unitId，InFlightSpawn 结构不变——
+  // 「本 run 内已回收」标记用主循环局部 Set 承载）。语义与依据见
+  // recallStoppedUnitSpawns 函数头注释
+  const recalledStoppedSpawns = new Set<string>();
 
   while (true) {
     // P0-1：编程停止/信号（库形态）已请求 → 在飞已 killAll，以约定码收束
@@ -1605,6 +1664,30 @@ async function runLoopMain(
         });
       }
     }
+
+    // fb-2（D9，C10）：停派维度命中即回收该 unit 在飞 spawn（全 role）。出声
+    // 时序定夺（设计检查点③，与 recallStoppedUnitSpawns 函数头注释一致）：
+    // 调用点在本轮转人工指引出声（settleTimeoutEscalations 的 escalationMessage /
+    // 上方 announceManualEscalations）与 stopped 事件之后——「人工先看到指引、
+    // 随后看到回收记录」（实测排布依据：指引在 stderr 先落盘，回收行走同一
+    // stderr 流，行序即人工视读序）。TIMEOUT 封顶档（escalated）也入回收集——
+    // 该档触发时刻 unit 必无在飞（单飞门 + 结算后才计 streak，检查点④已核），
+    // 属防御性兑底（空转无害），且后写覆盖四维条目（同时命中时以先触发的
+    // TIMEOUT 档出声）；维度名与 stopped 事件同用 timeoutEscalation
+    const stoppedUnitDimension = new Map<string, string>();
+    for (const dimension of STOPPED_DISPATCH_DIMENSIONS) {
+      for (const unitId of groups[dimension]) {
+        if (subtreeIds.has(unitId)) {
+          stoppedUnitDimension.set(unitId, dimension);
+        }
+      }
+    }
+    for (const unitId of escalated.keys()) {
+      if (subtreeIds.has(unitId)) {
+        stoppedUnitDimension.set(unitId, "timeoutEscalation");
+      }
+    }
+    recallStoppedUnitSpawns(inFlight, stoppedUnitDimension, recalledStoppedSpawns);
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
