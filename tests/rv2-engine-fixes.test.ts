@@ -353,6 +353,9 @@ describe("T3 exec-review 必填 --evidence-refs（dispatch 层完整路径）", 
 
   it("spec-review 无 refs 维持可选 → exit 0（不回归）", async () => {
     seedVerifiedUnit("u-1", ["run-1"]);
+    // fb-1（M7 设计 D8）：seed 场景已含同代 reviewer 结论，幂等守卫会拒收第二条
+    // spec-review verdict——补一条新 SpecSubmitted 开新代后再验「refs 可选」本意
+    ledger.append("SpecSubmitted", legalSpec("u-1"));
     const res = await run(["review", "submit", "--unit", "u-1", "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]);
     expect(res.code).toBe(0);
   });
