@@ -348,3 +348,33 @@ Complete 2.0 rewrite of the engine (PR #17): append-only event ledger + fold pro
 
 ### Refactoring
 - refactor(simplify): dedupe tokenize/dedup-emit patterns, drop dead param and passthrough, narrow exports across M5+M6 surface (70cd061)
+
+## [v2.3.0] - 2026-08-27
+
+### Features
+- Merge pull request #26 from zhushanwen321/feat-release-pipeline (0f0258d)
+- feat(pipeline): add --json output to pipeline status (close D8 contract gap) (559728c)
+- feat(w1): dogfood gate wrap adoption in merge + pr-cr-fix skills (4fcd01a)
+- Merge pull request #25 from zhushanwen321/fix-execute-full-workflow (809a0f0)
+- feat(skill): extend merge skill for dual-package release (71f7590)
+- Merge pull request #22 from zhushanwen321/fix-execute-full-workflow (4209eea)
+- feat(ext): rename plugin package to @zhushanwen/pi-coding-workflow for 0.5.0 release (7985ffc)
+- feat(w2): pipeline domain — manifest, run-with-resume, status (1c00262)
+- feat(w3): ci-judge (tsc closure + flaky decision tree) + gate stats (8bfeffc)
+- feat(w2): extend gate event algebra with PipelineStepRan (pre-landing) (4f17252)
+- feat(w1): wire gate wrap/query into CLI (rp-0 completion) (e12694d)
+- feat(rp-0): gate domain core — events, domain descriptor, fold, wrap, query (3f77ebe)
+- feat(rp-0): generalize EventLedger with injectable LedgerDomain + golden replay baseline (GP1) (70d16f8)
+
+### Bug Fixes
+- fix(tests): AC-1 baseline drifts on main evolution - use dynamic fork point (97e5746)
+- fix(metrics): split oversized functions to meet cyclomatic threshold (2989175)
+- fix(w1): consistency review round - close 3 scope gaps + exit-code triage guide (c7eae29)
+- fix(ext): add publishConfig.access=public for scoped package npm publish (3eec7df)
+- fix(ext): add repository field for npm provenance publishing (9485e41)
+- Merge pull request #24 from zhushanwen321/fix-execute-full-workflow (516ae12)
+- fix(ext): absorb module-init rejections during probe dynamic import (608625f)
+- Merge pull request #23 from zhushanwen321/fix-execute-full-workflow (11d26d6)
+- fix(ext-tests): static API detection in env guards — avoid Node<22 import side effects (d871267)
+- fix(test): make fx7-4 git error-message assertion locale-independent (f5e03c8)
+
