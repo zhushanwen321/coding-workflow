@@ -30,6 +30,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -443,13 +444,18 @@ describe("边角：nd 条目在 acceptanceIds 内（常规 run pass 形态）→
 // ================================================================
 
 /** w2 形态 fixture：基线即带 tsconfig + types + 封装 typecheck 脚本，developer 空 commit */
+// tsc 用测试进程解析出的项目内绝对路径（经 node 调用）：verify 重跑发生在 /tmp
+// 下独立 git 仓库，npx 在该 cwd 解析不到本地 typescript 时会联网拉包——npm 进度
+// 字符污染 e2e-sh 的标记行解析、耗时不可控（v2.4.0 CI 连挂两轮的根因）。
+const TSC_ENTRY = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+
 function makeWrapperRepo(): void {
   makeGitRepo(cwd, [
     {
       "tsconfig.json":
         '{\n  "compilerOptions": { "strict": true, "noEmit": true },\n  "include": ["src/**/*.ts"]\n}\n',
       "src/types.ts": "export type Probe = string;\n",
-      "scripts/check-types.sh": '#!/bin/sh\nnpx tsc --noEmit && echo "AC5 PASS"\n',
+      "scripts/check-types.sh": `#!/bin/sh\nnode '${TSC_ENTRY}' --noEmit && echo "AC5 PASS"\n`,
     },
     // developer「空改动/无效实现」：仅加无关文件——typecheck 型验收对实现免疫
     { "notes.txt": "developer 空改动\n" },
