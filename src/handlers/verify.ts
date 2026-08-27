@@ -46,7 +46,9 @@ import {
   patchAcceptanceFilesForRedPhase,
 } from "../verify/red-phase.js";
 import {
+  type AcceptanceRunResult,
   E2E_ACCEPTANCE_TIMEOUT_MS,
+  REPORT_FILE_NAME,
   runAcceptances,
   type RunOutcome,
   UNIT_ACCEPTANCE_TIMEOUT_MS,
@@ -62,8 +64,6 @@ import {
 
 /** 环境错误 exit code（验收文档锁定：验证未发生，不入账） */
 const ENV_ERROR_EXIT = 2;
-/** 总报告文件名（stdout 摘要里给出完整路径，便于人工复核产物） */
-const REPORT_FILE_NAME = "report.json";
 /** report.json 缩进宽度（与 verify/run.ts 的落盘格式逐字节同口径——redPhase 节并入后格式不变） */
 const REPORT_INDENT = 2;
 
@@ -221,6 +221,11 @@ function runRegularVerify(
   const parseFailedIds = outcome.results
     .filter((r) => r.parseError === true && r.nameSkipped !== "nondeterministic")
     .map((r) => r.id);
+  // fa-3（设计 D1）：无区分力信号提取进事件——与解析失败同座的确定性 spec
+  // 缺陷，投影侧并集进 specContractBroken 回炉通道。提取锚 = redFailed 严格
+  // 同集（勿二次 filter）；红阶段未执行（--no-red-phase）时 redFailed 恒空、
+  // 不写键（V5③ 断言锚）
+  const nonDiscriminativeIds = redFailed.map((e) => e.id);
   const payload: VerifyRanPayload = {
     unitId,
     runId,
@@ -228,6 +233,9 @@ function runRegularVerify(
     result,
     acceptanceIds,
     ...(parseFailedIds.length > 0 ? { parseFailedAcceptanceIds: parseFailedIds } : {}),
+    ...(nonDiscriminativeIds.length > 0
+      ? { nonDiscriminativeAcceptanceIds: nonDiscriminativeIds }
+      : {}),
   };
   const ledger = ledgerForCwd(cwd);
   const appended = tryAppend(ledger, "VerifyRan", payload);
@@ -241,31 +249,47 @@ function runRegularVerify(
   writeSummary(lastSpec, statusById, redPhase, { unitId, runId, result, evidenceBase });
 
   if (result === "fail") {
-    const errLines = [
-      `cw verify: unit "${unitId}" 有 ${regularFailed.length} 条验收失败：`,
-      ...regularFailed.map((r) => `  ${r.id}: ${r.reason ?? "未知原因"}`),
-    ];
-    if (redFailed.length > 0) {
-      errLines.push(
-        `红阶段：${redFailed.length} 条验收无区分力（恒真测试防线——新测试在旧代码树必须 fail，恒真测试会被拒）：`,
-        ...redFailed.map((e) => `  ${e.id}: ${e.reason}`),
-        "恢复动作：修测试而非修 gate——让验收引用实现产物（命令在父 commit 上因文件缺失/接口不存在而失败），勿弱化判定绕过。",
-      );
-      if (redPhaseEvidenceBase !== "") {
-        errLines.push(`红阶段产物：${join(redPhaseEvidenceBase, REPORT_FILE_NAME)}`);
-      }
-    }
-    errLines.push(
-      `产物报告：${join(evidenceBase, REPORT_FILE_NAME)}`,
-      // fx-1 R2：旧文案「重新提交 spec + build 证据并重审」会诱导 developer 重提
-      // spec → deriveStatus 判回 created → 派发真空死区。验收冻结不动是默认路径
-      `恢复动作：修复代码并 git commit 后，仅重新 cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <新id> 再 cw verify；spec 冻结不动（改验收走重新 spec 是另一路径，需重新过审）。`,
-      "",
+    process.stderr.write(
+      verifyFailSummaryLines(unitId, evidenceBase, redPhaseEvidenceBase, regularFailed, redFailed).join("\n"),
     );
-    process.stderr.write(errLines.join("\n"));
     return 1;
   }
   return 0;
+}
+
+/**
+ * verify fail 的 stderr 汇总清单（纯文案组装，从 runRegularVerify 提出以收敛
+ * 主流程圈复杂度——Gate-1.5 度量门禁，内容逐字节保留）。
+ */
+function verifyFailSummaryLines(
+  unitId: string,
+  evidenceBase: string,
+  redPhaseEvidenceBase: string,
+  regularFailed: readonly AcceptanceRunResult[],
+  redFailed: readonly RedPhaseReportEntry[],
+): string[] {
+  const errLines = [
+    `cw verify: unit "${unitId}" 有 ${regularFailed.length} 条验收失败：`,
+    ...regularFailed.map((r) => `  ${r.id}: ${r.reason ?? "未知原因"}`),
+  ];
+  if (redFailed.length > 0) {
+    errLines.push(
+      `红阶段：${redFailed.length} 条验收无区分力（恒真测试防线——新测试在旧代码树必须 fail，恒真测试会被拒）：`,
+      ...redFailed.map((e) => `  ${e.id}: ${e.reason}`),
+      "恢复动作：修测试而非修 gate——让验收引用实现产物（命令在父 commit 上因文件缺失/接口不存在而失败），勿弱化判定绕过。",
+    );
+    if (redPhaseEvidenceBase !== "") {
+      errLines.push(`红阶段产物：${join(redPhaseEvidenceBase, REPORT_FILE_NAME)}`);
+    }
+  }
+  errLines.push(
+    `产物报告：${join(evidenceBase, REPORT_FILE_NAME)}`,
+    // fx-1 R2：旧文案「重新提交 spec + build 证据并重审」会诱导 developer 重提
+    // spec → deriveStatus 判回 created → 派发真空死区。验收冻结不动是默认路径
+    `恢复动作：修复代码并 git commit 后，仅重新 cw evidence submit --kind build --unit ${unitId} --commit <hash> --run-id <新id> 再 cw verify；spec 冻结不动（改验收走重新 spec 是另一路径，需重新过审）。`,
+    "",
+  );
+  return errLines;
 }
 
 /**

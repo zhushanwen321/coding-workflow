@@ -184,6 +184,25 @@ export interface VerifyRanPayload {
    * 失败，重放兼容。
    */
   parseFailedAcceptanceIds?: string[];
+  /**
+   * 本次 verify 红阶段判「无区分力」的验收 id（fa-3，设计 D1）。来源 = 红阶段
+   * entries（handler 侧 RedPhaseReportEntry）中 `discriminative === false &&
+   * skipped !== true` 的条目——与 verify.ts 的 redFailed 严格同集（封闭枚举），
+   * 提取零二次判定。判定语义：该验收在实现前基线树（build commit 第一父，
+   * 必要时 patch 新测试）上照样 pass = 恒真测试防线——确定性 spec 缺陷信号
+   * （developer 结构性不可修），与解析失败同座并入 specContractBroken 回炉
+   * 通道（fa-3 设计 D3：投影侧 parseFailedAcceptanceIds ∪ 本字段逐 run 去重）。
+   * 豁免语义：nondeterministic 声明条目红阶段跳过判定（discriminative 恒 true，
+   * judgeRedPhase red-phase.ts:192-201）天然不入列；无父 commit 的合法跳过
+   * 条目（skipped: true 且 discriminative 恒 true）同不入列——与 parseFailed
+   * 的豁免语义对齐。`--no-red-phase` 下红阶段不执行，本字段必然缺省（操作者
+   * 显式选择，记档）。result / acceptanceIds 判定零变化：红阶段 fail 不改机器
+   * pass 事实（无区分力条目常规 run 照旧进 acceptanceIds），整体 result 照旧
+   * 由 regularFailed / redFailed 决定，本字段只做投影分类。无无区分力条目不
+   * 写该键：旧账本缺字段 = 无无区分力条目，重放兼容（先例口径照抄
+   * parseFailedAcceptanceIds）。
+   */
+  nonDiscriminativeAcceptanceIds?: string[];
 }
 
 /**

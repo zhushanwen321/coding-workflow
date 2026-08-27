@@ -65,12 +65,18 @@ export function renderStatusDetail(
   if (unit.specs.length === 0) {
     lines.push("  (无)");
   } else {
-    for (const spec of unit.specs) {
+    // 当前生效版 = 末项：fold 投影的 unit.specs 按入账序排列（append-only 无删
+    // 除），末项即最后一条 SpecSubmitted 的 specHash——投影构造语义直接可用，
+    // 不引入新的账本扫描（fb-3，设计 D10-②：重做 spec 的拷贝源一行定位，不再
+    // 靠列表顺序/mtime 猜测）
+    const activeIndex = unit.specs.length - 1;
+    unit.specs.forEach((spec, i) => {
+      const activeMark = i === activeIndex ? " ← active" : "";
       lines.push(
         `  - ${hashPrefix(spec.specHash)} acceptance=${spec.acceptance.length}` +
-          ` contracts=${spec.contracts.length} split=${spec.split.length}`,
+          ` contracts=${spec.contracts.length} split=${spec.split.length}${activeMark}`,
       );
-    }
+    });
   }
 
   lines.push("verdicts:");

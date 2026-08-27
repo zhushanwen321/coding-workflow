@@ -707,7 +707,7 @@ describe("D8 停派态描述", () => {
       }
     }
     expect(stoppedDispatchState(ledger.readAll(), "u-cd")).toBe(
-      "specContractDeadlock（验收命令解析失败已 2 代回炉，防活锁转人工）",
+      "specContractDeadlock（确定性 spec 缺陷信号已 2 代回炉，防活锁转人工）",
     );
 
     // flakeReview：e2e 断言失败连挂 2

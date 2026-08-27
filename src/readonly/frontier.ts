@@ -39,13 +39,16 @@
  *     loop 停派该 unit 的 developer，其余 unit 照常）。连挂输入排除解析失败条目
  *     （mx5-2：解析失败是确定性 spec 缺陷走 specContractBroken 回炉，不再误判
  *     为随机挂——M4 gate 三跑现场五的根因拆除）
- *   - specContractBroken：spec-frozen 且当前 spec 周期内某验收解析失败
- *     （VerifyRan.parseFailedAcceptanceIds，mx5-1）连挂 ≥2 次 ∧ 回炉代数 <2——
- *     待 designer 回炉修 spec 的验收命令契约（mx5-2，任务书内嵌逐轮解析失败
- *     原文；新 spec 照旧过独立 reviewer 再审）。判定序先于 flakeReview：解析
- *     失败有自动修复通道且 flake 启发式有误判前科，契约回炉优先拆死局
+ *   - specContractBroken：spec-frozen 且当前 spec 周期内某验收带确定性 spec
+ *     缺陷信号（解析失败 VerifyRan.parseFailedAcceptanceIds，mx5-1；或无区分力
+ *     VerifyRan.nonDiscriminativeAcceptanceIds——红阶段判基线树上也 pass，
+ *     fa-3 设计 D1/D3 并集逐 run 去重）连挂 ≥2 次 ∧ 回炉代数 <2——
+ *     待 designer 回炉修 spec 的验收命令契约（mx5-2 通道，fa-3 语义升格为
+ *     「确定性 spec 缺陷回炉」；任务书内嵌逐轮机器原文；新 spec 照旧过独立
+ *     reviewer 再审）。判定序先于 flakeReview：确定性缺陷有自动修复通道且
+ *     flake 启发式有误判前科，契约回炉优先拆死局
  *   - specContractDeadlock：specContractBroken 的连挂谓词成立 ∧ 回炉代数 ≥2
- *     （两轮「连挂 → 修 spec → verify 检验」完整走完仍解析失败）——转人工，
+ *     （两轮「连挂 → 修 spec → verify 检验」完整走完仍带确定性缺陷信号）——转人工，
  *     机器派发无出口（防 designer-developer 回炉活锁；loop 停派 + stderr
  *     转人工，与 specReviewDeadlock 同款三处联动）。已知逃逸面（设计记档）：
  *     新 SpecSubmitted 整体重置该 unit 全部连挂状态——断言失败条目的 flake
@@ -98,9 +101,9 @@ export interface FrontierGroups {
   missingChildren: string[];
   integrationDrift: string[];
   integrationReady: string[];
-  /** mx5-2：解析失败连挂 ≥2 ∧ 回炉代数 <2 的 spec-frozen unit（派 designer 回炉修 spec 命令契约） */
+  /** mx5-2：确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 ≥2 ∧ 回炉代数 <2 的 spec-frozen unit（派 designer 回炉修 spec 命令契约） */
   specContractBroken: string[];
-  /** mx5-2：解析失败连挂 ≥2 ∧ 回炉代数 ≥2 的 spec-frozen unit（转人工，防回炉活锁） */
+  /** mx5-2：确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 ≥2 ∧ 回炉代数 ≥2 的 spec-frozen unit（转人工，防回炉活锁） */
   specContractDeadlock: string[];
   /** rv-5：e2e 验收连挂 ≥2 的 unit（转人工判定，机器派发无出口） */
   flakeReview: string[];
@@ -469,6 +472,10 @@ export interface FlakeReviewFact {
  *     ≥2；中间任何一次 pass 即清零（投影天然重算，无内存态）；
  *   - 集成 verify（integrate- 前缀 runId）不参与计数也不清零（集成是全量重跑
  *     语义，随机挂由重跑覆盖）；
+ *   - 连挂输入排除确定性 spec 缺陷信号条目：parseFailedAcceptanceIds
+ *     （mx5-2）与 nonDiscriminativeAcceptanceIds（fa-3 D3②，作用条件：清零
+ *     判定在前、排除只作用 fail 分支——常态下 nd e2e 条目在 pass 集内自然
+ *     清零，本排除的作用面 = 主 run fail + 红阶段判无区分力的混合边角）；
  *   - 新 SpecSubmitted 即周期重置（清零，锚 lastSpecSeq 语义）。
  * 已知边界：nondeterministic 声明条目经 rv-5 豁免后恒在 pass 集内，其逐次
  * fail 对本投影不可见（VerifyRan payload 零变更下的粒度边界，见 types.ts
@@ -510,6 +517,14 @@ export function flakeReviewFacts(
         }
         if (event.payload.acceptanceIds.includes(id)) {
           state.streaks.delete(id); // 中间 pass 即清零
+        } else if ((event.payload.nonDiscriminativeAcceptanceIds ?? []).includes(id)) {
+          // fa-3（设计 D3②，作用条件钉死）：无区分力信号同样不进 flake 连挂
+          // 输入——镜像 mx5-2 的 parseFailed 排除。作用面 = 混合边角（主 run
+          // fail + 红阶段判无区分力，如实现破坏既有行为）：不在 acceptanceIds
+          // （清零判定在前已不成立）且在 nd 清单 → 既不计数也不清零，信号走
+          // specContractBroken 回炉。常态下无区分力 e2e 条目在 acceptanceIds
+          // 内（常规 run pass）由上方清零分支自然处置，不进本分支
+          continue;
         } else {
           const previous = state.streaks.get(id) ?? { count: 0, runIds: [] };
           state.streaks.set(id, {
@@ -538,41 +553,52 @@ export function flakeReviewFacts(
 
 // ---- mx5-2：解析失败回炉投影（specContractBroken / specContractDeadlock 判定输入） ----
 
-/** 解析失败连挂转回炉阈值（连挂 2 次：第 1 次给 developer 正常迭代机会，第 2 次定性为 spec 命令契约缺陷） */
+/** 契约缺陷信号（解析失败 ∪ 无区分力，fa-3 升格）连挂转回炉阈值（连挂 2 次：第 1 次给 developer 正常迭代机会，第 2 次定性为 spec 的确定性缺陷） */
 export const SPEC_CONTRACT_MIN_CONSECUTIVE_FAILS = 2;
 
 /**
  * 回炉代数上限（防活锁独立预算，mx5-2）：designer 共获 2 次修复机会且每次都
- * 经完整 verify 检验后才计满——2 代仍解析失败即判 spec/brief 层有更深问题，
+ * 经完整 verify 检验后才计满——2 代仍连挂确定性 spec 缺陷信号即判 spec/brief 层有更深问题，
  * 转人工。不可复用 specReviewFailCounts（那数的是 reviewer fail verdict；回炉
  * 环里 reviewer 对每版新 spec 的裁定是 pass，代数恒不增长）。代数累计绝不清理
  * （新 spec 只清连挂计数）——同打回代数的防活锁依赖累计语义。
  */
 export const SPEC_CONTRACT_MAX_GENERATIONS = 2;
 
-/** 单条验收的解析失败连挂事实（回炉任务书与转人工指引的失败事实来源） */
+/** 单条验收的契约缺陷信号（解析失败 ∪ 无区分力）连挂事实（回炉任务书与转人工指引的失败事实来源） */
 export interface SpecContractStreakFact {
-  /** 解析失败的验收 id（VerifyRan.parseFailedAcceptanceIds 的条目） */
+  /**
+   * 契约缺陷信号的验收 id（VerifyRan.parseFailedAcceptanceIds 与
+   * VerifyRan.nonDiscriminativeAcceptanceIds 条目的并集；信号来源标记不加——
+   * 消费方谓词与转人工指引不需要，来源区分在 brief.ts 侧按 runId+id 回查产物
+   * 落实，fa-3 设计 D3 取舍）
+   */
   acceptanceId: string;
-  /** 当前 spec 周期内的连续解析失败次数（返回值恒 ≥ SPEC_CONTRACT_MIN_CONSECUTIVE_FAILS） */
+  /** 当前 spec 周期内的连续契约缺陷信号次数（返回值恒 ≥ SPEC_CONTRACT_MIN_CONSECUTIVE_FAILS） */
   consecutiveFails: number;
-  /** 构成连挂的 VerifyRan runId（账本序；任务书按 runId 取 <id>.report.json 原文） */
+  /** 构成连挂的 VerifyRan runId（账本序；任务书按 runId 取产物原文） */
   runIds: string[];
 }
 
 /** 单 unit 的解析失败回炉事实：连挂条目 + 回炉代数（两维度判定输入） */
 export interface SpecContractFacts {
-  /** 当前 spec 周期内解析失败连挂 ≥2 的条目（<2 的连挂不外露——谓词不成立） */
+  /** 当前 spec 周期内契约缺陷信号（解析失败 ∪ 无区分力）连挂 ≥2 的条目（<2 的连挂不外露——谓词不成立） */
   streaks: SpecContractStreakFact[];
   /** 回炉代数（「连挂 ≥2 → 新 SpecSubmitted」累计次数；绝不清理） */
   generations: number;
 }
 
 /**
- * 各 unit 的解析失败连挂与回炉代数（mx5-2，纯投影——事件流重放，与
- * flakeReviewFacts 同构范式）。口径锁定（mx5-2 基线 §4 / 设计 D2 同构条目）：
- *   - 逐条目计数：VerifyRan.parseFailedAcceptanceIds 内的 id 连挂 +1；该 id
- *     不在该次 run 的清单内（中间一次解析成功）即清零；
+ * 各 unit 的契约缺陷信号连挂与回炉代数（mx5-2 建通道，fa-3 设计 D3 升格输入：
+ * 解析失败 ∪ 无区分力——两类同座的确定性 spec 缺陷，纯投影——事件流重放，
+ * 与 flakeReviewFacts 同构范式）。口径锁定（mx5-2 基线 §4 / 设计 D2 同构条目，
+ * fa-3 只扩输入枚举不动阈值语义）：
+ *   - 逐条目计数：VerifyRan.parseFailedAcceptanceIds ∪
+ *     VerifyRan.nonDiscriminativeAcceptanceIds 内的 id 连挂 +1；该 id 不在该次
+ *     run 的两清单任一内（中间一次信号消失）即清零；
+ *   - 逐 run 去重：同一 id 同一 run 同时出现在两清单可达（主 run parseError 且
+ *     红阶段 discriminative=false——judgeRedPhase 的 parseError 分支），Set
+ *     并集去重只计一次连挂（fa-3 V8 断言锚）；
  *   - 周期边界 = SpecSubmitted 事件（不比 specHash——同内容重提同开新周期），
  *     新 spec 入账清零全部连挂计数；
  *   - 集成 verify（integrate- 前缀 runId）不参与计数也不清零（集成解析失败走
@@ -616,14 +642,21 @@ export function specContractFacts(
       if (state === undefined) {
         continue; // 无 spec 周期锚的 verify：正常流程不可达（handler 先查 spec）
       }
-      const parseFailed = event.payload.parseFailedAcceptanceIds ?? [];
-      // 该 run 未解析失败的连挂条目清零（中间一次解析成功即清零——逐条目粒度）
+      // fa-3（设计 D3①）：信号并集 = 解析失败 ∪ 无区分力，Set 逐 run 去重——
+      // 同一 id 同一 run 双清单同真只计一次连挂
+      const contractFailed = [
+        ...new Set([
+          ...(event.payload.parseFailedAcceptanceIds ?? []),
+          ...(event.payload.nonDiscriminativeAcceptanceIds ?? []),
+        ]),
+      ];
+      // 该 run 无契约缺陷信号的连挂条目清零（中间一次信号消失即清零——逐条目粒度）
       for (const id of [...state.streaks.keys()]) {
-        if (!parseFailed.includes(id)) {
+        if (!contractFailed.includes(id)) {
           state.streaks.delete(id);
         }
       }
-      for (const id of parseFailed) {
+      for (const id of contractFailed) {
         const previous = state.streaks.get(id) ?? { count: 0, runIds: [] };
         state.streaks.set(id, {
           count: previous.count + 1,
@@ -773,7 +806,7 @@ export function computeFrontier(
   opts?: {
     consecutiveIntegrationFails?: ReadonlyMap<string, number>;
     flakeReviewFacts?: ReadonlyMap<string, readonly FlakeReviewFact[]>;
-    /** mx5-2：解析失败连挂 + 回炉代数（specContract 两维度判定输入） */
+    /** mx5-2：确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 + 回炉代数（specContract 两维度判定输入） */
     specContractFacts?: ReadonlyMap<string, SpecContractFacts>;
     specReviewFailCounts?: ReadonlyMap<string, number>;
     /** lv-2：本 spec 周期内 build 证据 ≥K 且无 pass 的事实（buildDrift 维度判定输入） */
@@ -837,7 +870,7 @@ export function computeFrontier(
         (contract?.streaks.length ?? 0) > 0 &&
         (contract?.generations ?? 0) >= SPEC_CONTRACT_MAX_GENERATIONS
       ) {
-        // 两轮「连挂 → 修 spec → verify 检验」完整走完仍解析失败——不再派
+        // 两轮「连挂 → 修 spec → verify 检验」完整走完仍连挂确定性 spec 缺陷信号——不再派
         // designer（防回炉活锁），转人工；处置写入账本后投影自然消失
         groups.specContractDeadlock.push(unit.unitId);
       } else if ((contract?.streaks.length ?? 0) > 0) {
@@ -919,7 +952,7 @@ export function stoppedDispatchState(
     maxSpecRejects: opts?.maxSpecRejects,
   });
   if (groups.specContractDeadlock.includes(unitId)) {
-    return "specContractDeadlock（验收命令解析失败已 2 代回炉，防活锁转人工）";
+    return "specContractDeadlock（确定性 spec 缺陷信号已 2 代回炉，防活锁转人工）";
   }
   if (groups.flakeReview.includes(unitId)) {
     return "flakeReview（e2e 验收连挂转人工判定）";

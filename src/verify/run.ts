@@ -62,8 +62,10 @@ import { defaultRegistry } from "../testrun/registry.js";
 import type { AdapterRegistry, EvidenceReport } from "../testrun/types.js";
 import { nameMatch } from "./name-match.js";
 
-/** 总报告文件名（evidence 目录内） */
-const REPORT_FILE_NAME = "report.json";
+/** 总报告文件名（evidence 目录内）——单一事实源：首次落盘在本模块
+ * runAcceptances（rawPath），verify handler 的 redPhase 重写与 brief 渲染层的
+ * 取数均 import 本常量（fa4 R1 镜像常量收敛） */
+export const REPORT_FILE_NAME = "report.json";
 /** report.json 缩进宽度（2 空格，与只读命令 --json 输出一致） */
 const REPORT_INDENT = 2;
 

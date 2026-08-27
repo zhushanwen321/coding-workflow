@@ -693,7 +693,9 @@ describe("F8 派发映射", () => {
     expect(briefPath).not.toBe("");
     expect(existsSync(briefPath)).toBe(true);
     const brief = readFileSync(briefPath, "utf-8");
-    expect(brief).toContain("验收命令契约回炉");
+    // fa-3 适配：回炉模板标题由「验收命令契约回炉」升格为「确定性 spec 缺陷回炉」
+    //（设计 D5/D6：specContractBroken 语义升格为解析失败 ∪ 无区分力的确定性 spec 缺陷回炉）
+    expect(brief).toContain("确定性 spec 缺陷回炉");
     expect(brief).toContain("新 spec 照旧过独立 reviewer");
     // 派发可观测性：stderr/stdout 出声「转派 designer 修 spec 的验收命令契约」
     expect(brokenRun.out).toContain("转派 designer 修 spec 的验收命令契约");

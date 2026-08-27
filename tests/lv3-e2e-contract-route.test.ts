@@ -413,7 +413,8 @@ describe("E4 回炉链：连挂 2 次 → specContractBroken + 回炉任务书�
       const briefMatch = stdout.match(/brief: (\S+?\.brief\.md)/);
       expect(briefMatch).not.toBeNull();
       const brief = readFileSync(briefMatch?.[1] ?? "", "utf-8");
-      expect(brief).toContain("验收命令契约回炉");
+      // fa-3 D5/D6：回炉模板标题升格为确定性 spec 缺陷回炉（解析失败 ∪ 无区分力并集通道）
+      expect(brief).toContain("确定性 spec 缺陷回炉");
       // 内嵌 reason 原文（<id>.report.json 顶层 reason——含断链语义与 stdout 首行）
       expect(brief).toContain("疑似脚本崩溃/环境断链");
       expect(brief).toContain("构建产物缺失，请先 pnpm run build:e2e");

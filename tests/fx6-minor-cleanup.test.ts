@@ -208,7 +208,7 @@ const countOf = (text: string, needle: string): number => text.split(needle).len
 
 /** 每条转人工消息恰出现一次的首行特征串（计数 = 出声次数） */
 const FLAKE_NEEDLE = "的 e2e 验收连挂 2 次以上（flake 疑似）";
-const CONTRACT_NEEDLE = "的验收命令解析失败已 2 代回炉仍连挂";
+const CONTRACT_NEEDLE = "的验收命令确定性缺陷信号（解析失败 / 无区分力）已 2 代回炉仍连挂";
 const SPEC_NEEDLE = "的 spec-review 已打回";
 
 /** 启动 loop（空转轮询观察）+ 窗口内推进账本 + 等 idle 收束退出的场景骨架 */
@@ -360,7 +360,7 @@ describe("fx-6 G4 contract 签名去重：deadlock 态 runId 追加不重出", (
     expect(countOf(captured.err, CONTRACT_NEEDLE)).toBe(1); // 恰出声 1 次
     // 解析失败条目不进 flake 通道（无 flake 消息混入）
     expect(captured.err).not.toContain(FLAKE_NEEDLE);
-    expect(captured.err).toContain("验收 E1：当前 spec 周期内连续 2 次解析失败（runId：r5-g4、r6-g4）");
+    expect(captured.err).toContain("验收 E1：当前 spec 周期内连续 2 次确定性缺陷信号（解析失败 / 无区分力，runId：r5-g4、r6-g4）");
     expect(captured.err).not.toContain("r7-g4");
     // 消息文本零降级：恢复指引照旧
     expect(captured.err).toContain("cw report --unit u-g4");

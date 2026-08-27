@@ -43,6 +43,12 @@ const HANDSHAKE_TIMEOUT_MS = 5_000;
 /** 超时梯度的收尾提前量：T-2min steer WRAP_UP → T-1min abort → T SIGTERM（TIMEOUT） */
 const STEER_LEAD_MS = 120_000;
 const ABORT_LEAD_MS = 60_000;
+/**
+ * 梯度武装的最小剩余预算：timeout 仅比 steer 提前量多不到该值时，武装
+ * steer/abort 两级定时器已无意义（首级 timer 距截止不足 10s，收尾指令来不及
+ * 生效）——只挂最终 SIGTERM 单级梯度
+ */
+const GRADIENT_MIN_HEADROOM_MS = 10_000;
 
 function artifactPaths(req: AgentSpawnRequest): {
   stdoutPath: string;
@@ -204,7 +210,7 @@ export function createPiRpcAdapter(opts?: PiAdapterOptions): AgentSpawnAdapter {
         settled?.(result);
       });
       // 超时梯度：steer WRAP_UP → abort → SIGTERM（killedByTimeout 置位 → TIMEOUT）
-      if (req.timeoutMs > STEER_LEAD_MS + 10_000) {
+      if (req.timeoutMs > STEER_LEAD_MS + GRADIENT_MIN_HEADROOM_MS) {
         timers.push(
           setTimeout(() => {
             void client.steer("WRAP_UP：请立即收尾并提交现有结论。").catch(() => undefined);

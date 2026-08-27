@@ -10,7 +10,11 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { AcceptanceItem, SpecSubmittedPayload } from "../src/events/types.js";
+import type {
+  AcceptanceItem,
+  SpecSubmittedPayload,
+  SplitEntry,
+} from "../src/events/types.js";
 import { checkSpecRules } from "../src/gates/spec-rules.js";
 
 /** 验收用例工厂：默认非 core 的 unit 用例，按需覆写 */
@@ -18,14 +22,17 @@ function item(id: string, overrides: Partial<AcceptanceItem> = {}): AcceptanceIt
   return { id, core: false, title: `${id} 一句话描述`, type: "unit", ...overrides };
 }
 
-/** spec payload 工厂：规则只读 acceptance，其余字段给最小合法占位 */
-function makeSpec(acceptance: readonly AcceptanceItem[]): SpecSubmittedPayload {
+/** spec payload 工厂：规则只读 acceptance 与 split（⑩⑬ 作用域输入），其余字段给最小合法占位 */
+function makeSpec(
+  acceptance: readonly AcceptanceItem[],
+  split: readonly SplitEntry[] = [],
+): SpecSubmittedPayload {
   return {
     unitId: "u3-test",
     specHash: "sha256:placeholder",
     acceptance: [...acceptance],
     contracts: [],
-    split: [],
+    split: [...split],
   };
 }
 
@@ -198,4 +205,153 @@ describe("checkSpecRules（u3 spec gate 五规则）", () => {
       }
     });
   }
+});
+
+// ── fa-1（M7 设计《无区分力验收设防与挂法归因》D2/D7，验收基线 V1/V9 的函数级投影）：
+// 规则⑬ unit 层纯 typecheck 形态拦截（fail/warning 双档）与规则⑭ e2e 型缺省
+// runner 与 vitest/pytest 调用的隐式错配 warning。夹具沿用 item/makeSpec 工厂，
+// 均含一条默认 unit 条目（A2）过规则⑤，避免⑤噪声混入断言 ──
+
+describe("规则⑬ unit 层 typecheck 形态拦截（fa-1）", () => {
+  it("⑬-1 unit 层 npx tsc --noEmit → 拒，failures 含规则⑬与两条恢复路径", () => {
+    const result = checkSpecRules(
+      makeSpec([item("A1", { command: "npx tsc --noEmit" }), item("A2")]),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    const hit = result.failures.find((f) => f.includes("规则⑬"));
+    expect(hit).toBeDefined();
+    expect(hit).toContain("断言具体产物");
+    expect(hit).toContain('layer: "topic"');
+  });
+
+  it("⑬-2 unit 层 npm run typecheck → ok=true，warnings 含规则⑬（script 名族 warning 档，不与规则⑪共存）", () => {
+    const result = checkSpecRules(
+      makeSpec([item("A1", { command: "npm run typecheck" }), item("A2")]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.warnings ?? []).toHaveLength(1);
+    const hit = result.warnings?.[0];
+    expect(hit).toContain("规则⑬");
+    // warning 档文案要素：script 体歧义点名 + 内联展开恢复动作
+    expect(hit).toContain("词法层不可见");
+    expect(hit).toContain("内联");
+  });
+
+  it("⑬-3 unit 层 npx tsc --noEmit && npx vitest run tests/x.test.ts → 复合命令放行（零⑬输出）", () => {
+    const result = checkSpecRules(
+      makeSpec([
+        item("A1", { command: "npx tsc --noEmit && npx vitest run tests/x.test.ts" }),
+        item("A2"),
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.failures.some((f) => f.includes("规则⑬"))).toBe(false);
+    expect((result.warnings ?? []).some((w) => w.includes("规则⑬"))).toBe(false);
+  });
+
+  it("⑬-4 layer: \"topic\" + split 非空的 typecheck 条目 → 零⑬输出（topic 豁免，root typecheck 链是集成层合法形态）", () => {
+    const result = checkSpecRules(
+      makeSpec(
+        [item("A1", { layer: "topic", command: "npx tsc --noEmit" }), item("A2")],
+        [{ unitId: "child-a", dependsOn: [] }],
+      ),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.failures.some((f) => f.includes("规则⑬"))).toBe(false);
+    expect((result.warnings ?? []).some((w) => w.includes("规则⑬"))).toBe(false);
+  });
+
+  it("⑬-5 unit 层真测试命令 npx vitest run tests/a.test.ts → 零⑬输出", () => {
+    const result = checkSpecRules(
+      makeSpec([item("A1", { command: "npx vitest run tests/a.test.ts" }), item("A2")]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.failures.some((f) => f.includes("规则⑬"))).toBe(false);
+    expect((result.warnings ?? []).some((w) => w.includes("规则⑬"))).toBe(false);
+  });
+
+  it("⑬-6 多缺口并列：⑬ fail 与规则③缺口共存 → failures 全列不短路且升序", () => {
+    const result = checkSpecRules(
+      makeSpec([
+        item("A1", { command: "npx tsc --noEmit" }),
+        item("A2", { type: "e2e-real" }), // 规则③：e2e-real 缺可执行 command
+      ]),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((f) => f.includes("rule③"))).toBe(true);
+    expect(result.failures.some((f) => f.includes("规则⑬"))).toBe(true);
+    const idx3 = result.failures.findIndex((f) => f.includes("rule③"));
+    const idx13 = result.failures.findIndex((f) => f.includes("规则⑬"));
+    expect(idx3).toBeLessThan(idx13);
+  });
+
+  it("⑬-7 边界锁定：pnpm typecheck / yarn typecheck（省略 run）命中 warning 档", () => {
+    for (const command of ["pnpm typecheck", "yarn typecheck"]) {
+      const result = checkSpecRules(makeSpec([item("A1", { command }), item("A2")]));
+      expect(result.ok, command).toBe(true);
+      expect((result.warnings ?? []).some((w) => w.includes("规则⑬")), command).toBe(
+        true,
+      );
+    }
+  });
+
+  it("⑬-8 边界锁定：npm exec tsc --noEmit 不在前缀枚举内 → 零⑬输出（诚实边界，同规则⑪不猜 wrapper）", () => {
+    const result = checkSpecRules(
+      makeSpec([item("A1", { command: "npm exec tsc --noEmit" }), item("A2")]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.failures.some((f) => f.includes("规则⑬"))).toBe(false);
+    expect((result.warnings ?? []).some((w) => w.includes("规则⑬"))).toBe(false);
+  });
+});
+
+describe("规则⑭ e2e 型缺省 runner 与 vitest/pytest 调用错配 warning（fa-1）", () => {
+  it("⑭-1 e2e-real + npx vitest run tests/x.test.ts + 无 runner → ok=true，warnings 含规则⑭与两条恢复动作", () => {
+    const result = checkSpecRules(
+      makeSpec([
+        item("A1", {
+          core: true,
+          type: "e2e-real",
+          command: "npx vitest run tests/x.test.ts",
+        }),
+        item("A2"),
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    const hit = (result.warnings ?? []).find((w) => w.includes("规则⑭"));
+    expect(hit).toBeDefined();
+    expect(hit).toContain('"runner": "vitest"');
+    expect(hit).toContain('"unit" 或 "integration"');
+    // 事实段：错配后果（e2e-sh 路由找标记行，解析必挂）
+    expect(hit).toContain("e2e-sh");
+    expect(hit).toContain("verify 必挂");
+  });
+
+  it("⑭-2 e2e-real + bash scripts/check.sh + 无 runner → 零⑭输出（合法缺省 e2e-sh 对照）", () => {
+    const result = checkSpecRules(
+      makeSpec([
+        item("A1", { core: true, type: "e2e-real", command: "bash scripts/check.sh" }),
+        item("A2"),
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect((result.warnings ?? []).some((w) => w.includes("规则⑭"))).toBe(false);
+  });
+
+  it("⑭-3 同⑭-1 但显式 runner: \"vitest\" → 零⑭输出（显式声明不查，合法性归规则⑧）", () => {
+    const result = checkSpecRules(
+      makeSpec([
+        item("A1", {
+          core: true,
+          type: "e2e-real",
+          command: "npx vitest run tests/x.test.ts",
+          runner: "vitest",
+        }),
+        item("A2"),
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect((result.warnings ?? []).some((w) => w.includes("规则⑭"))).toBe(false);
+  });
 });
