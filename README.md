@@ -28,11 +28,11 @@ npm install -g @zhushanwen/coding-workflow
 在 [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 主会话内跑 cw 派发循环：
 
 ```bash
-npx @zhushanwen/pi-coding-workflow-extension install   # 装 pi 会话扩展（loader 自动发现，重启 pi 生效）
+npx @zhushanwen/pi-coding-workflow install           # 装 pi 会话扩展（loader 自动发现，重启 pi 生效）
 cw setup-agent-dir                                    # 建受控 agentDir（~/.cw/agent-dir，供 cw spawn 显式注入）
 ```
 
-发版 tag 协议：`v*` → 核心包；`ext-v*` → 插件包（`@zhushanwen/pi-coding-workflow-extension`）。
+发版 tag 协议：`v*` → 核心包；`ext-v*` → 插件包（`@zhushanwen/pi-coding-workflow`，npm 包名复用一代 0.4.x 名，仓内目录仍为 pi-coding-workflow-extension/）。
 
 最小流程——人给意图（唯一一次人工输入），之后全自动：
 

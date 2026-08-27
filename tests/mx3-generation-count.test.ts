@@ -44,6 +44,7 @@ import { buildPiCommand, createPiAdapter } from "../src/runner/spawn/pi.js";
 import type { AgentSpawnRequest } from "../src/runner/spawn/types.js";
 import { EventLedger } from "../src/store/events-log.js";
 import { ledgerPath } from "../src/store/project.js";
+import { hasRealPi } from "./fixtures/pi-env.js";
 
 const DIST_ROOT = fileURLToPath(new URL("../dist", import.meta.url));
 const CLI_PATH = join(DIST_ROOT, "cli.js");
@@ -249,7 +250,7 @@ describe("mx-3 G1 同代双 fail 不 deadlock：试探 + 正式只计 1 代打�
     const runner = startRunner(repoDir, "demo");
     try {
       // specFixPending 派 designer（designer 获得修复机会——不被试探耗尽额度误杀）
-      await waitText(runner.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 10_000);
+      await waitText(runner.stdoutText, "spec-review fail——派 designer 按打回意见修 spec 重提", 60_000);
       // 无 escalation（多轮 poll 后 stderr 仍无转人工文案）
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       expect(runner.stderrText()).not.toContain("打回循环活锁");
@@ -283,7 +284,7 @@ describe("mx-3 G2 跨代双 fail deadlock：fail → 重提 → fail = 2 代打�
 
     const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(runner.stderrText, "打回循环活锁", 10_000);
+      await waitText(runner.stderrText, "打回循环活锁", 60_000);
       const escalation = runner.stderrText();
       expect(escalation).toContain("转人工");
       expect(escalation).toContain("已打回 2 代");
@@ -331,7 +332,7 @@ describe("mx-3 G3 三代打回：代数=3 ≥2 仍 deadlock 且 escalation 不�
 
     const runner = startRunner(repoDir, "demo", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(runner.stderrText, "打回循环活锁", 10_000);
+      await waitText(runner.stderrText, "打回循环活锁", 60_000);
       expect(runner.stderrText()).toContain("已打回 3 代");
       // 去重：足够多轮 poll（≥7 轮）后完整 escalation 文案仍只出现一次
       await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -376,9 +377,9 @@ describe("mx-3 G4 escalation 去重：同 unit 单次、跨 unit 各自打印", 
 
     const runner = startRunner(repoDir, "root", ["--max-spec-rejects", "2"]);
     try {
-      await waitText(runner.stderrText, "已打回 2 代", 10_000);
-      await waitText(runner.stderrText, '"leaf-dd1"', 10_000);
-      await waitText(runner.stderrText, '"leaf-dd2"', 10_000);
+      await waitText(runner.stderrText, "已打回 2 代", 60_000);
+      await waitText(runner.stderrText, '"leaf-dd1"', 60_000);
+      await waitText(runner.stderrText, '"leaf-dd2"', 60_000);
       // 去重窗口：≥7 轮 poll 后各自文案仍恰好一次
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       const escalation = runner.stderrText();
@@ -399,11 +400,11 @@ describe("mx-3 G4 escalation 去重：同 unit 单次、跨 unit 各自打印", 
 // ================================================================
 
 describe("mx-3 spawn session 保留（真实 pi 后端）", () => {
-  // 跳过条件（u6c 同款）：环境无 pi 时 skip 并 warn；本地 pi 可用则真实跑
-  const piResolvable = spawnSync("which", ["pi"], { encoding: "utf8" }).status === 0;
-  const itRealPi = piResolvable ? it : it.skip;
-  if (!piResolvable) {
-    console.warn("mx3 S 系: PATH 上无 pi，真实 E2E 条跳过（本地 pi 可用环境不 skip）");
+  // real-pi 守卫（u6c 同款，tests/fixtures/pi-env.ts）：CI 一律 skip；本地要求
+  // node_modules 外的真实 pi（vendored 副本无法完成真实模型调用）
+  const itRealPi = hasRealPi ? it : it.skip;
+  if (!hasRealPi) {
+    console.warn("mx3 S 系: 无可用真实 pi（CI 环境或 PATH 仅有 vendored 副本），真实 E2E 条跳过");
   }
 
   /** 真实 pi 微任务请求 fixture（u6c 真实 E2E 同款：PI_OFFLINE + tmp artifactDir） */

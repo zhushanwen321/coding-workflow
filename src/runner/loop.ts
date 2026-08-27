@@ -1071,7 +1071,7 @@ function startReflectionFollowUp(
     } catch (err) {
       emitErr(
         `[runner] unit "${unitId}" 的反思 followUp 链失败（已 kill，可重派）：` +
-          `${err instanceof Error ? err.message : String(err)}\\n`,
+          `${err instanceof Error ? err.message : String(err)}\n`,
       );
       interactive.kill();
     }
@@ -1702,6 +1702,7 @@ async function runLoopMain(
           unitId: unit.unitId,
           specHash: spec.specHash,
           round: unit.reflections.length + 1,
+          placeholder: true,
         });
         emitEvent({
           kind: "reflection",

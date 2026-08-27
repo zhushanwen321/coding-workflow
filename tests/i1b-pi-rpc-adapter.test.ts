@@ -43,6 +43,7 @@ import type {
   SpawnHandle,
   SpawnResult,
 } from "../src/runner/spawn/types.js";
+import { hasRealPi } from "./fixtures/pi-env.js";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "cw-i1b-"));
 
@@ -50,10 +51,9 @@ afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-const hasPi = (() => {
-  const res = spawnSync("pi", ["--version"], { encoding: "utf-8" });
-  return res.status === 0;
-})();
+// real-pi 守卫（tests/fixtures/pi-env.ts）：CI 一律 skip（vendored pi 使
+// pi --version 守卫失真且 CI 无 ~/.pi 配置）；本地要求 node_modules 外的真实 pi
+const hasPi = hasRealPi;
 
 function mkAgentRequest(over: Partial<AgentSpawnRequest> = {}): AgentSpawnRequest {
   const dir = join(tmpRoot, "req-" + Math.random().toString(36).slice(2, 8));

@@ -306,7 +306,17 @@ export function createRpcClient(opts: RpcClientOptions): RpcClient {
       await Promise.race([exitPromise, timer]);
     } catch {
       kill();
-      await exitPromise;
+      // 二级宽限：子进程可能忽略 SIGTERM，超时升级 SIGKILL（不可忽略，最终必然退出）。
+      // 取值与 STOP_GRACE_MS 同值——同一停机预算对 EOF 与 SIGTERM 两级各给一次。
+      const killTimer = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("SIGTERM 宽限超时")), STOP_GRACE_MS),
+      );
+      try {
+        await Promise.race([exitPromise, killTimer]);
+      } catch {
+        if (child.exitCode === null && !child.killed) child.kill("SIGKILL");
+        await exitPromise;
+      }
     }
   }
 

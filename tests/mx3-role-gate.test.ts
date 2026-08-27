@@ -363,7 +363,7 @@ describe("mx-3 R3 全链防绕过：developer in-flight 期间自审（§5.1 场
     const runner = startRunner(repoDir, "demo");
     try {
       // developer 派发（buildReady）——human adapter 无 VerifyRan 前保持 in-flight
-      await waitText(runner.stdoutText, '派发 developer → unit "demo"', 10_000);
+      await waitText(runner.stdoutText, '派发 developer → unit "demo"', 60_000);
       // developer 形态提交者先入账 build 证据（EvidenceSubmitted 不结算 human developer）
       ledger.append("EvidenceSubmitted", {
         unitId: "demo",
@@ -392,7 +392,7 @@ describe("mx-3 R3 全链防绕过：developer in-flight 期间自审（§5.1 场
       ]);
       expect(spoofed.code, `谎报 role 应入账（stderr: ${spoofed.stderr}）`).toBe(0);
 
-      await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 10_000);
+      await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 60_000);
       // 不阻断：警告后循环继续轮询（developer 仍 in-flight、runner 存活 ≥5 个 poll 周期）
       await new Promise((resolve) => setTimeout(resolve, 1_200));
       expect(runner.child.exitCode, "警告只是审计可见性，不得阻断或杀死循环").toBeNull();

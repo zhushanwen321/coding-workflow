@@ -14,16 +14,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createRpcClient } from "../src/runner/spawn/rpc-client.js";
+import { hasRealPi, hasRealPiLlm } from "./fixtures/pi-env.js";
 
 const PI_BIN = "pi";
 
-function hasLlmCredential(): boolean {
-  // 实测（2026-08-24）：auth.json 存在非默认 provider 的 key 时 pi -p 仍报
-  // "No API key found for the selected model"——凭据按选中 model 匹配而非按
-  // 存在性，静态检测（env keys / auth.json 非空）必然误判。改为显式 opt-in：
-  // CW_TEST_PI_LLM=1 时跑真实 LLM 链，缺省确定性跳过。
-  return process.env.CW_TEST_PI_LLM === "1";
-}
+// LLM 链守卫（tests/fixtures/pi-env.ts 的 hasRealPiLlm）：CI 一律 skip；本地需
+// 真实 pi（非 node_modules vendored 副本）+ CW_TEST_PI_LLM=1 显式 opt-in——实测
+// 凭据按选中 model 匹配而非按存在性，静态检测必误判。
 
 function tmpSessionDir(name: string): string {
   return mkdtempSync(join(tmpdir(), `i1a-${name}-`));
@@ -47,7 +44,7 @@ function spawnPiClient(sessionDir: string, onEvent?: (e: Record<string, unknown>
   });
 }
 
-describe("i1a rpc-client: 真实 pi 握手 / 生命周期（不依赖 LLM）", () => {
+describe.skipIf(!hasRealPi)("i1a rpc-client: 真实 pi 握手 / 生命周期（不依赖 LLM）", () => {
   it(
     "spawn → get_state 握手返回 sessionId/sessionFile → stop 优雅退出",
     async () => {
@@ -122,7 +119,7 @@ describe("i1a rpc-client: 真实 pi 握手 / 生命周期（不依赖 LLM）", (
   );
 });
 
-describe.skipIf(!hasLlmCredential())(
+describe.skipIf(!hasRealPiLlm)(
   "i1a rpc-client: LLM 链（prompt → waitForIdle → followUp）",
   () => {
     it(

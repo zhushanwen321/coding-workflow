@@ -182,7 +182,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw review submit --unit <id> --verdict-kind spec-review\|exec-review --verdict pass\|fail [--comment <text>] [--evidence-refs <runId,...>] [--role reviewer\|designer\|developer\|human]` | 写 | 提交审查结论（append-only，一次写入不可改；exec-review 必填 `--evidence-refs`，合法集 = 该 unit 已入账 EvidenceSubmitted ∪ VerifyRan 的 runId；spec-review verdict 必填 `--role reviewer`——缺/错 exit 1 拒收，mx-3 入账层强校验；exec-review 的 `--role` 为可选自报字段——审计载体非信任边界） |
 | `cw verify --unit <id> [--timeout-ms <n>] [--no-red-phase]` | 写 | 干净重跑验证（三道 gate，红阶段默认执行；exit 0 全过 / 1 有 fail / 2 环境错误） |
 | `cw run --root <id> [--spawn human\|pi] [--poll-ms <n>] [--max-idle-ms <n>] [--max-concurrency <n>] [--reviewer-model <m>] [--max-build-attempts <n>] [--spawn-timeout-ms <毫秒>]` | 跑 | runner 调度循环入口（`--reviewer-model` 配置 reviewer 异源模型，优先于 `CW_REVIEWER_MODEL`） |
-| `cw setup-agent-dir [--agent-dir <路径>] [--ask-user-source <src>] [--ask-user-path <路径>] [--pi-bin <路径>] [--timeout-ms <n>] [--skip-probe]` | 写 | 受控 agentDir 安装准备（spawnSync 透传插件包 `@zhushanwen/pi-coding-workflow-extension` 的 installer：装 ask-user 扩展清单 + manifest.json + 启动探针；installer 未找到 = exit 2 环境错误） |
+| `cw setup-agent-dir [--agent-dir <路径>] [--ask-user-source <src>] [--ask-user-path <路径>] [--pi-bin <路径>] [--timeout-ms <n>] [--skip-probe]` | 写 | 受控 agentDir 安装准备（spawnSync 透传插件包 `@zhushanwen/pi-coding-workflow` 的 installer：装 ask-user 扩展清单 + manifest.json + 启动探针；installer 未找到 = exit 2 环境错误） |
 | `cw status [--unit <id>] [--json]` | 只读 | 状态视图（fold 投影） |
 | `cw frontier [--json]` | 只读 | 就绪集合（十四组，见上 frontier 小节） |
 | `cw tree` | 只读 | 分解树 |

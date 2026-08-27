@@ -163,3 +163,4 @@ vite.config.ts.timestamp-*
 
 # batch-tracer skill 输出（代码分析报告，本地产物不入库）
 .tracers/
+.fallow/

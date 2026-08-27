@@ -15,9 +15,14 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { staticSubagentApiReady } from "./env-guard.js";
 import { registerCwRunner, type CwRunnerController, type LaunchOptions } from "../index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-api.js";
 import { mirrorRunnerLockPath } from "../runner-lock.js";
+
+// 环境守卫（同 entry.test.ts）：四用例均走 /cw start 链路，依赖 subagent-workflow 编程 API
+// （createSpawnManager，未发布 npm）——纯 registry 环境跳过，本地开发态自动恢复。
+const subagentApiReady = staticSubagentApiReady();
 
 interface UiCall {
   kind: "notify" | "setWidget";
@@ -105,7 +110,7 @@ function makeHangingLaunch(onLaunch?: (opts: LaunchOptions, release: (code: numb
 }
 
 describe("P0-2/P1-3：setWidget 实签名 + notify level 枚举", () => {
-  it("onEvent 接线：setWidget 收 (\"cw-runner\", string[])；stopped notify 用 \"warning\"", async () => {
+  it.skipIf(!subagentApiReady)("onEvent 接线：setWidget 收 (\"cw-runner\", string[])；stopped notify 用 \"warning\"", async () => {
     const host = makePi();
     const { launch, launches, releaseLast } = makeHangingLaunch();
     const ctl = registerCwRunner(host.pi, {
@@ -136,7 +141,7 @@ describe("P0-2/P1-3：setWidget 实签名 + notify level 枚举", () => {
 });
 
 describe("P0-1：onStopRequest 编程停止通道", () => {
-  it("/cw stop 调交付的 stop 函数而非 SIGINT，且打印已停止提示", async () => {
+  it.skipIf(!subagentApiReady)("/cw stop 调交付的 stop 函数而非 SIGINT，且打印已停止提示", async () => {
     const host = makePi();
     const stopCalls: number[] = [];
     let signalStops = 0;
@@ -166,7 +171,7 @@ describe("P0-1：onStopRequest 编程停止通道", () => {
 });
 
 describe("P1-4：stop → start → stop 序列", () => {
-  it("memoization 在 start 复位——第二次 stop 真收尾（signalStop 计 2 次）", async () => {
+  it.skipIf(!subagentApiReady)("memoization 在 start 复位——第二次 stop 真收尾（signalStop 计 2 次）", async () => {
     const host = makePi();
     let signalStops = 0;
     const { launch, releaseLast } = makeHangingLaunch();
@@ -192,7 +197,7 @@ describe("P1-4：stop → start → stop 序列", () => {
 });
 
 describe("P2-7：兜底 unlink 的 pid 比对", () => {
-  it("锁内 pid 为活他进程 → 保留；死他进程 pid / 本进程 pid → 清除", async () => {
+  it.skipIf(!subagentApiReady)("锁内 pid 为活他进程 → 保留；死他进程 pid / 本进程 pid → 清除", async () => {
     const lockPath = mirrorRunnerLockPath(home, cwdTmp);
     await mkdir(join(lockPath, ".."), { recursive: true });
     const writeLock = async (pid: number): Promise<void> => {

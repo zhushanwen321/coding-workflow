@@ -98,6 +98,24 @@ describe("i1c：ReflectionRan 事件与 fold 投影", () => {
     expect(proj.totalEvents).toBe(3);
   });
 
+  it("占位 ReflectionRan（placeholder: true）持久化标记且不改变 reflectionPending 派生（占位与真实反思同权重放行）", () => {
+    const { ledger } = makeLedger("placeholder");
+    ledger.append("UnitCreated", { unitId: "u1", parentId: null, briefRef: "docs/brief.md" });
+    ledger.append("SpecSubmitted", specPayload("u1", "hash-v1"));
+    ledger.append("ReflectionRan", {
+      unitId: "u1",
+      specHash: "hash-v1",
+      round: 1,
+      placeholder: true,
+    });
+
+    const unit = fold(ledger.readAll()).units.get("u1");
+    // 机器可判别标记随事件持久化（审计载体），投影含该字段
+    expect(unit?.reflections[0]).toMatchObject({ specHash: "hash-v1", placeholder: true });
+    // 占位与真实反思在派生上行为一致：消掉 reflectionPending
+    expect(computeFrontier(fold(ledger.readAll())).reflectionPending).toEqual([]);
+  });
+
   it("未知事件类型 default 分支错误消息含升级指引", () => {
     const bogus = {
       seq: 2,
