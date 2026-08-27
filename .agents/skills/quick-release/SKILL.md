@@ -190,7 +190,7 @@ esac
 
 ## 关键约束 [MANDATORY]
 
-1. **硬门槛不可绕过**：`src/` 或插件包 `pi-coding-workflow-extension/` 有改动必须拒绝转 pr-cr-fix + merge，不允许"这次先走 quick-release"
+1. **硬门槛不可绕过**：`src/` 或插件包 `pi-coding-workflow-extension/` 有改动必须拒绝，并转 pr-cr-fix + merge，不允许"这次先走 quick-release"
 2. **改动落源不可跳过**：symlink 目标（npm 安装版）里的改动，发布前必须同步回仓库源并 diff 验证零差异
 3. **合并必须 merge commit**：`gh pr merge --merge`，禁止 squash/rebase（保护 main 历史，全局规范）
 4. **bump 在 main worktree**：版本号、tag、push 只在 main worktree 执行（`resolve-main` 定位），不在 feature worktree
@@ -202,7 +202,7 @@ esac
 
 | 失败 | 动作 |
 |------|------|
-| 硬门槛不满足（src/ 有改动） | 停手，转 pr-cr-fix（review+PR）+ merge（bump+发布） |
+| 硬门槛不满足（`src/` 或插件包 `pi-coding-workflow-extension/` 有改动） | 停手，转 pr-cr-fix（review+PR）+ merge（bump+发布） |
 | 阶段 1 diff 验证有差异 | 检查复制遗漏的文件，重新同步直到 `diff -rq` 无输出 |
 | 阶段 2 自查发现问题 | 修复后重跑一致性 grep，全绿再进阶段 3 |
 | push 冲突 | `git fetch && git rebase` 后重试 push |

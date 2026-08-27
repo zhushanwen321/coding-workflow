@@ -37,7 +37,7 @@ bash .agents/skills/dev-link/use-npm.sh 0.0.1     # 指定版本
 bash .agents/skills/dev-link/use-link.sh
 ```
 
-切换后脚本会打印当前 `cw` 的指向，确认结果。
+切换后：cw 在当前 PATH 时打印其指向，确认结果；cw 不在 PATH 时（如新装 bin 未进入当前 shell），stdout 仍报成功、stderr 出警告并附 `npm ls -g @zhushanwen/coding-workflow` 验证指引，脚本 exit 0（安装本身已完成，不以 PATH 缺失伪装失败）。
 
 ## 多 worktree 场景
 

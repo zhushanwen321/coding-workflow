@@ -396,8 +396,8 @@ bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 1. 动态定位 workspace root（向上找 `.bare/`）
 2. 检查分支已合并到 `origin/<main>`（未合并 → 拒绝删除，需 `--force`）
 3. 检查 worktree 无未提交变更
-4. 恢复指向被删 worktree 的全局 cw devlink：仅当 `$(npm root -g)/@zhushanwen/coding-workflow` symlink 指向本次被删的 worktree 时，`npm unlink -g` 后重装 `npm i -g @zhushanwen/coding-workflow@latest`（切回 npm 正式版即最新版；安装失败中止清理保住现场，不误伤指向其他 worktree 的并行 dev link）。全局包既非 dev link 也非 npm 安装目录时（上次恢复中断的残留态或未安装），出声警告并中止清理
-5. 清理指向被删 worktree 的 cw-cli skill symlink（切回 npm 版或删除；与第 4 步同在删除 worktree 之前执行——比对用双侧 `readlink -f` 物理归一化，删除后 target 父路径不存在会导致 `-f` 解析失效）
+4. 恢复指向被删 worktree 的全局 cw devlink：仅当 `$(npm root -g)/@zhushanwen/coding-workflow` symlink 指向本次被删的 worktree 时，`npm unlink -g` 后重装 `npm i -g @zhushanwen/coding-workflow@latest`（切回 npm 正式版即最新版；安装失败中止清理保住现场，不误伤指向其他 worktree 的并行 dev link）。全局包既非 dev link 也非 npm 安装目录时（上次恢复中断的残留态或未安装），出声警告并中止清理；**dev link 悬空（指向目标已不存在，cw 已不可用）时同样出声警告 + 给出恢复命令并中止**（该中止不受 `--force` 影响）
+5. 清理指向被删 worktree 的 cw-cli skill symlink（切回 npm 版或删除；与第 4 步同在删除 worktree 之前执行——比对用双侧 `readlink -f` 物理归一化，删除后 target 父路径不存在会导致 `-f` 解析失效）。**悬空的 skill symlink 也一并清理**（出声警告后删除，流程继续）
 6. 删除 feature worktree 目录 + 本地分支
 7. **只同步 main worktree**（`sync-main`：fetch + merge --ff-only origin/main），**不遍历其他 feature worktree**
 
@@ -408,7 +408,7 @@ bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 | 参数 | 说明 |
 |------|------|
 | `<branch-name>` | 要清理的分支名，`/` 自动转 `-` 作为目录名 |
-| `--force` | 跳过合并检查 + 未提交检查，强制删除（用 `git worktree remove --force` + `branch -D`） |
+| `--force` | 跳过合并检查 + 未提交检查，强制删除（用 `git worktree remove --force` + `branch -D`）；不豁免第 4 步的 devlink 悬空/残留态中止（保现场优先） |
 
 冲突处理：`sync-main` 的 ff-only 失败不阻塞清理（main 有独立 commit 的罕见情况），脚本只警告并继续。
 
