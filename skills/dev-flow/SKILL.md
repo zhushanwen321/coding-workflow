@@ -31,7 +31,7 @@ description: >-
 | 2 开发循环 | 各单元 committed | 属地 diff 干净 + 测试真实跑绿 |
 | 3 一致性审查 | 合理/不合理偏差清单 | 每条结论带 file:line 证据 |
 | 4 修复循环 | unreasonable 与 doc_errors 清零 | 定向复审（只审影响面）收敛 |
-| 5 双级验收 | 全量测试绿 + §8 场景逐行签收 | Gate A 与 Gate B 双绿 |
+| 5 双级验收 | 全量测试绿 + 验收场景表逐行签收 | Gate A 与 Gate B 双绿 |
 
 ## 路由
 
