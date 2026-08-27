@@ -256,7 +256,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 - **效果**：G1 先行兑现；w1 的经验（scope 声明、check 命名）成为 w2 的模板。
 
 **D9：接入含仓外 CLI 依赖守卫——每项目阶段 0 加 cw 存在性/版本前置检查，失败出声转人工，禁止静默回退（选定）**
-- **采用**：接入后各项目验证步骤依赖仓外共享物 `cw`（结构上与 F2 同类——仓外路径，仓外物变动即坏）。每项目接入时在 merge skill **阶段 0** 与 pr-cr-fix **阶段 0（第一棒，同样依赖）**两处加守卫（一致性审查 C3 补记第一棒）：`command -v cw` 存在性 + **能力检查 `cw --help 2>&1 | grep -q "gate wrap"`**（一致性审查 C2 修正：版本阈值 ≥2.2.0 在两个真实状态下都判反——npm 2.2.0 实无 gate 域、dev-link 2.1.0 实有，**版本号与能力不对齐，能力探测是唯一可判真形态**），失败时 stderr 出声转人工并给恢复动作（npm 安装含 gate 域版本 / 仓工作区内 use-link.sh 切本地构建）。先例对齐：pr-cr-fix 对 fallow 已有存在性检查 + 安装指引的守卫模式。
+- **采用**：接入后各项目验证步骤依赖仓外共享物 `cw`（结构上与 F2 同类——仓外路径，仓外物变动即坏）。每项目接入时在 merge skill 与 pr-cr-fix 的 **SKILL.md 指令段 + 执行脚本层双落点**加守卫（w2 实态四处：脚本层是真执行点，agent 漏跑 SKILL.md 块时兜底；exit code 约定：SKILL.md 演示块 exit 1 / shell 脚本 exit 2——脚本层与 wrap 环境错误语义对齐）：`command -v cw` 存在性 + **能力检查 `cw --help 2>&1 | grep -q "gate wrap"`**（一致性审查 C2 修正：版本阈值 ≥2.2.0 在两个真实状态下都判反——npm 2.2.0 实无 gate 域、dev-link 2.1.0 实有，**版本号与能力不对齐，能力探测是唯一可判真形态**），失败时 stderr 出声转人工并给恢复动作（npm 安装含 gate 域版本 / 仓工作区内 use-link.sh 切本地构建）。先例对齐：pr-cr-fix 对 fallow 已有存在性检查 + 安装指引的守卫模式。
 - **被否**：静默回退裸跑——「验证是否入账」变得不可判定，破坏记账闭合的可信前提（比缺账本更糟的是账本时有时无）；不设守卫——cw 未安装/dev-link 切旧版时 merge 阶段直接 ENOENT 崩在中途。
 - **证据**：F2 结构同类性（§3.2 方案 C 被否论证的诚实对账：A 引入的仓外依赖靠 npm semver + 本守卫缓解）；pr-cr-fix skill 的 fallow 守卫先例。
 - **效果**：仓外依赖的风险面有显式防线；§3.2 对 C 的否决论证与 A 自身的依赖结构对账成立。
@@ -283,7 +283,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 |---|----------------|------|---------|
 | A1（G1，w1，**档 1 形态**） | cw 仓真实 dogfood：pr-cr-fix → merge 全流程 | 在 cw 仓开真实 feature：① pr-cr-fix 走到 Gate-3a（wrap 化后）；② 连续走 merge skill 到阶段 1（散装 wrap）；③ 对照 D8-canary | ① Gate-3a 各 check miss 真实执行且入账；② merge 阶段 1 四件套对同内容**全 hit**（输出 [hit] + 0 执行耗时），`cw gate query --json` 可查全部条目；③ canary 裸跑 lint 与 wrap lint 判定一致 |
 | A2（G2，w2） | xyz-agent 跨阶段零重跑 | xyz-agent 仓开真实 feature：① pr-cr-fix 阶段 1.1 static gate（wrap 化）；② merge 阶段 pre-merge-check | ② 对同内容全 hit；故意改 scope 内一个文件后重验 → 该 check miss 真实重跑（失效方向正确） |
-| A3（G5，w2——迁移对象全在 xyz-agent 系，w1 的 cw 无 marker 系统无对象） | 产物格式统一（双轨迁移） | 改造后 skill 的消费点 | ① 新增消费点全部读 `cw gate query --json`（grep 验证无新增 marker 解析）；② w2 交出存量消费方清单（pr-status.sh / `--test-result` 前置校验 / review 维度 B）并完成切换或给出切换波次；③ marker 停写列入收尾步（双轨判据对齐 D1） |
+| A3（G5，w2——迁移对象全在 xyz-agent 系，w1 的 cw 无 marker 系统无对象） | 产物格式统一（双轨迁移） | 改造后 skill 的消费点 | ① 新增消费点全部读 `cw gate query --json`（grep 验证无新增 marker 解析）；② w2 交出存量消费方清单并分类处置：**状态类**（pr-status.sh 只读 marker、`--test-result` 前置校验）→ 切 `cw gate query --json`；**产物明细类**（review 维度 B 读 metrics.json 明细做 review 输入）→ 无 query 可切（账本只有 pass 事实无 metrics 数据），处置 = 时序论证（hit 仅发生于无改动重跑，消费时点前必有 miss 重产）+ 记档；③ marker 停写列入收尾步（双轨判据对齐 D1） |
 | A4（G4，档 2 项目，**单次验证会话内**） | 断点续跑（含多流程独立进度） | llm-simple-router（或 cw）声明 manifest（验证步骤清单），`cw pipeline run` 跑到中途中断（Ctrl-C），**同一次验证会话内**重跑同命令续接；zcode 双 manifest 变体：`.cw-pipeline.merge.json` 与 `.cw-pipeline.release.json` 各自中断后续接 | 已 pass 步骤不重做（viaCache/投影跳过）；`cw pipeline status` 三态正确；双 manifest 变体两 pipeline 身份进度互不串。**负面断言（MF-1）**：第二次全新验证会话（新 HEAD）直接跑 `pipeline run` 必须先确认投影状态——同 manifestSha256 下旧 pass 步骤会被跳过，正确用法是新会话换 manifest 文件名或接受跳过语义（D2 档位隔离语义） |
 | A5（G3，w4） | Python 工具链同构接入 | dag-executor（悬空修复后）merge 验证序列 wrap 化：ruff / pytest 两条 wrap | miss→hit 行为与 Node 项目完全一致（同一套命令契约，无工具链特判分支） |
 | A6（G6，负面） | 副作用不入账 | 任一接入项目走完整发布流程（含 gh pr merge / npm version / deploy） | gate-events.log 中**只有** GateCheckRan/GateCacheHit/PipelineStepRan 三类事件，无任何发布动作条目；发布失败回滚（如 cw 阶段 4.5）不受账本状态影响 |
@@ -298,7 +298,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 | 波次 | 内容 | justification | 验收锚 |
 |------|------|---------------|--------|
 | w1 | cw 仓自身接入（**纯档 1**，档 2 不进 w1——D2 档位隔离语义下绑定 merge 常驻入口 = 第二次发布假 pass）：merge skill 阶段 1 四件套 + pr-cr-fix **PR 提交协议静态三件套**（仅阶段 1 首次开 PR 执行；3c 明确跳过 Step 1 不重复验证；Gate-1 本体是 PR URL 校验不可 wrap）/Gate-1.5（metrics）/Gate-3a（四件套+metrics 终值）换 wrap；**worker 静态自检豁免 wrap**（一致性审查 C8 记档：隔离 worktree = 不同 cwd 不同账本，跨账本无缓存收益，且是快速预检非主 gate——w2 模板化时同样豁免）；探针 GP-r1/GP-r2；D8-canary（不 wrap 的 lint 对照）；阶段 0 加 D9 守卫（merge 与 pr-cr-fix 两处）；可选：D10 ci-judge 接阶段 4 失败分支 | 最低成本的设计自证（cw 既是实现者又是消费者）；cw 无 PR CI，重复验证是现成 F1 实例；w1 产出的 scope 声明清单与 check 命名成为后续波的模板 | A1、A3、GP-r1/2、A4（若档 2） |
-| w2 | xyz-agent 接入（原 rp-1 主体）：`scripts/pr-pre-merge.sh` 的 run_step 结构逐条 wrap 化（typecheck×3 / lint / test×3）；merge skill 的 pre-merge-check.sh 同步；coverage-gate.py 外层单 check 包装（D3）；metrics-gate.py wrap 化；**legacy 产物消费方适配**（D1 清单：`--test-result` 前置校验改查 `cw gate query`、review 维度 B 的 metrics.json 读取路径、hit 路径 legacy 产物不重产的消费点核对） | 设计文档 A1b 预定现场；静态 gate（typecheck/lint）是缓存收益最高的 check（跑得慢、改动少）；coverage 是最难一块，放第二波有 w1 经验垫底 | A2、A3 |
+| w2 | xyz-agent 接入（原 rp-1 主体）：`scripts/pr-pre-merge.sh` 的 run_step 结构逐条 wrap 化（typecheck×3 / lint / test×3 / **build**）；merge skill 的 pre-merge-check.sh 同步（**merge 侧 check 集是 pr 侧子集**——通用脚本 find -maxdepth 2 所限，跨阶段 hit 面以交集为准：lint / typecheck-extensions / build；runtime/renderer 的重复消除靠 pr-cr-fix 内部 1.1↔3a 同脚本 hit 承接）；锚点 = **Gate-1.5/1.6/3a 命令替换**（Gate-1a 经 pr-pre-merge.sh 脚本内 wrap 间接覆盖，自身无命令可替换）；coverage-gate.py 外层单 check 包装（D3，**固定 --extra-packages 扩展形态单条**——缓存键不含 command，保留双形态会让「无 extra 的 pass」被「带 extra 调用」hit 复用即 shared 下游传播静默漏验，固定最大集是安全方向；代价 = 无 shared 改动的 miss 亦多跑 runtime/renderer coverage）；metrics-gate.py wrap 化；**内层 base 随 wrap 化统一 origin/main**（R2）；**legacy 产物消费方适配**（D1 清单：`--test-result` 前置校验改查 `cw gate query --json` + node 判 passEntries、review 维度 B 的 metrics.json 读取路径、hit 路径 legacy 产物不重产的消费点核对） | 设计文档 A1b 预定现场；静态 gate（typecheck/lint）是缓存收益最高的 check（跑得慢、改动少）；coverage 是最难一块，放第二波有 w1 经验垫底 | A2、A3 |
 | w3 | xyz-pi-extensions（Gate-3a 一道，改造面最小）+ zcode-plugin（quality-gate.js 单 check 包装，D4；**档 2 多 manifest 试点**——调用契约：双 manifest 文件随仓常驻作流程声明，`pipeline run` 仅在单次验证会话内手跑续接，**不绑定每次 merge 的常驻入口**，D2 档位隔离语义） | 两项目接入面中等且形态互补（一个纯终验、一个合一脚本+解耦流程），验证「接入成本与项目差异成正比」的承诺与多流程区分机制 | A2 变体（跨阶段 hit，档 1）、A4 双 manifest 变体（会话内）、A6 |
 | w4 | Python 三项目：先修复悬空（重写为自包含，D7）→ ruff/pytest wrap 接入（GP-r3） | 修复先行解耦（D7）；Python 工具链接入验证 G3（工具链无关承诺） | A7、A5、A6 |
 
@@ -309,6 +309,8 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 - w2 锚点：xyz-agent `scripts/pr-pre-merge.sh`（run_step 内命令替换）、`.agents/skills/merge/scripts/pre-merge-check.sh`（同步）、pr-cr-fix SKILL.md（Gate-1a/3a 命令替换）。
 - 不改：cw 引擎全部源码（`src/gate/` / `src/pipeline/` 冻结）；各 skill 的 review 维度/执行通道/调档机制段落。
 
+**w2 一致性审查教训补记（scope 前缀漂移）**：动态推导的 scope（如 `$(dirname)` 产出 `./extensions/`）与字面声明的 `extensions/` 在缓存键层面是**不同键**（`JSON.stringify` 原序原样，无路径归一化）——跨脚本共享 check 的 scope 必须归一化到无 `./` 前缀形态（U2 修复：`${dir#./}/`）。D5-⑥ 的一致性 grep 因此须覆盖「推导结果」而非仅字面文本。
+
 **新项目接入 checklist（S-7，第 10 个项目剧本）**：① merge skill 阶段 0 加 D9 守卫（cw 存在性/版本）；② 盘点 merge + pr-cr-fix skill 内全部裸跑确定性命令（含脚本内 run_step 形态）；③ 逐 check 过 D5 六条审查（生态等价物自行映射：Rust → Cargo.toml/Cargo.lock、Go → go.mod/go.sum）；④ D5-⑥ 全仓 grep 一处一致性核对（check 名/base/scope 序列）；⑤ 可选档 2 manifest（记住档位隔离语义：会话内续接用，不绑常驻入口）；⑥ D10 ci-judge 接 CI 等待失败分支（有 CI 面的项目）；⑦ A6 负面验证（副作用不入账）。w1 的 cw 接入产出可作为参照实现。
 
 **收尾验收锚（S-8，w4 后独立收尾步，非永久 TODO）**：D1-③ marker 停写的验收判据 = ① 存量消费方清单清零（pr-status.sh / `--test-result` 前置校验 / review 维度 B 全部切 `cw gate query --json`）；② 骨架 `write_result_marker` 调用拆除；③ grep 全仓无 `.review/premerge-result` 新增读取。三判据齐 → 收尾步完成可验收。
@@ -318,7 +320,7 @@ $ cw gate wrap --check lint --base origin/main --scope src/ -- npm run lint
 1. **复合 script 的 exit 语义**（GP-r1）：`npm run check:all` 内部跑两个 tsc 进程，wrap 只看最终 exit——中间步骤失败是否总表现为非零 exit（预期是，但 npm script 的 exit 传递有历史坑）。
 2. **coverage miss 频率与内层增量耗时**（D3 实态修正后）：观测 miss 频率 × changed_packages 增量耗时——若高频 miss 且增量本身耗时长，再评估内层优化（不是按包拆分——该路已被 D3 supersession 关闭）。
 3. **`.review/premerge-result` 的存量消费方**：A3 要求「不再新增产生」，但存量脚本（pr-status.sh 等）读旧格式——迁移期内两格式并存还是一次性切换，w2 实施时按消费方清单定。
-4. **tai-ji ≡ xyz-agent 同体的处理**：同体仓库改一份还是两份——w2 时与用户确认。若两份都改，wrap 行（check 名/scope/base）必须逐字同步，scope 漂移 = 双根因 2 的新 F3 形态；长期应在 xyz-agent 侧收敛后让 tai-ji 整仓重新同步。
+4. **tai-ji ≡ xyz-agent 同体的处理**：w2 已改 xyz-agent 一份，tai-ji 未动（保持开放——合并前需显式确认同步策略）。若两份都改，wrap 行（check 名/scope/base）必须逐字同步，scope 漂移 = 双根因 2 的新 F3 形态；长期应在 xyz-agent 侧收敛后让 tai-ji 整仓重新同步。
 
 5. **账本与产物无界增长（S-6 已知演化项）**：gate-events.log append-only 无清理、gate-artifacts 每次 wrap 各落 report（hit 也复制）。近期量级（事件 ~500B、report 1-2KB）不构成问题；触发条件 = 单仓事件数超阈值或 query/续接 fold 延迟可测退化——届时引入归档/冷藏 + fold 起点快照（append-only 事实不可改写），本波不实施。
 
