@@ -25,7 +25,7 @@ description: >-
 | `resolve-main` | main worktree 路径（不存在则**自动创建**） | 阶段 3 需要进入 main worktree 时 |
 | `sync-main` | 同步 main worktree 到 `origin/<main>` | 阶段 3.1、阶段 6 清理后 |
 
-**main worktree 兜底机制**：`resolve-main` / `sync-main` 发现 main worktree 不存在时，会自动 `fetch origin` + `worktree add` 创建（基于 `origin/<main>`）。创建失败则明确报错退出，绝不 cd 失败后静默在错误目录继续。
+**main worktree 兜底机制**：`resolve-main` / `sync-main` 发现 main worktree 不存在时，会自动 `fetch origin` + `worktree add` 创建——本地 `<main>` 分支已存在时直接检出既有分支（常见于 main worktree 曾被 `worktree remove`、分支留在 bare repo，此时带 `-b` 会报 already exists 失败），不存在时才基于 `origin/<main>` 新建。创建失败则明确报错退出（含按分支存在与否二选一的手动恢复命令），绝不 cd 失败后静默在错误目录继续。
 
 **[设计约束] 只同步 main**：`sync-main` 只在 main worktree 内执行 `fetch + merge --ff-only`，**绝不遍历其他 feature worktree**。feature worktree 的同步是各分支自己的职责，merge 流程不越权触碰。
 
@@ -396,10 +396,10 @@ bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 1. 动态定位 workspace root（向上找 `.bare/`）
 2. 检查分支已合并到 `origin/<main>`（未合并 → 拒绝删除，需 `--force`）
 3. 检查 worktree 无未提交变更
-4. 恢复指向被删 worktree 的全局 cw devlink：仅当 `$(npm root -g)/@zhushanwen/coding-workflow` symlink 指向本次被删的 worktree 时，`npm unlink -g` 后重装 `npm i -g @zhushanwen/coding-workflow@latest`（切回 npm 正式版即最新版；安装失败中止清理保住现场，不误伤指向其他 worktree 的并行 dev link）
-5. 删除 feature worktree 目录 + 本地分支
-6. **只同步 main worktree**（`sync-main`：fetch + merge --ff-only origin/main），**不遍历其他 feature worktree**
-7. 清理指向被删 worktree 的 cw-cli skill symlink（切回 npm 版或删除）
+4. 恢复指向被删 worktree 的全局 cw devlink：仅当 `$(npm root -g)/@zhushanwen/coding-workflow` symlink 指向本次被删的 worktree 时，`npm unlink -g` 后重装 `npm i -g @zhushanwen/coding-workflow@latest`（切回 npm 正式版即最新版；安装失败中止清理保住现场，不误伤指向其他 worktree 的并行 dev link）。全局包既非 dev link 也非 npm 安装目录时（上次恢复中断的残留态或未安装），出声警告并中止清理
+5. 清理指向被删 worktree 的 cw-cli skill symlink（切回 npm 版或删除；与第 4 步同在删除 worktree 之前执行——比对用双侧 `readlink -f` 物理归一化，删除后 target 父路径不存在会导致 `-f` 解析失效）
+6. 删除 feature worktree 目录 + 本地分支
+7. **只同步 main worktree**（`sync-main`：fetch + merge --ff-only origin/main），**不遍历其他 feature worktree**
 
 **与原 remove-worktree 的关键差异**：去掉了"遍历同步所有 feature worktree"的逻辑——那是各分支自己的事，merge 流程不越权。只同步 main，确保本地 main 追上刚合并的远程提交。
 

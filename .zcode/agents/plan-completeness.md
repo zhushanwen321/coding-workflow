@@ -1,5 +1,5 @@
 ---
-description: "spec 声明与交付核对（维度 C）。客观事实核对：spec 入账的验收条目 / contracts / split 声明的内容是否在交付 diff 中真实落地 + 分解树完整性。仅 harness 模式启用（events.log 存在或仓库根有 .cw/ 目录）。"
+description: "spec 声明与交付核对（维度 C）。客观事实核对：spec 入账的验收条目 / contracts / split 声明的内容是否在交付 diff 中真实落地 + 分解树完整性。仅 harness 模式启用（$CW_HOME 下存在本项目根的 events.log 账本）。"
 name: plan-completeness
 ---
 
@@ -21,7 +21,9 @@ name: plan-completeness
 
 **仅 harness 模式启用**：`$CW_HOME/<encoded-cwd>/events.log` 存在（encoded-cwd = cwd
 绝对路径中 `\ / .` 字符替换为 `__`，后接 `-` + 路径 sha256 前 8 位十六进制，
-与 `src/store/project.ts` 的 `encodeCwd` 同源），或仓库根存在 `.cw/` 目录。
+与 `src/store/project.ts` 的 `encodeCwd` 同源；探测顺序 = review-context.sh：
+`CW_PROJECT_DIR` 环境变量 → git 结构推导的主仓根（worktree 场景账本 key 是主仓根
+而非 worktree 根）→ git_root 自身）。
 standalone（无账本上下文）时本维度被裁掉，无核对对象。
 
 ## 数据来源

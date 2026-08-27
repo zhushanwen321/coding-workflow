@@ -25,20 +25,49 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
-# ── 2. harness_mode：检测 cw 工作流上下文（events.log 事件账本）──
-#    检测 $CW_HOME（默认 ~/.cw）下是否有当前 git_root 的事件账本，或仓库根有 .cw/
+# ── 2. harness_mode：检测 cw 2.0 工作流上下文（events.log 事件账本）──
+#    2.0 数据全在 $CW_HOME（默认 ~/.cw），引擎无 repo-local 数据目录；账本 key 是
+#    主仓根而非 worktree 根（runner spawn 的每条 cw 命令内联 CW_PROJECT_DIR="<主仓根>"，
+#    见 src/runner/spawn/human.ts）。探测候选序列（任一命中 → harness）：
+#      ① CW_PROJECT_DIR env：存在时最优先，它就是账本 key 的权威来源
+#      ② 主仓根：由 git 结构推导——worktree 布局下 --git-common-dir 指向主仓
+#        .git/.bare（如 <workspace>/.bare），其父目录即主仓根；普通布局推导结果
+#        = GIT_ROOT 本身
+#      ③ GIT_ROOT 自身：兼容直接在主仓根执行的非 worktree 普通布局
 CW_HOME="${CW_HOME:-$HOME/.cw}"
-# encodeCwd 规则（与 src/store/project.ts 的 2.0 实态完全同构）：前缀把 / \ . 三字符
-# 逐一替换为 __（点号也编码，防 cwd="." 编码成特殊目录名逃逸 CW_HOME）；后缀拼
-# sha256(cwd 原文) 前 8 位小写 hex 防碰撞（纯替换是多对一映射），连接符 -。
-# TS 原型：encodeCwd = cwd.replace(/[\\/.]/g, "__") + "-" + sha256(cwd).digest("hex").slice(0, 8)
-# bash 无单步等价写法：bracket 内连写两个反斜杠的形态会整段失效（实测），拆两段逐字符替换
-READABLE_CWD="${GIT_ROOT//[\/.]/__}"
-READABLE_CWD="${READABLE_CWD//\\/__}"
-ENCODED_CWD="${READABLE_CWD}-$(printf '%s' "$GIT_ROOT" | shasum -a 256 | cut -c1-8)"
-LEDGER_FILE="$CW_HOME/$ENCODED_CWD/events.log"
 
-if [ -f "$LEDGER_FILE" ] || [ -d "$GIT_ROOT/.cw" ]; then
+encode_cwd() {
+  # encodeCwd 规则（与 src/store/project.ts 的 2.0 实态完全同构）：前缀把 / \ . 三字符
+  # 逐一替换为 __（点号也编码，防 cwd="." 编码成特殊目录名逃逸 CW_HOME）；后缀拼
+  # sha256(cwd 原文) 前 8 位小写 hex 防碰撞（纯替换是多对一映射），连接符 -。
+  # TS 原型：encodeCwd = cwd.replace(/[\\/.]/g, "__") + "-" + sha256(cwd).digest("hex").slice(0, 8)
+  # bash 无单步等价写法：bracket 内连写两个反斜杠的形态会整段失效（实测），拆两段逐字符替换
+  local readable="${1//[\/.]/__}"
+  readable="${readable//\\/__}"
+  printf '%s-%s' "$readable" "$(printf '%s' "$1" | shasum -a 256 | cut -c1-8)"
+}
+
+ledger_exists() {
+  # $1 = 候选项目根；非空且 $CW_HOME 下其编码目录含 events.log 判真
+  [ -n "$1" ] || return 1
+  [ -f "$CW_HOME/$(encode_cwd "$1")/events.log" ]
+}
+
+# 主仓根推导：--git-common-dir 的父目录。相对路径输出（普通仓的 ".git"）锚定脚本
+# 运行目录解析；父目录用 pwd -P 物理化，与 --show-toplevel 的规范化形态一致
+MAIN_ROOT=""
+COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [ -n "$COMMON_DIR" ]; then
+  case "$COMMON_DIR" in
+    /*) ;;
+    *) COMMON_DIR="$PWD/$COMMON_DIR" ;;
+  esac
+  MAIN_ROOT="$(cd "$(dirname "$COMMON_DIR")" 2>/dev/null && pwd -P || true)"
+fi
+
+if ledger_exists "${CW_PROJECT_DIR:-}"; then
+  HARNESS_MODE="harness"
+elif ledger_exists "$MAIN_ROOT" || ledger_exists "$GIT_ROOT"; then
   HARNESS_MODE="harness"
 else
   HARNESS_MODE="standalone"

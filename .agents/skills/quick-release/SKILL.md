@@ -6,8 +6,9 @@ description: >-
   触发词："快速发布"、"直接发布"、"直接走完"、"quick release"、"简单改动发布"、
   "PR + merge + 发布走完"、"patch version 直接发布"。
   仅 coding-workflow worktree；仅限 markdown/skill/docs/CHANGELOG/版本号类文件改动
-  （src/ 有改动必须拒绝，转 pr-cr-fix + merge）；patch 默认，minor/major 需用户
-  显式说明。不自创 git 命令，复用 merge-helpers.sh 与 pr-cr-fix 的 PR 提交协议。
+  （src/ 或插件包 pi-coding-workflow-extension/ 下有改动必须拒绝，转 pr-cr-fix + merge）；
+  patch 默认，minor/major 需用户显式说明。不自创 git 命令，复用 merge-helpers.sh
+  与 pr-cr-fix 的 PR 提交协议。
 ---
 
 # Quick-Release — coding-workflow 快速发布流水线
@@ -21,10 +22,11 @@ pr-cr-fix + merge 的**轻量快车道**：只服务"简单改动直接发布"�
 | 改动范围 | 限 markdown / skill / docs / CHANGELOG / 版本号类文件 |
 | **src/ 有改动** | **拒绝走本 skill**，转 pr-cr-fix（review + PR）+ merge（发布）完整流程 |
 | **插件包目录有改动** | **拒绝走本 skill**：`pi-coding-workflow-extension/` 下任何改动（含其 README/CHANGELOG——在插件包 files 白名单内、随 ext 包上 npm）随 ext 包经 `ext-v*` tag 发布，quick-release 只打 `v*` tag、永不发 ext 版（纯静默漏发），转 merge skill 完整流程（其 §3.2 有双包归属决策树） |
+| **当前分支 = main**（`git log main..HEAD` 为空） | **拒绝走本 skill**：无分支 commits 可开 PR——`git push origin HEAD` 直推 origin/main 绕过 PR，随后 `gh pr create`（head==base）必败，停在「main 已推、PR 不存在」中间态；在 feature worktree（非 main 分支）内执行 |
 | 版本类型 | patch（默认）；minor/major 需用户显式说明 |
 | 工作位置 | coding-workflow git worktree 中 |
 
-判定方法：`git status --short` + `git diff --stat main...HEAD` 确认改动文件清单，逐个检查路径前缀。有任何 `src/`、`scripts/`、`tests/`、`package.json`（版本号除外）、`pi-coding-workflow-extension/`、配置类文件 → 拒绝。
+判定方法：先跑 `git log main..HEAD`——为空（当前在 main 分支或分支无 commits）→ 拒绝。再用 `git status --short` + `git diff --stat main...HEAD` 确认改动文件清单，逐个检查路径前缀。有任何 `src/`、`scripts/`、`tests/`、`package.json`（版本号除外）、`pi-coding-workflow-extension/`、配置类文件 → 拒绝。
 
 ## 前置：workspace 定位
 
@@ -128,10 +130,15 @@ NEW_VER=$(node -p "require('./package.json').version")
 echo "版本: $CURRENT_VER → $NEW_VER"
 ```
 
-CHANGELOG 追加一行（轻量版，不走 merge 的 git log 提取）：
+CHANGELOG 追加本版段（轻量版，不走 merge 的 git log 提取；header 格式对齐 merge §3.3.5——先写版本 header 再写条目，裸条目会挂进上一版本段；quick-release 只 bump 根包，TAG 恒为 `v` 前缀）：
 
 ```bash
-echo "- <改动一句话> (#$(gh pr view <PR_NUM> --json number -q .number))" >> CHANGELOG.md
+{
+  echo ""
+  echo "## [v$NEW_VER] - $(date +%Y-%m-%d)"
+  echo ""
+  echo "- <改动一句话> (#$(gh pr view <PR_NUM> --json number -q .number))"
+} >> CHANGELOG.md
 ```
 
 commit + tag + push：

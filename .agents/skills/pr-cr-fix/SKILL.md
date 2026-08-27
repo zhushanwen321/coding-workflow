@@ -178,7 +178,7 @@ cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/ski
 | 通用质量（B） | `quality-criteria.md` | 跨语言通用范式：类型安全 / 错误处理 / 边界条件 / 测试有效性（兜底维度，C > A > B） | 总是 |
 | plan 落地（C） | `plan-completeness.md` | plan 声明的 changes/files 落地核对 + plan 设计正确性（客观事实核对） | 仅 harness 模式 |
 
-`review-context.sh` 检测 `$CW_HOME`（默认 `~/.cw`）下是否有当前 git_root 的 store.json、或仓库根有 `.cw/`，据此判定 harness_mode：harness 启用 C，standalone 裁掉只跑 A+B。
+`review-context.sh` 检测 `$CW_HOME`（默认 `~/.cw`）下是否存在当前项目的事件账本 `events.log`（探测顺序：`CW_PROJECT_DIR` 环境变量 → git 结构推导的主仓根 → git_root 自身；2.0 账本 key 是主仓根而非 worktree 根，编码与 `src/store/project.ts` 的 `encodeCwd` 同源），据此判定 harness_mode：harness 启用 C，standalone 裁掉只跑 A+B。
 
 **Step 2.1 分流**（按序判定，命中即停）：
 
@@ -346,7 +346,7 @@ zsw 可达（zcode）          → 走「路径 1：worktree 隔离」（zsub �
 
 | 分组维度 | 规则 | 示例 |
 |---------|------|------|
-| **文件归属** | 同文件/同模块的问题归一组 | `src/rules/state-machine.ts` 的所有问题归一组 |
+| **文件归属** | 同文件/同模块的问题归一组 | `src/core/fold.ts` 的所有问题归一组 |
 | **问题性质** | 同类型的问题可跨文件归一组 | 全部 lint 类问题归一组 |
 
 分组原则：每组 3-10 个问题（太少浪费 subagent，太多单组上下文过载）；同组内文件尽量相邻；precommit 问题（lint/format/typecheck，常涉全仓库）单独成组放最后；相互依赖的问题分同组。输出「分组计划」草稿：每组列出「组名 + 问题清单（含文件:行号 + 描述 + level）」。

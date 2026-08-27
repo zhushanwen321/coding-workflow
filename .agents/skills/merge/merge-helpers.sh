@@ -82,14 +82,30 @@ resolve_main_worktree() {
         # 先确保 bare repo 有最新的 origin/<main>
         # [HISTORICAL] fetch 不带分支名走 refspec，确保 tracking ref 更新
         git -C "$ws_root/.bare" fetch origin 2>&1 | tail -1 >&2
-        if git -C "$ws_root/.bare" worktree add "$ws_root/$main_branch" \
-               -b "$main_branch" "origin/$main_branch" >&2; then
+        # 本地分支可能已存在（常见：main worktree 曾被 worktree remove，本地分支留在
+        # bare repo）。此时 -b 会 fatal: a branch named '<main>' already exists，
+        # 必须分派：分支存在 → 检出既有分支（不带 -b）；不存在 → 从 origin/<main> 新建。
+        local add_ok=false
+        if git -C "$ws_root/.bare" show-ref --verify --quiet "refs/heads/$main_branch"; then
+            if git -C "$ws_root/.bare" worktree add "$ws_root/$main_branch" "$main_branch" >&2; then
+                add_ok=true
+            fi
+        else
+            if git -C "$ws_root/.bare" worktree add "$ws_root/$main_branch" \
+                   -b "$main_branch" "origin/$main_branch" >&2; then
+                add_ok=true
+            fi
+        fi
+        if [[ "$add_ok" == "true" ]]; then
             main_wt="$ws_root/$main_branch"
             echo "✓ 已创建 $main_branch worktree: $main_wt" >&2
         else
             echo "✗ 自动创建 $main_branch worktree 失败。" >&2
-            echo "  请手动执行:" >&2
-            echo "    git -C \"$ws_root/.bare\" worktree add \"$ws_root/$main_branch\" -b $main_branch origin/$main_branch" >&2
+            echo "  请按本地分支是否存在二选一手动执行:" >&2
+            echo "  # refs/heads/$main_branch 已存在（检出既有分支，不带 -b）:" >&2
+            echo "    git -C \"$ws_root/.bare\" worktree add \"$ws_root/$main_branch\" \"$main_branch\"" >&2
+            echo "  # refs/heads/$main_branch 不存在（从 origin/$main_branch 新建）:" >&2
+            echo "    git -C \"$ws_root/.bare\" worktree add \"$ws_root/$main_branch\" -b $main_branch \"origin/$main_branch\"" >&2
             return 1
         fi
     fi

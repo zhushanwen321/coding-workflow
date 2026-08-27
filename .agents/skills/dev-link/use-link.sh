@@ -3,8 +3,12 @@
 set -euo pipefail
 
 PKG="@zhushanwen/coding-workflow"
-# 脚本所在仓库根目录（.agents/skills/dev-link/ 往上三级）
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# 脚本所在仓库根目录（.agents/skills/dev-link/ 往上三级）。
+# 先 readlink -f 解析 symlink 再上三级：本 skill 以 symlink 形态安装在
+# ~/.agents/skills/dev-link（全局 AGENTS.md 的 skill 安装规范），不解析的话
+# REPO_ROOT 会落到用户 HOME 目录，导致先卸载 npm 版、再在错误目录 build 失败。
+SCRIPT_REAL_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$SCRIPT_REAL_PATH")/../../.." && pwd)"
 
 echo "→ 卸载 npm 正式版（如存在）..."
 npm uninstall -g "$PKG" 2>/dev/null || true
