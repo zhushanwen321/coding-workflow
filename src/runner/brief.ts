@@ -34,6 +34,7 @@ import {
 } from "../readonly/frontier.js";
 import { unitStatus } from "../readonly/load.js";
 import { attachmentsDir, evidenceDir, getCwHome } from "../store/project.js";
+import { REPORT_FILE_NAME } from "../verify/run.js";
 import { integrationRecoveryGuidance, readIntegrateReport } from "./integrate.js";
 import type { AgentRole } from "./spawn/types.js";
 import { unitBranchName } from "./worktree.js";
@@ -279,13 +280,60 @@ function isParseErrorReport(value: unknown): value is { parseError: true; reason
 }
 
 /**
- * 同 runId 目录顶层总报告文件名（verify handler 落盘口径：reportWithRedPhase
- * 重写后的 report.json，redPhase 节在此不在 <id>.report.json——设计 D5 对抗审查
- * 钉死）。verify.ts 与 verify/run.ts 各自私有同名常量 REPORT_FILE_NAME 未导出
- * （verify/run.ts 非本 unit 领地），此处按 reportStemOf 先例镜像声明，一致性
- * 由 fa3 测试钉住。
+ * parse-failed 信号的逐条事实读取（fa4 R1 从 contractFailFactsOf 拆出，Gate-1.5
+ * CRAP 靶降复杂度，行为零变化）：<id>.report.json 顶层 {parseError, reason}
+ * 守卫后取 reason；产物不可读 / 非法 JSON → 降级 reason=null + reportPath 兑底。
  */
-const VERIFY_REPORT_FILE_NAME = "report.json";
+function parseFailedFactsOf(
+  runDir: string,
+  runId: string,
+  ids: readonly string[],
+): ContractFailFact[] {
+  const facts: ContractFailFact[] = [];
+  for (const id of ids) {
+    const reportPath = join(runDir, `${reportStemOf(id)}.report.json`);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
+    } catch {
+      parsed = null; // 产物不可读 / 非法 JSON → 降级为 id + 产物路径（事实行兑底）
+    }
+    const reason = isParseErrorReport(parsed) ? parsed.reason : null;
+    facts.push({ acceptanceId: id, runId, source: "parse-failed", reason, reportPath });
+  }
+  return facts;
+}
+
+/**
+ * non-discriminative 信号的逐条事实读取（fa4 R1 同款拆出）：同 runId 目录顶层
+ * report.json 的 redPhase 节按 id 取 discriminative === false 且非 skipped 条目的
+ * reason；产物不可读 → 同款降级。
+ */
+function nondiscriminativeFactsOf(
+  runDir: string,
+  runId: string,
+  ids: readonly string[],
+): ContractFailFact[] {
+  const facts: ContractFailFact[] = [];
+  for (const id of ids) {
+    const reportPath = join(runDir, REPORT_FILE_NAME);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
+    } catch {
+      parsed = null; // 同款降级：产物不可读 / 非法 JSON
+    }
+    const reason = redPhaseReasonOf(parsed, id);
+    facts.push({
+      acceptanceId: id,
+      runId,
+      source: "non-discriminative",
+      reason,
+      reportPath,
+    });
+  }
+  return facts;
+}
 
 /**
  * report.json redPhase 节里无区分力条目的机器原文提取（fa-3 D5）：守卫
@@ -342,34 +390,13 @@ function contractFailFactsOf(
       return;
     }
     const runDir = evidenceDir(getCwHome(), projectCwd, unit.unitId, run.runId);
-    for (const id of run.parseFailedAcceptanceIds ?? []) {
-      const reportPath = join(runDir, `${reportStemOf(id)}.report.json`);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
-      } catch {
-        parsed = null; // 产物不可读 / 非法 JSON → 降级为 id + 产物路径（事实行兜底）
-      }
-      const reason = isParseErrorReport(parsed) ? parsed.reason : null;
-      facts.push({ acceptanceId: id, runId: run.runId, source: "parse-failed", reason, reportPath });
-    }
-    for (const id of run.nonDiscriminativeAcceptanceIds ?? []) {
-      const reportPath = join(runDir, VERIFY_REPORT_FILE_NAME);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
-      } catch {
-        parsed = null; // 同款降级：产物不可读 / 非法 JSON
-      }
-      const reason = redPhaseReasonOf(parsed, id);
-      facts.push({
-        acceptanceId: id,
-        runId: run.runId,
-        source: "non-discriminative",
-        reason,
-        reportPath,
-      });
-    }
+    // 两路信号各自成函数（parse-failed 在前、non-discriminative 在后——与拆分前
+    // 的同 run 内推送序一致，行为零变化）；文件名常量 import 自 verify/run.ts
+    // （REPORT_FILE_NAME，单一事实源）
+    facts.push(
+      ...parseFailedFactsOf(runDir, run.runId, run.parseFailedAcceptanceIds ?? []),
+      ...nondiscriminativeFactsOf(runDir, run.runId, run.nonDiscriminativeAcceptanceIds ?? []),
+    );
   });
   return facts;
 }

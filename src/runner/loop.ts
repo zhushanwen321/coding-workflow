@@ -57,12 +57,12 @@
  *     -idle 模式：停派后无新 VerifyRan，若树内无其他目标由 maxIdleMs 收束；
  *     人工处置写入账本后投影自然消失，运行中的循环下轮自愈。连挂输入排除
  *     解析失败条目（mx5-2：解析失败走 specContractBroken 回炉，不再误判 flake）
- *   - spec-frozen 且当前 spec 周期内某验收解析失败连挂 ≥2 ∧ 回炉代数 <2
- *     （specContractBroken，mx5-2）→ designer 回炉修 spec 的验收命令契约
- *     （任务书内嵌当前周期逐轮解析失败原文 + 规则⑨式恢复指引；新 spec 照旧
+ *   - spec-frozen 且当前 spec 周期内某验收带确定性缺陷信号（解析失败 ∪ 无区分力，
+ *     fa-3 D3）连挂 ≥2 ∧ 回炉代数 <2（specContractBroken，mx5-2）→ designer 回炉
+ *     修 spec 的验收命令契约（任务书内嵌当前周期逐轮机器原文 + 规则⑨式恢复指引；新 spec 照旧
  *     过独立 reviewer 再审——回炉不建新信任机制）。回炉代数 =「连挂 ≥2 → 新
  *     SpecSubmitted」累计次数，新 spec 只清连挂计数不清代数
- *   - spec-frozen 且解析失败连挂 ≥2 ∧ 回炉代数 ≥2（specContractDeadlock，
+ *   - spec-frozen 且确定性缺陷信号连挂 ≥2 ∧ 回炉代数 ≥2（specContractDeadlock，
  *     mx5-2）→ 不派任何 agent（两轮修复均经 verify 检验仍失败，判 spec/brief
  *     层更深问题），stderr 转人工（含 2 代回炉事实与恢复指引）；复用审计-不喂
  *     -idle 模式，人工处置（新 spec 过审 / 人工关闭）写入账本后投影自然消失
@@ -301,7 +301,7 @@ const STOPPED_DISPATCH_DIMENSIONS = [
 const STOPPED_REASONS: Record<(typeof STOPPED_DISPATCH_DIMENSIONS)[number], string> = {
   specReviewDeadlock: "spec-review 打回代数达预算（designer-reviewer 活锁），停派转人工",
   flakeReview: "e2e 验收连挂 ≥2（flake 疑似），停派 developer 转人工判定",
-  specContractDeadlock: "验收命令解析失败 2 代回炉仍连挂，停派转人工",
+  specContractDeadlock: "确定性 spec 缺陷信号 2 代回炉仍连挂，停派转人工",
   buildDrift: "build 证据达预算无 pass verify（缓慢进展），停派转人工",
 };
 

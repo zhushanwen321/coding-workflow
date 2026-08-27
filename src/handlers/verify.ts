@@ -48,6 +48,7 @@ import {
 import {
   type AcceptanceRunResult,
   E2E_ACCEPTANCE_TIMEOUT_MS,
+  REPORT_FILE_NAME,
   runAcceptances,
   type RunOutcome,
   UNIT_ACCEPTANCE_TIMEOUT_MS,
@@ -63,8 +64,6 @@ import {
 
 /** 环境错误 exit code（验收文档锁定：验证未发生，不入账） */
 const ENV_ERROR_EXIT = 2;
-/** 总报告文件名（stdout 摘要里给出完整路径，便于人工复核产物） */
-const REPORT_FILE_NAME = "report.json";
 /** report.json 缩进宽度（与 verify/run.ts 的落盘格式逐字节同口径——redPhase 节并入后格式不变） */
 const REPORT_INDENT = 2;
 

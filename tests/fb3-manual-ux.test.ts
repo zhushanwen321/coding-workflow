@@ -171,7 +171,10 @@ describe("fb-3 ① 五类停派文案 + TIMEOUT 出口统一附人工闭环句�
       }
     }
     const err = announceCaptured(ledger, ["u-contract"]);
-    expect(err).toContain("解析失败已 2 代回炉仍连挂");
+    // fa4 R1（D-1）：双信号口径——parse 形态 fixture 照旧（parseFailedAcceptanceIds），
+    // 文案升格后两种信号名都在场（parse 路径覆盖不断）
+    expect(err).toContain("确定性缺陷信号（解析失败 / 无区分力）已 2 代回炉仍连挂");
+    expect(err).toContain("解析失败读各 runId 目录的 <验收id>.report.json 顶层 reason");
     expectClosingLoop(err);
   });
 

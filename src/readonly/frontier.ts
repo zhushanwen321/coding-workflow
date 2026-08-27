@@ -952,7 +952,7 @@ export function stoppedDispatchState(
     maxSpecRejects: opts?.maxSpecRejects,
   });
   if (groups.specContractDeadlock.includes(unitId)) {
-    return "specContractDeadlock（验收命令解析失败已 2 代回炉，防活锁转人工）";
+    return "specContractDeadlock（确定性 spec 缺陷信号已 2 代回炉，防活锁转人工）";
   }
   if (groups.flakeReview.includes(unitId)) {
     return "flakeReview（e2e 验收连挂转人工判定）";
