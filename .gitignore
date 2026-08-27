@@ -1,6 +1,9 @@
 # Logs
 logs
 *.log
+# golden ledger fixture 是逐字节入库的验证基线（README + snapshots 同性质），
+# 缺失会导致 CI copyfile ENOENT（release.yml npm test 曾因此挂）
+!tests/fixtures/golden-ledgers/**/events.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
