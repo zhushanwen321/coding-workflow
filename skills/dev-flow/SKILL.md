@@ -1,5 +1,5 @@
 ---
-name: impl-design
+name: dev-flow
 description: >-
   Use when 一份已通过对抗式审查的技术设计文档（tech-design 产出）需要落地为可运行代码。
   触发短语：「按设计文档开发」「实施这个设计」「按设计实现」「设计已经好了，开始开发」「根据 design doc 写代码」。
@@ -7,7 +7,7 @@ description: >-
   无设计文档的 bug 修复、小改动（直接编码）；只出计划不写代码（用 lite-plan）。
 ---
 
-# impl-design
+# dev-flow
 
 把通过对抗式审查的设计文档变成已验收的代码——主 agent 只调度，subagent 完成全部开发与验收。
 
