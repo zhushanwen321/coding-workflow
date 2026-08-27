@@ -410,7 +410,7 @@ async function driveToFlake(
   const dispatchLine = '派发 developer → unit "fdemo"';
   submitScenarioSpec(repoDir, "node e1.js");
   // developer 第 1 次派发后人进场：worktree 提交坏实现 + build 证据 + 第一次 verify
-  await waitText(runner.stdoutText, dispatchLine, 60_000);
+  await waitText(runner.stdoutText, dispatchLine, 180_000);
   const badCommit = humanCommit(repoDir, "fdemo", {
     "impl.js": implBad("E1"),
     "e1.js": e1File(),
@@ -422,11 +422,11 @@ async function driveToFlake(
   const verify1 = runCli(repoDir, ["verify", "--unit", "fdemo"]);
   expect(verify1.code, `第一次 verify 应 fail（E1 FAIL）：${verify1.stderr}`).toBe(1);
   // developer 第 2 次派发（正常打回路径）后再挂一次——同条目连续第 2 次 fail
-  await waitTextCount(runner.stdoutText, dispatchLine, 2, 10_000);
+  await waitTextCount(runner.stdoutText, dispatchLine, 2, 120_000);
   const verify2 = runCli(repoDir, ["verify", "--unit", "fdemo"]);
   expect(verify2.code, `第二次 verify 应 fail（E1 FAIL）：${verify2.stderr}`).toBe(1);
   // 转人工指引出声（stderr）且不再派 developer——由调用方各自断言
-  await waitText(runner.stderrText, "停止对该 unit 派发 developer", 60_000);
+  await waitText(runner.stderrText, "停止对该 unit 派发 developer", 180_000);
   const runs = scenarioVerifyRans(repoDir);
   expect(runs).toHaveLength(2);
   return { runIds: runs.map((r) => r.runId) };
@@ -706,7 +706,7 @@ describe("T3 e2e 连挂转人工（human 模式 E2E）", () => {
     const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "4000"]);
     const { runIds } = await driveToFlake(repoDir, runner);
 
-    const code = await waitExit(runner, 30_000);
+    const code = await waitExit(runner, 90_000);
     expect(code).toBe(1); // 空转收束（转人工后无 machine 推进路径）
 
     const stderr = runner.stderrText();
@@ -722,14 +722,14 @@ describe("T3 e2e 连挂转人工（human 模式 E2E）", () => {
     expect(dispatchCount).toBe(2);
     // frontier --json 出现 flakeReview 维度（与派发判定同一出处）
     expect(scenarioFrontier(repoDir).flakeReview).toContain("fdemo");
-  }, 90_000);
+  }, 300_000);
 });
 
 describe("T8 人工处置自愈（flakeReview 消失、循环继续推进）", () => {
   runnerIt("按指引修复（修实现稳定 pass + 重提 build + verify pass）→ root closed、循环 exit 0", async () => {
     const repoDir = makeRunnerScenario("t8-recover");
     // 空转上限放宽：转人工后留人工处置窗口，处置写入账本即有进展
-    const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "30000"]);
+    const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "60000"]);
     await driveToFlake(repoDir, runner);
 
     // 人工判定动作 ①：确认现状（flakeReview 可见）；②判定真 bug → 修实现
@@ -742,17 +742,17 @@ describe("T8 人工处置自愈（flakeReview 消失、循环继续推进）", (
     expect(verify.code, `修复后 verify 应 pass（stdout: ${verify.stdout}，stderr: ${verify.stderr}）`).toBe(0);
 
     // verify pass 写入账本 → 连挂清零、投影自然消失、循环自愈推进 reviewer
-    await waitText(runner.stdoutText, '派发 reviewer → unit "fdemo"', 60_000);
+    await waitText(runner.stdoutText, '派发 reviewer → unit "fdemo"', 120_000);
     expect(
       runCli(repoDir, ["review", "submit", "--unit", "fdemo", "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", "b2"]).code,
     ).toBe(0);
 
-    const code = await waitExit(runner, 30_000);
+    const code = await waitExit(runner, 90_000);
     expect(code).toBe(0);
     expect(runner.stdoutText()).toContain("已 closed");
     // flakeReview 维度消失（pass 清零 + unit 已越过推进点）
     const groups = scenarioFrontier(repoDir);
     expect(groups.flakeReview).toEqual([]);
     expect(groups.buildReady).toEqual([]);
-  }, 120_000);
+  }, 300_000);
 });

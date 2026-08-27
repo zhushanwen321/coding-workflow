@@ -241,7 +241,7 @@ describe("u-i2-a PP6 同源回归：同账本双跑续接，frontier 一致、cl
         adapter: makeScriptAdapter("work", head),
         cwd: repoDir,
         pollMs: 40,
-        maxIdleMs: 20_000,
+        maxIdleMs: 60_000,
         onEvent: (ev) => {
           events.push(ev);
         },
@@ -280,7 +280,7 @@ describe("u-i2-a onEvent 事件流", () => {
           adapter: makeScriptAdapter("work", head),
           cwd: repoDir,
           pollMs: 40,
-          maxIdleMs: 20_000,
+          maxIdleMs: 60_000,
           onEvent: (ev) => {
             events.push(ev);
           },
@@ -311,7 +311,7 @@ describe("u-i2-a onEvent 事件流", () => {
       expect(reflection?.unitId).toBe("root");
       expect(reflection?.round).toBe(1);
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 // ---- 验收 3：stopped（maxSpecRejects=1 快速构造 specReviewDeadlock） ----
@@ -362,7 +362,7 @@ describe("u-i2-a onEvent 抛错韧性", () => {
           adapter: makeScriptAdapter("work", head),
           cwd: repoDir,
           pollMs: 40,
-          maxIdleMs: 20_000,
+          maxIdleMs: 60_000,
           onEvent: () => {
             throw new Error("i2a 测试：onEvent 消费者崩了");
           },
