@@ -221,6 +221,11 @@ function runRegularVerify(
   const parseFailedIds = outcome.results
     .filter((r) => r.parseError === true && r.nameSkipped !== "nondeterministic")
     .map((r) => r.id);
+  // fa-3（设计 D1）：无区分力信号提取进事件——与解析失败同座的确定性 spec
+  // 缺陷，投影侧并集进 specContractBroken 回炉通道。提取锚 = redFailed 严格
+  // 同集（勿二次 filter）；红阶段未执行（--no-red-phase）时 redFailed 恒空、
+  // 不写键（V5③ 断言锚）
+  const nonDiscriminativeIds = redFailed.map((e) => e.id);
   const payload: VerifyRanPayload = {
     unitId,
     runId,
@@ -228,6 +233,9 @@ function runRegularVerify(
     result,
     acceptanceIds,
     ...(parseFailedIds.length > 0 ? { parseFailedAcceptanceIds: parseFailedIds } : {}),
+    ...(nonDiscriminativeIds.length > 0
+      ? { nonDiscriminativeAcceptanceIds: nonDiscriminativeIds }
+      : {}),
   };
   const ledger = ledgerForCwd(cwd);
   const appended = tryAppend(ledger, "VerifyRan", payload);

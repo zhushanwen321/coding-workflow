@@ -246,11 +246,21 @@ function reportStemOf(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-/** 回炉任务书的单条解析失败事实（取数路径见 specContractBrokenTasks 注释） */
-interface ParseFailFact {
+/** 回炉任务书的单条契约失败事实（取数路径见 specContractBrokenTasks 注释） */
+interface ContractFailFact {
   acceptanceId: string;
   runId: string;
-  /** <id>.report.json 顶层 reason；产物不可读 / 无 reason 时为 null（降级备案） */
+  /**
+   * 信号来源（fa-3 设计 D5，D3 取舍的 brief 侧落实：信号来源标记不加进投影
+   * 事实、只在本渲染层携带）：parse-failed = 主 run 产物解析失败；
+   * non-discriminative = 红阶段判无区分力（基线树上照样 pass）
+   */
+  source: "parse-failed" | "non-discriminative";
+  /**
+   * 产物里的机器原文（parse-failed 读 <id>.report.json 顶层 reason；
+   * non-discriminative 读同 runId 目录顶层 report.json 的 redPhase 节 reason）；
+   * 产物不可读 / 无对应条目时为 null（降级备案）
+   */
   reason: string | null;
   /** 产物文件绝对路径（降级与审计的兜底锚点） */
   reportPath: string;
@@ -269,34 +279,71 @@ function isParseErrorReport(value: unknown): value is { parseError: true; reason
 }
 
 /**
- * 当前 spec 周期内逐条解析失败事实的取数（mx5-2 基线 §4 取数检查点——developer
- * 已核实：解析失败原文不在 VerdictSubmitted（那是 reviewer 的语义结论），机器
- * 原文的落盘载体 = verify 产物 <id>.report.json 顶层 {parseError, reason}
- * （src/verify/run.ts parse 抛错分支落盘；VerifyRan payload 只带 id 清表不带
- * 原文）。选取路径 = 周期内每条携带 parseFailedAcceptanceIds 的 VerifyRan，
- * 按其 runId 定位 evidence/<unitId>/<runId>/<stem>.report.json 读 reason——
- * 与 verify 落盘结构一一对应、可审计可降级。周期边界锚 lastSpecSeq（run 的
- * 账本 seq 需晚于最后一条 SpecSubmitted），seq 锚点取 fold 输出的结构超集
- * （deriveStatus 同款访问方式，手写投影缺锚点时保守视为不在周期内）。
+ * 同 runId 目录顶层总报告文件名（verify handler 落盘口径：reportWithRedPhase
+ * 重写后的 report.json，redPhase 节在此不在 <id>.report.json——设计 D5 对抗审查
+ * 钉死）。verify.ts 与 verify/run.ts 各自私有同名常量 REPORT_FILE_NAME 未导出
+ * （verify/run.ts 非本 unit 领地），此处按 reportStemOf 先例镜像声明，一致性
+ * 由 fa3 测试钉住。
  */
-function parseFailFactsOf(
+const VERIFY_REPORT_FILE_NAME = "report.json";
+
+/**
+ * report.json redPhase 节里无区分力条目的机器原文提取（fa-3 D5）：守卫
+ * Array.isArray 后按 id + discriminative === false + skipped !== true 匹配
+ * （verify.ts redFailed 同集口径的渲染层复刻）。无匹配条目返回 null（降级备案）。
+ */
+function redPhaseReasonOf(value: unknown, id: string): string | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const redPhase = (value as Record<string, unknown>).redPhase;
+  if (!Array.isArray(redPhase)) {
+    return null;
+  }
+  for (const entry of redPhase) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const e = entry as Record<string, unknown>;
+    if (e.id === id && e.discriminative === false && e.skipped !== true && typeof e.reason === "string") {
+      return e.reason;
+    }
+  }
+  return null;
+}
+
+/**
+ * 当前 spec 周期内逐条契约失败事实的取数（mx5-2 基线取数检查点；fa-3
+ * 设计 D5 升格为双信号分流）。机器原文不在 VerdictSubmitted（那是 reviewer 的
+ * 语义结论），两信号的落盘载体不同，分流读取：
+ *   - parse-failed：verify 产物 <id>.report.json 顶层 {parseError, reason}
+ *     （src/verify/run.ts parse 抛错分支落盘；VerifyRan payload 只带 id 清单
+ *     不带原文）——mx5-2 既有路径照旧；
+ *   - non-discriminative（fa-3）：同 runId（verify- 前缀）目录顶层 report.json
+ *     的 redPhase 数组（verify.ts 的 {...report, redPhase} 重写——该节在主 run
+ *     目录顶层，red-phase- 前缀目录的 report.json 不含此节），按 id 取
+ *     discriminative === false 且非 skipped 条目的 reason。
+ * 两类产物不可读均降级 reason=null + reportPath 兑底（mx5-2 同款）。周期边界
+ * 锚 lastSpecSeq（run 的账本 seq 需晚于最后一条 SpecSubmitted），seq 锚点取
+ * fold 输出的结构超集（deriveStatus 同款访问方式，手写投影缺锚点时保守视为
+ * 不在周期内）。
+ */
+function contractFailFactsOf(
   unit: SequencedUnitProjection,
   projectCwd: string,
-): ParseFailFact[] {
+): ContractFailFact[] {
   const lastSpecSeq = unit.lastSpecSeq;
   const runSeqs: readonly number[] =
     (unit as VerifySequencedUnitProjection).verifyRunSeqs ?? [];
-  const facts: ParseFailFact[] = [];
+  const facts: ContractFailFact[] = [];
   unit.verifyRuns.forEach((run: VerifyRanPayload, i: number) => {
     const seq = runSeqs[i] ?? 0;
     if (lastSpecSeq === null || seq <= lastSpecSeq) {
       return;
     }
+    const runDir = evidenceDir(getCwHome(), projectCwd, unit.unitId, run.runId);
     for (const id of run.parseFailedAcceptanceIds ?? []) {
-      const reportPath = join(
-        evidenceDir(getCwHome(), projectCwd, unit.unitId, run.runId),
-        `${reportStemOf(id)}.report.json`,
-      );
+      const reportPath = join(runDir, `${reportStemOf(id)}.report.json`);
       let parsed: unknown;
       try {
         parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
@@ -304,7 +351,24 @@ function parseFailFactsOf(
         parsed = null; // 产物不可读 / 非法 JSON → 降级为 id + 产物路径（事实行兜底）
       }
       const reason = isParseErrorReport(parsed) ? parsed.reason : null;
-      facts.push({ acceptanceId: id, runId: run.runId, reason, reportPath });
+      facts.push({ acceptanceId: id, runId: run.runId, source: "parse-failed", reason, reportPath });
+    }
+    for (const id of run.nonDiscriminativeAcceptanceIds ?? []) {
+      const reportPath = join(runDir, VERIFY_REPORT_FILE_NAME);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(reportPath, "utf-8"));
+      } catch {
+        parsed = null; // 同款降级：产物不可读 / 非法 JSON
+      }
+      const reason = redPhaseReasonOf(parsed, id);
+      facts.push({
+        acceptanceId: id,
+        runId: run.runId,
+        source: "non-discriminative",
+        reason,
+        reportPath,
+      });
     }
   });
   return facts;
@@ -323,27 +387,48 @@ function specContractBrokenTasks(
   unit: SequencedUnitProjection,
   projectCwd: string,
 ): string {
-  const facts = parseFailFactsOf(unit, projectCwd);
+  const facts = contractFailFactsOf(unit, projectCwd);
   const spec = unit.specs[unit.specs.length - 1];
+  // fa-3 D5：nd 指引块保守统一附加——不按 reason 词形分流 patched-tree pass 形态：
+  // ①未 patch 旧树 pass 形态同样可由 commit 结构违约产生（父树误含实现且命令真
+  // 检测实现时旧树原样 pass，非仅 patched 形态才误判）；②reason 降级为 null 时
+  // 无形态可判；③词形分流把渲染层耦合到 judgeRedPhase 的 reason 字符串字面量，
+  // 未来文案微调会静默破坏分流。误判代价封顶 = 浪费一代回炉预算（代数上限 2 兜底）
+  const hasNondiscriminative = facts.some((f) => f.source === "non-discriminative");
   const factLines =
     facts.length === 0
       ? [
-          "  （账本内未见携带解析失败字段的 VerifyRan——不可达：本任务书仅在解析失败连挂 ≥2 后派发；",
-          "    可 cw report --unit " + unit.unitId + " 核对逐轮产物）",
+          "  （账本内未见携带解析失败 / 无区分力字段的 VerifyRan——不可达：本任务书仅在契约缺陷信号",
+          "    连挂 ≥2 后派发；可 cw report --unit " + unit.unitId + " 核对逐轮产物）",
         ]
       : facts.map(
           (f) =>
-            `  - 验收 ${f.acceptanceId}（runId=${f.runId}）：${f.reason ?? `（原文不可读——产物：${f.reportPath}）`}`,
+            `  - 验收 ${f.acceptanceId}（runId=${f.runId}，信号=${f.source === "parse-failed" ? "解析失败" : "无区分力"}）：${f.reason ?? `（原文不可读——产物：${f.reportPath}）`}`,
         );
+  const ndGuidance = hasNondiscriminative
+    ? [
+        "",
+        "### 无区分力信号专属指引（红阶段判基线树上照样 pass 的条目）",
+        "  - 先核查 build commit 结构：实现与测试须同一 git commit——红阶段以 build commit",
+        "    第一父为「实现前基线」，developer 拆多个 commit 会让父树误含部分实现、把有区分力",
+        "    的验收误判为无区分力（同类信号、病灶在 developer 侧；若属实，让 developer 以单",
+        "    commit 重交 build 证据后重跑 verify，误判即消失，无需改 spec）。",
+        "  - 确属验收自身无区分力时给替代路径（与规则⑬同款）：意图是「类型装配成立」→ 改为",
+        "    断言具体产物的用例（import 新类型并断言行为）；意图是全仓类型回归 → 上收 root",
+        '    spec 并标 layer: "topic"（集成层执行，集成口径天然重跑 root 验收）。',
+      ]
+    : [];
   return [
-    "## 你的任务（designer：验收命令契约回炉——修 spec 的解析失败形态）",
+    "## 你的任务（designer：确定性 spec 缺陷回炉——修 spec 的解析失败 / 无区分力形态）",
     "",
-    `unit "${unit.unitId}" 的验收在 verify 阶段解析失败连挂 ≥2 次——冻结 spec 的验收命令`,
-    "与 cw 适配器的输出契约不符（实现写得再对也恒判 fail），不是实现问题，是 spec 的命令契约",
-    "问题。请按以下机器错误原文修正 spec 后重提：",
+    `unit "${unit.unitId}" 的验收在 verify 阶段带确定性 spec 缺陷信号连挂 ≥2 次——解析失败`,
+    "（验收命令与 cw 适配器的输出契约不符）或无区分力（红阶段判基线树上照样 pass，恒真测试",
+    "防线——验收对任何实现都无检测力），实现写得再对也恒判 fail：不是实现问题，是 spec 的",
+    "确定性缺陷。请按以下机器原文修正 spec 后重提：",
     "",
-    "### 解析失败事实（当前 spec 周期内逐轮原文，<id>.report.json 顶层 reason）",
+    "### 契约缺陷事实（当前 spec 周期内逐轮原文与信号来源）",
     ...factLines,
+    ...ndGuidance,
     "",
     "### 命令契约恢复指引（按验收 type 对照，与 spec gate 规则⑨同口径）",
     "  - unit / integration 型（vitest 适配器从 stdout 解析 JSON）：删除冲突 flag——cw 会自动",
@@ -361,8 +446,8 @@ function specContractBrokenTasks(
     "   集成期跨 unit 比对，无谓变更制造漂移）。",
     `3. 重提：cw evidence submit --kind spec --unit ${unit.unitId} --file spec.json`,
     "4. 新 spec 照旧过独立 reviewer 再审（spec-review 一律由独立 reviewer 提交，你无需也不得",
-    "   自审）；过审后 verify 若仍解析失败连挂 ≥2，将累计回炉代数（已 2 代回炉转人工——每次",
-    "   修复都经完整 verify 检验后才计满）。",
+    "   自审）；过审后 verify 若仍带契约缺陷信号（解析失败 / 无区分力）连挂 ≥2，将累计回炉代数",
+    "   （已 2 代回炉转人工——每次修复都经完整 verify 检验后才计满）。",
     "完成标志：修正后的 spec 已提交入账（审查结论由 reviewer 给出）。",
   ].join("\n");
 }
