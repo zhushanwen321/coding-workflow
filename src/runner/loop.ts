@@ -733,11 +733,16 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
  * 与 stopped 事件发射之后——stderr 上人工先看到指引、随后看到回收记录；回收
  * 行自身只带维度短名 + C10 原因短句，完整恢复指引不在本行重复（指引已出）。
  *
- * 去重键 = unitId（设计 D9 钉死「本 run 内同一 unit 只执行一次主动回收」，
- * 主循环局部 Set 承载）：单飞门下停派期间该 unit 不会再有新在飞（停派维度
- * continue + escalated 排除），跨轮重复执行只会对同一已 kill / 已结算的 flight
- * 空转与刷屏；残余面记档——人工处置入账后投影自愈、同 run 内二次停派命中时
- * 不再回收（人工在场，maxIdleMs / SPAWN_ERROR 出口兜底）。
+ * 去重键 = unitId、粒度 = 停派 episode（设计 D9 只钉死「停派维度命中时回收
+ * 该 unit 在飞 spawn」，未钉死去重粒度；episode 是实施层选择，理由在此记
+ * 档）：连续停派轮次 = 一个接管 episode（Set 去重防对同一已 kill / 已结算的
+ * flight 空转刷屏）；离开本轮停派命中集（四维 + timeoutEscalation 全集，
+ * 即 stoppedUnitDimension）= 自愈完成、登记清出——同 run 内二次停派命中 =
+ * 新接管现场（新 spawn 可能已派发），必须重新回收，否则 C10 竞态口二次重开
+ * （人工第二轮处置同样会被迟交产出顶掉）。仍处 escalated 而本轮无四维命中
+ * 的 unit 留在命中集内（接管未结束，保持已回收态不清）；其余残余面——
+ * 回收与人工处置入账几乎同轮时新 spawn 尚未派发，只能等下轮命中再回收
+ * （人工在场，maxIdleMs / SPAWN_ERROR 出口兜底）。
  *
  * reflectionPending 不在回收范围（反思接缝对在飞句柄 followUp 是合法等待态，
  * 非转人工）——由调用侧的维度枚举（STOPPED_DISPATCH_DIMENSIONS + escalated）
@@ -748,9 +753,19 @@ function recallStoppedUnitSpawns(
   stoppedUnitDimension: ReadonlyMap<string, string>,
   recalled: Set<string>,
 ): void {
+  // episode 收尾：离开本轮停派命中集的登记一并清出（自愈完成）——下一次
+  // 再命中 = 新接管现场，重新回收。escalated（timeoutEscalation）档已由调用
+  // 侧并入 stoppedUnitDimension（四维 + escalated 全集基准），仍处 escalated
+  // 的 unit 不会在此被清（接管未结束，保持已回收态）。Set 迭代中删除当前
+  // 元素安全（ES 规范：已访问元素的删除不影响迭代）
+  for (const unitId of recalled) {
+    if (!stoppedUnitDimension.has(unitId)) {
+      recalled.delete(unitId);
+    }
+  }
   for (const [unitId, dimension] of stoppedUnitDimension) {
     if (recalled.has(unitId)) {
-      continue; // 本 run 已主动回收过——跨轮去重（见函数头注释）
+      continue; // 本 episode 已回收过——连续停派轮次内去重（见函数头注释）
     }
     recalled.add(unitId);
     for (const flight of inFlight) {
@@ -1518,9 +1533,9 @@ async function runLoopMain(
   };
   let roundSeq = 0;
   const announcedStopped = new Set<string>();
-  // fb-2（D9）：停派回收的本 run 去重登记（键 = unitId，InFlightSpawn 结构不变——
-  // 「本 run 内已回收」标记用主循环局部 Set 承载）。语义与依据见
-  // recallStoppedUnitSpawns 函数头注释
+  // fb-2（D9）：停派回收的 episode 去重登记（键 = unitId；连续停派轮次 = 同一
+  // episode，离开停派集时由 recallStoppedUnitSpawns 清出——语义与依据见其
+  // 函数头注释）
   const recalledStoppedSpawns = new Set<string>();
 
   while (true) {

@@ -83,22 +83,26 @@ function unknownUnitError(ledger: EventLedger, unitId: string): string | null {
   );
 }
 
-/** verdictKind 枚举守卫（文案逐字节保留） */
-function invalidVerdictKindError(verdictKind: string | undefined): string | null {
-  if (verdictKind === "spec-review" || verdictKind === "exec-review") {
-    return null;
-  }
+/** verdictKind 枚举谓词（类型守卫：true 分支收窄到枚举，与 payload 目标类型由编译器强制同步） */
+function isVerdictKind(value: string | undefined): value is "spec-review" | "exec-review" {
+  return value === "spec-review" || value === "exec-review";
+}
+
+/** verdictKind 非法时的错误文案（仅消费谓词 false 分支；文案逐字节保留） */
+function invalidVerdictKindMessage(verdictKind: string | undefined): string {
   return (
     `cw review submit: 非法 --verdict-kind "${verdictKind ?? ""}"：合法值 spec-review | exec-review。` +
     "恢复动作：spec 审查（解冻验收）用 --verdict-kind spec-review，执行审查用 --verdict-kind exec-review。"
   );
 }
 
-/** verdict 枚举守卫（文案逐字节保留） */
-function invalidVerdictError(verdict: string | undefined): string | null {
-  if (verdict === "pass" || verdict === "fail") {
-    return null;
-  }
+/** verdict 枚举谓词（同 isVerdictKind：收窄即校验，消除裸 as） */
+function isVerdict(value: string | undefined): value is "pass" | "fail" {
+  return value === "pass" || value === "fail";
+}
+
+/** verdict 非法时的错误文案（仅消费谓词 false 分支；文案逐字节保留） */
+function invalidVerdictMessage(verdict: string | undefined): string {
   return (
     `cw review submit: 非法 --verdict "${verdict ?? ""}"：合法值 pass | fail。恢复动作：--verdict pass 或 --verdict fail。`
   );
@@ -243,17 +247,16 @@ export async function handleReviewSubmit(ctx: CommandContext): Promise<number> {
     return fail(unitError);
   }
   const verdictKindRaw = stringArg(ctx.argv, "verdict-kind");
-  const kindError = invalidVerdictKindError(verdictKindRaw);
-  if (kindError !== null) {
-    return fail(kindError);
+  if (!isVerdictKind(verdictKindRaw)) {
+    return fail(invalidVerdictKindMessage(verdictKindRaw));
   }
-  const verdictKind = verdictKindRaw as "spec-review" | "exec-review";
+  // 谓词 true 分支已收窄——直接赋值给目标类型，无裸 as（守卫值域 ≡ 类型枚举由编译器保证）
+  const verdictKind: "spec-review" | "exec-review" = verdictKindRaw;
   const verdictRaw = stringArg(ctx.argv, "verdict");
-  const verdictError = invalidVerdictError(verdictRaw);
-  if (verdictError !== null) {
-    return fail(verdictError);
+  if (!isVerdict(verdictRaw)) {
+    return fail(invalidVerdictMessage(verdictRaw));
   }
-  const verdict = verdictRaw as "pass" | "fail";
+  const verdict: "pass" | "fail" = verdictRaw;
   const resolvedRefs = resolveEvidenceRefs(ledger, unitId, verdictKind, stringArg(ctx.argv, "evidence-refs"));
   if (resolvedRefs.error !== undefined) {
     return fail(resolvedRefs.error);

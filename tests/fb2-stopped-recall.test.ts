@@ -21,7 +21,8 @@
  *   ② A 在飞 developer spawn 被回收（CRASH 结算行）；
  *   ③ 健康对照 B 的在飞 spawn 全程存活（观察窗 ≥ 一个 poll 周期 + 事后唤醒证明）；
  *   ④ 回收后等待窗口内账本无来自 A 的新迟交入账；
- *   ⑤ 跨轮去重：多条轮次重算后 A 的回收出声恰出现一次。
+ *   ⑤ 跨轮去重（episode 内）：多条轮次重算后 A 的回收出声恰出现一次；后续
+ *     追加 MF-1 回归段（离开停派集后二次命中 → 第二条回收行）验证 episode 粒度。
  *
  * 构造：双叶 unit（目标 A=ua + 健康对照 B=ub）挂同一 root，spec 各就位后
  * A、B 各自在飞一个 developer（human spawn 指令打印后长驻轮询等待）；
@@ -190,6 +191,24 @@ async function waitText(readText: () => string, needle: string, timeoutMs: numbe
   }
 }
 
+/** 轮询等待文本累计出现 ≥count 次（episode 二次命中段的同步点） */
+async function waitCount(
+  readText: () => string,
+  needle: string,
+  count: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (countOccurrences(readText(), needle) < count) {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `等待文本 "${needle}" 第 ${count} 次出现超时（${timeoutMs}ms，当前 ${countOccurrences(readText(), needle)} 次）。当前文本末尾：${readText().slice(-600)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 function countOccurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
@@ -268,8 +287,10 @@ describe("V11 停派命中回收在飞 spawn", () => {
       // ④ 回收后窗口内账本无来自 A 的新迟交入账（被回收的 spawn 不得再产出）
       expect(seqsForUnit("ua"), "A 的事件 seq 集应与观察窗前完全一致（无迟交）").toEqual(uaSeqsBeforeWindow);
 
-      // ⑤ 跨轮去重：多条轮次重算后 A 的回收出声恰一次；停派后无新派发
-      expect(countOccurrences(runner.stderrText(), recallLine), "本 run 内同一 unit 只回收一次（D9 去重键 = unitId）").toBe(1);
+      // ⑤ 跨轮去重（episode 内）：观察窗内 A 连续命中属同一停派 episode，回收
+      // 出声恰一次（episode 粒度为实施层选择——设计未钉死，见函数头注释）；
+      // 二次命中段（下方 MF-1 回归）验证离开停派集后重新回收。停派后无新派发
+      expect(countOccurrences(runner.stderrText(), recallLine), "同一 episode 内只回收一次（episode 粒度去重，键 = unitId）").toBe(1);
       expect(countOccurrences(runner.stdoutText(), dispatchA), "停派只挡新派发——A 不应再被派发").toBe(1);
 
       // ③ 存活证明（正向）：向账本写 B 的进展事件（真实 build 证据 + verify fail
@@ -300,6 +321,48 @@ describe("V11 停派命中回收在飞 spawn", () => {
       await waitText(runner.stdoutText, 'developer unit "ub" 退出 exit 0', 30_000);
       // B 全程零回收（含结算后复核）
       expect(runner.stderrText()).not.toContain('回收 unit "ub"');
+
+      // ---- MF-1 回归段：per-episode 回收去重（同 run 内二次停派 = 新接管现场） ----
+      // 链路：A 首次回收（上方①-⑤）后人工重提 spec（human 场景合法操作）→
+      // buildDrift 自愈（specEpoch 周期锄重置，episode 结束）→ 重派 A 的
+      // reviewer 过审 → developer 进入在飞 → 新周期再灌满 K 条 build 证据 →
+      // buildDrift 二次命中 → 必须重新回收（第二条回收出声行）。修前代码
+      // （unitId 键入 Set 后永不清理）在「第二条回收行」断言上红。
+      writeFileSync(
+        join(repoDir, "spec-ua-r2.json"),
+        `${JSON.stringify({ acceptance: contractAcceptance(), contracts: [], split: [] }, null, 2)}\n`,
+      );
+      expect(
+        runCli(repoDir, ["evidence", "submit", "--kind", "spec", "--unit", "ua", "--file", "spec-ua-r2.json"]).code,
+        "人工重提 spec（新代）应入账",
+      ).toBe(0);
+      // 新 spec 待审 → runner 派 A 的 reviewer（等它进场再交 pass，避免无
+      // in-flight reviewer 的抢答警告噪音）
+      await waitText(runner.stdoutText, '派发 reviewer → unit "ua"', 60_000);
+      expect(
+        runCli(repoDir, ["review", "submit", "--unit", "ua", "--verdict-kind", "spec-review", "--verdict", "pass", "--role", "reviewer"]).code,
+        "新代 spec-review pass（人工以 reviewer 身份）应入账——旧代结论不占新代",
+      ).toBe(0);
+      // A 回到 spec-frozen → runner 重派 A 的 developer（第 2 次 dispatchA）
+      await waitCount(runner.stdoutText, dispatchA, 2, 60_000);
+      // 新 spec 周期内再灌满 K 条 build 证据（无 pass verify）→ buildDrift 二次命中
+      for (let i = BUILD_DRIFT_MAX_ATTEMPTS + 1; i <= BUILD_DRIFT_MAX_ATTEMPTS * 2; i += 1) {
+        const commit = commitFiles(wtA, { [`ua-attempt-${i}.txt`]: `attempt ${i}\n` });
+        expect(
+          runCli(repoDir, ["evidence", "submit", "--kind", "build", "--unit", "ua", "--commit", commit, "--run-id", `ua-b${i}`]).code,
+          `A 的第 ${i} 条 build 证据（新周期）应入账`,
+        ).toBe(0);
+      }
+      // 核心断言：第二条回收出声行（episode 粒度去重——观察窗内连续命中属同一
+      // episode 不重复出声，离开停派集后二次命中 = 新现场必须重新回收）
+      await waitCount(runner.stderrText, recallLine, 2, 60_000);
+      expect(
+        countOccurrences(runner.stderrText(), recallLine),
+        "二次停派 = 新接管现场，必须重新回收（episode 粒度去重）",
+      ).toBe(2);
+      // 新在飞 developer 确实被回收（第二条 CRASH 结算行——新 spawn 被杀的机器证明）
+      await waitCount(runner.stdoutText, 'developer unit "ua" 退出 CRASH', 2, 30_000);
+      expect(countOccurrences(runner.stdoutText(), 'developer unit "ua" 退出 CRASH')).toBe(2);
 
       runner.child.kill("SIGKILL");
     },

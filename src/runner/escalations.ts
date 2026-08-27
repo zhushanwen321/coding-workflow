@@ -169,7 +169,8 @@ function specDeadlockEscalationMessage(
     `  2. 人工审查该 spec：cw report --unit ${unitId}（原文副本见 evidence 目录 attachments/）\n` +
     `  3. 处置三选一：人工修 spec 重提后由你以 reviewer 身份判定（cw evidence submit --kind spec --unit ${unitId} --file spec.json + ` +
     `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer——mx-3 起 spec-review 必须携带 --role reviewer）；` +
-    "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工提交 pass verdict\n" +
+    "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工按 reviewer 结论执行（重提 spec 走新代：cw evidence submit --kind spec --unit " +
+    `${unitId} --file spec.json，新代由独立 reviewer 重审——同代直接提交 pass verdict 已被幂等守卫拒收）\n` +
     "处置完成（unit 离开 created 态）投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
     `cw run --root ${rootId} 即续。` +
     `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`

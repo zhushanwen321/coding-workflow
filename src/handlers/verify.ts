@@ -46,9 +46,9 @@ import {
   patchAcceptanceFilesForRedPhase,
 } from "../verify/red-phase.js";
 import {
+  type AcceptanceRunResult,
   E2E_ACCEPTANCE_TIMEOUT_MS,
   runAcceptances,
-  type AcceptanceRunResult,
   type RunOutcome,
   UNIT_ACCEPTANCE_TIMEOUT_MS,
 } from "../verify/run.js";
