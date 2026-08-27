@@ -27,7 +27,7 @@ import { EMPTY_STATS_PLACEHOLDER, renderStats } from "../gate/stats.js";
 import { EventLedger } from "../store/events-log.js";
 import { gateLedgerPath } from "../store/project.js";
 import { queryGate, type GatePassEntry } from "../gate/query.js";
-import { wrapCheck, wrapExitCode } from "../gate/wrap.js";
+import { wrapCheck, wrapExitCode, type WrapCheckOutcome } from "../gate/wrap.js";
 import { getCwHome } from "../store/project.js";
 import { fail, stringArg, stringArrayArg } from "./common.js";
 
@@ -94,46 +94,52 @@ function wrapUsage(missing: string): string {
   );
 }
 
-export async function handleGateWrap(ctx: CommandContext): Promise<number> {
-  const check = stringArg(ctx.argv, "check");
+/** 解析后的 gate wrap 参数（runId / timeoutMs 缺省用 undefined 表示，接线时按条件展开） */
+interface GateWrapParsedArgs {
+  check: string;
+  base: string;
+  scope: string[];
+  runId?: string | undefined;
+  timeoutMs?: number | undefined;
+  command: string[];
+}
+
+/** 参数解析与校验：缺参 / --timeout-ms 非法 / 空命令均属用法错误，不入 wrapCheck（不产生任何副作用） */
+function parseGateWrapArgs(argv: CommandContext["argv"]):
+  | { ok: true; args: GateWrapParsedArgs }
+  | { ok: false; error: string } {
+  const check = stringArg(argv, "check");
   if (check === undefined) {
-    return fail(wrapUsage("缺少 --check <名>"));
+    return { ok: false, error: wrapUsage("缺少 --check <名>") };
   }
-  const base = stringArg(ctx.argv, "base");
+  const base = stringArg(argv, "base");
   if (base === undefined) {
-    return fail(wrapUsage("缺少 --base <ref>"));
+    return { ok: false, error: wrapUsage("缺少 --base <ref>") };
   }
-  const scope = stringArrayArg(ctx.argv, "scope");
-  const runId = stringArg(ctx.argv, "run-id");
-  const timeout = parseTimeoutMs(ctx.argv["timeout-ms"]);
+  const scope = stringArrayArg(argv, "scope");
+  const runId = stringArg(argv, "run-id");
+  const timeout = parseTimeoutMs(argv["timeout-ms"]);
   if (!timeout.ok) {
-    return fail(timeout.error);
+    return { ok: false, error: timeout.error };
   }
-  const command = commandArgv(ctx.argv);
+  const command = commandArgv(argv);
   if (command.length === 0) {
-    return fail(
-      wrapUsage("缺少要执行的命令（-- 之后）"),
-    );
+    return { ok: false, error: wrapUsage("缺少要执行的命令（-- 之后）") };
   }
+  return { ok: true, args: { check, base, scope, runId, timeoutMs: timeout.value, command } };
+}
 
-  const outcome = wrapCheck({
-    cwHome: getCwHome(),
-    cwd: ctx.cwd,
-    check,
-    base,
-    scope,
-    command,
-    ...(runId !== undefined ? { runId } : {}),
-    ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
-  });
-
-  // warnings 仅 hit/pass/fail 变体携带（idempotent/env-error 无）
+/** warnings 仅 hit/pass/fail 变体携带（idempotent/env-error 无） */
+function emitWrapWarnings(outcome: WrapCheckOutcome): void {
   if ("warnings" in outcome) {
     for (const w of outcome.warnings) {
       process.stderr.write(`[warn] ${w}\n`);
     }
   }
+}
 
+/** 按 outcome.kind 渲染人类可读结果；核心库错误文案自带恢复动作（F-3/F-5/产物写失败），本层不改写 */
+function renderWrapOutcome(outcome: WrapCheckOutcome): void {
   switch (outcome.kind) {
     case "hit":
       process.stdout.write(
@@ -161,7 +167,6 @@ export async function handleGateWrap(ctx: CommandContext): Promise<number> {
       );
       break;
     case "env-error":
-      // 核心库错误文案自带恢复动作（F-3/F-5/产物写失败），本层不改写
       process.stderr.write(`cw gate wrap: ${outcome.error}\n`);
       break;
     default: {
@@ -169,6 +174,26 @@ export async function handleGateWrap(ctx: CommandContext): Promise<number> {
       throw new Error(`cw gate wrap: 未知 kind：${String(_exhaustive)}`);
     }
   }
+}
+
+export async function handleGateWrap(ctx: CommandContext): Promise<number> {
+  const parsed = parseGateWrapArgs(ctx.argv);
+  if (!parsed.ok) {
+    return fail(parsed.error);
+  }
+  const args = parsed.args;
+  const outcome = wrapCheck({
+    cwHome: getCwHome(),
+    cwd: ctx.cwd,
+    check: args.check,
+    base: args.base,
+    scope: args.scope,
+    command: args.command,
+    ...(args.runId !== undefined ? { runId: args.runId } : {}),
+    ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+  });
+  emitWrapWarnings(outcome);
+  renderWrapOutcome(outcome);
   // 三态 exit 单一出处 = 核心库 wrapExitCode（D8：0 pass 含命中 / 1 fail / 2 环境错误）
   return wrapExitCode(outcome);
 }

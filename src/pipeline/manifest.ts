@@ -70,6 +70,42 @@ function sha256(content: string): string {
   return createHash("sha256").update(content, "utf-8").digest("hex");
 }
 
+/** command / cache.scope 两处共用的非空字符串数组判定，避免同一条目内条件链写两遍 */
+function isNonEmptyStringArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((c) => typeof c === "string" && c.length > 0)
+  );
+}
+
+/** 单步校验；names 跨步共享以维持步骤名唯一性约束（唯一性先于字段类型报错） */
+function validateStep(step: unknown, i: number, names: Set<string>): void {
+  if (typeof step !== "object" || step === null) {
+    throw new PipelineManifestError(`steps[${i}] 必须为对象。`);
+  }
+  const s = step as Record<string, unknown>;
+  if (typeof s.name !== "string" || s.name.trim().length === 0) {
+    throw new PipelineManifestError(`steps[${i}].name 必须为非空字符串。`);
+  }
+  if (names.has(s.name)) {
+    throw new PipelineManifestError(`步骤名 "${s.name}" 重复（steps 内必须唯一）。`);
+  }
+  names.add(s.name);
+  if (!isNonEmptyStringArray(s.command)) {
+    throw new PipelineManifestError(`步骤 "${s.name}" 的 command 必须为非空字符串数组。`);
+  }
+  if (s.cache !== undefined) {
+    const cache = s.cache as Record<string, unknown>;
+    if (!isNonEmptyStringArray(cache.scope)) {
+      throw new PipelineManifestError(`步骤 "${s.name}" 的 cache.scope 必须为非空字符串数组。`);
+    }
+  }
+  if (s.timeoutMs !== undefined && (typeof s.timeoutMs !== "number" || s.timeoutMs <= 0)) {
+    throw new PipelineManifestError(`步骤 "${s.name}" 的 timeoutMs 必须为正数。`);
+  }
+}
+
 function validateManifest(parsed: unknown): PipelineManifest {
   if (typeof parsed !== "object" || parsed === null) {
     throw new PipelineManifestError("manifest 根必须是对象。");
@@ -83,37 +119,7 @@ function validateManifest(parsed: unknown): PipelineManifest {
   }
   const names = new Set<string>();
   for (const [i, step] of (obj.steps as unknown[]).entries()) {
-    if (typeof step !== "object" || step === null) {
-      throw new PipelineManifestError(`steps[${i}] 必须为对象。`);
-    }
-    const s = step as Record<string, unknown>;
-    if (typeof s.name !== "string" || s.name.trim().length === 0) {
-      throw new PipelineManifestError(`steps[${i}].name 必须为非空字符串。`);
-    }
-    if (names.has(s.name)) {
-      throw new PipelineManifestError(`步骤名 "${s.name}" 重复（steps 内必须唯一）。`);
-    }
-    names.add(s.name);
-    if (
-      !Array.isArray(s.command) ||
-      s.command.length === 0 ||
-      s.command.some((c) => typeof c !== "string" || c.length === 0)
-    ) {
-      throw new PipelineManifestError(`步骤 "${s.name}" 的 command 必须为非空字符串数组。`);
-    }
-    if (s.cache !== undefined) {
-      const cache = s.cache as Record<string, unknown>;
-      if (
-        !Array.isArray(cache.scope) ||
-        cache.scope.length === 0 ||
-        cache.scope.some((p) => typeof p !== "string" || p.length === 0)
-      ) {
-        throw new PipelineManifestError(`步骤 "${s.name}" 的 cache.scope 必须为非空字符串数组。`);
-      }
-    }
-    if (s.timeoutMs !== undefined && (typeof s.timeoutMs !== "number" || s.timeoutMs <= 0)) {
-      throw new PipelineManifestError(`步骤 "${s.name}" 的 timeoutMs 必须为正数。`);
-    }
+    validateStep(step, i, names);
   }
   return parsed as PipelineManifest;
 }
