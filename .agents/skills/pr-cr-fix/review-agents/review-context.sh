@@ -25,14 +25,20 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
-# ── 2. harness_mode：检测 cw 工作流上下文（store.json + WorkUnit）──
-#    检测 $CW_HOME（默认 ~/.cw）下是否有当前 git_root 的 store.json，或仓库根有 .cw/
+# ── 2. harness_mode：检测 cw 工作流上下文（events.log 事件账本）──
+#    检测 $CW_HOME（默认 ~/.cw）下是否有当前 git_root 的事件账本，或仓库根有 .cw/
 CW_HOME="${CW_HOME:-$HOME/.cw}"
-# encodeCwd 规则：路径分隔符 / 和 \ → __（与 src/store/schema.ts:85 encodeCwd 一致）
-ENCODED_CWD="$(printf '%s' "$GIT_ROOT" | sed 's|/|__|g; s|\\|__|g')"
-STORE_JSON="$CW_HOME/$ENCODED_CWD/store.json"
+# encodeCwd 规则（与 src/store/project.ts 的 2.0 实态完全同构）：前缀把 / \ . 三字符
+# 逐一替换为 __（点号也编码，防 cwd="." 编码成特殊目录名逃逸 CW_HOME）；后缀拼
+# sha256(cwd 原文) 前 8 位小写 hex 防碰撞（纯替换是多对一映射），连接符 -。
+# TS 原型：encodeCwd = cwd.replace(/[\\/.]/g, "__") + "-" + sha256(cwd).digest("hex").slice(0, 8)
+# bash 无单步等价写法：bracket 内连写两个反斜杠的形态会整段失效（实测），拆两段逐字符替换
+READABLE_CWD="${GIT_ROOT//[\/.]/__}"
+READABLE_CWD="${READABLE_CWD//\\/__}"
+ENCODED_CWD="${READABLE_CWD}-$(printf '%s' "$GIT_ROOT" | shasum -a 256 | cut -c1-8)"
+LEDGER_FILE="$CW_HOME/$ENCODED_CWD/events.log"
 
-if [ -f "$STORE_JSON" ] || [ -d "$GIT_ROOT/.cw" ]; then
+if [ -f "$LEDGER_FILE" ] || [ -d "$GIT_ROOT/.cw" ]; then
   HARNESS_MODE="harness"
 else
   HARNESS_MODE="standalone"
@@ -55,10 +61,12 @@ PRIMARY_LANG="typescript"
 
 # ── 6. 输出 JSON ──
 # files 数组：用 jq -R 逐行读，正确转义特殊字符（空格、引号、反斜杠）
-# FILES_RAW 为空时 jq -R 不产出任何行 → files 为 []
+# FILES_RAW 为空时 jq -R 不产出任何行 → files 为 []；删空行必须用 sed 而非
+# grep -v：grep 对空输入 exit 1，pipefail 下误触发 || 分支，与 jq 已输出的 []
+# 叠加成两份污染 FILES_JSON（argjson 解析必炸）
 # jq 缺失时走 else 降级：手工构造等价 JSON，保证调用方（pr-cr-fix 阶段 2）总能拿到输出
 if command -v jq >/dev/null 2>&1; then
-  FILES_JSON="$(printf '%s' "$FILES_RAW" | grep -v '^$' | jq -R . 2>/dev/null | jq -s . 2>/dev/null || printf '[]')"
+  FILES_JSON="$(printf '%s' "$FILES_RAW" | sed '/^$/d' | jq -R . 2>/dev/null | jq -s . 2>/dev/null || printf '[]')"
 
   # 用 jq 构造最终 JSON（保证字段顺序 + 合法性）
   jq -n \

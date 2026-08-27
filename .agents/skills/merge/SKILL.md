@@ -200,6 +200,9 @@ else
   RANGE="HEAD"
 fi
 
+# 先生成到临时文件：有实质条目才追加（直接 >> 会在无匹配时留下空 header 段，
+# 且 CHANGELOG.md 尚不存在时 git diff 恒报"无变更"，诱导重跑产生重复段落）
+TMP_CHANGELOG=$(mktemp)
 {
   echo ""
   echo "## [$TAG] - $(date +%Y-%m-%d)"
@@ -229,23 +232,24 @@ fi
     echo ""
   fi
 
-  # docs / test / chore（合并为 Miscellaneous）
-  MISC=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^docs\|^test\|^chore" --extended-regexp)
+  # docs / test / chore（合并为 Miscellaneous；ERE 交替符是 | 不是 \|)
+  MISC=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^docs|^test|^chore" --extended-regexp)
   if [ -n "$MISC" ]; then
     echo "### Miscellaneous"
     echo "$MISC"
     echo ""
   fi
-} >> CHANGELOG.md
+} > "$TMP_CHANGELOG"
 
-# 检查是否真的有内容追加（排除空 header）
-git diff --quiet CHANGELOG.md && echo "无 conventional commit，跳过 CHANGELOG" || echo "CHANGELOG 已更新"
-```
-
-若 CHANGELOG.md 不存在，先创建：
-
-```bash
-[ -f CHANGELOG.md ] || echo "# Changelog" > CHANGELOG.md
+# 生成的条目均以 "- " 开头；只有 header 无条目行 = 无可记录变更
+if grep -q '^-' "$TMP_CHANGELOG"; then
+  [ -f CHANGELOG.md ] || echo "# Changelog" > CHANGELOG.md
+  cat "$TMP_CHANGELOG" >> CHANGELOG.md
+  echo "CHANGELOG 已更新"
+else
+  echo "无 conventional commit，跳过 CHANGELOG"
+fi
+rm -f "$TMP_CHANGELOG"
 ```
 
 脚本无需额外依赖，纯 `git log` + `--grep` + 重定向。生成后可人工审阅再 commit。

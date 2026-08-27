@@ -40,6 +40,14 @@ name: quality-criteria
 
 审查者在报告每个问题时，必须同时标注本维度判定（fail/warn）和统一严重度（MUST_FIX/SUGGESTION）。pass 的维度不产出条目。
 
+## 阶段 1.5 度量产物消费约定（metrics.json）
+
+`.review/metrics.json` 存在时（pr-cr-fix 阶段 1.5 度量门禁产出）必须消费：
+
+- **warn 清单 + `targets.high_crap` 靶子**（CRAP 降序 top 20）是本维度的优先核查对象——高 CRAP 函数是回归高风险区，逐个读函数体核查：确有「多职责混杂 / 深嵌套 / 错误处理路径缺失 / 边界分支遗漏」等缺陷的，归入对应维度（错误处理 / 边界条件）产出 SUGGESTION 条目并引用 metrics 数据（`crap=X, cyclomatic=Y`）；判定为「复杂但单一职责、分支各自清晰」的（估算噪声），在报告末尾列「已核查不成立 + 理由」，不产出条目
+- fail 清单理论上已被 Gate-1.5 拦截清零；若报告时仍见 introduced 圈复杂度 > 15 的条目，直接 MUST_FIX（结构违规，机器判定优先于人工品味）
+- metrics 数据是机器估算（cw 无 coverage 基建，CRAP 为静态值），**不可单独作为 MUST_FIX 依据**——必须叠加人工读码确认缺陷后才升级严重度
+
 ---
 
 ## 维度 1：类型安全
@@ -119,7 +127,7 @@ function handle(data: any) {
 try {
   await fs.writeFile(path, data);
 } catch (e) {
-  throw new CwError("WRITE_FAILED", `写 ${path} 失败`, { cause: e });
+  throw new Error(`写 ${path} 失败`, { cause: e });
 }
 
 // warn：空 catch 但有注释说明意图
@@ -192,7 +200,7 @@ function divide(a: number, b: number): number {
 
 测试是否有效验证了行为，而不是"凑覆盖率"。断言是否具体，是否覆盖正常 + 异常路径。
 
-> **CW 项目特定补充**：本维度是通用范式层（"克制 mock"）。但 CW（coding-workflow）项目另有**零 mock 硬规则**——测试零 mock、禁止引入 mock 框架（见 AGENTS.md / TEST-STRATEGY.md）。审查 CW 自身源码时，若发现引入 mock 框架，归 Subagent A（项目约定，project-conventions.md），优先级高于本维度的通用"克制 mock"判断。
+> **CW 项目特定补充**：本维度是通用范式层（"克制 mock"）。但 CW（coding-workflow）项目另有**零 mock 硬规则**——测试零 mock、禁止引入 mock 框架（见 AGENTS.md「测试规范」节；TEST-STRATEGY.md 已归档至 archive/TEST-STRATEGY.md，属 1.x 历史参考）。审查 CW 自身源码时，若发现引入 mock 框架，归 Subagent A（项目约定，project-conventions.md），优先级高于本维度的通用"克制 mock"判断。
 
 ### pass 标准
 

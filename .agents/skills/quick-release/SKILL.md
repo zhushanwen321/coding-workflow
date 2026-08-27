@@ -5,9 +5,9 @@ description: >-
   逻辑变更）直接走完 PR → 合并 → patch 发布全流程，触发词即全流程授权，中间零确认点。
   触发词："快速发布"、"直接发布"、"直接走完"、"quick release"、"简单改动发布"、
   "PR + merge + 发布走完"、"patch version 直接发布"。
-  仅 coding-workflow worktree；仅限 markdown/skill/docs/CHANGELOG 类改动（src/
-  有改动必须拒绝，转 pr-cr-fix + merge）。不自创 git 命令，复用 merge-helpers.sh
-  与 pr-cr-fix 的 PR 提交协议。
+  仅 coding-workflow worktree；仅限 markdown/skill/docs/CHANGELOG/版本号类文件改动
+  （src/ 有改动必须拒绝，转 pr-cr-fix + merge）；patch 默认，minor/major 需用户
+  显式说明。不自创 git 命令，复用 merge-helpers.sh 与 pr-cr-fix 的 PR 提交协议。
 ---
 
 # Quick-Release — coding-workflow 快速发布流水线
@@ -20,10 +20,11 @@ pr-cr-fix + merge 的**轻量快车道**：只服务"简单改动直接发布"�
 |------|------|
 | 改动范围 | 限 markdown / skill / docs / CHANGELOG / 版本号类文件 |
 | **src/ 有改动** | **拒绝走本 skill**，转 pr-cr-fix（review + PR）+ merge（发布）完整流程 |
+| **插件包目录有改动** | **拒绝走本 skill**：`pi-coding-workflow-extension/` 下任何改动（含其 README/CHANGELOG——在插件包 files 白名单内、随 ext 包上 npm）随 ext 包经 `ext-v*` tag 发布，quick-release 只打 `v*` tag、永不发 ext 版（纯静默漏发），转 merge skill 完整流程（其 §3.2 有双包归属决策树） |
 | 版本类型 | patch（默认）；minor/major 需用户显式说明 |
 | 工作位置 | coding-workflow git worktree 中 |
 
-判定方法：`git status --short` + `git diff --stat main...HEAD` 确认改动文件清单，逐个检查路径前缀。有任何 `src/`、`scripts/`、`tests/`、`package.json`（版本号除外）、配置类文件 → 拒绝。
+判定方法：`git status --short` + `git diff --stat main...HEAD` 确认改动文件清单，逐个检查路径前缀。有任何 `src/`、`scripts/`、`tests/`、`package.json`（版本号除外）、`pi-coding-workflow-extension/`、配置类文件 → 拒绝。
 
 ## 前置：workspace 定位
 
@@ -138,9 +139,11 @@ commit + tag + push：
 ```bash
 git add -A && git commit -m "chore: bump version $CURRENT_VER → $NEW_VER"
 git tag "v$NEW_VER"
-git push origin HEAD:refs/heads/main --tags
+git push origin HEAD:refs/heads/main "v$NEW_VER"
 ```
 
+> ⚠️ 禁止 `git push --tags`：会重推陈旧本地 tag、误触发发布流水线（merge skill §3.4 同款约束）——只推本次新建的显式 tag。
+>
 > ⚠️ 禁止 `git fetch origin main`（走 refspec 的 fetch 才更新 origin/main ref，merge skill 有 [HISTORICAL] 事故记录）——`sync-main` 已正确处理，直接用它。
 
 ### 阶段 6：等 CI 发布 + 验证 + 清理
@@ -163,10 +166,19 @@ npm view @zhushanwen/coding-workflow@$NEW_VER version
 bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 ```
 
-**清理后确认 symlink 安装版已更新**：npm 包更新后，symlink 目标（`npm root -g` 下安装目录）内容应为新版本。验证：
+**清理后确认 symlink 安装版已更新**：npm 包更新后，symlink 目标（`npm root -g` 下安装目录）内容应为新版本。**先校验 symlink 指向**：目标位于 `$(npm root -g)/@zhushanwen/coding-workflow/` 之下才做内容比对——symlink 指向本地仓库时，rg 读的是本地文件，无论 CI 发布成败都会命中（假阳性）：
 
 ```bash
-rg -n "<本次改动标记内容>" "$(readlink ~/.agents/skills/<skill>)"   # 改动内容出现在安装版 = 发布生效
+LINK_TARGET=$(readlink ~/.agents/skills/<skill>)
+NPM_INSTALL_PREFIX="$(npm root -g)/@zhushanwen/coding-workflow/"
+case "$LINK_TARGET" in
+  "$NPM_INSTALL_PREFIX"*)
+    rg -n "<本次改动标记内容>" "$LINK_TARGET"   # 改动内容出现在安装版 = 发布生效
+    ;;
+  *)
+    echo "⚠️ symlink 指向本地仓库而非 npm 安装目录，内容比对无发布验证意义，以 npm view 与 CI run 为准" >&2
+    ;;
+esac
 ```
 
 ## 关键约束 [MANDATORY]
@@ -188,7 +200,7 @@ rg -n "<本次改动标记内容>" "$(readlink ~/.agents/skills/<skill>)"   # �
 | 阶段 2 自查发现问题 | 修复后重跑一致性 grep，全绿再进阶段 3 |
 | push 冲突 | `git fetch && git rebase` 后重试 push |
 | PR 已存在 | `gh pr edit` 更新 title/body，不重复创建 |
-| CI 发布失败（tag 已推） | 按 merge skill 阶段 4.5 场景 A 回滚：删远程/本地 tag → reset bump commit → 修复 → 重新 bump |
+| CI 发布失败（tag 已推） | 按 merge skill 阶段 4.5 场景 A 回滚：删远程/本地 tag（**不 reset commit**——commit 保留，下次 bump 时版本号已就位；reset 会使本地 main 与 origin 分叉）→ 修复问题 → 重新走版本 bump + tag + push |
 | npm 包发布成功但有误 | 按 merge skill 阶段 4.5 场景 B：72h 内 unpublish → 删 tag → 修复 → 重新发布 |
 | 清理 worktree 后会话 cwd 失效 | 正常现象（当前会话 cwd 锁在已删 worktree）。停止 bash 操作，改用绝对路径 read/edit，或新会话继续（merge skill [HISTORICAL] 教训） |
 

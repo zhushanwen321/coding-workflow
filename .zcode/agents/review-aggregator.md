@@ -53,18 +53,18 @@ plan-completeness 的 must_fix / should_fix 由该维度自行映射为 MUST_FIX
 ## Must-Fix Issues
 | # | 文件 | 行号 | 维度 | 描述 | 修复方向 |
 |---|------|------|------|------|---------|
-| 1 | src/rules/state-machine.ts | 64 | A | 新增 action 未加转换表项 | 在 WAVE_TRANSITIONS 补对应转换 |
-| 2 | src/rules/gates/test.ts | 79 | A | gate 结果未写 statusHistory | handler 内 append statusHistory |
+| 1 | src/core/fold.ts | 64 | A | 新增事件类型未同步投影 | 在 fold() 补对应状态转移 |
+| 2 | src/handlers/verify.ts | 79 | A | verify fail 未入账 | fail 也走 VerifyRan 入账留审计 |
 
 ## Suggestions
 | # | 文件 | 行号 | 维度 | 描述 | 修复方向 |
 |---|------|------|------|------|---------|
-| 1 | src/dispatch.ts | 197 | A | guard 错误消息缺调试信息 | reason 补当前 status/期望 action |
+| 1 | src/gates/spec-rules.ts | 197 | A | gate 缺口消息缺恢复指引 | 错误信息补「错误 → 恢复动作」闭环 |
 
 ## Infos
 | # | 文件 | 行号 | 维度 | 描述 |
 |---|------|------|------|------|
-| 1 | src/rules/gates/retrospect.ts | 197 | A | 新增 gate 建议补 e2e |
+| 1 | src/gates/spec-rules.ts | 210 | A | 新增规则建议补 e2e 用例 |
 ```
 
 ## 返回值（stdout JSON）
@@ -78,4 +78,4 @@ plan-completeness 的 must_fix / should_fix 由该维度自行映射为 MUST_FIX
 }
 ```
 
-调用方（pr-cr-fix 的 SKILL.md）按 `must_fix` 数量决策：`must_fix > 0` → 阻塞通过，引导修复；`must_fix == 0` → 通过。
+调用方（pr-cr-fix 的 SKILL.md）按 `must_fix` 数量 + 运行档位决策（Gate-2，档位感知）：`must_fix == 0` → 两档均通过。「只审查」档：`must_fix > 0` 时无修复环节——报告落盘即流程结束（汇报里列 must-fix 清单）；已授权修复档（审查 + 修复 / 全流程）：`must_fix > 0` 时自动进入修复流程（阶段 3a，全部修）。仅 must-fix 条数 > 15 时弹窗请用户裁剪优先级。

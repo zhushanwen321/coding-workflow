@@ -167,3 +167,6 @@ vite.config.ts.timestamp-*
 # batch-tracer skill 输出（代码分析报告，本地产物不入库）
 .tracers/
 .fallow/
+
+# Python 字节码缓存（metrics-gate.py 被 py_compile/执行时的副产物）
+__pycache__/

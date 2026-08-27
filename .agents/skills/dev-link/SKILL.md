@@ -6,7 +6,7 @@ description: >-
   toggle the `cw` command between the published npm package and the local
   development symlink. Provides two scripts: use-npm.sh (uninstall local link,
   install published npm version) and use-link.sh (uninstall npm version,
-  install local symlink for development).
+  link the local project and install skill/agent symlinks for development).
 ---
 
 # dev-link（cw 安装切换器）
@@ -31,7 +31,7 @@ bash .agents/skills/dev-link/use-npm.sh 0.0.1     # 指定版本
 
 ### `use-link.sh` — 切换到本地开发版
 
-卸载 npm 正式版，`npm link` 本地项目（会先 `npm run build`）。
+卸载 npm 正式版，`npm link` 本地项目（会先 `npm run build`），然后执行 `scripts/install-skill.sh`，把包内 skills/agents 以 symlink 安装到全局目录（skills → `~/.agents/skills` + `~/.claude/skills`；agents → `~/.agents/agents` + `~/.pi/agent/agents` + `~/.claude/agents`）。
 
 ```bash
 bash .agents/skills/dev-link/use-link.sh

@@ -127,7 +127,7 @@ function handle(data: any) {
 try {
   await fs.writeFile(path, data);
 } catch (e) {
-  throw new CwError("WRITE_FAILED", `写 ${path} 失败`, { cause: e });
+  throw new Error(`写 ${path} 失败`, { cause: e });
 }
 
 // warn：空 catch 但有注释说明意图
@@ -200,7 +200,7 @@ function divide(a: number, b: number): number {
 
 测试是否有效验证了行为，而不是"凑覆盖率"。断言是否具体，是否覆盖正常 + 异常路径。
 
-> **CW 项目特定补充**：本维度是通用范式层（"克制 mock"）。但 CW（coding-workflow）项目另有**零 mock 硬规则**——测试零 mock、禁止引入 mock 框架（见 AGENTS.md / TEST-STRATEGY.md）。审查 CW 自身源码时，若发现引入 mock 框架，归 Subagent A（项目约定，project-conventions.md），优先级高于本维度的通用"克制 mock"判断。
+> **CW 项目特定补充**：本维度是通用范式层（"克制 mock"）。但 CW（coding-workflow）项目另有**零 mock 硬规则**——测试零 mock、禁止引入 mock 框架（见 AGENTS.md「测试规范」节；TEST-STRATEGY.md 已归档至 archive/TEST-STRATEGY.md，属 1.x 历史参考）。审查 CW 自身源码时，若发现引入 mock 框架，归 Subagent A（项目约定，project-conventions.md），优先级高于本维度的通用"克制 mock"判断。
 
 ### pass 标准
 
