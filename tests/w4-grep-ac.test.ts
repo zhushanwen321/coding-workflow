@@ -60,9 +60,11 @@ describe("w4 T4.1 grep AC 机器复核", () => {
     expect(offenders, `事件构造泄漏出域：${offenders.join(", ")}`).toEqual([]);
   });
 
-  it("AC-1（可重跑近似）：unit 域九路径自 merge 基线以来零行为改动——git diff 为空", () => {
-    // merge 基线（8844c67 = feat-optimize-design-dev-test-flow 合入点）。若基线
-    // commit 不存在（浅克隆等）跳过并以 import 边界测试（AC-2）兜底。
+  it("AC-1（可重跑近似）：unit 域九路径自分叉点以来零行为改动——git diff 为空", () => {
+    // 分叉点动态解析（merge-base HEAD origin/main）：unit 域在 main 上会随其他波次
+    // 合法演进，固定 commit 基线每次合入 main 都会误伤——本测试要锁的是「本分支
+    // 自己不动 unit 域」，而非「全局零演进」。若分叉点不可解析时（浅克隆等）退化
+    // 为不判，由 import 边界测试（AC-2/AC-3）兜底。
     const paths = [
       "src/events/types.ts",
       "src/core/fold.ts",
@@ -73,16 +75,24 @@ describe("w4 T4.1 grep AC 机器复核", () => {
       "src/gates/",
       "pi-coding-workflow-extension/",
     ];
+    let diff: string;
     try {
-      const diff = execFileSync(
+      const forkPoint = execFileSync("git", ["merge-base", "HEAD", "origin/main"], {
+        cwd: ROOT,
+        encoding: "utf-8",
+      }).trim();
+      diff = execFileSync(
         "git",
-        ["diff", "--stat", "8844c67..HEAD", "--", ...paths],
+        ["diff", "--stat", `${forkPoint}..HEAD`, "--", ...paths],
         { cwd: ROOT, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
       );
-      expect(diff.trim(), "unit 域九路径出现 diff（零污染破坏）").toBe("");
     } catch (e) {
-      // 基线不可解析时（浅历史），本测试退化为不判——AC-2/AC-3 仍锁 import/构造边界
-      expect((e as { status?: number }).status).not.toBeUndefined();
+      // 只允许 git 进程正常失败（浅历史/无 origin/main ref）；spawn 级异常等其它错误
+      // status 缺失 → 此处 fail 出声。断言放 try 外：diff 非空时的 AssertionError
+      // 不能被本 catch 吞掉伪装成 git 错误。
+      expect((e as { status?: number }).status, `git 异常退出异常: ${String(e)}`).toBeDefined();
+      return;
     }
+    expect(diff.trim(), "unit 域九路径出现 diff（零污染破坏）").toBe("");
   });
 });
