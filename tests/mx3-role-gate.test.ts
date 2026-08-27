@@ -353,7 +353,13 @@ describe("mx-3 R2 fold 消费校验：role≠reviewer 的 spec-review verdict �
 // ================================================================
 
 describe("mx-3 R3 全链防绕过：developer in-flight 期间自审（§5.1 场景重演）", () => {
-  it("带 build 证据后自审无 role → 被拒 exit 1；--role reviewer 谎报 → 入账 + 抢答警告 + 循环继续", async () => {
+  it(
+    "带 build 证据后自审无 role → 被拒 exit 1；同代重复 spec-review verdict（含 --role reviewer 谎报）→ 幂等守卫拒收 + 循环继续",
+    // fb-1（M7 设计 D8）行为变更记档：同代已有 reviewer 生效结论后，任何 CLI
+    // spec-review 提交被幂等守卫入账层拒收——原「谎报 入账 + 抢答警告」路径关闭，
+    // 防绕过目标不变且更强（从审计可见升级为结构性不可入）；正路 = 重提新 spec。
+    // 抢答警告的审计可见性覆盖由 mx-1 T3 的直写路径保留（守卫只拦 CLI 迟到者）
+    async () => {
     const repoDir = makeScenario("r3-bypass", "demo");
     // 前置直写：spec 已过独立审查（role=reviewer pass）→ unit spec-frozen
     const ledger = ledgerOf(repoDir);
@@ -382,21 +388,28 @@ describe("mx-3 R3 全链防绕过：developer in-flight 期间自审（§5.1 场
       expect(bare.code).toBe(1);
       expect(bare.stderr).toContain("--role reviewer");
 
-      // 自审 attempt #2：谎报 --role reviewer → 入账（role 自报可伪造），但本 run
-      // 从未派发该 unit 的 reviewer（更无在场 reviewer flight）→ 抢答警告出声
-      const spoofed = runCli(repoDir, [
+      // 自审 attempt #2：同代重复 spec-review verdict——幂等守卫拒收（fb-1 D8 行为变更）
+      const specReviewVerdictCount = () =>
+        ledger.readAll().filter(
+          (e) =>
+            e.type === "VerdictSubmitted" &&
+            e.payload.unitId === "demo" &&
+            (e.payload as { verdictKind?: string }).verdictKind === "spec-review",
+        ).length;
+      const dupBefore = specReviewVerdictCount();
+      const resubmitted = runCli(repoDir, [
         "review", "submit", "--unit", "demo",
         "--verdict-kind", "spec-review", "--verdict", "pass",
         "--role", "reviewer",
-        "--comment", "developer 自审（R3 谎报现场）",
+        "--comment", "developer 自审（R3 同代重复现场）",
       ]);
-      expect(spoofed.code, `谎报 role 应入账（stderr: ${spoofed.stderr}）`).toBe(0);
+      expect(resubmitted.code, `同代重复应被守卫拒收（stderr: ${resubmitted.stderr}）`).toBe(1);
+      expect(resubmitted.stderr).toContain("已有生效审查结论");
+      expect(specReviewVerdictCount(), "守卫拒收零事件追加").toBe(dupBefore);
 
-      await waitText(runner.stderrText, "疑似非独立 reviewer 提交", 60_000);
-      // 不阻断：警告后循环继续轮询（developer 仍 in-flight、runner 存活 ≥5 个 poll 周期）
+      // 守卫只是入账层拒绝，不阻断循环：developer 仍 in-flight、runner 存活 ≥5 个 poll 周期
       await new Promise((resolve) => setTimeout(resolve, 1_200));
-      expect(runner.child.exitCode, "警告只是审计可见性，不得阻断或杀死循环").toBeNull();
-    } finally {
+      expect(runner.child.exitCode, "守卫拒收不得阻断或杀死循环").toBeNull();    } finally {
       runner.child.kill("SIGTERM");
       await waitExit(runner, 10_000);
     }

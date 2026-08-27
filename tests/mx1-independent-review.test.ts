@@ -8,9 +8,10 @@
  *      含 attachments 绝对路径可解析）→ 人扮演 reviewer 提交 fail → specFixPending
  *      派 designer（任务书含 fail comment 全文、不含 review submit）→ 新 spec →
  *      reviewer pass → spec-frozen；verdict 事件 ts 晚于 reviewer brief mtime
- *   T2 deadlock（mx3 语义变化：按打回代数计数）——形态①「不重提的两连 fail」
- *      同代只计 1 次打回，不再 deadlock（specFixPending 正常派 designer，见
- *      mx3-generation-count G1）；形态②「fail → 重提（改 1 字节）→ fail」= 2 代
+ *   T2 deadlock（mx3 语义变化：按打回代数计数）——形态①「不重提的第二条 fail」
+ *      被 fb-1 幂等守卫 exit 1 拒收（同代重复 spec-review verdict 不再入账，
+ *      mx3「同代只计 1 代」由入账拒绝直接保证；直写账本的同代双 fail 路径
+ *      见 mx3-generation-count G1）；形态②「fail → 重提（改 1 字节）→ fail」= 2 代
  *      打回，保持 specReviewDeadlock + escalation 含各代 comment 摘要 + 停止派发
  *      （mx4 迁移：默认预算 10，形态② runner 注入 --max-spec-rejects 2 快速构造）
  *   T3 抢答警告：无 in-flight reviewer 时人为提交 spec-review verdict → stderr
@@ -402,8 +403,8 @@ async function assertDeadlock(
   expect(countDispatches(), "deadlock 后应停止该 unit 的一切新派发").toBe(before);
 }
 
-describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打回代数只计 1 代，不再 deadlock）", () => {
-  distIt("fail ×2（无重提）→ 不 deadlock、specFixPending 正常派 designer，无 escalation", async () => {
+describe("mx-1 T2 幂等守卫形态（fb-1 收窄：同代第二条 fail 被拒收，不再入账）", () => {
+  distIt("fail（1 条）→ 同代第二条 fail 被 fb-1 守卫 exit 1 拒收 → 账本恰一条 fail、单代打回不 deadlock、specFixPending 正常派 designer", async () => {
     const repoDir = makeScenario("t2-two-fails", "demo");
     const runner = startRunner(repoDir, "demo", ["--max-idle-ms", "60000"]);
     try {
@@ -416,20 +417,31 @@ describe("mx-1 T2 deadlock 形态①（mx3 语义变化：同代双 fail 按打�
         runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态一第1次fail：缺A3", "--role", "reviewer"]).code,
       ).toBe(0);
       await waitCountText(runner.stdoutText, '派发 designer → unit "demo"', 2, 10_000); // specFixPending 派 designer
-      // 不重提：直接第二次 fail（人为——正常流程 designer 不出 verdict，抢答仅审计警告）
-      expect(
-        runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态一第2次fail：仍未补A3", "--role", "reviewer"]).code,
-      ).toBe(0);
-      // mx3 语义变化（原断言反转）：同一版 spec 的第二条 fail 仍是 1 代打回
-      // （< 阈值——mx4 后默认 10）——designer 不被试探性提交误杀，specFixPending
-      // 出口继续有效
+      // 不重提：直接第二次 fail（人为——正常流程 designer 不出 verdict，抢答仅审计警告）。
+      // fb-1 守卫：同代重复的 spec-review verdict 被 exit 1 拒收（改判/重复路径均关）
+      const secondFail = runCli(repoDir, ["review", "submit", "--unit", "demo", "--verdict-kind", "spec-review", "--verdict", "fail", "--comment", "形态一第2次fail：仍未补A3", "--role", "reviewer"]);
+      expect(secondFail.code, "同代第二条 fail 应被守卫拒收").toBe(1);
+      expect(secondFail.stderr).toContain("该 spec 已有生效审查结论");
+      // 账本断言：spec-review verdict 仍恰 1 条（拒收零入账——mx3 原语义「同代
+      // 双 fail 只计 1 代」的账本前提如今由入账拒绝直接保证）
+      const specReviews = ledgerOf(repoDir)
+        .readAll()
+        .filter(
+          (ev) =>
+            ev.type === "VerdictSubmitted" &&
+            (ev.payload as { verdictKind: string }).verdictKind === "spec-review",
+        )
+        .map((ev) => (ev.payload as { verdict: string }).verdict);
+      expect(specReviews).toEqual(["fail"]);
+      // 单条 fail = 1 代打回（< 阈值——mx4 后默认 10）——designer 不被试探性
+      // 提交误杀，specFixPending 出口继续有效
       await new Promise((resolve) => setTimeout(resolve, 1_500));
-      expect(runner.stderrText(), "同代双 fail 不触发 deadlock escalation").not.toContain("打回循环活锁");
+      expect(runner.stderrText(), "同代第二条 fail 被拒收后不触发 deadlock escalation").not.toContain("打回循环活锁");
       const frontier = runCli(repoDir, ["frontier", "--json"]);
       const groups = JSON.parse(frontier.stdout) as { specReviewDeadlock: string[]; specFixPending: string[] };
       expect(groups.specReviewDeadlock).not.toContain("demo");
       expect(groups.specFixPending).toContain("demo");
-      // designer 未被停派：第二条 fail 后 designer 仍是该 unit 的推进出口（此处
+      // designer 未被停派：拒收发生后 designer 仍是该 unit 的推进出口（此处
       // designer#2 尚在飞等待重提，无新派发是 gate 语义——断言 reviewer/developer
       // 均未被派发即可证停派未发生之外的通道未打开）
       expect(runner.stdoutText()).not.toContain('派发 developer → unit "demo"');

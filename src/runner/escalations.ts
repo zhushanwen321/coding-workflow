@@ -30,6 +30,18 @@ import type { AgentRole } from "./spawn/types.js";
 const MS_PER_MINUTE = 60_000;
 
 /**
+ * 五类停派文案统一附尾的人工闭环句（fb-3，设计《M7 fa/fb 波次》§3.1 场景 5 /
+ * D10-①，实战观察 C4 的对症药）：先给完整处置路径再给续接条件，人工接管不
+ * 依赖记忆。「下轮自愈」的机制依据 = frontier 投影语义：转人工维度的命中
+ * 条件随人工处置事件入账自然消失，loop 下轮重算投影即恢复派发——文案只是
+ * 显性化既有保证，非新机制。措辞按设计原文（反引号转裸文本，对齐 stderr
+ * 纯文本风格）。
+ */
+const MANUAL_CLOSING_LOOP_GUIDANCE =
+  "人工闭环顺序：重提 spec → 独立 spec-review → build 证据 → cw verify → exec-review；" +
+  "处置入账后运行中的 cw run 下轮自愈，已退出则重跑 cw run 续接。";
+
+/**
  * spec-review 代数中间档出声阈值（lv-3，设计 D5）：打回代数 ≥3 且 < 预算逐代
  * 一声一行提示（不进停派 map、不改变派发行为——给用户 3 代即可介入的可见性，
  * 不必等 10 代爆发一次性转人工）。与 brief.ts 的审查上下文历史截断
@@ -75,7 +87,8 @@ export function escalationMessage(
     `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
     `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（本次 run 的历次输出；跨 run 历史在 ~/.cw/topic/ 下按 runTs 目录可查）\n` +
     `  3. 若任务量确超单次 spawn 上限（--spawn-timeout-ms / CW_SPAWN_TIMEOUT_MS 可调，当前 ${spawnTimeoutMs / MS_PER_MINUTE}min）：` +
-    "人工接手完成该 unit，或拆小任务另建 unit"
+    "人工接手完成该 unit，或拆小任务另建 unit" +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -88,7 +101,8 @@ export function escalationExitMessage(rootId: string, escalated: ReadonlyMap<str
       .map(([unitId, role]) => `  - ${unitId}（最后派发 role：${role}）`)
       .join("\n") +
     `\n恢复动作：按各 Unit 的转人工指引处理（cw run --root ${rootId} --spawn human 人工接手），` +
-    "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。"
+    "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。" +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -120,7 +134,8 @@ function flakeEscalationMessage(
     `     cw evidence submit --kind spec --unit ${unitId} --file spec.json（新 spec 提交即清零连挂计数）\n` +
     "  3. 判定为真 bug → 人工修复实现后重新提交 build 证据并 cw verify\n" +
     "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
+    `cw run --root ${rootId} 即续。` +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -154,21 +169,26 @@ function specDeadlockEscalationMessage(
     `  2. 人工审查该 spec：cw report --unit ${unitId}（原文副本见 evidence 目录 attachments/）\n` +
     `  3. 处置三选一：人工修 spec 重提后由你以 reviewer 身份判定（cw evidence submit --kind spec --unit ${unitId} --file spec.json + ` +
     `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer——mx-3 起 spec-review 必须携带 --role reviewer）；` +
-    "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工提交 pass verdict\n" +
+    "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误：重提 spec（内容可不变）走新代——cw evidence submit --kind spec --unit " +
+    `${unitId} --file spec.json，由新代独立 reviewer 重审、或人工以 --role reviewer 判定——同代直接补 pass verdict 已被幂等守卫拒收\n` +
     "处置完成（unit 离开 created 态）投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
+    `cw run --root ${rootId} 即续。` +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
 /**
- * 解析失败回炉活锁转人工指引（mx5-2，设计 mx-5 D2 防活锁独立预算）：两轮完整
- * 回炉（连挂 ≥2 → designer 修 spec → 新 spec 过审 → verify 仍解析失败连挂 ≥2）
- * 走满后判定 spec/brief 层有更深问题——继续派 designer 只会重演（每轮回炉都
- * 清空连挂再重建），停派转人工。列出当前周期的连挂事实（条目 id + 逐次 runId
- * ——原文在 <id>.report.json 顶层 reason，cw report 可查）与人工处置动作；出
- * 口形态复用 fx-2 上限出口的「审计-不喂-idle」模式（停派后无新 VerifyRan 喂活
- * idle 判定，空转由 maxIdleMs 收束）；人工处置（新 spec 过审 / 人工关闭）写入
- * 账本后投影自然消失，运行中的循环下轮自愈。
+ * 确定性 spec 缺陷回炉活锁转人工指引（mx5-2，设计 mx-5 D2 防活锁独立预算；fa-3
+ * D3 双信号升格：确定性缺陷 = 解析失败 ∪ 无区分力，两形态同座共用本出口）：两轮
+ * 完整回炉（连挂 ≥2 → designer 修 spec → 新 spec 过审 → verify 仍带确定性缺陷
+ * 信号连挂 ≥2）走满后判定 spec/brief 层有更深问题——继续派 designer 只会重演
+ * （每轮回炉都清空连挂再重建），停派转人工。列出当前周期的连挂事实（条目 id +
+ * 逐次 runId）与人工处置动作；两信号的机器原文落盘载体不同（取数口径与
+ * brief.ts contractFailFactsOf 逐字对齐）：解析失败在 <id>.report.json 顶层
+ * reason，无区分力在同 runId 目录顶层 report.json 的 redPhase 节——cw report
+ * 均可查；出口形态复用 fx-2 上限出口的「审计-不喂-idle」模式（停派后无新
+ * VerifyRan 喂活 idle 判定，空转由 maxIdleMs 收束）；人工处置（新 spec 过审 /
+ * 人工关闭）写入账本后投影自然消失，运行中的循环下轮自愈。
  */
 function specContractDeadlockEscalationMessage(
   rootId: string,
@@ -177,21 +197,25 @@ function specContractDeadlockEscalationMessage(
 ): string {
   const factLines = facts.streaks.map(
     (f) =>
-      `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次解析失败（runId：${f.runIds.join("、")}）`,
+      `  - 验收 ${f.acceptanceId}：当前 spec 周期内连续 ${f.consecutiveFails} 次确定性缺陷信号（解析失败 / 无区分力，runId：${f.runIds.join("、")}）`,
   );
   return (
-    `cw run: unit "${unitId}" 的验收命令解析失败已 2 代回炉仍连挂 ≥2（两轮「连挂 → designer 修 spec → 过审 → verify 检验」完整走完；` +
+    `cw run: unit "${unitId}" 的验收命令确定性缺陷信号（解析失败 / 无区分力）已 2 代回炉仍连挂 ≥2（两轮「连挂 → designer 修 spec → 过审 → verify 检验」完整走完；` +
     "代数累计不因重提清理）——判定 spec/任务书层有更深问题，停止对该 unit 派发（不再派 designer，防回炉活锁），" +
     "转人工处置（本循环继续处理其余 unit）：\n" +
     factLines.join("\n") +
     "\n人工处置动作（恢复指引，按序）：\n" +
     `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
-    `  2. 查看逐次解析失败原文：cw report --unit ${unitId}（各 runId 目录的 <验收id>.report.json 顶层 reason）\n` +
-    `  3. 人工修正验收命令契约（e2e 型补标记行产出；vitest 型删冲突 flag——cw 自动追加 --reporter=json）后重提并以 reviewer 身份过审：` +
-    `cw evidence submit --kind spec --unit ${unitId} --file spec.json + cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer；` +
+    `  2. 查看逐次确定性缺陷信号原文：cw report --unit ${unitId}（解析失败读各 runId 目录的 <验收id>.report.json 顶层 reason；无区分力读同 runId 目录顶层 report.json 的 redPhase 节）\n` +
+    `  3. 人工修正验收命令契约后重提并以 reviewer 身份过审：` +
+    `cw evidence submit --kind spec --unit ${unitId} --file spec.json + cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer。` +
+    "修法按信号分流：解析失败形态——e2e 型补标记行产出、vitest 型删冲突 flag（cw 自动追加 --reporter=json）；" +
+    "无区分力形态——先核查 build commit 结构（实现与测试须同一 commit：红阶段以 build commit 第一父为基线，developer 拆多个 commit 会让基线树误含部分实现而误判，属实则让 developer 以单 commit 重交 build 证据后重跑 verify 即愈，无需改 spec），" +
+    "确属恒真验收时给替代路径（规则⑬同款：意图是「类型装配成立」→ 改为断言具体产物的用例；意图是全仓类型回归 → 上收 root spec 并标 layer: \"topic\"）；" +
     "或判定任务书本身不可行，人工关闭/重构该 unit\n" +
     "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
+    `cw run --root ${rootId} 即续。` +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -220,7 +244,8 @@ function buildDriftEscalationMessage(
     `  1. 人工接手：cw run --root ${rootId} --spawn human（账本即状态，${fact.buildCount} 次证据的进度不丢）\n` +
     `  2. 定位卡点：${stdoutPath}（历次输出）\n` +
     "  3. 三选一：人工完成该 unit；或拆小任务另建 unit（cw create 深度上限内）；\n" +
-    `     或确认可继续自动跑：cw run --root ${rootId} --max-build-attempts <更大值>`
+    `     或确认可继续自动跑：cw run --root ${rootId} --max-build-attempts <更大值>\n` +
+    MANUAL_CLOSING_LOOP_GUIDANCE
   );
 }
 
@@ -324,7 +349,8 @@ export function announceManualEscalations(
       () => flakeEscalationMessage(rootId, unitId, facts),
     );
   }
-  // mx5-2 specContractDeadlock：解析失败连挂 ≥2 且回炉代数达上限（两代完整回炉
+  // mx5-2 specContractDeadlock（fa-3 D3 双信号）：确定性缺陷信号（解析失败 ∪ 无
+  // 区分力）连挂 ≥2 且回炉代数达上限（两代完整回炉
   // 仍失败）→ 停派转人工（computeDispatchTargets 同口径不派）
   const contractFacts = specContractFacts(events);
   for (const [unitId, facts] of contractFacts) {

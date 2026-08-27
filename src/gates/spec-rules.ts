@@ -1,5 +1,5 @@
 /**
- * spec gate 十二规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
+ * spec gate 十四规则（canon《design-rewrite-architecture.md》§3.3 D3「机器前置规则」；
  * 判定语义与 M0 口径锁定于 docs/rewrite/acceptance/u3-acceptance.md）。
  *
  * ① 验收非空；② core 用例自身 type 必须为 e2e-real/e2e-mock（M0 口径：核心 case
@@ -22,7 +22,18 @@
  * D3，fail 级：".cw-worktrees" 子串或目录选择词法族后随剥引号 /~ 开头 token——
  * 逃逸使 verify 绑定执行瞬间的工作区状态而非账本 commit，语义失效同⑩真空
  * 声明；词法族见 DIRECTORY_FLAG_TOKENS / DIRECTORY_FLAG_EQUALS_PREFIXES
- * （分离 / -C 紧贴 / 等号紧贴三形态均已覆盖），漏报面由 reviewer 第五维语义审兜底）。
+ * （分离 / -C 紧贴 / 等号紧贴三形态均已覆盖），漏报面由 reviewer 第五维语义审兜底）；
+ * ⑬ unit 层纯 typecheck 形态拦截（fa-1，M7 设计《无区分力验收设防与挂法归因》
+ * D2，双档：bin 族 {tsc, vue-tsc, tsgo} 全段命中 = fail——typecheck 不引用
+ * 测试文件，红阶段在基线树上恒 pass，验收对任何实现无区分力；script 名族
+ * {typecheck, type-check, types, tsc} 全段命中 = warning——script 体词法
+ * 不可见，fail 级误伤「tsc && vitest 复合体」合法形态；topic 层豁免
+ * （root typecheck 链是集成层合法形态）；形态枚举见 TYPECHECK_BINS /
+ * TYPECHECK_SCRIPT_NAMES）；
+ * ⑭ e2e 型条目缺省 runner 却写 vitest/pytest 调用的隐式错配 warning（fa-1，
+ * 同设计 D7：缺省推导按 type 把 e2e 级路由 e2e-sh 找标记行，vitest/pytest
+ * 输出必然解析失败 verify 必挂；显式 runner 不查——规则⑧管其合法性；
+ * unit/integration 不查——缺省推导本就命中 vitest）。
  * 多缺口按规则序号升序全部列出，不短路。
  *
  * 规则③的 PATH 解析是 `which` 等价检查：只验证设计期可得的事实（bin 可解析），
@@ -56,7 +67,8 @@ function tokenizeCommand(command: string | undefined): string[] {
 
 /**
  * spec 提交时的机器前置规则（①-⑤ 为 u3 五规则，⑥ 为 fx-1 追加，⑦ 为 rv-2 追加，
- * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加，⑫ 为 lv-1 追加）。确定性检查（对同一 spec +
+ * ⑧ 为 mx-2 追加，⑨ 为 mx5-1 追加，⑩⑪ 为 al-3 追加，⑫ 为 lv-1 追加，⑬⑭ 为
+ * fa-1 追加）。确定性检查（对同一 spec +
  * 同一 PATH 环境结果恒定），不做任何主观判断——「验收强不强」由独立 reviewer 审，
  * 不在本函数职责内。
  */
@@ -267,6 +279,82 @@ export function checkSpecRules(spec: SpecSubmittedPayload): SpecRulesResult {
           `恢复动作：改用相对路径（cd packages/app && …）或 git -C <相对路径>；引用的脚本/文件必须提交进仓库（干净 checkout 只含账本 commit 的内容）。`,
       );
     }
+  }
+
+  // ⑬ unit 层纯 typecheck 形态拦截（fa-1，M7 设计 D2，双档）。fail 档误伤面
+  // 为零的论证：裸 typecheck 命令不引用测试文件，红阶段在基线树上恒 pass
+  // （基线本就编译通过）——对任何实现无区分力，verify 恒 fail；且常规 run 在
+  // 任何适配器路由下必 parseError（vitest 适配器等 stdout JSON、e2e-sh 等
+  // 标记行，tsc 输出两者皆非），现行代码下要烧 2 轮 verify 全价才被解析失败
+  // 回炉通道接走——入账期 fail 拒收反馈最快成本最低，命令里直接写出纯
+  // typecheck 的 unit 验收没有合法用途。script 名族只能 warning：script 体
+  // 在 gate 词法层不可见（规则⑪「gate 词法层不猜」既有诚实边界），「纯 tsc
+  // 体（病态）」与「tsc && vitest run 复合体（合法有区分力）」无法区分，fail
+  // 级结构性误伤后者（设计 D2 对抗审查实证）；warning 文案点名歧义并建议内
+  // 联展开。作用域：layer 缺省或 "unit"（topic 豁免——root typecheck 链是
+  // 集成层合法形态，集成层无红阶段/无区分力判定）；manual 型跳过（无 command
+  // 可检，仿规则⑫）。命令按 && / ; / || 分段（引号外近似，与全模块空白切分
+  // 词法哲学一致）：全部非空段都是 bin 族调用 → fail；未命中 fail 档且全部
+  // 非空段都是 script 名族调用 → warning。一条 command 只出一条输出（多形态
+  // 叠加无增量信息，仿规则⑪）
+  for (const ac of spec.acceptance) {
+    if (ac.layer === "topic" || ac.type === "manual") {
+      continue;
+    }
+    const tokens = tokenizeCommand(ac.command);
+    if (tokens.length === 0) {
+      continue;
+    }
+    const segments = splitByLogicalOperators(tokens);
+    if (segments.length === 0) {
+      continue;
+    }
+    const command = ac.command?.trim() ?? "";
+    if (segments.every(isTypecheckBinCall)) {
+      failures.push(
+        `规则⑬: 验收 ${ac.id} 的 command "${command}" 只含 typecheck 族调用。` +
+          `typecheck 命令不引用测试文件，红阶段在基线树上恒 pass（基线本就编译通过）——` +
+          `该验收对任何实现都无区分力，verify 恒 fail（现行代码下要烧 2 轮 verify 全价才被回炉通道接走）。` +
+          `恢复动作：①若意图是「类型装配成立」，改为断言具体产物的 unit/e2e 用例（import 新类型并断言行为）；` +
+          `②若意图是全仓类型回归，上收 root spec 并标 layer: "topic"（集成层执行，topic 层不受本规则约束）。`,
+      );
+      continue;
+    }
+    if (segments.every(isTypecheckScriptCall)) {
+      warnings.push(
+        `规则⑬: 验收 ${ac.id} 的 command "${command}" 只含 typecheck script 名族调用。` +
+          `script 体在 gate 词法层不可见：纯 tsc 体（病态——红阶段基线树上恒 pass，对任何实现无区分力）` +
+          `与 "tsc && vitest run" 复合体（合法有区分力）无法区分，故降 warning 不拒。` +
+          `恢复动作：①把 script 内容展开内联进 command 供 gate 判定；` +
+          `②若确属纯 typecheck 意图，上收 root spec 并标 layer: "topic"（集成层执行，topic 层不受本规则约束）。`,
+      );
+    }
+  }
+
+  // ⑭ runner/type 隐式错配 warning（fa-1，同设计 D7，观察文档 C6 的触发形态：
+  // e2e-real 型条目 + vitest 命令 + 无 runner 字段）。错配后果：缺省推导按 type
+  // 把 e2e 级路由到 e2e-sh（在 stdout 找 e2e 标记行），vitest/pytest 的 JSON/
+  // 条目行输出必然解析失败，verify 必挂——几乎必然烧一轮 build 全价才暴露，
+  // 反馈位置错（烧在 developer 头上，w2 spec v1 实证）。warning 而非 fail：
+  // 错配有理论合法态（显式 runner 忘了写而非意图错——规则⑪先例：词法层猜
+  // 不透意图时降级）。作用域：仅 e2e 级且 runner 未显式声明（显式声明的
+  // 合法性归规则⑧，不双重报错；unit/integration 不查——缺省推导本就命中
+  // vitest 无错配；manual 无 command 不查）
+  for (const ac of spec.acceptance) {
+    if (!isE2eType(ac.type) || ac.runner !== undefined) {
+      continue;
+    }
+    const tokens = tokenizeCommand(ac.command);
+    if (tokens.length === 0 || !isTestFrameworkCall(tokens)) {
+      continue;
+    }
+    warnings.push(
+      `规则⑭: 验收 ${ac.id} (${ac.type}) 的 command 是 vitest/pytest 调用但未显式声明 runner——` +
+        `缺省推导按 type 把 e2e 级路由到 e2e-sh（在 stdout 找 e2e 标记行），` +
+        `vitest 的 JSON 输出必然解析失败，verify 必挂。` +
+        `恢复动作：①补 "runner": "vitest"（或 "pytest"）显式声明，走对应适配器；` +
+        `②若意图本就是 unit/integration 级用例，把 type 改为 "unit" 或 "integration"（缺省推导即命中 vitest）。`,
+    );
   }
 
   return { ok: failures.length === 0, failures, warnings };
@@ -611,6 +699,99 @@ function pathEscapeGaps(
     }
   }
   return gaps;
+}
+
+// ── 规则⑬⑭：typecheck 形态与 runner 错配词法（单一事实源，与 ADAPTER_FLAG_CONTRACTS 同型组织） ──
+
+/** 规则⑬ fail 档的 typecheck 可执行族（命令词法直见的 bin 名，fa-1 M7 设计 D2） */
+const TYPECHECK_BINS: readonly string[] = ["tsc", "vue-tsc", "tsgo"];
+
+/** 规则⑬ warning 档的 typecheck script 名族（script 体词法不可见，只记名字形态） */
+const TYPECHECK_SCRIPT_NAMES: readonly string[] = [
+  "typecheck",
+  "type-check",
+  "types",
+  "tsc",
+];
+
+/** 规则⑭词法锚：缺省推导会错配路由的测试框架可执行名（fa-1 M7 设计 D7） */
+const TEST_FRAMEWORK_BINS: readonly string[] = ["vitest", "pytest"];
+
+/** 命令逻辑操作符 token（规则⑬分段切分锚） */
+const LOGICAL_OPERATOR_TOKENS: readonly string[] = ["&&", ";", "||"];
+
+/**
+ * command 逻辑分段（规则⑬）：按 && / ; / || 独立 token 把空白切分结果切成
+ * 若干段，空段剔除（连续操作符 / 操作符收尾的边角形态不产生可判定段）。
+ * 引号外近似——操作符须为独立 token 才切段（`echo a;b` 无空白不切），与
+ * tokenizeCommand 的空白切分词法哲学一致（引号包裹形态是既有诚实漏报面，
+ * 与规则⑫注释同款声明）。
+ */
+function splitByLogicalOperators(tokens: readonly string[]): string[][] {
+  const segments: string[][] = [];
+  let current: string[] = [];
+  for (const token of tokens) {
+    if (LOGICAL_OPERATOR_TOKENS.includes(token)) {
+      segments.push(current);
+      current = [];
+    } else {
+      current.push(token);
+    }
+  }
+  segments.push(current);
+  return segments.filter((segment) => segment.length > 0);
+}
+
+/**
+ * 段是否为 typecheck bin 族调用（规则⑬ fail 档判据）：段内首个可执行
+ * token ∈ TYPECHECK_BINS，或 manager 前缀（VITEST_PREFIX_TOKENS——npx/
+ * bunx 类「执行 bin」语义同族）后紧随上述 bin。bin 后的参数不参与判定
+ * （`npx tsc --noEmit` 与 `tsc -p x` 同为 typecheck 调用）。
+ */
+function isTypecheckBinCall(segment: readonly string[]): boolean {
+  const first = segment[0] ?? "";
+  if (TYPECHECK_BINS.includes(first)) {
+    return true;
+  }
+  return (
+    VITEST_PREFIX_TOKENS.includes(first) &&
+    TYPECHECK_BINS.includes(segment[1] ?? "")
+  );
+}
+
+/**
+ * 段是否为 typecheck script 名族调用（规则⑬ warning 档判据）：manager ∈
+ * SCRIPT_MANAGER_TOKENS，随后可选 `run`，再随 script 名 ∈ TYPECHECK_SCRIPT_
+ * NAMES（pnpm/yarn 省略 run 的形态同样命中——与规则⑪ wholeRepoScriptForm
+ * 同款词法）。script 名后的参数不参与判定（script 体是否复合词法不可见，
+ * 正是 warning 档存在的原因）。
+ */
+function isTypecheckScriptCall(segment: readonly string[]): boolean {
+  if (!SCRIPT_MANAGER_TOKENS.includes(segment[0] ?? "")) {
+    return false;
+  }
+  let i = 1;
+  if (segment[i] === "run") {
+    i += 1;
+  }
+  return TYPECHECK_SCRIPT_NAMES.includes(segment[i] ?? "");
+}
+
+/**
+ * command 是否为 vitest/pytest 调用（规则⑭判据）：首个可执行 token ∈
+ * TEST_FRAMEWORK_BINS，或 manager 前缀（VITEST_PREFIX_TOKENS，复用规则⑪
+ * 前缀族）后紧随上述可执行名。只看首部——e2e 型条目 command 由 verify 整
+ * 条执行，首部框架调用已注定产物形态与 e2e-sh 路由的错配。
+ */
+function isTestFrameworkCall(tokens: readonly string[]): boolean {
+  const first = tokens[0] ?? "";
+  if (TEST_FRAMEWORK_BINS.includes(first)) {
+    return true;
+  }
+  return (
+    VITEST_PREFIX_TOKENS.includes(first) &&
+    TEST_FRAMEWORK_BINS.includes(tokens[1] ?? "")
+  );
 }
 
 /**

@@ -57,12 +57,12 @@
  *     -idle 模式：停派后无新 VerifyRan，若树内无其他目标由 maxIdleMs 收束；
  *     人工处置写入账本后投影自然消失，运行中的循环下轮自愈。连挂输入排除
  *     解析失败条目（mx5-2：解析失败走 specContractBroken 回炉，不再误判 flake）
- *   - spec-frozen 且当前 spec 周期内某验收解析失败连挂 ≥2 ∧ 回炉代数 <2
- *     （specContractBroken，mx5-2）→ designer 回炉修 spec 的验收命令契约
- *     （任务书内嵌当前周期逐轮解析失败原文 + 规则⑨式恢复指引；新 spec 照旧
+ *   - spec-frozen 且当前 spec 周期内某验收带确定性缺陷信号（解析失败 ∪ 无区分力，
+ *     fa-3 D3）连挂 ≥2 ∧ 回炉代数 <2（specContractBroken，mx5-2）→ designer 回炉
+ *     修 spec 的验收命令契约（任务书内嵌当前周期逐轮机器原文 + 规则⑨式恢复指引；新 spec 照旧
  *     过独立 reviewer 再审——回炉不建新信任机制）。回炉代数 =「连挂 ≥2 → 新
  *     SpecSubmitted」累计次数，新 spec 只清连挂计数不清代数
- *   - spec-frozen 且解析失败连挂 ≥2 ∧ 回炉代数 ≥2（specContractDeadlock，
+ *   - spec-frozen 且确定性缺陷信号连挂 ≥2 ∧ 回炉代数 ≥2（specContractDeadlock，
  *     mx5-2）→ 不派任何 agent（两轮修复均经 verify 检验仍失败，判 spec/brief
  *     层更深问题），stderr 转人工（含 2 代回炉事实与恢复指引）；复用审计-不喂
  *     -idle 模式，人工处置（新 spec 过审 / 人工关闭）写入账本后投影自然消失
@@ -301,7 +301,7 @@ const STOPPED_DISPATCH_DIMENSIONS = [
 const STOPPED_REASONS: Record<(typeof STOPPED_DISPATCH_DIMENSIONS)[number], string> = {
   specReviewDeadlock: "spec-review 打回代数达预算（designer-reviewer 活锁），停派转人工",
   flakeReview: "e2e 验收连挂 ≥2（flake 疑似），停派 developer 转人工判定",
-  specContractDeadlock: "验收命令解析失败 2 代回炉仍连挂，停派转人工",
+  specContractDeadlock: "确定性 spec 缺陷信号 2 代回炉仍连挂，停派转人工",
   buildDrift: "build 证据达预算无 pass verify（缓慢进展），停派转人工",
 };
 
@@ -414,7 +414,7 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
  * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
  * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
- * 模板（内嵌解析失败原文，非 reviewer comment）。ph-i1 R4：reflectionPending
+ * 模板（内嵌确定性缺陷信号机器原文，非 reviewer comment）。ph-i1 R4：reflectionPending
  * 派 designer——派发后 loop 对句柄探测 followUp 能力并走反思链（见
  * startReflectionFollowUp），完成后 loop 自己写 ReflectionRan 再派 reviewer。 */
 const DISPATCH_SHAPE: Record<
@@ -718,6 +718,76 @@ function killAll(inFlight: readonly InFlightSpawn[]): void {
   }
 }
 
+/**
+ * fb-2（M7 设计 D9，观察 C10）：停派维度命中的 unit 在飞 spawn 回收——killAll
+ * 的 per-unit 过滤版（按 InFlightSpawn.unitId 匹配，全 role），尽力回收语义
+ * 逐行照抄 killAll：try/catch 单失败记录后继续，不炸循环（kill 目标常为「已
+ * 自然退出但 race 未结算」的 flight，macOS 对已退出进程组返回 EPERM 而非 ESRCH
+ * 的既有事实见 killAll 注释）。为什么必须回收在飞本体：停派维度在
+ * computeDispatchTargets 只挡新派发（continue），在飞 designer 迟交的
+ * SpecSubmitted 会顶掉人工重提的 spec（C10 主案例）——入账层守卫（fb-1）管
+ * verdict 管不到 SpecSubmitted，竞态口只能在循环层堵。
+ *
+ * 出声时序（设计检查点③的定夺，两处一致）：调用点固定在转人工指引出声
+ * （announceManualEscalations / settleTimeoutEscalations 的 escalationMessage）
+ * 与 stopped 事件发射之后——stderr 上人工先看到指引、随后看到回收记录；回收
+ * 行自身只带维度短名 + C10 原因短句，完整恢复指引不在本行重复（指引已出）。
+ *
+ * 去重键 = unitId、粒度 = 停派 episode（设计 D9 只钉死「停派维度命中时回收
+ * 该 unit 在飞 spawn」，未钉死去重粒度；episode 是实施层选择，理由在此记
+ * 档）：连续停派轮次 = 一个接管 episode（Set 去重防对同一已 kill / 已结算的
+ * flight 空转刷屏）；离开本轮停派命中集（四维 + timeoutEscalation 全集，
+ * 即 stoppedUnitDimension）= 自愈完成、登记清出——同 run 内二次停派命中 =
+ * 新接管现场（新 spawn 可能已派发），必须重新回收，否则 C10 竞态口二次重开
+ * （人工第二轮处置同样会被迟交产出顶掉）。仍处 escalated 而本轮无四维命中
+ * 的 unit 留在命中集内（接管未结束，保持已回收态不清）；其余残余面——
+ * 回收与人工处置入账几乎同轮时新 spawn 尚未派发，只能等下轮命中再回收
+ * （人工在场，maxIdleMs / SPAWN_ERROR 出口兜底）。
+ *
+ * reflectionPending 不在回收范围（反思接缝对在飞句柄 followUp 是合法等待态，
+ * 非转人工）——由调用侧的维度枚举（STOPPED_DISPATCH_DIMENSIONS + escalated）
+ * 结构性保证。
+ */
+function recallStoppedUnitSpawns(
+  inFlight: readonly InFlightSpawn[],
+  stoppedUnitDimension: ReadonlyMap<string, string>,
+  recalled: Set<string>,
+): void {
+  // episode 收尾：离开本轮停派命中集的登记一并清出（自愈完成）——下一次
+  // 再命中 = 新接管现场，重新回收。escalated（timeoutEscalation）档已由调用
+  // 侧并入 stoppedUnitDimension（四维 + escalated 全集基准），仍处 escalated
+  // 的 unit 不会在此被清（接管未结束，保持已回收态）。Set 迭代中删除当前
+  // 元素安全（ES 规范：已访问元素的删除不影响迭代）
+  for (const unitId of recalled) {
+    if (!stoppedUnitDimension.has(unitId)) {
+      recalled.delete(unitId);
+    }
+  }
+  for (const [unitId, dimension] of stoppedUnitDimension) {
+    if (recalled.has(unitId)) {
+      continue; // 本 episode 已回收过——连续停派轮次内去重（见函数头注释）
+    }
+    recalled.add(unitId);
+    for (const flight of inFlight) {
+      if (flight.unitId !== unitId) {
+        continue;
+      }
+      try {
+        flight.handle.kill();
+        emitErr(
+          `[runner] 停派转人工（${dimension}）：回收 unit "${unitId}" 的在飞 ${flight.role} spawn` +
+            "——停派只挡新派发，在飞产出迟交会顶掉人工处置（C10）；人工处置见上方指引，处置入账后下轮自愈。\n",
+        );
+      } catch (err) {
+        process.stderr.write(
+          `[runner] 停派回收 kill 失败（${flight.role} unit "${unitId}"，维度 ${dimension}）：` +
+            `${err instanceof Error ? err.message : String(err)}——目标进程多半已退出，忽略。\n`,
+        );
+      }
+    }
+  }
+}
+
 // ---- rv-1：信号中断回收（Ctrl-C/SIGTERM 孤儿清理） ----
 
 /** 信号中断的约定退出码（shell 惯例 128+signum：SIGINT=2 → 130、SIGTERM=15 → 143） */
@@ -741,10 +811,12 @@ function emitSpecFrozenDesignerRationale(
   if (target.dimension === "specContractBroken") {
     const fact = contractFacts.get(target.unitId);
     emit([
-      `[runner] unit "${target.unitId}" 的验收命令解析失败连挂 ≥2（条目 ` +
+      // fa-3 双信号口径（D-1 同款第四处）：解析失败 / 无区分力同座触发本维度，
+      // 信号名不得只报其一；逐轮原文分流取数见 brief.ts contractFailFactsOf
+      `[runner] unit "${target.unitId}" 的确定性 spec 缺陷信号连挂 ≥2（条目 ` +
         `${fact?.streaks.map((s) => s.acceptanceId).join("、") ?? "（未知）"}；spec 契约回炉，` +
         `代数 ${fact?.generations ?? 0}/${SPEC_CONTRACT_MAX_GENERATIONS}）` +
-        "——转派 designer 修 spec 的验收命令契约（逐轮解析失败原文见 brief）",
+        "——转派 designer 修 spec 的验收命令契约（逐轮信号原文见 brief）",
     ]);
     return;
   }
@@ -1463,6 +1535,10 @@ async function runLoopMain(
   };
   let roundSeq = 0;
   const announcedStopped = new Set<string>();
+  // fb-2（D9）：停派回收的 episode 去重登记（键 = unitId；连续停派轮次 = 同一
+  // episode，离开停派集时由 recallStoppedUnitSpawns 清出——语义与依据见其
+  // 函数头注释）
+  const recalledStoppedSpawns = new Set<string>();
 
   while (true) {
     // P0-1：编程停止/信号（库形态）已请求 → 在飞已 killAll，以约定码收束
@@ -1605,6 +1681,30 @@ async function runLoopMain(
         });
       }
     }
+
+    // fb-2（D9，C10）：停派维度命中即回收该 unit 在飞 spawn（全 role）。出声
+    // 时序定夺（设计检查点③，与 recallStoppedUnitSpawns 函数头注释一致）：
+    // 调用点在本轮转人工指引出声（settleTimeoutEscalations 的 escalationMessage /
+    // 上方 announceManualEscalations）与 stopped 事件之后——「人工先看到指引、
+    // 随后看到回收记录」（实测排布依据：指引在 stderr 先落盘，回收行走同一
+    // stderr 流，行序即人工视读序）。TIMEOUT 封顶档（escalated）也入回收集——
+    // 该档触发时刻 unit 必无在飞（单飞门 + 结算后才计 streak，检查点④已核），
+    // 属防御性兑底（空转无害），且后写覆盖四维条目（同时命中时以先触发的
+    // TIMEOUT 档出声）；维度名与 stopped 事件同用 timeoutEscalation
+    const stoppedUnitDimension = new Map<string, string>();
+    for (const dimension of STOPPED_DISPATCH_DIMENSIONS) {
+      for (const unitId of groups[dimension]) {
+        if (subtreeIds.has(unitId)) {
+          stoppedUnitDimension.set(unitId, dimension);
+        }
+      }
+    }
+    for (const unitId of escalated.keys()) {
+      if (subtreeIds.has(unitId)) {
+        stoppedUnitDimension.set(unitId, "timeoutEscalation");
+      }
+    }
+    recallStoppedUnitSpawns(inFlight, stoppedUnitDimension, recalledStoppedSpawns);
 
     // mx-1 S7 抢答可见性（mx-3 豁免收紧）：本 run 期间新入账的 spec-review
     // verdict，若其入账时刻不落在该 unit 任何 reviewer flight 的存活窗口内、且非
