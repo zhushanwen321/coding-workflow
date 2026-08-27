@@ -30,6 +30,18 @@ import type { AgentRole } from "./spawn/types.js";
 const MS_PER_MINUTE = 60_000;
 
 /**
+ * 五类停派文案统一附尾的人工闭环句（fb-3，设计《M7 fa/fb 波次》§3.1 场景 5 /
+ * D10-①，实战观察 C4 的对症药）：先给完整处置路径再给续接条件，人工接管不
+ * 依赖记忆。「下轮自愈」的机制依据 = frontier 投影语义：转人工维度的命中
+ * 条件随人工处置事件入账自然消失，loop 下轮重算投影即恢复派发——文案只是
+ * 显性化既有保证，非新机制。措辞按设计原文（反引号转裸文本，对齐 stderr
+ * 纯文本风格）。
+ */
+const MANUAL_CLOSING_LOOP_GUIDANCE =
+  "人工闭环顺序：重提 spec → 独立 spec-review → build 证据 → cw verify → exec-review；" +
+  "处置入账后运行中的 cw run 下轮自愈，已退出则重跑 cw run 续接。";
+
+/**
  * spec-review 代数中间档出声阈值（lv-3，设计 D5）：打回代数 ≥3 且 < 预算逐代
  * 一声一行提示（不进停派 map、不改变派发行为——给用户 3 代即可介入的可见性，
  * 不必等 10 代爆发一次性转人工）。与 brief.ts 的审查上下文历史截断
@@ -75,7 +87,8 @@ export function escalationMessage(
     `  1. 人工接手该 unit：重新运行 cw run --root ${rootId} --spawn human（按打印的指令手工推进；账本即状态，已完成进度不丢）\n` +
     `  2. 定位卡点：查看 ${stdoutPath} 与同级 .stderr（本次 run 的历次输出；跨 run 历史在 ~/.cw/topic/ 下按 runTs 目录可查）\n` +
     `  3. 若任务量确超单次 spawn 上限（--spawn-timeout-ms / CW_SPAWN_TIMEOUT_MS 可调，当前 ${spawnTimeoutMs / MS_PER_MINUTE}min）：` +
-    "人工接手完成该 unit，或拆小任务另建 unit"
+    "人工接手完成该 unit，或拆小任务另建 unit" +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -88,7 +101,8 @@ export function escalationExitMessage(rootId: string, escalated: ReadonlyMap<str
       .map(([unitId, role]) => `  - ${unitId}（最后派发 role：${role}）`)
       .join("\n") +
     `\n恢复动作：按各 Unit 的转人工指引处理（cw run --root ${rootId} --spawn human 人工接手），` +
-    "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。"
+    "完成后重新运行 cw run --root ${rootId} 继续（账本即状态，重跑即续）。" +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -120,7 +134,8 @@ function flakeEscalationMessage(
     `     cw evidence submit --kind spec --unit ${unitId} --file spec.json（新 spec 提交即清零连挂计数）\n` +
     "  3. 判定为真 bug → 人工修复实现后重新提交 build 证据并 cw verify\n" +
     "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
+    `cw run --root ${rootId} 即续。` +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -156,7 +171,8 @@ function specDeadlockEscalationMessage(
     `cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer——mx-3 起 spec-review 必须携带 --role reviewer）；` +
     "或判定任务书本身不可行，人工关闭/重构该 unit；或确认 reviewer 判定有误，人工提交 pass verdict\n" +
     "处置完成（unit 离开 created 态）投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
+    `cw run --root ${rootId} 即续。` +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -191,7 +207,8 @@ function specContractDeadlockEscalationMessage(
     `cw evidence submit --kind spec --unit ${unitId} --file spec.json + cw review submit --unit ${unitId} --verdict-kind spec-review --verdict pass --role reviewer；` +
     "或判定任务书本身不可行，人工关闭/重构该 unit\n" +
     "处置完成投影自然重算（账本即状态）：运行中的循环下轮自愈；已退出的重新运行 " +
-    `cw run --root ${rootId} 即续。`
+    `cw run --root ${rootId} 即续。` +
+    `\n${MANUAL_CLOSING_LOOP_GUIDANCE}`
   );
 }
 
@@ -220,7 +237,8 @@ function buildDriftEscalationMessage(
     `  1. 人工接手：cw run --root ${rootId} --spawn human（账本即状态，${fact.buildCount} 次证据的进度不丢）\n` +
     `  2. 定位卡点：${stdoutPath}（历次输出）\n` +
     "  3. 三选一：人工完成该 unit；或拆小任务另建 unit（cw create 深度上限内）；\n" +
-    `     或确认可继续自动跑：cw run --root ${rootId} --max-build-attempts <更大值>`
+    `     或确认可继续自动跑：cw run --root ${rootId} --max-build-attempts <更大值>\n` +
+    MANUAL_CLOSING_LOOP_GUIDANCE
   );
 }
 
