@@ -702,8 +702,11 @@ describe("T7 spec 变更清零", () => {
 describe("T3 e2e 连挂转人工（human 模式 E2E）", () => {
   runnerIt("两次 verify fail 后：flakeReview 维度出现、stderr 转人工指引、不再派 developer", async () => {
     const repoDir = makeRunnerScenario("t3-flake");
-    // 空转上限收紧：转人工后无新事件，循环按「审计-不喂-idle」模式收束退出
-    const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "4000"]);
+    // 空转上限收紧：转人工后无新事件，循环按「审计-不喂-idle」模式收束退出。
+    // 该上限是全局兜底而非分段参数——CI 双核满载下 runner 启动到测试提交 spec
+    // 之间仅冷启动就可能超过短窗（v2.4.0 发布第 4 轮 T3/T8 双挂：runner 在
+    // spec 入账前即 idle 收束、stdout 冻结在 dispatch 行），放宽以保住首段窗口
+    const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "20000"]);
     const { runIds } = await driveToFlake(repoDir, runner);
 
     const code = await waitExit(runner, 90_000);
@@ -728,8 +731,9 @@ describe("T3 e2e 连挂转人工（human 模式 E2E）", () => {
 describe("T8 人工处置自愈（flakeReview 消失、循环继续推进）", () => {
   runnerIt("按指引修复（修实现稳定 pass + 重提 build + verify pass）→ root closed、循环 exit 0", async () => {
     const repoDir = makeRunnerScenario("t8-recover");
-    // 空转上限放宽：转人工后留人工处置窗口，处置写入账本即有进展
-    const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "60000"]);
+    // 空转上限放宽：转人工后留人工处置窗口，处置写入账本即有进展（同 T3 注：
+    // 该上限同时兜住启动段到首次 spec 提交的调度窗口）
+    const runner = startRunner(repoDir, "fdemo", ["--max-idle-ms", "90000"]);
     await driveToFlake(repoDir, runner);
 
     // 人工判定动作 ①：确认现状（flakeReview 可见）；②判定真 bug → 修实现
@@ -747,7 +751,7 @@ describe("T8 人工处置自愈（flakeReview 消失、循环继续推进）", (
       runCli(repoDir, ["review", "submit", "--unit", "fdemo", "--verdict-kind", "exec-review", "--verdict", "pass", "--evidence-refs", "b2"]).code,
     ).toBe(0);
 
-    const code = await waitExit(runner, 90_000);
+    const code = await waitExit(runner, 150_000);
     expect(code).toBe(0);
     expect(runner.stdoutText()).toContain("已 closed");
     // flakeReview 维度消失（pass 清零 + unit 已越过推进点）
