@@ -4,14 +4,15 @@ description: >-
   Use when 一份已通过对抗式审查的技术设计文档（tech-design 产出）需要落地为可运行代码。
   触发短语：「按设计文档开发」「实施这个设计」「按设计实现」「设计已经好了，开始开发」「根据 design doc 写代码」。
   Not for 编写或审查设计文档本身（用 tech-design）；结构化 topic/unit 台账式开发（用 cw-cli / coding-workflow）；
+  已产出 execution-plan/plan.md 待 Wave 式执行（用 coding-execute）；
   无设计文档的 bug 修复、小改动（直接编码）；只出计划不写代码（用 lite-plan）。
 ---
 
 # dev-flow
 
-把通过对抗式审查的设计文档变成已验收的代码——主 agent 只调度，subagent 完成全部开发与验收。
+主 agent 只调度，subagent 完成全部开发与验收——把通过对抗式审查的设计文档变成已验收的代码。
 
-**首次进入 → read `flow/plan.md`。**
+首次进入 → read `flow/plan.md`。中途进入按路由表落点，各行的入口前提机械可查。
 
 ## 核心原则
 
@@ -34,13 +35,14 @@ description: >-
 
 ## 路由
 
-| 用户意图 | read |
-|----------|------|
-| 开始实施（拿到设计文档路径）/ 中断后恢复 | `flow/plan.md`（恢复走其末尾「状态恢复」节） |
-| 计划就绪，派发开发单元 / 循环中途卡住 | `flow/execute.md` |
-| 全部单元完成，开始一致性审查与修复 | `flow/consistency-review.md` |
-| 进入测试与端到端验收 | `flow/acceptance.md` |
-| 单元怎么拆 / 并行串行怎么判 / worktree 要不要开 / DAG 怎么画 | `references/dag-authoring.md` |
+| 用户意图 | read | 入口前提（机械可查） |
+|----------|------|----------------------|
+| 开始实施（拿到设计文档路径） | `flow/plan.md` | 无 |
+| 中断后恢复 | 先读本页末尾「状态恢复」，再按所处阶段选落点 | — |
+| 计划就绪，派发开发单元 / 循环中途卡住 | `flow/execute.md` | 计划文档已基线 commit |
+| 开始一致性审查与修复 | `flow/consistency-review.md` | 状态表全部 committed |
+| 进入测试与端到端验收 | `flow/acceptance.md` | 审查清零 commit 在 git log 可见，且无未裁决冻结单元 |
+| 单元怎么拆 / 并行串行怎么判 / worktree 要不要开 / DAG 怎么画 | `references/dag-authoring.md` | — |
 
 ## 关键约束
 
@@ -52,7 +54,13 @@ description: >-
 
 ## 状态恢复
 
-进度唯一事实源 = 计划文档内「状态表」。中断恢复时以 git log 与工作区实际文件校准之，表项冲突以实物为准；无 committed 证据的一律按 pending 重算。
+进度唯一事实源 = 计划文档内「状态表」。
+
+1. 校准：以 git log 与工作区实物为准修正表项（无 committed 证据一律按 pending 重算），并在计划变更历史记一笔校准事件
+2. 定位中断点：
+   - 计划期（基线 commit 缺失或不完整）→ 重走 `flow/plan.md`，从用户评审步继续
+   - 执行期 → `flow/execute.md` 第 1 步重新算就绪集
+   - 已全部 committed → 按路由表查审查清零情况，决定进审查还是验收
 
 ---
 
