@@ -1,5 +1,32 @@
 # Changelog
 
+## [v2.4.0] - 2026-08-27
+
+### Features
+- feat(skills): add impl-design skill — execute reviewed design docs via subagent pipeline (4c42bf1)
+- feat(runner): recall in-flight spawns when a manual-escalation dimension hits (4c74e29)
+- feat(verify): carry non-discriminative signal into ledger and unify deterministic spec-defect rework (88c0fea)
+- feat(runner): manual handoff closing-loop guidance and active-spec marker in status (ab011eb)
+- feat(review): reject duplicate spec-review verdicts for the same spec generation (9ba6024)
+- feat(gate): add spec rules 13/14 — typecheck-form interception and runner/type mismatch warning (fa-1, M7 design D2/D7) (c81b429)
+
+### Bug Fixes
+- fix: address review must-fix — scope AC-1 boundary lock to gate/pipeline waves (f39bec8)
+- fix(runner): align specContractBroken rationale line with dual-signal wording (abfe32b)
+- fix(m7): dual-signal deadlock guidance, guard-wording fix, report-file constant unification, and nd-contract e2e coverage (33c8a50)
+- fix(review): address round-1 must-fix — per-episode recall dedup, guard-aligned escalation guidance, typed verdict guards (bfe5722)
+
+### Refactoring
+- refactor(skills): rename impl-design to dev-flow (a4ec087)
+- refactor(handlers): extract helpers to bring cyclomatic complexity under gate (a4cbad8)
+
+### Miscellaneous
+- docs(comments): sync deterministic-defect dual-signal wording across jsdoc anchors (7ca1aad)
+- docs: sync glossary, dispatch-episode dedup note, and V-carrier mapping (R1 doc-side) (f4fb5d9)
+- test(review): adapt duplicate-verdict assertions to idempotency guard (056f023)
+- docs: unify glossary for M7 fail attribution and manual handoff (57315e9)
+
+
 ## [v2.2.0] - 2026-08-24
 
 ### Features
