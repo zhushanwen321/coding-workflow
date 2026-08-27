@@ -392,9 +392,10 @@ bash .agents/skills/merge/cleanup-worktree.sh <branch-name>
 1. 动态定位 workspace root（向上找 `.bare/`）
 2. 检查分支已合并到 `origin/<main>`（未合并 → 拒绝删除，需 `--force`）
 3. 检查 worktree 无未提交变更
-4. 删除 feature worktree 目录 + 本地分支
-5. **只同步 main worktree**（`sync-main`：fetch + merge --ff-only origin/main），**不遍历其他 feature worktree**
-6. 清理指向被删 worktree 的 cw-cli dev symlink（切回 npm 版或删除）
+4. 恢复指向被删 worktree 的全局 cw devlink：仅当 `$(npm root -g)/@zhushanwen/coding-workflow` symlink 指向本次被删的 worktree 时，`npm unlink -g` 后重装 `npm i -g @zhushanwen/coding-workflow@latest`（切回 npm 正式版即最新版；安装失败中止清理保住现场，不误伤指向其他 worktree 的并行 dev link）
+5. 删除 feature worktree 目录 + 本地分支
+6. **只同步 main worktree**（`sync-main`：fetch + merge --ff-only origin/main），**不遍历其他 feature worktree**
+7. 清理指向被删 worktree 的 cw-cli skill symlink（切回 npm 版或删除）
 
 **与原 remove-worktree 的关键差异**：去掉了"遍历同步所有 feature worktree"的逻辑——那是各分支自己的事，merge 流程不越权。只同步 main，确保本地 main 追上刚合并的远程提交。
 

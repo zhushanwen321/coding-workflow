@@ -98,6 +98,42 @@ if [[ -n "$DIRTY" ]]; then
     fi
 fi
 
+# --- 恢复指向本 worktree 的全局 cw devlink 为 npm 正式版 ---
+# dev-link 的 use-link.sh 会 npm link 把全局包 @zhushanwen/coding-workflow 指向
+# 本 worktree；worktree 删除后该 link 悬空，cw 命令整体不可用。
+# 仅处理指向本次被删 worktree 的 link（不误伤并行场景下其他有效的 dev link）。
+# npm link 用相对 symlink，须先 resolve 成绝对路径再比对（删除前 target 存活，
+# readlink -f 可安全展开）。
+# [设计约束] 放在删除之前：先把退路修好再拆房子。npm install 从 registry 拉、
+# 不依赖本地文件；失败则中止清理保住现场（worktree/分支原样，可直接重试）。
+_cw_pkg="@zhushanwen/coding-workflow"
+_npm_groot="$(npm root -g 2>/dev/null || true)"
+_cw_pkg_link="${_npm_groot}/${_cw_pkg}"
+if [ -n "$_npm_groot" ] && [ -L "$_cw_pkg_link" ]; then
+    # 两侧统一物理归一化：npm link 建相对 symlink 须由 readlink -f 展开；
+    # $WORKSPACE_ROOT 来自逻辑 pwd，途经 symlink 时形态不同，直接比对永不命中
+    _pkg_target="$(readlink -f "$_cw_pkg_link")"
+    _wt_physical="$(readlink -f "$WT_PATH")"
+    case "$_pkg_target" in
+        "$_wt_physical"|"$_wt_physical"/*)
+            echo ""
+            echo "=== 恢复 cw 全局 devlink 到 npm 正式版 ==="
+            echo "dev link $_cw_pkg_link → $_pkg_target（本次将被删除）"
+            npm unlink -g "$_cw_pkg" >/dev/null 2>&1 || true
+            # 兜底清残留 symlink，防 EEXIST 挡住后续安装
+            if [ -L "$_cw_pkg_link" ]; then rm -f "$_cw_pkg_link"; fi
+            # @latest = 刚发布的新版本（阶段 4 CI 发布完成后才走到清理）
+            if npm install -g "${_cw_pkg}@latest"; then
+                echo "✓ cw 已切回 npm 正式版并升级到 latest"
+            else
+                echo "Error: npm install -g ${_cw_pkg}@latest 失败（网络或 registry 异常），已中止清理以保全现场。" >&2
+                echo "恢复动作：修复后重跑本脚本；或手动执行 npm i -g ${_cw_pkg}@latest 后重跑。" >&2
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
 # --- 删除目标 worktree ---
 echo ""
 echo "=== 清理 worktree $BRANCH_NAME ==="
