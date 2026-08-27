@@ -17,10 +17,12 @@ npm run build       # tsc 编译到 dist/
 
 ## 核心约定（2.0 实态，均附 src 锚点）
 
-- **10 命令面 = 5 写 + 1 跑 + 4 只读**（`src/cli.ts` 帮助文本 / `src/dispatch.ts` 命令表）：
+- **16 命令面 = unit 域 10（5 写 + 1 跑 + 4 只读）+ gate/pipeline 域 6（2 写 + 1 跑 + 3 只读）**（`src/cli.ts` 帮助文本 / `src/dispatch.ts` 命令表）：
   - 写：`create`（建 unit，深度上限 2：根 + 叶）、`evidence submit`（spec / build 两类证据）、`review submit`（spec-review / exec-review 结论）、`verify`（干净重跑验证）、`setup-agent-dir`（受控 agentDir 安装准备：spawnSync 透传插件包 installer，装 ask-user + manifest.json + 启动探针）
   - 跑：`run`（runner 调度循环，`--spawn human|pi`）
   - 只读：`status` / `frontier` / `tree` / `report`
+  - gate/pipeline 域（发布期验证，硬隔离双域）：写 `gate wrap`（check 包装执行，缓存命中跳过重跑但记账闭合）、`ci-judge`（CI flaky/真回归判定）；跑 `pipeline run`（断点续接）；只读 `gate query` / `gate stats` / `pipeline status`
+- **双域硬隔离（发布验证管线）**：同仓同包第二个问题域 **gate 域**（`src/gate/` + `src/pipeline/`）——独立账本 `gate-events.log`（三类事件 GateCheckRan / GateCacheHit / PipelineStepRan，独立 seq 空间）+ 独立 fold，与 unit 域仅共享泛化后的账本心（`EventLedger` 域描述符注入，`src/store/ledger-domain.ts`；存量调用点零改动）。核心语义：缓存键 `(check, baseSha, scope)` + scope 内容 diff 判定（异常一律向 miss 倒，宁重跑不假 pass）；**记账闭合** = wrap 单入口固定先后序（锁外先落产物→锁内追加事件，「跑了但没记账」结构性不存在）；pipeline `run 即 resume`（manifestSha256 内容寻址分组防假进度）。双域边界机器锁 = `tests/w4-grep-ac.test.ts`。设计全文 `docs/rewrite/design-release-pipeline.md`。
 - **事件账本 + fold 投影**：唯一真相源 = append-only JSONL `events.log`，六类事件（UnitCreated / SpecSubmitted / VerdictSubmitted / EvidenceSubmitted / VerifyRan / ReflectionRan，`src/events/types.ts`；ReflectionRan = 反思先于审查的锚记录：纯 append、不参与四态状态派生）；写入走文件锁短事务（读末 seq → seq+1 → 追加 + fsync，`src/store/events-log.ts`）。**状态不存储只计算**：`status = fold(events)` 纯函数投影，四态 `created → spec-frozen → verified → closed`（`src/core/fold.ts`）——没有「声明状态」的命令，只有「交证据」的命令，补录结构性不可能。
 - **spec gate 十四规则**（`src/gates/spec-rules.ts`，多缺口全列不短路）：① 验收非空；② core 用例自身 type 必须为 e2e 级；③ e2e 用例 command 非空且首 token 在 PATH 可解析；④ e2e-mock 附非空保真说明；⑤ 至少一条 unit 级用例；⑥ split 不得自引用；⑦ 验收 id 字符集（`ACCEPTANCE_ID_RE`，与 e2e-sh marker 同源）；⑧ runner 显式声明必须在 `knownAdapterTypes()` 集合内；⑨ 验收命令契约——按最终适配器路由检查冲突 flag：vitest / playwright 的 `--reporter` 值若出现必须恰为 `json` 且禁 `--outputFile`，pytest 禁 `-q` / `--quiet`（含 `-qq` / `-vq` 等短选项合写），e2e / manual 无静态规则（诚实边界，漏网走回炉通道）；⑩ `layer: "topic"` 条目要求 spec.split 非空——叶子/无子节点声明 topic = 条目永无执行点的真空，fail 级拒入账（al-3）；⑪ unit 层条目 command 纯词法命中全量回归形态（无文件参数的 `vitest run` / 全仓 test·lint script）→ 入账继续 + stderr 成本警告，wrapper 封装显式不枚举、误杀面由 reviewer 第六维语义审兜底（al-3）；⑫ 全部非 manual 型条目 command 路径逃逸词法拦截（command 含 `.cw-worktrees` 子串，或目录选择词法族 `cd` / `-C` / `--dir` / `--prefix` / `--root` 后随剥引号以 `/` 或 `~` 开头的 token，含 `-C/abs` 紧贴与 `--dir=/abs` / `--prefix=/abs` / `--root=/abs` 等号紧贴形态），fail 级拒入账——逃逸使 verify 绑定执行瞬间工作区状态而非账本 commit，漏报面由 reviewer 第五维语义审兜底（lv-1）；⑬ unit 层纯 typecheck 形态拦截（命令按 `&&`/`;`/`||` 分段后全段为 tsc/vue-tsc/tsgo 族调用 → fail 级拒入账，全段为 typecheck script 名族 → warning 级，`layer: "topic"` 豁免——M7 fa D2）；⑭ e2e 型条目 command 首部（manager 前缀后一位）为 vitest/pytest 调用且无显式 runner 声明 → warning 级（缺省路由 e2e-sh 恒解析挂，给显式声明 runner / 改 type 两条恢复，显式声明归规则⑧——M7 fa D7）。验收 type 五枚举：`unit | integration | e2e-real | e2e-mock | manual`。
 - **verify 三道 gate**（`src/handlers/verify.ts` + `src/verify/`）：红阶段（测试区分力检查，新测试打到实现前基线树必须挂；默认执行，`--no-red-phase` 逃生口——rv-4 已交付）→ 名字级比对（验收 id 词边界匹配重跑产物用例名，非计数启发式，`src/verify/name-match.ts`）→ 干净 checkout 重跑（账本 commit 检出到一次性工作区 + 独立 CW_HOME，系统自己复跑，`src/verify/checkout.ts` / `src/verify/run.ts`）。exit 语义：`0` 全过；`1` 有 fail（fail 也入账留审计）；`2` 环境错误（不入账）。
@@ -50,7 +52,7 @@ npm run build       # tsc 编译到 dist/
 
 | 文档 | 内容 |
 |------|------|
-| [CONTEXT.md](./CONTEXT.md) | 2.0 统一语言（核心概念 / 10 命令面 / 环境变量 / 数据布局）——权威术语源 |
+| [CONTEXT.md](./CONTEXT.md) | 2.0 统一语言（核心概念 / 16 命令面（unit 域 10 + gate/pipeline 域 6）/ 环境变量 / 数据布局）——权威术语源 |
 | [docs/rewrite/ledger.md](./docs/rewrite/ledger.md) | 重写状态账本（M0-M4 各 unit 状态 / 里程碑 gate / 事件流水）——进行中波次的唯一权威 |
 | [docs/rewrite/orchestration.md](./docs/rewrite/orchestration.md) | 重写期协调机制（验收基线防篡改 + developer/verifier 分工） |
 | [docs/rewrite/acceptance/](./docs/rewrite/acceptance/) | 各 unit 验收基线（`<unit>-acceptance.md`）与 verifier 报告 / 里程碑 gate 报告 |

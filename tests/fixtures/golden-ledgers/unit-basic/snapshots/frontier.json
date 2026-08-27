@@ -1,0 +1,16 @@
+{
+  "specReady": [],
+  "reflectionPending": [],
+  "specReviewPending": [],
+  "specFixPending": [],
+  "specReviewDeadlock": [],
+  "missingChildren": [],
+  "integrationDrift": [],
+  "integrationReady": [],
+  "specContractBroken": [],
+  "specContractDeadlock": [],
+  "flakeReview": [],
+  "buildDrift": [],
+  "buildReady": [],
+  "execReviewReady": []
+}

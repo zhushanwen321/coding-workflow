@@ -1,0 +1,21 @@
+unit: root (closed)
+  spec: 44f2537f6d5e
+  acceptance:
+    A1 e2e-real [core] ✓ sh test.sh
+    A2 unit ✓
+  evidences:
+    runId=run-root-1 commit=f7ca6046550b7729bf1588f5f65b8ac87c81968a
+      app.js sha256=2d0c4161478b
+  verifyRuns:
+    runId=verify-5eb86046-de84-43b8-b527-777d3ff220c6 result=pass acceptance=A1,A2
+
+unit: leaf (closed)
+  spec: 2cc4a78adcba
+  acceptance:
+    B1 e2e-real [core] ✓ sh test.sh
+    B2 unit ✓
+  evidences:
+    runId=run-leaf-1 commit=f7ca6046550b7729bf1588f5f65b8ac87c81968a
+      app.js sha256=2d0c4161478b
+  verifyRuns:
+    runId=verify-2cb694a0-4e88-4579-9990-c3e1d0c4f9bb result=pass acceptance=B1,B2
