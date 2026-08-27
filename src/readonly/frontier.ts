@@ -101,9 +101,9 @@ export interface FrontierGroups {
   missingChildren: string[];
   integrationDrift: string[];
   integrationReady: string[];
-  /** mx5-2：解析失败连挂 ≥2 ∧ 回炉代数 <2 的 spec-frozen unit（派 designer 回炉修 spec 命令契约） */
+  /** mx5-2：确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 ≥2 ∧ 回炉代数 <2 的 spec-frozen unit（派 designer 回炉修 spec 命令契约） */
   specContractBroken: string[];
-  /** mx5-2：解析失败连挂 ≥2 ∧ 回炉代数 ≥2 的 spec-frozen unit（转人工，防回炉活锁） */
+  /** mx5-2：确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 ≥2 ∧ 回炉代数 ≥2 的 spec-frozen unit（转人工，防回炉活锁） */
   specContractDeadlock: string[];
   /** rv-5：e2e 验收连挂 ≥2 的 unit（转人工判定，机器派发无出口） */
   flakeReview: string[];
@@ -558,14 +558,14 @@ export const SPEC_CONTRACT_MIN_CONSECUTIVE_FAILS = 2;
 
 /**
  * 回炉代数上限（防活锁独立预算，mx5-2）：designer 共获 2 次修复机会且每次都
- * 经完整 verify 检验后才计满——2 代仍解析失败即判 spec/brief 层有更深问题，
+ * 经完整 verify 检验后才计满——2 代仍连挂确定性 spec 缺陷信号即判 spec/brief 层有更深问题，
  * 转人工。不可复用 specReviewFailCounts（那数的是 reviewer fail verdict；回炉
  * 环里 reviewer 对每版新 spec 的裁定是 pass，代数恒不增长）。代数累计绝不清理
  * （新 spec 只清连挂计数）——同打回代数的防活锁依赖累计语义。
  */
 export const SPEC_CONTRACT_MAX_GENERATIONS = 2;
 
-/** 单条验收的解析失败连挂事实（回炉任务书与转人工指引的失败事实来源） */
+/** 单条验收的契约缺陷信号（解析失败 ∪ 无区分力）连挂事实（回炉任务书与转人工指引的失败事实来源） */
 export interface SpecContractStreakFact {
   /**
    * 契约缺陷信号的验收 id（VerifyRan.parseFailedAcceptanceIds 与
@@ -806,7 +806,7 @@ export function computeFrontier(
   opts?: {
     consecutiveIntegrationFails?: ReadonlyMap<string, number>;
     flakeReviewFacts?: ReadonlyMap<string, readonly FlakeReviewFact[]>;
-    /** mx5-2：解析失败连挂 + 回炉代数（specContract 两维度判定输入） */
+    /** mx5-2：确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 + 回炉代数（specContract 两维度判定输入） */
     specContractFacts?: ReadonlyMap<string, SpecContractFacts>;
     specReviewFailCounts?: ReadonlyMap<string, number>;
     /** lv-2：本 spec 周期内 build 证据 ≥K 且无 pass 的事实（buildDrift 维度判定输入） */
@@ -870,7 +870,7 @@ export function computeFrontier(
         (contract?.streaks.length ?? 0) > 0 &&
         (contract?.generations ?? 0) >= SPEC_CONTRACT_MAX_GENERATIONS
       ) {
-        // 两轮「连挂 → 修 spec → verify 检验」完整走完仍解析失败——不再派
+        // 两轮「连挂 → 修 spec → verify 检验」完整走完仍连挂确定性 spec 缺陷信号——不再派
         // designer（防回炉活锁），转人工；处置写入账本后投影自然消失
         groups.specContractDeadlock.push(unit.unitId);
       } else if ((contract?.streaks.length ?? 0) > 0) {

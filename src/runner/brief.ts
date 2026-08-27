@@ -10,7 +10,7 @@
  *                                + canon D3 审查语义 + --role reviewer 提交命令）
  *   - specFixPending           → designer 按 fail comment 全文修 spec 重提（mx-1 MF1）
  *   - specContractBroken       → designer 回炉修 spec 的验收命令契约（mx5-2：内嵌
- *                                当前周期逐轮解析失败原文 + 规则⑨式恢复指引；复用
+ *                                当前周期逐轮确定性缺陷信号（解析失败 ∪ 无区分力）机器原文 + 规则⑨式恢复指引；复用
  *                                specFixPending 骨架）
  *   - missingChildren          → designer 补建 split 子（fx-3 R5.3）
  *   - integrationDrift         → designer 处置集成契约漂移（fx-2 R4a / rv-4）
@@ -402,11 +402,13 @@ function contractFailFactsOf(
 }
 
 /**
- * mx5-2：specContractBroken 的 designer 回炉任务书（解析失败连挂 ≥2 触发，复用
+ * mx5-2：specContractBroken 的 designer 回炉任务书（确定性 spec 缺陷信号（解析失败 ∪ 无区分力）连挂 ≥2 触发，复用
  * specFixPending 模板骨架——失败事实全文内嵌 + 修 spec 指令 + 重提回流独立
  * reviewer）。与 specFixPending 的差异仅在失败事实来源：那里是 reviewer fail
- * verdict 的 comment（语义结论），这里必须内嵌机器错误原文（<id>.report.json
- * 的 reason——designer 修的是命令契约，错的不是语义而是产物形态）；逐轮列出
+ * verdict 的 comment（语义结论），这里必须内嵌机器错误原文（两信号载体不同：parse-failed 读
+ * <id>.report.json 顶层 reason，non-discriminative 读同 runId 目录顶层
+ * report.json 的 redPhase 节，取数见 contractFailFactsOf——designer 修的是
+ * 命令契约，错的不是语义而是产物形态）；逐轮列出
  * （连挂 2 轮 = 2 份原文，审计可对账）。附规则⑨式恢复指引（按验收 type 对照
  * 适配器输出契约——回炉任务书的「怎么修」不依赖 designer 记得规则⑨）。
  */
@@ -649,7 +651,7 @@ function renderBrief(
   // 任务书按派发依据的 frontier 维度选择（口径与 loop 的 computeDispatchTargets
   // 同一投影）：spec-frozen + split 子未建 = fx-3 R5.3 兜底出口（补建子）；其余
   // spec-frozen designer = fx-2 R4a 集成上限出口（契约漂移处置）；specFixPending
-  // = mx-1 fail 打回修 spec；specContractBroken = mx5-2 解析失败回炉（命令契约
+  // = mx-1 fail 打回修 spec；specContractBroken = mx5-2 确定性缺陷信号回炉（命令契约
   // 修复，内嵌机器错误原文）；specReviewPending = mx-1 独立 reviewer 审 spec；
   // specReady = 首派（撰写 spec，root 无子时含 fx-3 R5.2 第 0 步建子指令）
   const roleTasks =

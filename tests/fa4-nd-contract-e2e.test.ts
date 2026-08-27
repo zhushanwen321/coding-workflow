@@ -1,6 +1,8 @@
 /**
  * fa-4 单测：nd 触发链的端到端补齐（设计《.tmp/design-fail-attribution.md》v6
- * §4 V2/V3 的 E2E 形态——fa4 R1 交付；实现侧三处文案升格双信号口径的回归锚）。
+ * §4 V2/V3 的 E2E 形态——fa4 R1 交付；实现侧三处文案升格双信号口径的回归锚；
+ * 编写时点 = v6，R2 时点核对基线 = v7——v7 §4 的 V2/V3 行已注记本文件为
+ * E2E 载体，双向引用闭环）。
  *
  * 真实 dispatch 链路（fb2 V11 harness 范式照搬）：真实 CLI 子进程跑
  * `cw run --spawn human`，隔离 CW_HOME tmp 目录 + scratch git 仓 + 真实 worktree /

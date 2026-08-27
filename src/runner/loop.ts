@@ -414,7 +414,7 @@ async function emitExitOutput(text: string, stream: ExitStream): Promise<void> {
  * mx-1：specReviewPending（spec 审）与 execReviewReady（执行审）都派 reviewer，
  * 但任务书形态不同（renderBrief 按 dimension 区分）。mx5-2：specContractBroken
  * 复用 specFixPending 的 designer 派发形态（修 spec 重提），任务书是独立的回炉
- * 模板（内嵌解析失败原文，非 reviewer comment）。ph-i1 R4：reflectionPending
+ * 模板（内嵌确定性缺陷信号机器原文，非 reviewer comment）。ph-i1 R4：reflectionPending
  * 派 designer——派发后 loop 对句柄探测 followUp 能力并走反思链（见
  * startReflectionFollowUp），完成后 loop 自己写 ReflectionRan 再派 reviewer。 */
 const DISPATCH_SHAPE: Record<

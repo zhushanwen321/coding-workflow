@@ -192,6 +192,9 @@ describe("fb-3 ① 五类停派文案 + TIMEOUT 出口统一附人工闭环句�
     // 预算注入 1：1 代打回即达预算 → 停派文案（绕开 10 代默认只为最小化 fixture）
     const err = announceCaptured(ledger, ["u-spec"], { maxSpecRejects: 1 });
     expect(err).toContain("判定 designer-reviewer 打回循环活锁");
+    // B-4 锚（R2）：选项③新文案防漂移——重提 spec 走新代 + 幂等守卫拒收句
+    expect(err).toContain("重提 spec（内容可不变）走新代");
+    expect(err).toContain("同代直接补 pass verdict 已被幂等守卫拒收");
     expectClosingLoop(err);
   });
 
