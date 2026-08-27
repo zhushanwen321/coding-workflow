@@ -21,7 +21,7 @@ pr-cr-fix + merge 的**轻量快车道**：只服务"简单改动直接发布"�
 |------|------|
 | 改动范围 | 限 markdown / skill / docs / CHANGELOG / 版本号类文件 |
 | **src/ 有改动** | **拒绝走本 skill**，转 pr-cr-fix（review + PR）+ merge（发布）完整流程 |
-| **插件包目录有改动** | **拒绝走本 skill**：`pi-coding-workflow-extension/` 下任何改动（含其 README/CHANGELOG——在插件包 files 白名单内、随 ext 包上 npm）随 ext 包经 `ext-v*` tag 发布，quick-release 只打 `v*` tag、永不发 ext 版（纯静默漏发），转 merge skill 完整流程（其 §3.2 有双包归属决策树） |
+| **插件包目录有改动** | **拒绝走本 skill**：`pi-coding-workflow-extension/` 下任何改动（含其 README/CHANGELOG——在插件包 files 白名单内、随 ext 包上 npm）随 ext 包经 `ext-v*` tag 发布，quick-release 只打 `v*` tag、永不发 ext 版（纯静默漏发），转 pr-cr-fix（review + PR）+ merge（发布，其 §3.2 有双包归属决策树） |
 | **当前分支 = main**（`git log main..HEAD` 为空） | **拒绝走本 skill**：无分支 commits 可开 PR——`git push origin HEAD` 直推 origin/main 绕过 PR，随后 `gh pr create`（head==base）必败，停在「main 已推、PR 不存在」中间态；在 feature worktree（非 main 分支）内执行 |
 | 版本类型 | patch（默认）；minor/major 需用户显式说明 |
 | 工作位置 | coding-workflow git worktree 中 |
@@ -190,7 +190,7 @@ esac
 
 ## 关键约束 [MANDATORY]
 
-1. **硬门槛不可绕过**：`src/` 有改动必须拒绝转 pr-cr-fix + merge，不允许"这次先走 quick-release"
+1. **硬门槛不可绕过**：`src/` 或插件包 `pi-coding-workflow-extension/` 有改动必须拒绝转 pr-cr-fix + merge，不允许"这次先走 quick-release"
 2. **改动落源不可跳过**：symlink 目标（npm 安装版）里的改动，发布前必须同步回仓库源并 diff 验证零差异
 3. **合并必须 merge commit**：`gh pr merge --merge`，禁止 squash/rebase（保护 main 历史，全局规范）
 4. **bump 在 main worktree**：版本号、tag、push 只在 main worktree 执行（`resolve-main` 定位），不在 feature worktree

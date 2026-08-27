@@ -28,6 +28,12 @@ standalone（无账本上下文）时本维度被裁掉，无核对对象。
 
 ## 数据来源
 
+**账本定位**：优先使用调用方注入的 `ledger_key`（review-context.sh 输出，任务书显式给定）
+定位账本 = `$CW_HOME/<ledger_key>/events.log`（CW_HOME 由调用方一并注入，未注入时默认
+`~/.cw`）。仅在缺失时才按「适用场景与启用条件」的推导规则自行计算 encoded-cwd——
+自行推导需重走 git-common-dir → 主仓根 → encodeCwd 三步，任一步错即读空账本，
+把全部条目误判为「无法核对」。
+
 | 数据 | 位置 | 说明 |
 |------|------|------|
 | spec 声明 | `$CW_HOME/<encoded-cwd>/events.log` 的 SpecSubmitted 事件（该 unit 最后一条为当前生效 spec） | `acceptance`（id / core / title / type / command / runner / layer）、`contracts`（provider / consumer / signature / file）、`split`（unitId / dependsOn / files） |

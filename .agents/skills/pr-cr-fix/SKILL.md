@@ -168,7 +168,7 @@ cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/ski
 
 **阶段 1.5 产物消费约定**：`.review/metrics.json` 由维度 B（quality-criteria）按其 agent 定义内的消费约定自读——warn 清单 + `targets.high_crap` 靶子优先核查（高 CRAP 函数是回归高风险区），核查结论（确认风险 / 判定误报）写入维度报告。其余维度不消费。
 
-**Step 2.0 确定维度**：跑 `bash .agents/skills/pr-cr-fix/review-agents/review-context.sh`，读 JSON 的 `dimensions` + `harness_mode` + `git_root` + `files`。
+**Step 2.0 确定维度**：跑 `bash .agents/skills/pr-cr-fix/review-agents/review-context.sh`，读 JSON 的 `dimensions` + `harness_mode` + `git_root` + `files` + `ledger_key`。
 
 维度文件在 `.agents/skills/pr-cr-fix/review-agents/`，已带 frontmatter 是 pi agent（可被 review-fix-loop 直接加载，正文作 reviewer system prompt）：
 
@@ -178,7 +178,7 @@ cw gate wrap --check metrics --base origin/main --scope src/ --scope .agents/ski
 | 通用质量（B） | `quality-criteria.md` | 跨语言通用范式：类型安全 / 错误处理 / 边界条件 / 测试有效性（兜底维度，C > A > B） | 总是 |
 | plan 落地（C） | `plan-completeness.md` | plan 声明的 changes/files 落地核对 + plan 设计正确性（客观事实核对） | 仅 harness 模式 |
 
-`review-context.sh` 检测 `$CW_HOME`（默认 `~/.cw`）下是否存在当前项目的事件账本 `events.log`（探测顺序：`CW_PROJECT_DIR` 环境变量 → git 结构推导的主仓根 → git_root 自身；2.0 账本 key 是主仓根而非 worktree 根，编码与 `src/store/project.ts` 的 `encodeCwd` 同源），据此判定 harness_mode：harness 启用 C，standalone 裁掉只跑 A+B。
+`review-context.sh` 检测 `$CW_HOME`（默认 `~/.cw`）下是否存在当前项目的事件账本 `events.log`（探测顺序：`CW_PROJECT_DIR` 环境变量 → git 结构推导的主仓根 → git_root 自身；2.0 账本 key 是主仓根而非 worktree 根，编码与 `src/store/project.ts` 的 `encodeCwd` 同源），据此判定 harness_mode：harness 启用 C，standalone 裁掉只跑 A+B。命中的候选根经 `encodeCwd` 编码后以 `ledger_key` 字段输出（即 `$CW_HOME/<ledger_key>/events.log` 的目录名部分，standalone 时为 `null`）——reviewer 定位账本时直接使用该值，不自行推导。
 
 **Step 2.1 分流**（按序判定，命中即停）：
 
@@ -276,6 +276,9 @@ task:
   2. 完全按该维度审查标准，审查 git diff main...HEAD 的变更
   3. 把报告写到 .review/run-<runId>/<维度>.md
   4. 按该维度输出格式返回，含 must_fix / suggestion / info 计数
+显式输入（Step 2.0 输出原样注入；维度 C reviewer 用它定位账本，禁止自行推导账本位置）：
+  - ledger_key: <review-context.sh 输出的 ledger_key>（账本路径 = <CW_HOME>/<ledger_key>/events.log）
+  - CW_HOME:    <环境变量 CW_HOME，未设置时为 ~/.cw>（与 review-context.sh 探测用的取值一致）
 ```
 
 `<维度>` 依次取 `dimensions` 列表。**全部 reviewer 完成后**，派第 N+1 个**串行** aggregator（依赖各维度报告，不可并行）：
@@ -298,6 +301,8 @@ task:
 1. 按 `dimensions` 顺序，主 agent 依次 read 每个维度文件
 2. 按该维度 checklist 逐项审查 `git diff main...HEAD`
 3. 主 agent 自己按 `review-aggregator.md` 格式汇总成 `aggregated.md`，报告标注「降级路径（主 agent 自查，存在确认偏差风险）」
+
+维度 C 核对账本时，用 Step 2.0 输出的 `ledger_key` + `CW_HOME` 直接定位账本（`<CW_HOME>/<ledger_key>/events.log`），不自行推导账本位置。
 
 **Gate-2（仅路径 B/C）——档位感知，不重复确认** [HISTORICAL]：`must_fix === 0` 直接进阶段 3（跳过 3a）。`must_fix > 0` 时按档位处置，**不再弹 AskUserQuestion**（2026-08 之前为三选项弹窗；实测教训：档位判定已在阶段 0 消解「修不修」的意图歧义，「审查 + 修复」「全流程」档的用户已明示修复授权，弹窗是重复确认，无人值守场景直接阻塞流程）：
 
@@ -529,7 +534,7 @@ cw gate wrap --check build --base origin/main --scope src/ --scope tsconfig.json
     ├── quality-criteria.md      # 维度 B：跨语言通用质量（兜底维度；含 .review/metrics.json 消费约定）
     ├── plan-completeness.md     # 维度 C：plan 落地核对（仅 harness 模式启用）
     ├── review-aggregator.md     # 路径 B/C 的聚合器指令（去重合并 → aggregated.md）
-    └── review-context.sh        # 环境探测脚本（输出 dimensions / harness_mode / git_root / files 的 JSON）
+    └── review-context.sh        # 环境探测脚本（输出 dimensions / harness_mode / git_root / files / ledger_key 的 JSON）
 
 仓根配套：.fallowrc.json          # 度量阈值 SSOT（health 节：maxCyclomatic/maxCognitive/maxCrap + ignore 面）
 ```

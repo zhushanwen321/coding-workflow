@@ -8,6 +8,8 @@
 #   git_root          git 仓库根目录绝对路径
 #   files             变更文件列表（git diff main...HEAD --name-only）
 #   primary_lang      "typescript"
+#   ledger_key        命中候选根经 encodeCwd 编码后的账本目录名（$CW_HOME/<ledger_key>/events.log
+#                     的 <ledger_key> 部分）；全部候选未命中（standalone）时为 null
 set -euo pipefail
 
 # ── 1. diff 定位（感知 worktree）──
@@ -65,12 +67,27 @@ if [ -n "$COMMON_DIR" ]; then
   MAIN_ROOT="$(cd "$(dirname "$COMMON_DIR")" 2>/dev/null && pwd -P || true)"
 fi
 
+# LEDGER_ROOT：命中的候选根绝对路径（账本 key 的原文），供输出 ledger_key 编码用；
+# 全部未命中（standalone）时为空 → ledger_key 输出 null
+LEDGER_ROOT=""
 if ledger_exists "${CW_PROJECT_DIR:-}"; then
   HARNESS_MODE="harness"
-elif ledger_exists "$MAIN_ROOT" || ledger_exists "$GIT_ROOT"; then
+  LEDGER_ROOT="${CW_PROJECT_DIR:-}"
+elif ledger_exists "$MAIN_ROOT"; then
   HARNESS_MODE="harness"
+  LEDGER_ROOT="$MAIN_ROOT"
+elif ledger_exists "$GIT_ROOT"; then
+  HARNESS_MODE="harness"
+  LEDGER_ROOT="$GIT_ROOT"
 else
   HARNESS_MODE="standalone"
+fi
+
+# ledger_key：命中候选根经 encode_cwd 编码（与 src/store/project.ts 的 encodeCwd 同源），
+# 即 $CW_HOME/<ledger_key>/events.log 的 <ledger_key> 部分；standalone 时为空 → 输出 null
+LEDGER_KEY=""
+if [ -n "$LEDGER_ROOT" ]; then
+  LEDGER_KEY="$(encode_cwd "$LEDGER_ROOT")"
 fi
 
 # ── 3. dimensions：harness 模式启用 plan-completeness，standalone 裁掉 ──
@@ -98,6 +115,8 @@ if command -v jq >/dev/null 2>&1; then
   FILES_JSON="$(printf '%s' "$FILES_RAW" | sed '/^$/d' | jq -R . 2>/dev/null | jq -s . 2>/dev/null || printf '[]')"
 
   # 用 jq 构造最终 JSON（保证字段顺序 + 合法性）
+  # ledger_key 经 --arg 传字符串，空值在 jq 内折成 null（standalone 形态）——
+  # 不用 --argjson 切换两种取值形态，避免单独构造引号
   jq -n \
     --arg harness_mode "$HARNESS_MODE" \
     --argjson subagent_capable "$SUBAGENT_CAPABLE" \
@@ -105,17 +124,20 @@ if command -v jq >/dev/null 2>&1; then
     --arg git_root "$GIT_ROOT" \
     --argjson files "$FILES_JSON" \
     --arg primary_lang "$PRIMARY_LANG" \
+    --arg ledger_key "$LEDGER_KEY" \
     '{
       harness_mode: $harness_mode,
       subagent_capable: $subagent_capable,
       dimensions: $dimensions,
       git_root: $git_root,
       files: $files,
-      primary_lang: $primary_lang
+      primary_lang: $primary_lang,
+      ledger_key: (if $ledger_key == "" then null else $ledger_key end)
     }'
 else
-  # jq 缺失降级：仅对含用户输入的两个字段（git_root / files）转义引号和反斜杠；
-  # 其余字段（harness_mode / subagent_capable / dimensions / primary_lang）是固定枚举值，直接内插
+  # jq 缺失降级：对含用户输入或派生路径的字段（git_root / files / ledger_key）转义引号
+  # 和反斜杠；其余字段（harness_mode / subagent_capable / dimensions / primary_lang）
+  # 是固定枚举值，直接内插。ledger_key 空时输出 null
   json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
   }
@@ -125,7 +147,12 @@ else
     [ -n "$FILES_LIST" ] && FILES_LIST="$FILES_LIST,"
     FILES_LIST="$FILES_LIST\"$(json_escape "$line")\""
   done < <(printf '%s\n' "$FILES_RAW")
-  printf '{"harness_mode":"%s","subagent_capable":%s,"dimensions":%s,"git_root":"%s","files":[%s],"primary_lang":"%s"}\n' \
+  if [ -n "$LEDGER_KEY" ]; then
+    LEDGER_KEY_JSON="\"$(json_escape "$LEDGER_KEY")\""
+  else
+    LEDGER_KEY_JSON="null"
+  fi
+  printf '{"harness_mode":"%s","subagent_capable":%s,"dimensions":%s,"git_root":"%s","files":[%s],"primary_lang":"%s","ledger_key":%s}\n' \
     "$HARNESS_MODE" "$SUBAGENT_CAPABLE" "$DIMENSIONS" \
-    "$(json_escape "$GIT_ROOT")" "$FILES_LIST" "$PRIMARY_LANG"
+    "$(json_escape "$GIT_ROOT")" "$FILES_LIST" "$PRIMARY_LANG" "$LEDGER_KEY_JSON"
 fi

@@ -104,7 +104,8 @@ fi
 # 仅处理指向本次被删 worktree 的 link（不误伤并行场景下其他有效的 dev link）。
 # npm link 用相对 symlink，须先 resolve 成绝对路径再比对（删除前 target 存活，
 # readlink -f 可安全展开）。
-# 入口三分支：[ -L ] = dev link 走恢复；非 link 且非目录 = 上次恢复中断残留态
+# 入口三分支：[ -L ] = dev link 走恢复（link 悬空即目标已不存在时并入残留态语义，
+# 同样出声 + 中止保现场）；非 link 且非目录 = 上次恢复中断残留态
 # （npm unlink 成功但 install 失败）或 cw 未安装——出声警告 + 中止清理保现场；
 # [ -d ] = npm 正常安装，无动作。三分支缺一不可：只认 [ -L ] 会在残留态静默跳过，
 # 随后 worktree 被删，全局 cw 包永久缺失且零警告。
@@ -117,8 +118,20 @@ if [ -n "$_npm_groot" ]; then
     if [ -L "$_cw_pkg_link" ]; then
         # 分支 1：dev link 存在，比对 target 决定是否恢复。
         # 两侧统一物理归一化：npm link 建相对 symlink 须由 readlink -f 展开；
-        # $WORKSPACE_ROOT 来自逻辑 pwd，途经 symlink 时形态不同，直接比对永不命中
-        _pkg_target="$(readlink -f "$_cw_pkg_link")"
+        # $WORKSPACE_ROOT 来自逻辑 pwd，途经 symlink 时形态不同，直接比对永不命中。
+        # [悬空兜底] link 指向的目标已不存在时 readlink -f rc≠0（BSD 实测：stdout
+        # 仍输出 target 路径、stderr 全空），set -e 下赋值语句继承 rc=1 直接终止，
+        # exit 1 零输出——恰好绕过下方三分支的残留态兜底。故 `2>/dev/null || true`
+        # 兜底后须显式验证：解析失败为空、或 target 不可达（-e 为假）均视为悬空 =
+        # 残留/异常态，并入分支 2 同语义处置（出声警告 + 中止清理保现场）。
+        _pkg_target="$(readlink -f "$_cw_pkg_link" 2>/dev/null || true)"
+        if [ -z "$_pkg_target" ] || [ ! -e "$_pkg_target" ]; then
+            echo "" >&2
+            echo "Error: cw 全局包为悬空 dev link（指向目标已不存在），cw 命令当前不可用: ${_cw_pkg_link}" >&2
+            echo "  已中止清理以保全现场。" >&2
+            echo "  恢复动作：执行 npm i -g ${_cw_pkg}@latest；cw 可用后再次执行本脚本即可继续清理。" >&2
+            exit 1
+        fi
         _wt_physical="$(readlink -f "$WT_PATH")"
         case "$_pkg_target" in
             "$_wt_physical"|"$_wt_physical"/*)
@@ -159,8 +172,9 @@ fi
 
 # --- 清理指向被删 worktree 的 cw-cli dev symlink ---
 # dev-link（use-link.sh）会把 cw-cli symlink 指向 feature worktree；worktree 删除后
-# 该 symlink 悬空，pi 读到悬空 link 当 skill 不存在。仅处理指向本次被删 worktree 的
-# link（不误伤多 worktree 并行场景下其他仍有效的 dev link）。
+# 该 symlink 悬空，pi 读到悬空 link 当 skill 不存在。处理两类：指向本次被删 worktree
+# 的 link（不误伤多 worktree 并行场景下其他仍有效的 dev link），以及已悬空的 link
+# （目标已不存在——出声后直接清理，悬空 link 本就是待清理对象）。
 # [设计约束] 本段必须在删除 worktree 之前执行：比对用双侧 readlink -f 物理归一化，
 # 而 readlink -f 只要求「除最后一段外路径存在」——删除后 link target 的父目录已不在，
 # -f 解析失败输出不可靠（macOS BSD readlink 实测 exit 1）；删除前 target 存活，-f
@@ -171,11 +185,19 @@ _npm_skill="${_npm_root}/@zhushanwen/coding-workflow/skills/cw-cli"
 for _skill_link in "$HOME/.agents/skills/cw-cli" "$HOME/.claude/skills/cw-cli"; do
     [ -L "$_skill_link" ] || continue
     # 双侧 readlink -f 物理归一化（与 devlink 段同法）：link 可能是相对 symlink，
-    # $WT_PATH / link target 途经 symlink 分量时裸字符串比对永不命中
-    _skill_target="$(readlink -f "$_skill_link")"
+    # $WT_PATH / link target 途经 symlink 分量时裸字符串比对永不命中。
+    # [悬空兜底] link 悬空（目标已不存在）时 readlink -f rc≠0（同 devlink 段实测），
+    # set -e 下会静默终止脚本。skill link 悬空本就是待清理对象：出声后归一为空串
+    # 并入下方命中分支，按既有分支语义处置（npm skill 目录在则切回 npm，否则
+    # rm -f），流程继续不中止——重建退路已由 devlink 段的 npm install 保证。
+    _skill_target="$(readlink -f "$_skill_link" 2>/dev/null || true)"
+    if [ -z "$_skill_target" ] || [ ! -e "$_skill_target" ]; then
+        echo "Warning: skill symlink 悬空（指向目标已不存在），删除之: ${_skill_link}" >&2
+        _skill_target=""
+    fi
     _wt_physical="$(readlink -f "$WT_PATH")"
     case "$_skill_target" in
-        "$_wt_physical"|"$_wt_physical"/*)
+        ""|"$_wt_physical"|"$_wt_physical"/*)
             if [ -d "$_npm_skill" ]; then
                 rm -rf "$_skill_link"
                 ln -s "$_npm_skill" "$_skill_link"
