@@ -1,6 +1,9 @@
 import type { CommandEntry } from "../dispatch.js";
 import { handleCreate } from "./create.js";
 import { handleEvidenceSubmit } from "./evidence-submit.js";
+import { handleCiJudge } from "./cijudge.js";
+import { handleGateQuery, handleGateStats, handleGateWrap } from "./gate.js";
+import { handlePipelineRun, handlePipelineStatus } from "./pipeline.js";
 import { handleReviewSubmit } from "./review-submit.js";
 import { handleRun } from "./run.js";
 import { handleSetupAgentDir } from "./setup-agent-dir.js";
@@ -39,5 +42,38 @@ export const commands: CommandEntry[] = [
     handler: handleSetupAgentDir,
     summary:
       "建受控 agentDir（默认 ~/.cw/agent-dir，--agent-dir 覆盖；装 ask-user 扩展 + manifest + 启动探针）",
+  },
+  {
+    name: "gate wrap",
+    handler: handleGateWrap,
+    summary:
+      "gate check 包装执行（--check 名 --base ref [--scope 路径...] [--run-id id] [--timeout-ms n] -- 命令；命中跳过重跑，exit 0/1/2 三态）",
+  },
+  {
+    name: "gate query",
+    handler: handleGateQuery,
+    summary: "查 gate 缓存 pass 条目（[--check 名] [--base ref] [--json]，只读）",
+  },
+  {
+    name: "gate stats",
+    handler: handleGateStats,
+    summary: "gate check 计时聚合（真实执行耗时分组，只读；空账本输出空形态）",
+  },
+  {
+    name: "ci-judge",
+    handler: handleCiJudge,
+    summary:
+      "CI 失败判定（<run-id> --base <prBase> [--already-rerun]：import 闭包归属 → flaky rerun 恰一次 / 真回归证据链 / 两轮 flaky 转人工）",
+  },
+  {
+    name: "pipeline run",
+    handler: handlePipelineRun,
+    summary:
+      "按 .cw-pipeline.json 顺序执行验证步骤（[--manifest 路径] [--base ref]；断点续接，已 pass 不重做；cache 步骤走 gate 缓存）",
+  },
+  {
+    name: "pipeline status",
+    handler: handlePipelineStatus,
+    summary: "pipeline 步骤三态清单（✓/✗/pending，只读）",
   },
 ];

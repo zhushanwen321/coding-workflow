@@ -184,7 +184,9 @@ describe("EventLedger 账本（验收 6-8）", () => {
 
     // 另一账本实例（短锁超时，测试专用注入）尝试写入：不得清锁成功——旧实现
     // 读到空指纹 → null → unlink 误删，正是本用例防的回归
-    const victim = new EventLedger(path, { lockTotalTimeoutMs: 300 });
+    // rp-0 D2 泛化后构造签名 = (ledgerPath, domain?, options?)——options 移至第三位，
+    // 此处 domain 缺省 unit 域（与泛化前行为一致），仅注入短锁超时
+    const victim = new EventLedger(path, undefined, { lockTotalTimeoutMs: 300 });
     expect(() => victim.append("UnitCreated", unitCreatedPayload("u-1"))).toThrow(/读不出有效指纹/);
     expect(() => victim.append("UnitCreated", unitCreatedPayload("u-1"))).toThrow(/rm "/);
     // 锁文件未被误删（等待重试而非清锁），账本也未被写入
