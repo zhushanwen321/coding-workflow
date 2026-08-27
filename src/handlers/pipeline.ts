@@ -7,8 +7,9 @@
  *   - run：`cw pipeline run [--manifest <路径>] [--base <ref>]`（缺省 manifest =
  *     <cwd>/.cw-pipeline.json）。exit 0 全 pass（含跳过）/ 1 有步骤 fail 或
  *     manifest 缺失 / 2 环境错误。
- *   - status：`cw pipeline status [--manifest <路径>]`。步骤三态清单（✓/✗/pending
- *     + viaCache/耗时标注）。
+ *   - status：`cw pipeline status [--manifest <路径>] [--json]`。步骤三态清单（✓/✗/pending
+ *     + viaCache/耗时标注）；`--json` 直出 PipelineStatusResult 结构体供机器消费方
+ *     （D8 命令面声明，形态对齐 gate query 的 --json 先例：缺省人类可读）。
  */
 import type { CommandContext } from "../dispatch.js";
 import { PipelineEnvironmentError, runPipeline } from "../pipeline/run.js";
@@ -61,6 +62,12 @@ export async function handlePipelineStatus(ctx: CommandContext): Promise<number>
   const manifestPath = manifestPathOf(ctx);
   try {
     const status = pipelineStatus({ cwHome: getCwHome(), cwd: ctx.cwd, manifestPath });
+    // D8 [--json]：结构化直出（PipelineStatusResult），机器消费方契约；缺省走人类可读。
+    // 形态对齐 gate query：JSON.stringify(status, null, 2) + 尾换行，错误面不产出假 JSON。
+    if (ctx.argv["json"] === true) {
+      process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+      return 0;
+    }
     const lines = status.steps.map((s) => {
       const mark = s.state === "pass" ? "✓" : s.state === "fail" ? "✗" : "pending";
       const via = s.viaCache === true ? "（cache 命中）" : "";

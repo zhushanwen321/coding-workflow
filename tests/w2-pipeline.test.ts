@@ -9,19 +9,21 @@
  * → 续跑必须重做；已 pass 步骤靠投影跳过）。fail-then-fix 形态确定性最强，
  * 采为断言形态（SIGKILL 形态受进程时序影响易 flaky）。
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DuplicatePipelineStepError, gateLedgerDomain } from "../src/gate/domain.js";
 import { foldGate } from "../src/gate/fold.js";
-import { EventLedger } from "../src/store/events-log.js";
-import { gateLedgerPath } from "../src/store/project.js";
 import { loadManifest } from "../src/pipeline/manifest.js";
 import { PipelineEnvironmentError, runPipeline } from "../src/pipeline/run.js";
 import { pipelineStatus } from "../src/pipeline/status.js";
+import { EventLedger } from "../src/store/events-log.js";
+import { gateLedgerPath } from "../src/store/project.js";
 
 let root: string;
 let projDir: string;
@@ -230,6 +232,70 @@ describe("w2 viaCache（cache 步骤内部走 gate 缓存判定）", () => {
       expect((e as Error).message).toContain("--base");
       expect((e as Error).message).toContain("恢复动作");
     }
+  });
+});
+
+// ── pipeline status --json（D8 契约：design-release-pipeline.md「只读 cw pipeline status [--json]」）──
+//
+// handler 层 flag 解析无法用直调核心库的形态覆盖，采 CLI 子进程 e2e
+// （对照 w1-gate-e2e 的 runCli 模式：真实子进程跑 dist/cli.js 走完整 dispatch 路径）。
+// dist 缺席时挂起（pretest build 后自动激活，对照 w1 同款守卫）。
+
+const CLI_PATH = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+const distIt = existsSync(CLI_PATH) ? it : it.todo;
+
+function runCli(args: readonly string[], cwd: string): { code: number; stdout: string; stderr: string } {
+  const res = spawnSync(process.execPath, [CLI_PATH, ...args], {
+    cwd,
+    encoding: "utf-8",
+    env: { ...process.env, CW_HOME: cwHome },
+    timeout: 60_000,
+  });
+  return { code: res.status ?? -1, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+}
+
+describe("w2 pipeline status --json（D8 契约）", () => {
+  distIt("--json 输出机器可解析 JSON；缺省人类可读形态不变", () => {
+    initRepo("status-json");
+    const manifestPath = writeManifest(projDir, [
+      { name: "s1", command: ["node", "-e", "console.log('s1')"] },
+      { name: "s2", command: ["node", "-e", "process.exit(7)"] }, // fail 即停
+      { name: "s3", command: ["node", "-e", "console.log('s3')"] }, // 未执行 → pending
+    ]);
+    const run = runCli(["pipeline", "run", "--manifest", manifestPath], projDir);
+    expect(run.code).toBe(1);
+
+    // --json：机器消费方契约——stdout 必须整体为一个合法 JSON 值
+    const res = runCli(["pipeline", "status", "--manifest", manifestPath, "--json"], projDir);
+    expect(res.code).toBe(0);
+    const parsed: unknown = JSON.parse(res.stdout); // 非法 JSON 在此抛错（人类文本混入即红）
+    expect(parsed).toEqual({
+      pipeline: ".cw-pipeline",
+      manifestSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      steps: [
+        { name: "s1", state: "pass", durationMs: expect.any(Number), seq: expect.any(Number) },
+        { name: "s2", state: "fail", durationMs: expect.any(Number), seq: expect.any(Number) },
+        { name: "s3", state: "pending" },
+      ],
+    });
+
+    // 缺省输出逐字形态锁定（M1 验收②：人类可读模式字节不变）
+    const human = runCli(["pipeline", "status", "--manifest", manifestPath], projDir);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toMatch(
+      /^pipeline "\.cw-pipeline"（manifest [0-9a-f]{8}…）：\n  ✓ s1.*\n  ✗ s2.*\n  pending s3\n$/,
+    );
+  });
+
+  distIt("manifest 缺失 → --json 不产出假 JSON：stderr 报错 exit 1", () => {
+    initRepo("status-json-missing");
+    const res = runCli(
+      ["pipeline", "status", "--manifest", join(projDir, "nope.json"), "--json"],
+      projDir,
+    );
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("manifest 不存在");
+    expect(res.stdout).toBe("");
   });
 });
 

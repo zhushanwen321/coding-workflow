@@ -192,7 +192,7 @@ designer 的固定动作序：**先建子、后提 spec**。根 unit 的 designe
 | `cw gate stats` | 只读（gate 域） | 计时聚合（真实执行 durationMs 分组；空账本输出结构化空形态） |
 | `cw ci-judge <run-id> --base <prBase> [--already-rerun]` | 判定（gate 域） | CI 失败 flaky/真回归判定（import 闭包含 dist→src 映射归属；flaky 自动 `gh run rerun --failed` 恰一次；两轮 flaky 出声转人工；exit 0 判定完成 / 2 环境错误） |
 | `cw pipeline run [--manifest <路径>] [--base <ref>]` | 跑（pipeline 域） | 按 `.cw-pipeline.json` 顺序执行验证步骤（断点续接：已 pass 步骤靠投影跳过不重做；cache 声明步骤内部走 gate 缓存 viaCache；fail 即停；exit 0 全 pass / 1 有 fail 或 manifest 缺失 / 2 环境错误） |
-| `cw pipeline status [--manifest <路径>]` | 只读（pipeline 域） | 步骤三态清单 ✓/✗/pending（含 viaCache/耗时/seq 标注） |
+| `cw pipeline status [--manifest <路径>] [--json]` | 只读（pipeline 域） | 步骤三态清单 ✓/✗/pending（含 viaCache/耗时/seq 标注）；--json 供消费方机器读 |
 
 runner 的角色派发规则（对投影每轮重算，维度 → 派发形态单一映射）：created 且无 spec → designer（首派，任务书第 0 步建 split 子 unit）；created 且有 spec 且最新 spec 未反思 → 反思先于审查（reflectionPending：loop 对在飞长驻句柄发 followUp 反思文案，完成后写 ReflectionRan 再派 reviewer，无在飞句柄则代写占位事件）；created 且有 spec 待审 → 独立 reviewer（specReviewPending，designer 不自审）；spec-review fail 后 → designer 修 spec 重提（specFixPending，任务书内嵌 fail comment 全文）；spec-frozen 单元解析失败连挂 ≥2 → designer 回炉修验收命令契约（specContractBroken，任务书内嵌逐轮解析失败原文，新 spec 照旧过独立 reviewer）；spec-frozen 叶子 → developer（verified 未 closed → reviewer exec-review）；子全 verified 的根 → 不派 agent，直接集成；集成连续 fail 达上限 → designer 处置契约漂移。同 unit 存在任意 role 的 in-flight spawn 时本轮缓派（防 worktree reset 清在飞现场）。等待 spawn 期间零锁（否则子进程的 evidence submit 饿死）。中断（Ctrl-C）后重跑 `cw run` 从事件投影续接，已 closed 的单元不重做。可见性防线：无 in-flight reviewer 时新入账的 spec-review verdict 触发 stderr 抢答警告（不阻断——role 自报可伪造，仅审计信号）。
 
