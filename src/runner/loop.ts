@@ -811,10 +811,12 @@ function emitSpecFrozenDesignerRationale(
   if (target.dimension === "specContractBroken") {
     const fact = contractFacts.get(target.unitId);
     emit([
-      `[runner] unit "${target.unitId}" 的验收命令解析失败连挂 ≥2（条目 ` +
+      // fa-3 双信号口径（D-1 同款第四处）：解析失败 / 无区分力同座触发本维度，
+      // 信号名不得只报其一；逐轮原文分流取数见 brief.ts contractFailFactsOf
+      `[runner] unit "${target.unitId}" 的确定性 spec 缺陷信号连挂 ≥2（条目 ` +
         `${fact?.streaks.map((s) => s.acceptanceId).join("、") ?? "（未知）"}；spec 契约回炉，` +
         `代数 ${fact?.generations ?? 0}/${SPEC_CONTRACT_MAX_GENERATIONS}）` +
-        "——转派 designer 修 spec 的验收命令契约（逐轮解析失败原文见 brief）",
+        "——转派 designer 修 spec 的验收命令契约（逐轮信号原文见 brief）",
     ]);
     return;
   }
